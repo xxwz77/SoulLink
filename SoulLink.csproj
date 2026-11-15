@@ -13,7 +13,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- ★ 版本号唯一来源：改这里即可，FileVersion/AssemblyVersion 自动派生。
          历史教训：标签打到 v1.4.3 而这里仍是 1.4.1，标题栏一直显示旧版本。 -->
-    <Version>1.5.3</Version>
+    <Version>1.6.0</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 多用户挂机中控台</AssemblyTitle>
@@ -22,8 +22,9 @@
     <SatelliteResourceLanguages>zh-CN;en-US</SatelliteResourceLanguages>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS8618;CA1416;WPF0001</NoWarn>
-    <!-- tools 放的是独立试验程序，别被主项目的通配符吃进来（否则 obj 里的 AssemblyInfo 会重复） -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);tools\**</DefaultItemExcludes>
+    <!-- ★ tools 是独立试验程序、releases 是版本归档与 WIP 备份，
+         都必须排除：其中的 .cs 副本被通配符编译进来会造成类型重复定义（AutoStart 已踩过）。 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tools\**;releases\**</DefaultItemExcludes>
     <ApplicationIcon Condition="Exists('Assets\soullink.ico')">Assets\soullink.ico</ApplicationIcon>
   </PropertyGroup>
 

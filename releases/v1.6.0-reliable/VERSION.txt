@@ -1,0 +1,6 @@
+版本: v1.6.0-reliable
+日期: 2026-11-16
+新增: 开机自启（计划任务，绑定指定用户登录时启动，不弹 UAC）
+      启动账户默认当前用户；启动后自动连接的 RDP 用户可多选
+修复: csproj 排除 releases**，避免归档里的 .cs 副本被编译导致类型重复定义
+SoulLink.exe SHA256: 476F0AD7DE8B97F8486A3CC5D1B5DED44F0695267ACFE072D4F8CDFA72430DC1

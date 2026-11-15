@@ -41,6 +41,7 @@ namespace SoulLink.Views
 
             RefreshAccounts();
             _ = DetectAsync();
+            _ = RefreshAutoStartAsync();
         }
 
         private void RefreshAccounts()
@@ -174,6 +175,139 @@ namespace SoulLink.Views
         }
 
         // ── 配置 ─────────────────────────────────────────────────────────────
+
+        // ── 开机自启 ────────────────────────────────────────────────────────
+
+        private bool _autoStartBusy;
+
+        /// <summary>填充启动账户与自动连接列表，并回显当前自启状态。</summary>
+        private async Task RefreshAutoStartAsync()
+        {
+            try
+            {
+                // ① 启动账户候选：当前登录用户 + 本机所有已启用的本地账户
+                AutoStartUserCombo.Items.Clear();
+                var users = new List<string>();
+                users.Add(AutoStart.CurrentUser);   // 默认第一项 = 当前用户
+                // 从账号配置里补充（这些是本机能登录的 RDP 用户）
+                foreach (var a in App.Config.Accounts)
+                {
+                    string n = string.IsNullOrWhiteSpace(a.RdpUserName) ? a.UserName : a.RdpUserName;
+                    if (!string.IsNullOrWhiteSpace(n) &&
+                        !users.Contains(n, StringComparer.OrdinalIgnoreCase))
+                        users.Add(n);
+                }
+                foreach (var u in users) AutoStartUserCombo.Items.Add(u);
+
+                // 选上次保存的；没有就选当前用户（默认）
+                string saved = App.Config.Settings.AutoStartUser;
+                int idx = 0;
+                if (!string.IsNullOrWhiteSpace(saved))
+                    for (int i = 0; i < AutoStartUserCombo.Items.Count; i++)
+                        if (string.Equals(AutoStartUserCombo.Items[i]?.ToString(), saved,
+                                          StringComparison.OrdinalIgnoreCase)) { idx = i; break; }
+                AutoStartUserCombo.SelectedIndex = idx;
+
+                // ② 自动连接的 RDP 用户（多选）
+                AutoConnectList.Children.Clear();
+                var selected = App.Config.Settings.AutoConnectAccountIds ?? new List<string>();
+                if (App.Config.Accounts.Count == 0)
+                {
+                    AutoConnectList.Children.Add(new TextBlock
+                    {
+                        Text = "尚未配置任何 RDP 账号",
+                        Style = (Style)FindResource("Caption")
+                    });
+                }
+                foreach (var a in App.Config.Accounts)
+                {
+                    var cb = new CheckBox
+                    {
+                        Content = a.Caption + "（" + a.UserName + "）",
+                        Tag = a.Id,
+                        Style = (Style)FindResource("GlassCheckBox"),
+                        Margin = new Thickness(0, 2, 0, 2),
+                        IsChecked = selected.Contains(a.Id)
+                    };
+                    cb.Checked += AutoConnectItem_Changed;
+                    cb.Unchecked += AutoConnectItem_Changed;
+                    AutoConnectList.Children.Add(cb);
+                }
+
+                // ③ 状态回显
+                bool on = AutoStart.IsEnabled();
+                AutoStartButtonText.Text = on ? "关闭自启" : "开启自启";
+                if (on)
+                {
+                    string? bound = AutoStart.GetBoundUser();
+                    AutoStartStatus.Text = "当前状态：已开启"
+                        + (string.IsNullOrWhiteSpace(bound) ? "" : "（启动账户 " + bound + "）");
+                }
+                else AutoStartStatus.Text = "当前状态：未开启";
+
+                UpdateAutoConnectHint();
+                await Task.CompletedTask;
+            }
+            catch (Exception ex) { AutoStartStatus.Text = "读取自启状态失败：" + ex.Message; }
+        }
+
+        private void UpdateAutoConnectHint()
+        {
+            int n = 0;
+            foreach (var c in AutoConnectList.Children)
+                if (c is CheckBox cb && cb.IsChecked == true) n++;
+            AutoStartStatus.Text = (AutoStart.IsEnabled() ? "自启已开启 · " : "")
+                + (n > 0 ? "启动后自动连接 " + n + " 个 RDP 用户" : "启动后不自动连接");
+        }
+
+        private void AutoConnectItem_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            try
+            {
+                var ids = new List<string>();
+                foreach (var c in AutoConnectList.Children)
+                    if (c is CheckBox cb && cb.IsChecked == true && cb.Tag is string id)
+                        ids.Add(id);
+                App.Config.Settings.AutoConnectAccountIds = ids;
+                ConfigStore.Save(App.Config);
+                UpdateAutoConnectHint();
+            }
+            catch { }
+        }
+
+        private async void AutoStart_Click(object sender, RoutedEventArgs e)
+        {
+            if (_autoStartBusy) return;
+            _autoStartBusy = true;
+            try
+            {
+                bool on = AutoStart.IsEnabled();
+                if (on)
+                {
+                    AutoStartStatus.Text = "正在关闭…";
+                    var (ok, msg) = await AutoStart.DisableAsync();
+                    AutoStartStatus.Text = msg;
+                    if (ok) AutoStartButtonText.Text = "开启自启";
+                }
+                else
+                {
+                    string user = AutoStartUserCombo.SelectedItem as string;
+                    if (string.IsNullOrWhiteSpace(user)) user = AutoStart.CurrentUser;
+                    string exe = Environment.ProcessPath ?? "";
+
+                    App.Config.Settings.AutoStartUser = user;
+                    ConfigStore.Save(App.Config);
+
+                    AutoStartStatus.Text = "正在创建计划任务…";
+                    var (ok, msg) = await AutoStart.EnableAsync(user, exe);
+                    AutoStartStatus.Text = msg;
+                    if (ok) AutoStartButtonText.Text = "关闭自启";
+                }
+            }
+            catch (Exception ex) { AutoStartStatus.Text = "操作失败：" + ex.Message; }
+            finally { _autoStartBusy = false; }
+        }
 
         private void OpenConfig_Click(object sender, RoutedEventArgs e)
         {

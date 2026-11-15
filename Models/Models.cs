@@ -118,6 +118,20 @@ namespace SoulLink.Models
         public bool MinimizeToTray { get; set; } = true;
         public string LastExportPath { get; set; } = "";
 
+        // ── 开机自启 ────────────────────────────────────────────────────
+        /// <summary>
+        /// 自启任务绑定的 Windows 账户（该账户登录时启动程序）。
+        /// 空 = 使用当前登录用户。
+        /// </summary>
+        public string AutoStartUser { get; set; } = "";
+
+        /// <summary>
+        /// 启动后自动连接 RDP 的账号 Id 列表（可多选）。
+        /// 与 AutoStartUser 无关：前者是谁来启动程序，这里是启动后连哪些 RDP 用户。
+        /// </summary>
+        public System.Collections.Generic.List<string> AutoConnectAccountIds { get; set; }
+            = new System.Collections.Generic.List<string>();
+
         // ── 内嵌 RDP 控制台 ────────────────────────────────────────────
         /// <summary>控制台默认分辨率</summary>
         public int RdpWidth { get; set; } = 1280;

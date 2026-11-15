@@ -68,6 +68,36 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- 开机自启 -->
+                    <TextBlock Text="开机自启" Style="{StaticResource Label}" Margin="0,18,0,6" />
+                    <Border Style="{StaticResource GlassPanel}" Padding="14,12">
+                        <StackPanel>
+                            <TextBlock Text="用计划任务实现：只在指定 Windows 账户登录时启动，以最高权限运行，不弹 UAC。"
+                                       Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="18" />
+
+                            <!-- ① 启动账户：谁登录时拉起程序（默认当前用户） -->
+                            <TextBlock Text="启动账户（该账户登录时启动程序）" FontSize="10.5"
+                                       Foreground="{StaticResource TextMuted}" Margin="0,12,0,0" />
+                            <ComboBox x:Name="AutoStartUserCombo" Margin="0,5,0,0" />
+
+                            <!-- ② 启动后自动连接的 RDP 用户：可多选 -->
+                            <TextBlock Text="启动后自动连接（可多选）" FontSize="10.5"
+                                       Foreground="{StaticResource TextMuted}" Margin="0,12,0,0" />
+                            <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,5,0,0">
+                                <StackPanel x:Name="AutoConnectList" />
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                <Button x:Name="AutoStartButton" Style="{StaticResource PrimaryButton}" Padding="18,8"
+                                        Click="AutoStart_Click">
+                                    <TextBlock x:Name="AutoStartButtonText" Text="开启自启" FontSize="11.5" />
+                                </Button>
+                            </StackPanel>
+                            <TextBlock x:Name="AutoStartStatus" Style="{StaticResource Caption}"
+                                       Margin="0,10,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
                     <!-- 配置 -->
                     <TextBlock Text="配置文件" Style="{StaticResource Label}" Margin="0,18,0,6" />
                     <Border Style="{StaticResource GlassPanel}" Padding="14,12">

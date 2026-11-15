@@ -227,6 +227,85 @@ namespace SoulLink.Views
             RenderTabs();
             _initialized = true;
             SyncBusyOverlaySize();
+
+            if (!_autoConnectTried)
+            {
+                _autoConnectTried = true;
+                // ★ 后台执行，绝不 await：开机自启时界面必须立即可操作。
+                //   上次卡死的教训：任何会话查询/连接上的同步等待都会冻住 UI。
+                _ = Task.Run(AutoConnectAsync);
+            }
+        }
+
+        private bool _autoConnectTried;
+        private bool _autoConnectRunning;
+
+        /// <summary>
+        /// 启动后自动连接配置的 RDP 用户（可多个）。
+        ///
+        /// 设计要点：
+        ///   · 通道投送只依赖会话号，不需要先连 RDP（用户思路）；
+        ///   · 全部在后台线程跑，UI 不参与任何等待；
+        ///   · 只把第一个账号打开画面，其余留在标签卡，切页即可看到。
+        /// </summary>
+        private async Task AutoConnectAsync()
+        {
+            if (_autoConnectRunning) return;
+            _autoConnectRunning = true;
+            try
+            {
+                var ids = App.Config.Settings.AutoConnectAccountIds;
+                if (ids == null || ids.Count == 0) { Debug("自动连接：未配置账号，跳过"); return; }
+
+                await Task.Delay(1200).ConfigureAwait(false);
+
+                // 收集目标（读 App.Config 和 _rows 需回 UI 线程，用 Dispatcher 取快照）
+                var snapshot = await Dispatcher.InvokeAsync(() =>
+                {
+                    var list = new List<(UserRow row, string caption)>();
+                    foreach (var id in ids)
+                        foreach (var r in _rows)
+                            if (string.Equals(r.Account.Id, id, StringComparison.Ordinal))
+                            { list.Add((r, r.Account.Caption)); break; }
+                    return list;
+                });
+
+                if (snapshot.Count == 0) { Debug("自动连接：配置的账号都不存在"); return; }
+                Debug("自动连接：共 " + snapshot.Count + " 个账号");
+
+                // ① 第一个：打开画面（走完整连接流程，本身是 async，不阻塞）
+                await Dispatcher.InvokeAsync(() => _ = ShowViewPageAsync(snapshot[0].row));
+
+                // ② 其余：只投送通道，不开画面
+                for (int i = 1; i < snapshot.Count; i++)
+                {
+                    try
+                    {
+                        var (row, caption) = snapshot[i];
+                        Debug("自动连接（投送通道）：" + caption);
+
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            _openedIds.Add(row.Account.Id);
+                            if (row.Console == null) InitializeConsole(row);
+                            row.Console?.SetForegroundActive(false);
+                        });
+
+                        var console = await Dispatcher.InvokeAsync(() => row.Console);
+                        if (console != null)
+                        {
+                            bool ok = await console.StartInputBySessionAsync().ConfigureAwait(false);
+                            Debug(ok ? "通道投送成功：" + caption
+                                     : "通道投送跳过：" + caption + "（无会话）");
+                        }
+                    }
+                    catch (Exception ex) { Debug("投送通道失败：" + ex.Message); }
+                }
+
+                await Dispatcher.InvokeAsync(RenderTabs);
+            }
+            catch (Exception ex) { Debug("自动连接失败：" + ex.Message); }
+            finally { _autoConnectRunning = false; }
         }
 
         // ── 标签卡 ───────────────────────────────────────────────────────────

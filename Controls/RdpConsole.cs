@@ -238,6 +238,43 @@ namespace SoulLink.Controls
 
         private bool InputAllowed => _activeState == 0 && !_disposed && IsVisible;
 
+        /// <summary>
+        /// 按「用户名 → 会话号」投送注入通道，**不需要先连 RDP**。
+        ///
+        /// 用途：多账号挂机时，没打开画面的账号也要有注入通道。
+        /// RelayClient 只依赖会话号，与 RDP 控件是否连接无关。
+        ///
+        /// 返回 true = 已投送；false = 该账号当前无会话（未登录）。
+        /// </summary>
+        public async Task<bool> StartInputBySessionAsync()
+        {
+            try
+            {
+                if (_disposed || !InjectEnabled) return false;
+                var acc = Account;
+                if (acc == null) return false;
+                if (Input?.Relay.IsConnected == true) return true;
+
+                var sessions = await SessionService.QueryAsync().ConfigureAwait(true);
+                var s = SessionService.Find(sessions, acc.UserName);
+                if (s == null || s.Id <= 0)
+                {
+                    Debug("投送通道：「" + acc.UserName + "」当前无会话，跳过");
+                    return false;
+                }
+
+                CurrentSessionId = s.Id;
+                Debug("投送通道：「" + acc.UserName + "」→ 会话 " + s.Id);
+                BeginInput(s.Id, acc, ConfigStore.GetPassword(acc));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug("投送通道失败：" + ex.Message);
+                return false;
+            }
+        }
+
         /// <summary>切回画面时调用：如果输入通道已断开，重建一次。</summary>
         public void EnsureInputRestored()
         {
