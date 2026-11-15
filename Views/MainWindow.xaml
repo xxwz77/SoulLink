@@ -101,19 +101,25 @@
                     <!-- ═══ 主体 ═══ -->
                     <Grid Grid.Row="1" x:Name="SideNavHost">
                         <Grid.ColumnDefinitions>
-                            <!-- ★ 固定 56px：收起时放图标栏，展开时侧栏以浮层盖在上面，
-                                 画面尺寸**永不变化**，所以不会闪 -->
-                            <ColumnDefinition x:Name="NavColumn" Width="56" />
+                            <!-- ★ 图标栏固定 56 宽，列宽 76 = 56 + 20 间距。
+                                 ★ rail 不能再设 Margin：列宽已经包含间距，
+                                   再加 Margin 会把 rail 挤窄或者让间距消失（实测两者重叠）。
+                                 收起时放图标栏，展开时侧栏以浮层盖在上面，画面尺寸**永不变化**，所以不会闪。 -->
+                            <ColumnDefinition x:Name="NavColumn" Width="76" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
                         <!-- ① 图标栏：恒定 56px 宽，永远占位
-                             ★ 四边留白与右侧内容面板一致（内容区 Margin=20,10,20,16）：
-                               左边 10、上边 4、下边 16。收起时它是一个独立圆角卡片，
-                               不能贴死窗口左边框（用户反馈：挨得太近）。 -->
+                             ★ 垂直必须与右侧内容卡片**完全等高**：主体 Grid 已经是内容区，
+                               上下边距由外层 Margin(20,10,20,16) 提供，这里不能再加 Margin，
+                               否则会比右卡矮一截（实测顶差 4 DIP、底差 16 DIP）。
+                             ★ 左边距**不能在这里加**：外层内容区已有 Margin(20,...)，
+                               再加一次会和右侧卡片错位（实测 rail 跑到 40 DIP，右卡仍是 20 DIP）。
+                               所以 Margin 只留右边距 20，把图标栏和内容卡片隔开。 -->
                         <Border Grid.Column="0" x:Name="NavRail" Panel.ZIndex="10"
                                 Style="{StaticResource NavSurface}"
-                                Margin="10,4,0,16" Padding="3,12"
+                                HorizontalAlignment="Left" Width="56"
+                                Margin="0" Padding="3,12"
                                 MouseEnter="NavRail_MouseEnter" MouseLeave="NavRail_MouseLeave">
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -195,8 +201,12 @@
                                     MouseLeave="NavPanel_MouseLeave"
                                     MouseEnter="NavPanel_MouseEnter">
                                 <Grid>
+                                    <!-- ★ 上：标题+导航（Auto）；下：开关 + 当前会话（Auto 贴底）。
+                                         原来它们全塞在一个 StackPanel 里，Grid.Row="2" 完全无效，
+                                         结果「鼠标悬停展开 / 当前会话」紧跟在导航项后面浮在中间，
+                                         而不是贴到面板底部。 -->
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <StackPanel>
+                                <StackPanel Grid.Row="0">
                                     <!-- 标题行：与汉堡按钮等高 36 -->
                                     <Border Height="36" Margin="0,0,0,0" Padding="6,0">
                                         <Grid>
@@ -229,14 +239,28 @@
                                     <Button Style="{StaticResource NavTextButton}" Tag="cli"
                                             Height="38" Click="RailIcon_Click" Content="命令行" />
 
-                                    <!-- 分隔线后是开关与状态 -->
-                                    <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="6,10,6,10" />
+                                </StackPanel>
 
-                                    <CheckBox x:Name="AutoHideNavCheck" Grid.Row="2" Style="{StaticResource GlassCheckBox}"
+                                <!-- ★ 底部区（Grid.Row=2，自动贴底）：
+                                     分隔线 → 鼠标悬停展开 → 当前会话。
+                                     原来这三块跟着导航项挤在上半部分，用户看图像是"悬空"的。
+                                     ★ 用 Grid 而不是 StackPanel：StackPanel 里子元素只按内容宽度收缩，
+                                       「当前会话」卡片会缩成一小块；Grid 才会水平撑满面板。 -->
+                                <Grid Grid.Row="2">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <!-- 分隔线：与导航区隔开 -->
+                                    <Border Grid.Row="0" Height="1" Background="{StaticResource StrokeSoft}" Margin="6,10,6,10" />
+
+                                    <CheckBox Grid.Row="1" x:Name="AutoHideNavCheck" Style="{StaticResource GlassCheckBox}"
                                               Content="鼠标悬停展开" Margin="6,4,0,10"
                                               Checked="AutoHideNav_Changed" Unchecked="AutoHideNav_Changed" />
 
-                                    <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="12,10" VerticalAlignment="Bottom">
+                                    <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="12,10">
                                         <StackPanel>
                                             <TextBlock Text="当前会话" Style="{StaticResource Caption}" />
                                             <TextBlock x:Name="SelfSessionText" Text="—" Style="{StaticResource Mono}"
@@ -245,7 +269,7 @@
                                                        Margin="0,2,0,0" />
                                         </StackPanel>
                                     </Border>
-                                </StackPanel>
+                                </Grid>
                                 </Grid>
                             </Border>
                         </Popup>

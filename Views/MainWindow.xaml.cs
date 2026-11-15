@@ -579,9 +579,8 @@ namespace SoulLink.Views
                         // 实测只盖 1px 仍会露出 1px 亮线，所以按 border(1) + 抗锯齿(1) 取 2。
                         NavPopup.HorizontalOffset = offset.X + NavRail.ActualWidth - 2;
 
-                        // ★ 垂直也必须跟 rail 对齐：NavRail 有 Margin 上边距 4，
-                        //   漏掉这一项面板顶部会高出 rail 一截（实测高 4 DIP），
-                        //   用户看到的就是"面板顶着标题栏、和图标栏错位"。
+                        // 垂直直接跟 rail 的顶边重合。rail 现在不再有上下 Margin
+                        // （与右侧内容卡片等高的前提），所以 offset.Y 就是内容区顶边。
                         NavPopup.VerticalOffset = offset.Y;
 
                         // 高度与 rail 完全一致，否则面板会比 rail 短一截，四角露出缺口。
