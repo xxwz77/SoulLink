@@ -113,6 +113,8 @@ namespace SoulLink.Views
 
                 if (_autoHide) SetNavCollapsed(true, "启动恢复（自动收起）");
                 else SetNavCollapsed(st0.NavCollapsed, "启动恢复");
+                // 确保首帧文字状态与宽度一致（否则收起态文字仍可见，会压到右侧内容）
+                ApplyNavTextVisibility();
             }
             catch { }
 
@@ -422,6 +424,16 @@ namespace SoulLink.Views
             SaveNavPref();
         }
 
+        /// <summary>导航行点击（Grid 行，Tag 为页面标识）。</summary>
+        private void NavRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is string tag)
+            {
+                NavigateTo(tag);
+                SetNavCollapsed(true, "点图标切页");
+            }
+        }
+
         private void BtnToggleNav_Click(object sender, RoutedEventArgs e)
         {
             SetNavCollapsed(!_navCollapsed, "手动切换");
@@ -563,10 +575,38 @@ namespace SoulLink.Views
 
             try
             {
-                if (collapsed) NavPopup.IsOpen = false;
-                else NavPopup.IsOpen = true;
+                // ★ 不再开第二个窗口：图标栏自身变宽，展开时显示文字。
+                NavPopup.IsOpen = false;
+
+                const double collapsedWidth = 56;
+                const double expandedWidth = 180;
+                double target = collapsed ? collapsedWidth : expandedWidth;
+
+                // 侧栏变宽会挤压右侧内容，用动画让过程平滑
+                var anim = new System.Windows.Media.Animation.DoubleAnimation
+                {
+                    To = target,
+                    Duration = TimeSpan.FromMilliseconds(collapsed ? 140 : 170),
+                    EasingFunction = new System.Windows.Media.Animation.CubicEase
+                    { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
+                };
+                NavRail.BeginAnimation(FrameworkElement.WidthProperty, anim);
+
+                // ★ 列宽必须一起变：NavRail 在 Column 0，列宽固定 76 时，
+                //   加宽后的侧栏会被 Column 1 的内容压住（用户实测"被别的界面挡住"）。
+                // ★ 列宽固定 76 不变：侧栏已改为 ColumnSpan=2 覆盖在内容之上，
+                //   不再挤压右侧内容（用户明确要求"覆盖，不挤压"）。
+
+                // ★ 文字显隐必须与宽度同步，且要在动画**开始前**就定好。
+                //   收起时立刻隐藏（否则文字会溢出栏外压到右侧内容，实测）；
+                //   展开时立刻显示（栏宽跟着动画涨，文字有空间）。
+                _navTextVisible = !collapsed;
+                ApplyNavTextVisibility();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                App.AppendErrorLog("MainWindow.SetNavCollapsed", ex);
+            }
 
             UpdateNavSurfaceShape(collapsed);
 
@@ -585,6 +625,23 @@ namespace SoulLink.Views
         /// <summary>供 ThemeManager 读取当前侧栏状态（主题刷新时要用）。</summary>
         internal bool IsNavCollapsedForTheme => _navCollapsed;
 
+        /// <summary>侧栏文字是否应显示（与栏宽同步）。</summary>
+        private bool _navTextVisible;
+
+        /// <summary>按当前状态刷新侧栏文字显隐。</summary>
+        private void ApplyNavTextVisibility()
+        {
+            var vis = _navTextVisible ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var t in new FrameworkElement?[]
+            {
+                NavTitleText, NavTextLaunch, NavTextConsole,
+                NavTextSessions, NavTextProcs, NavTextCli
+            })
+            {
+                if (t != null) t.Visibility = vis;
+            }
+        }
+
         /// <summary>
         /// 侧栏两态的圆角：
         ///   收起 = 独立卡片，四角全圆；
@@ -595,50 +652,12 @@ namespace SoulLink.Views
         {
             try
             {
+                // ★ 单窗口方案：NavRail 就是一个整体卡片，展开/收起只是宽度变化，
+                //   圆角始终一致，不再需要"拼接两个窗口"的直角/去边框处理。
                 if (NavRail != null)
-                    NavRail.CornerRadius = collapsed
-                        ? new CornerRadius(14)
-                        : new CornerRadius(14, 0, 0, 14);
+                    NavRail.CornerRadius = new CornerRadius(14);
 
-                if (NavPanel != null)
-                {
-                    NavPanel.CornerRadius = new CornerRadius(0, 14, 14, 0);
-                    // 左边界不画：面板左边正好压在图标栏右边上，两条线会并成一条粗缝。
-                    NavPanel.BorderThickness = new Thickness(0, 1, 1, 1);
-
-                    // ★ Popup 内容在独立视觉树里，ElementName 绑定不到 NavRail，
-                    //   高度必须在这里显式对齐，否则面板会塌成一条小窗、看不见。
-                    // ★ 位置也不能靠 Placement=Right：NavRail 带 Margin 时 Popup 按外框算，
-                    //   实测会偏 2px，露出窗口底色形成接缝。这里按 NavRail 相对 Grid 的
-                    //   实际偏移精确重合：面板左边 === 图标栏右边。
-                    if (!collapsed && NavRail != null && SideNavHost != null)
-                    {
-                        var offset = NavRail.TranslatePoint(new Point(0, 0), SideNavHost);
-
-                        // 左移 2px 盖住 NavRail 自己的右边框：
-                        // 两条 1px 边框并排会显出一条比背景亮的竖线（实测 #505469），
-                        // 这就是用户看到的"接缝"。面板左边界本来就不画，正好用来遮这一条。
-                        // 实测只盖 1px 仍会露出 1px 亮线，所以按 border(1) + 抗锯齿(1) 取 2。
-                        NavPopup.HorizontalOffset = offset.X + NavRail.ActualWidth - 2;
-
-                        // 垂直直接跟 rail 的顶边重合。rail 现在不再有上下 Margin
-                        // （与右侧内容卡片等高的前提），所以 offset.Y 就是内容区顶边。
-                        NavPopup.VerticalOffset = offset.Y;
-
-                        // 高度与 rail 完全一致，否则面板会比 rail 短一截，四角露出缺口。
-                        NavPanel.Height = NavRail.ActualHeight;
-
-                        // 打开瞬间 NavPanel 还没参与布局，Popup 会按旧高度定位。
-                        // 强制走一次测量-排布，让 Popup 立刻按新尺寸摆好，避免首帧错位。
-                        NavPanel.Measure(new Size(NavPanel.Width, NavPanel.Height));
-                        NavPanel.Arrange(new Rect(0, 0, NavPanel.Width, NavPanel.Height));
-                        NavPanel.UpdateLayout();
-                    }
-                    else if (NavPanel != null)
-                    {
-                        NavPanel.ClearValue(FrameworkElement.HeightProperty);
-                    }
-                }
+                // 旧的 Popup 面板已停用，这里不再做任何定位计算。
             }
             catch (Exception ex)
             {
@@ -792,23 +811,29 @@ namespace SoulLink.Views
             try
             {
                 if (RailIcons == null) return;
+
+                var primary = (System.Windows.Media.Brush)FindResource("TextPrimary");
+                var muted = (System.Windows.Media.Brush)FindResource("TextMuted");
+                // 图标颜色：未选中用次级色，选中用主色。缺这行时深色主题下图标是黑的（用户实测）。
+                // 选中底色：与旧版一致的紫色半透明
+                var activeBg = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(0x33, 0x7C, 0x5C, 0xFF));
+
+                // ★ 导航行现在是 Grid（图标+文字），不再是 Button。
+                //   原来只处理 Button，导致选中高亮完全失效（用户实测）。
                 foreach (var child in RailIcons.Children)
                 {
-                    if (child is not Button b || b.Tag is not string t) continue;
+                    if (child is not Grid row || row.Tag is not string t) continue;
+
                     bool on = t == _activePage;
-                    b.Background = on
-                        ? new System.Windows.Media.SolidColorBrush(
-                              System.Windows.Media.Color.FromArgb(0x33, 0x7C, 0x5C, 0xFF))
-                        : System.Windows.Media.Brushes.Transparent;
-                    b.Foreground = on ? (System.Windows.Media.Brush)FindResource("TextPrimary") : (System.Windows.Media.Brush)FindResource("TextMuted");
-                    if (b.Content is System.Windows.Controls.TextBlock glyph)
-                        glyph.Foreground = b.Foreground;
-                    if (!b.IsMouseOver && b.Content is TextBlock normalGlyph)
-                        normalGlyph.Foreground = b.Foreground;
-                    if (NavPanel != null)
-                        foreach (var textButton in NavPanel.FindChildren<Button>())
-                            if (textButton.Tag is string textTag)
-                                textButton.Foreground = textTag == _activePage ? (System.Windows.Media.Brush)FindResource("TextPrimary") : (System.Windows.Media.Brush)FindResource("TextMuted");
+                    row.Background = on ? activeBg : System.Windows.Media.Brushes.Transparent;
+
+                    // 图标是第 0 列的 TextBlock，文字是第 1 列
+                    foreach (var el in row.Children)
+                    {
+                        if (el is System.Windows.Controls.TextBlock tb)
+                            tb.Foreground = on ? primary : muted;
+                    }
                 }
             }
             catch { }

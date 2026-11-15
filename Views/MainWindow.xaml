@@ -105,6 +105,8 @@
                                  ★ rail 不能再设 Margin：列宽已经包含间距，
                                    再加 Margin 会把 rail 挤窄或者让间距消失（实测两者重叠）。
                                  收起时放图标栏，展开时侧栏以浮层盖在上面，画面尺寸**永不变化**，所以不会闪。 -->
+                            <!-- ★ 展开时列宽跟着变，否则右侧内容会压住加宽后的侧栏（层级不够）。
+                                 收起 76 = 56(rail) + 20(间距)；展开 200 = 180(rail) + 20(间距)。 -->
                             <ColumnDefinition x:Name="NavColumn" Width="76" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
@@ -116,63 +118,123 @@
                              ★ 左边距**不能在这里加**：外层内容区已有 Margin(20,...)，
                                再加一次会和右侧卡片错位（实测 rail 跑到 40 DIP，右卡仍是 20 DIP）。
                                所以 Margin 只留右边距 20，把图标栏和内容卡片隔开。 -->
-                        <Border Grid.Column="0" x:Name="NavRail" Panel.ZIndex="10"
+                        <!-- ★ 侧栏：单个 Border，自身通过 Width 动画展开，不产生第二个窗口。
+                             展开时右侧出现文字，收起时只剩图标。
+                             这样彻底没有空域/翻边/越界/盖任务栏的问题。 -->
+                        <!-- ★ Grid.ColumnSpan="2"：让侧栏横跨两列并左对齐。
+                             这样它加宽时是**盖在右侧内容之上**，而不是把内容挤开
+                             （用户要求：侧栏层级最高，展开时覆盖内容，内容位置不变）。
+                             列宽保持 76 不变，右侧内容永远不动。 -->
+                        <Border Grid.Column="0" Grid.ColumnSpan="2" x:Name="NavRail" Panel.ZIndex="99"
                                 Style="{StaticResource NavSurface}"
                                 HorizontalAlignment="Left" Width="56"
                                 Margin="0" Padding="3,12"
+                                ClipToBounds="True"
                                 MouseEnter="NavRail_MouseEnter" MouseLeave="NavRail_MouseLeave">
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <StackPanel x:Name="RailIcons" VerticalAlignment="Top">
-                                <!-- 汉堡 ⇄ 侧栏切换（与浮层标题行等高）-->
-                                <Button x:Name="BtnHamburger" Style="{StaticResource WindowButton}"
-                                        Width="42" Height="36" HorizontalAlignment="Center"
-                                        Click="BtnToggleNav_Click" ToolTip="展开 / 收起侧栏">
-                                    <TextBlock x:Name="HamburgerGlyph" Text="&#xE700;"
-                                               FontFamily="Segoe MDL2 Assets" FontSize="13" />
-                                </Button>
 
-                                <!-- 分隔线：与浮层里同一位置（高 1 + 上下各 10）-->
-                                <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
+                                <!-- 上：图标 + 文字 -->
+                                <StackPanel Grid.Row="0" x:Name="RailIcons" VerticalAlignment="Top">
+                                    <!-- 汉堡：展开时文字显示「控制台」 -->
+                                    <Grid Height="36">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Button x:Name="BtnHamburger" Grid.Column="0" Style="{StaticResource WindowButton}"
+                                                Width="42" Height="36" HorizontalAlignment="Left"
+                                                Click="BtnToggleNav_Click" ToolTip="展开 / 收起侧栏">
+                                            <TextBlock x:Name="HamburgerGlyph" Text="&#xE700;"
+                                                       FontFamily="Segoe MDL2 Assets" FontSize="13" />
+                                        </Button>
+                                        <TextBlock x:Name="NavTitleText" Grid.Column="1" Text="控制台"
+                                                   Style="{StaticResource Caption}" VerticalAlignment="Center"
+                                                   Margin="6,0,0,0" Visibility="Collapsed" />
+                                    </Grid>
 
-                                <!-- 导航图标：每行 38px，和浮层文字行严格对齐 -->
-                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                        HorizontalAlignment="Center" Tag="launch" Click="RailIcon_Click"
-                                        ToolTip="启动台">
-                                    <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
-                                </Button>
-                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                        HorizontalAlignment="Center" Tag="console" Click="RailIcon_Click"
-                                        ToolTip="中控台">
-                                    <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
-                                </Button>
-                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                        HorizontalAlignment="Center" Tag="sessions" Click="RailIcon_Click"
-                                        ToolTip="在线会话">
-                                    <TextBlock Text="&#xE772;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
-                                </Button>
-                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                        HorizontalAlignment="Center" Tag="procs" Click="RailIcon_Click"
-                                        ToolTip="会话进程">
-                                    <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
-                                </Button>
-                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                        HorizontalAlignment="Center" Tag="cli" Click="RailIcon_Click"
-                                        ToolTip="命令行">
-                                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
-                                </Button>
-                                <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
-                            </StackPanel>
-                            <StackPanel Grid.Row="1" VerticalAlignment="Bottom">
-                                <Button x:Name="BtnThemeBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                        HorizontalAlignment="Center" Click="BtnTheme_Click" ToolTip="主题：跟随系统">
-                                    <TextBlock x:Name="ThemeGlyphBottom" Text="&#xE708;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
-                                </Button>
-                                <Button x:Name="BtnSettingsBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                        HorizontalAlignment="Center" Click="GeneralSettings_Click" ToolTip="应用设置">
-                                    <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
-                                </Button>
-                            </StackPanel>
+                                    <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
+
+                                    <!-- 导航行：图标 +（展开时）文字 -->
+                                    <Grid Height="38" Tag="launch" ToolTip="启动台"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE768;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextLaunch" Grid.Column="1" Text="启动台"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
+                                    <Grid Height="38" Tag="console" ToolTip="中控台"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE7F4;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextConsole" Grid.Column="1" Text="中控台"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
+                                    <Grid Height="38" Tag="sessions" ToolTip="在线会话"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE772;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextSessions" Grid.Column="1" Text="在线会话"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
+                                    <Grid Height="38" Tag="procs" ToolTip="会话进程"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE9D9;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextProcs" Grid.Column="1" Text="会话进程"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
+                                    <Grid Height="38" Tag="cli" ToolTip="命令行"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE756;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextCli" Grid.Column="1" Text="命令行"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
+                                    <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
+                                </StackPanel>
+
+                                <!-- 下：主题 + 设置 -->
+                                <StackPanel Grid.Row="1" VerticalAlignment="Bottom">
+                                    <Button x:Name="BtnThemeBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                            HorizontalAlignment="Left" Click="BtnTheme_Click" ToolTip="主题：跟随系统">
+                                        <TextBlock x:Name="ThemeGlyphBottom" Text="&#xE708;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                    </Button>
+                                    <Button x:Name="BtnSettingsBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                            HorizontalAlignment="Left" Click="GeneralSettings_Click" ToolTip="应用设置">
+                                        <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                    </Button>
+                                </StackPanel>
                             </Grid>
                         </Border>
 
@@ -182,8 +244,11 @@
                                NavRail 有 Margin，Popup 会按外框算位置，实测顶/底各差 2px、右边差 2px，
                                中间就会露出一条窗口底色的缝。改成 Placement=Relative + 代码里
                                用 NavRail 相对本 Grid 的实际偏移来定位（见 UpdateNavSurfaceShape）。 -->
+                        <!-- ★ 已弃用：改成 NavRail 自身加宽（见下方内嵌面板）。
+                             保留此 Popup 仅为兼容旧代码引用（IsOpen 恒为 false，不再显示），
+                             彻底避免了"第二个窗口"带来的翻边、越界、盖任务栏问题。 -->
                         <Popup x:Name="NavPopup" Placement="Relative" PlacementTarget="{Binding ElementName=SideNavHost}"
-                               HorizontalOffset="0" VerticalOffset="0"
+                               HorizontalOffset="0" VerticalOffset="0" IsOpen="False"
                                AllowsTransparency="True" StaysOpen="True" PopupAnimation="None"
                                Opened="NavPopup_Opened" Closed="NavPopup_Closed">
                             <!-- Padding 与图标栏一致：7 左右 · 12 上下；这样第一行基线相同
@@ -307,3 +372,5 @@
         </Border>
     </Grid>
 </Window>
+
+
