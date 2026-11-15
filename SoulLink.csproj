@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>SoulLink</RootNamespace>
+    <AssemblyName>SoulLink</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.1.0</Version>
+    <FileVersion>1.1.0.0</FileVersion>
+    <AssemblyTitle>SoulLink 多用户挂机中控台</AssemblyTitle>
+    <Product>SoulLink</Product>
+    <Description>多用户会话中控台：内嵌 RDP 画面 + 跨会话投送 + 鼠标注入转视角</Description>
+    <SatelliteResourceLanguages>zh-CN;en-US</SatelliteResourceLanguages>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS8618;CA1416;WPF0001</NoWarn>
+    <!-- tools 放的是独立试验程序，别被主项目的通配符吃进来（否则 obj 里的 AssemblyInfo 会重复） -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tools\**</DefaultItemExcludes>
+    <ApplicationIcon Condition="Exists('Assets\soullink.ico')">Assets\soullink.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('Assets\soullink.ico')">
+    <Resource Include="Assets\soullink.ico" />
+  </ItemGroup>
+
+</Project>

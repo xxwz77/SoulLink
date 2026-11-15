@@ -1,0 +1,28 @@
+<UserControl x:Class="SoulLink.Views.AutomationPage"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" FontFamily="{StaticResource UiFont}">
+ <Grid>
+  <Grid.ColumnDefinitions><ColumnDefinition Width="300" /><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+  <Border Style="{StaticResource GlassCard}" Padding="16">
+   <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+    <StackPanel><TextBlock Text="自动化配置组" Style="{StaticResource Title}" /><TextBlock Text="多用户 · 顺序流程 · 定时任务" Style="{StaticResource Caption}" Margin="0,4,0,10" /></StackPanel>
+    <ListBox x:Name="ProfileList" Grid.Row="1" SelectionChanged="ProfileList_SelectionChanged" Background="Transparent" BorderThickness="0">
+     <ListBox.ItemTemplate><DataTemplate><Border Style="{StaticResource GlassPanel}" Margin="0,4" Padding="12,10"><StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" /><TextBlock Text="{Binding Summary}" Style="{StaticResource Caption}" Margin="0,4,0,0" /></StackPanel></Border></DataTemplate></ListBox.ItemTemplate>
+    </ListBox>
+    <Button Grid.Row="2" x:Name="BtnNewProfile" Style="{StaticResource PrimaryButton}" Content="新建配置组" Margin="0,12,0,0" Click="New_Click" />
+   </Grid>
+  </Border>
+  <Border Grid.Column="2" Style="{StaticResource GlassCardStrong}" Padding="20">
+   <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+    <TextBlock Text="一条龙 / 定时管理" Style="{StaticResource Title}" /><TextBlock Text="按列表顺序逐个执行；每个步骤独立记录结果。" Style="{StaticResource Caption}" Margin="0,4,0,16" />
+    <TextBlock Text="配置组名称" Style="{StaticResource Label}" /><TextBox x:Name="ProfileName" Style="{StaticResource GlassTextBox}" />
+    <TextBlock Text="用户范围（按中控台列表顺序）" Style="{StaticResource Label}" Margin="0,16,0,6" /><ItemsControl x:Name="AccountChoices" />
+    <TextBlock Text="动作流程（按列表顺序）" Style="{StaticResource Label}" Margin="0,16,0,6" /><ItemsControl x:Name="ActionChoices" />
+    <Border Style="{StaticResource Divider}" Margin="0,16" />
+    <CheckBox x:Name="ScheduleEnabled" Style="{StaticResource GlassCheckBox}" Content="启用每天定时启动（应用保持运行时生效）" />
+    <Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /></Grid.ColumnDefinitions><TextBlock Text="执行时间（HH:mm）" Style="{StaticResource Label}" /><TextBox x:Name="ScheduleTime" Grid.Column="1" Style="{StaticResource GlassTextBox}" Text="08:00" /></Grid>
+    <StackPanel Orientation="Horizontal" Margin="0,18,0,0"><Button x:Name="BtnSaveProfile" Style="{StaticResource PrimaryButton}" Content="保存配置" Padding="18,8" Click="Save_Click" /><Button x:Name="BtnRunProfile" Style="{StaticResource GhostButton}" Content="启动一条龙" Padding="18,8" Margin="8,0,0,0" Click="Run_Click" /><Button Style="{StaticResource GhostButton}" Content="删除" Padding="18,8" Margin="8,0,0,0" Click="Delete_Click" /></StackPanel>
+    <TextBlock x:Name="StatusText" Text="选择左侧配置组，或新建一个。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,16,0,0" />
+   </StackPanel></ScrollViewer>
+  </Border>
+ </Grid>
+</UserControl>

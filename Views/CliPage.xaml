@@ -1,0 +1,126 @@
+<UserControl x:Class="SoulLink.Views.CliPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FontFamily="{StaticResource UiFont}">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="18" />
+            <ColumnDefinition Width="400" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 左：命令说明 -->
+        <Border Grid.Column="0" Style="{StaticResource GlassCardStrong}" Padding="20,18">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="命令行调用" Style="{StaticResource Title}" />
+                    <TextBlock Text="保存设置后，用一条命令就能执行 —— 不弹窗、不留界面，毫秒级返回。"
+                               Style="{StaticResource Caption}" Margin="0,4,0,16" TextWrapping="Wrap" />
+
+                    <TextBlock Text="一行版（最常用）" Style="{StaticResource Label}" />
+                    <Border CornerRadius="12" Background="#22000000" BorderBrush="#2AFFFFFF" BorderThickness="1" Padding="14,12">
+                        <StackPanel>
+                            <TextBlock x:Name="SampleOne" Style="{StaticResource Mono}" TextWrapping="Wrap"
+                                       Foreground="#FFBFE9FF" />
+                            <Button Style="{StaticResource GhostButton}" HorizontalAlignment="Right" Margin="0,8,0,0"
+                                    Padding="10,5" Click="CopySampleOne_Click">
+                                <TextBlock Text="复制" FontSize="11" />
+                            </Button>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="三种写法" Style="{StaticResource Label}" Margin="0,18,0,6" />
+                    <Border Style="{StaticResource GlassPanel}" Padding="14,12">
+                        <StackPanel>
+                            <TextBlock x:Name="SampleOpen" Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <TextBlock x:Name="SampleClose" Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <TextBlock x:Name="SampleRestart" Style="{StaticResource Mono}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="推荐：密码不进命令行" Style="{StaticResource Label}" Margin="0,18,0,6" />
+                    <Border Style="{StaticResource GlassPanel}" Padding="14,12">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,0,0,6"
+                                       Text="echo 你的密码 | SoulLink.exe close --user A2 --exe &quot;D:\X\Y.exe&quot; --password-stdin" />
+                            <TextBlock Text="密码通过标准输入传递，Windows 的进程命令行里看不到它。"
+                                       Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="退出码" Style="{StaticResource Label}" Margin="0,18,0,6" />
+                    <Border Style="{StaticResource GlassPanel}" Padding="14,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="0  成功" Style="{StaticResource Mono}" />
+                                <TextBlock Text="1  执行失败" Style="{StaticResource Mono}" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="2  参数错误" Style="{StaticResource Mono}" />
+                                <TextBlock Text="3  目标账号无会话" Style="{StaticResource Mono}" Margin="0,5,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- 右：调试台 -->
+        <Border Grid.Column="2" Style="{StaticResource GlassCard}" Padding="18,16">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="2,0,2,12">
+                    <StackPanel>
+                        <TextBlock Text="命令调试台" Style="{StaticResource Title}" />
+                        <TextBlock Text="在这里直接试一条命令，看它到底做了什么" Style="{StaticResource Caption}" Margin="0,3,0,0" />
+                    </StackPanel>
+                </Grid>
+
+                <StackPanel Grid.Row="1">
+                    <TextBlock Text="参数（粘贴上面的命令后半段即可）" Style="{StaticResource Label}" />
+                    <TextBox x:Name="CmdBox" Style="{StaticResource GlassTextBox}" Height="76"
+                             AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                             Text="close --user A2 --exe &quot;D:\AAA挂机专区\A2\BetterGI\BetterGI.exe&quot;" />
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button Style="{StaticResource PrimaryButton}" Padding="20,9" Click="Run_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" />
+                                <TextBlock Text="执行" Margin="8,0,0,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Padding="16,9" Margin="8,0,0,0" Click="CopyFull_Click">
+                            <TextBlock Text="复制完整命令" />
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+
+                <Border Grid.Row="2" CornerRadius="13" Background="#33000000" BorderBrush="#26FFFFFF" BorderThickness="1"
+                        Margin="0,14,0,0" Padding="12,10">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <TextBlock x:Name="OutputText" Text="等待执行…" Style="{StaticResource Mono}"
+                                   TextWrapping="Wrap" LineHeight="19" />
+                    </ScrollViewer>
+                </Border>
+
+                <Border Grid.Row="3" Style="{StaticResource GlassPanel}" Padding="12,10" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Text="提示" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource CyanBrush}" />
+                        <TextBlock Text="把这个 exe 丢进计划任务、开机脚本或其它程序里调用都可以；同一时刻只会有一个常驻实例，重复调用会自动转交给它处理。"
+                                   FontSize="11" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

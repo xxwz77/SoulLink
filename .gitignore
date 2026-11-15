@@ -1,0 +1,39 @@
+# .NET build outputs
+bin/
+obj/
+dist/
+out/
+publish/
+
+# Test tools, experiments and screenshots
+tools/
+rdptest/
+relaytest/
+sysdiag/
+systest/
+*.tmp
+*.log
+*.pdb
+
+# Local application configuration and credentials
+config.json
+config.portable.json
+*.config.json
+*.secret.json
+*.secrets.json
+appsettings*.Local.json
+*.user
+*.suo
+
+# Temporary interop/test downloads
+MSTSCLib.dll
+AxMSTSCLib.dll
+
+# OS/editor files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.bak
+Thumbs.db
+Desktop.ini

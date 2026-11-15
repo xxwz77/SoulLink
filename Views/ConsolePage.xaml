@@ -1,0 +1,376 @@
+<UserControl x:Class="SoulLink.Views.ConsolePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:SoulLink.Controls"
+             FontFamily="{StaticResource UiFont}">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ═══ 顶部标签卡：配置页 + 各用户画面 ═══ -->
+        <Border Grid.Row="0" Style="{StaticResource GlassCard}" Padding="8,6" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="TabBar" Orientation="Horizontal" />
+                </ScrollViewer>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- 画面操作（只在用户页显示）-->
+                    <StackPanel x:Name="ViewOps" Orientation="Horizontal" Visibility="Collapsed">
+                        <Button x:Name="BtnMode" Style="{StaticResource GhostButton}" Padding="12,5"
+                                Click="BtnMode_Click" ToolTip="自由视角：光标固定在画面内，移动即转视角">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="ModeGlyph" Text="&#xE785;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock x:Name="ModeLabel" Text="自由视角" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="BtnSens" Style="{StaticResource GhostButton}" Padding="8,5"
+                                Margin="6,0,0,0" Click="BtnSens_Click" ToolTip="灵敏度与热键">
+                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="11.5" />
+                        </Button>
+                        <Button x:Name="BtnReconnect" Style="{StaticResource GhostButton}" Padding="8,5"
+                                Margin="6,0,0,0" Click="BtnReconnect_Click" ToolTip="重新连接">
+                            <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11.5" />
+                        </Button>
+                        <Button x:Name="BtnDisconnect" Style="{StaticResource GhostButton}" Padding="8,5"
+                                Margin="6,0,0,0" Click="BtnDisconnect_Click" ToolTip="只断开画面，会话继续挂机">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="11.5"
+                                           VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="断开" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="BtnLogoff" Style="{StaticResource DangerButton}" Padding="10,5"
+                                Margin="6,0,0,0" Click="BtnLogoff_Click"
+                                ToolTip="注销该用户并关闭他的所有程序（不可恢复）">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE7E8;" FontFamily="Segoe MDL2 Assets" FontSize="11.5"
+                                           VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="注销" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ═══ 内容区 ═══ -->
+        <Grid Grid.Row="1">
+
+            <!-- ① 配置页：用户列表 + 右侧配置 -->
+            <Grid x:Name="ConfigPage">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="240" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- 用户列表 -->
+                <Border Grid.Column="0" Style="{StaticResource GlassCard}" Margin="0,0,10,0" Padding="10">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <!-- 标题 + 添加按钮：加用户 = 从在线会话里挑一个已登录的 -->
+                        <Grid Grid.Row="0" Margin="2,0,2,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="用户" Style="{StaticResource Label}" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" x:Name="BtnAddUser" Style="{StaticResource GhostButton}"
+                                    Padding="8,4" Click="BtnAddUser_Click"
+                                    ToolTip="从在线会话里挑一个用户接入（不会新建账号）">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                               VerticalAlignment="Center" Margin="0,0,5,0" />
+                                    <TextBlock Text="添加" FontSize="10.5" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
+                                <ItemsControl x:Name="UserList" />
+                                <TextBlock x:Name="NoUserHint" Text="还没有用户。点上方「添加」从在线会话里挑一个，或先让用户登录。"
+                                           Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="2,8,2,0" />
+
+                                <!-- 多选批量操作 -->
+                                <Button x:Name="BtnOpenSelected" Style="{StaticResource PrimaryButton}"
+                                        Margin="0,10,0,0" Padding="10,7" Visibility="Collapsed"
+                                        Click="BtnOpenSelected_Click"
+                                        ToolTip="为所有勾选的用户同时打开画面">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                                   VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <TextBlock x:Name="OpenSelectedText" Text="打开勾选的画面" FontSize="11"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
+                <!-- 用户配置详情 -->
+                <Border Grid.Column="1" Style="{StaticResource GlassCard}" Padding="18,12">
+                    <Grid>
+                        <ctl:RdpGeneralSettings x:Name="GeneralSettingsPanel" Visibility="Collapsed" />
+
+                        <Grid x:Name="NoSelectionHint" VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <StackPanel>
+                                <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="38"
+                                           HorizontalAlignment="Center" Foreground="#33FFFFFF" />
+                                <TextBlock Text="从左侧选一个用户进行配置" FontSize="13"
+                                           HorizontalAlignment="Center" Margin="0,12,0,0"
+                                           Foreground="{StaticResource TextSecondary}" />
+                                <TextBlock Text="双击用户可直接打开画面" FontSize="11"
+                                           HorizontalAlignment="Center" Margin="0,6,0,0"
+                                           Foreground="{StaticResource TextMuted}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid x:Name="ConfigPanel" Visibility="Collapsed">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <StackPanel x:Name="ConfigHeader" Grid.Row="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock x:Name="CfgTitle" Text="用户" FontSize="16" FontWeight="Bold"
+                                                   Foreground="{StaticResource TextPrimary}" />
+                                        <TextBlock x:Name="CfgSub" Text="" FontSize="11"
+                                                   Foreground="{StaticResource TextMuted}" Margin="0,4,0,0" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1" x:Name="BtnOpenView" Style="{StaticResource PrimaryButton}"
+                                            Padding="16,8" Click="BtnOpenView_Click" VerticalAlignment="Top">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="11.5"
+                                                       VerticalAlignment="Center" Margin="0,0,6,0" />
+                                            <TextBlock Text="打开画面" FontSize="11.5" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="保存配置" Style="{StaticResource PrimaryButton}" Padding="18,8" Click="SaveConfig_Click" />
+                                        <Button Content="移除用户" Style="{StaticResource DangerButton}" Padding="18,8" Margin="8,0,0,0" Click="RemoveUser_Click" />
+                                    </StackPanel>
+                            </StackPanel>
+                            <ScrollViewer x:Name="ConfigScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+                                <StackPanel>
+                                <Border Style="{StaticResource Divider}" Margin="0,0,0,14" />
+
+                                <TextBlock Text="显示名称" Style="{StaticResource Label}" />
+                                <TextBox x:Name="NameBox" Style="{StaticResource GlassTextBox}" Margin="0,6,0,0" />
+
+                                <TextBlock Text="RDP 地址" Style="{StaticResource Label}" Margin="0,10,0,0" />
+                                <TextBox x:Name="HostBox" Style="{StaticResource GlassTextBox}" Margin="0,6,0,0"
+                                         FontFamily="{StaticResource MonoFont}" />
+                                <TextBlock Text="留空 = 自动探测。多用户环回一般是 127.0.0.3 这类地址。"
+                                           Style="{StaticResource Caption}" Margin="2,5,0,0" />
+
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="100" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="端口" Style="{StaticResource Label}" />
+                                        <TextBox x:Name="PortBox" Style="{StaticResource GlassTextBox}" Margin="0,6,0,0"
+                                                 FontFamily="{StaticResource MonoFont}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                        <TextBlock Text="RDP 登录名" Style="{StaticResource Label}" />
+                                        <TextBox x:Name="UserBox" Style="{StaticResource GlassTextBox}" Margin="0,6,0,0"
+                                                 FontFamily="{StaticResource MonoFont}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="密码（留空保持不变）" Style="{StaticResource Label}" />
+                                        <PasswordBox x:Name="PasswordBox" Style="{StaticResource GlassPasswordBox}" Margin="0,6,0,0" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="画面" Style="{StaticResource Label}" Margin="0,10,0,0" />
+                                <Grid Margin="0,6,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                                        <TextBlock Text="宽" FontSize="10" Foreground="{StaticResource TextMuted}" />
+                                        <TextBox x:Name="WidthBox" Style="{StaticResource GlassTextBox}" Margin="0,4,0,0"
+                                                 FontFamily="{StaticResource MonoFont}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="6,0,6,0">
+                                        <TextBlock Text="高" FontSize="10" Foreground="{StaticResource TextMuted}" />
+                                        <TextBox x:Name="HeightBox" Style="{StaticResource GlassTextBox}" Margin="0,4,0,0"
+                                                 FontFamily="{StaticResource MonoFont}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="色深" FontSize="10" Foreground="{StaticResource TextMuted}" />
+                                        <ComboBox x:Name="DepthCombo" Margin="0,4,0,0">
+                                            <ComboBoxItem Content="32 位" Tag="32" />
+                                            <ComboBoxItem Content="16 位" Tag="16" />
+                                            <ComboBoxItem Content="8 位" Tag="8" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="缩放模式" Style="{StaticResource Label}" Margin="0,10,0,0" />
+                                <ComboBox x:Name="ScaleCombo" Margin="0,6,0,0">
+                                    <ComboBoxItem Content="跟随窗口（自动调整远端分辨率）" Tag="0" />
+                                    <ComboBoxItem Content="拉伸（固定分辨率，画面撑满）" Tag="1" />
+                                    <ComboBoxItem Content="原大小（固定分辨率，不缩放）" Tag="2" />
+                                </ComboBox>
+
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                                        <TextBlock Text="性能等级" Style="{StaticResource Label}" />
+                                        <ComboBox x:Name="PerformanceCombo">
+                                            <ComboBoxItem Content="自动（由 RDP 决定）" Tag="0" />
+                                            <ComboBoxItem Content="省带宽（关闭视觉特效）" Tag="1" />
+                                            <ComboBoxItem Content="均衡（字体平滑 + 桌面合成）" Tag="2" />
+                                            <ComboBoxItem Content="高画质（挂机游戏推荐）" Tag="3" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                        <TextBlock Text="网络类型" Style="{StaticResource Label}" />
+                                        <ComboBox x:Name="NetworkCombo">
+                                            <ComboBoxItem Content="自动检测" Tag="0" />
+                                            <ComboBoxItem Content="调制解调器" Tag="1" />
+                                            <ComboBoxItem Content="低速宽带" Tag="2" />
+                                            <ComboBoxItem Content="卫星" Tag="3" />
+                                            <ComboBoxItem Content="高速宽带" Tag="4" />
+                                            <ComboBoxItem Content="WAN" Tag="5" />
+                                            <ComboBoxItem Content="LAN（本机多用户推荐）" Tag="6" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                                        <TextBlock Text="音频输出" Style="{StaticResource Label}" />
+                                        <ComboBox x:Name="AudioCombo">
+                                            <ComboBoxItem Content="在本机播放" Tag="0" />
+                                            <ComboBoxItem Content="在远端播放" Tag="1" />
+                                            <ComboBoxItem Content="禁用音频" Tag="2" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                        <TextBlock Text="Windows 组合键" Style="{StaticResource Label}" />
+                                        <ComboBox x:Name="KeyboardCombo">
+                                            <ComboBoxItem Content="发送到远端" Tag="1" />
+                                            <ComboBoxItem Content="仅全屏时发送" Tag="2" />
+                                            <ComboBoxItem Content="保留在本机" Tag="0" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
+                                <CheckBox x:Name="AudioCaptureCheck" Style="{StaticResource GlassCheckBox}" Margin="0,10,0,0"
+                                          Content="录音重定向（把本机麦克风送到远端）" />
+
+                                <TextBlock Text="设备与资源重定向" Style="{StaticResource Label}" Margin="0,10,0,0" />
+                                <Grid Margin="0,3,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="32" />
+                                        <RowDefinition Height="32" />
+                                    </Grid.RowDefinitions>
+                                    <CheckBox x:Name="ClipboardCheck" Style="{StaticResource GlassCheckBox}" Content="剪贴板" Grid.Column="0" Grid.Row="0" />
+                                    <CheckBox x:Name="PrintersCheck" Style="{StaticResource GlassCheckBox}" Content="打印机" Grid.Column="1" Grid.Row="0" />
+                                    <CheckBox x:Name="SmartCardsCheck" Style="{StaticResource GlassCheckBox}" Content="智能卡" Grid.Column="2" Grid.Row="0" />
+                                    <CheckBox x:Name="PortsCheck" Style="{StaticResource GlassCheckBox}" Content="COM 端口" Grid.Column="0" Grid.Row="1" />
+                                    <CheckBox x:Name="DrivesCheck" Style="{StaticResource GlassCheckBox}" Content="本机驱动器" Grid.Column="1" Grid.Row="1" />
+                                </Grid>
+                                <TextBlock Text="设备重定向默认关闭；启用后请重新连接画面。" Style="{StaticResource Caption}" Margin="2,3,0,0" />
+
+                                <TextBlock Text="连接行为" Style="{StaticResource Label}" Margin="0,10,0,0" />
+                                <CheckBox x:Name="AutoDiscCheck" Style="{StaticResource GlassCheckBox}" Margin="0,8,0,0"
+                                          Content="连接前先把目标会话踢成断开（RDP 才能复用真实桌面）" />
+                                <Border Style="{StaticResource Divider}" Margin="0,16" />
+
+                            </StackPanel>
+                        </ScrollViewer>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- ② 用户画面页（每个用户一个）-->
+            <Grid x:Name="ViewPage" Visibility="Collapsed">
+                <Border CornerRadius="16" ClipToBounds="True" Background="#FF04060D"
+                        BorderBrush="#26FFFFFF" BorderThickness="1">
+                    <Grid>
+                        <Grid x:Name="ViewportHost" />
+
+                        <Popup x:Name="BusyPopup" IsOpen="False" AllowsTransparency="True" Placement="Relative" PlacementTarget="{Binding ElementName=ViewportHost}">
+                            <Border x:Name="BusyOverlay" Background="#F2050913" Visibility="Visible">
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="460">
+                                <TextBlock x:Name="BusyText" Text="正在连接…" FontSize="12.5"
+                                           HorizontalAlignment="Center" TextAlignment="Center"
+                                           TextWrapping="Wrap" LineHeight="20"
+                                           Foreground="{StaticResource TextSecondary}" />
+                                <ProgressBar x:Name="BusyBar" IsIndeterminate="True" Width="180" Height="3"
+                                             Margin="0,10,0,0" Foreground="{StaticResource CyanBrush}"
+                                             Background="#22FFFFFF" BorderThickness="0" />
+                                <Button x:Name="BtnBusyReconnect" Content="重新连接" Visibility="Collapsed"
+                                        Style="{StaticResource PrimaryButton}" Padding="22,8"
+                                        HorizontalAlignment="Center" Margin="0,18,0,0"
+                                        Click="BtnBusyReconnect_Click" />
+                            </StackPanel>
+                        </Border>
+                        </Popup>
+
+                        <TextBlock x:Name="InputText" Text="" FontSize="10.5"
+                                   VerticalAlignment="Bottom" HorizontalAlignment="Left"
+                                   Margin="12,0,0,10" Foreground="#88AABBCC" />
+                    </Grid>
+                </Border>
+
+                <!-- 设置浮层 -->
+                <Border x:Name="OptPanel" Visibility="Collapsed" VerticalAlignment="Top" HorizontalAlignment="Right"
+                        Margin="0,10,10,0" Style="{StaticResource GlassCard}" Padding="14,10">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="灵敏度" FontSize="10.5" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextMuted}" Margin="0,0,6,0" />
+                        <Slider x:Name="SensSlider" Width="100" Minimum="1" Maximum="12" Value="4"
+                                IsSnapToTickEnabled="True" TickFrequency="0.5" SmallChange="0.5"
+                                VerticalAlignment="Center" ValueChanged="SensSlider_ValueChanged" />
+                        <TextBlock x:Name="SensText" Text="4.0x" FontSize="10.5" VerticalAlignment="Center"
+                                   Foreground="{StaticResource CyanBrush}" Margin="6,0,14,0" Width="34" />
+                        <Border Width="1" Background="#28FFFFFF" Margin="0,2" />
+                        <TextBlock Text="锁定热键" FontSize="10.5" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextMuted}" Margin="14,0,6,0" />
+                        <ctl:HotkeyRecorder x:Name="HotkeyBtn" Width="140" Height="28"
+                                            Style="{StaticResource GhostButton}" FontSize="10.5" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

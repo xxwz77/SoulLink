@@ -1,0 +1,269 @@
+<Window x:Class="SoulLink.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctl="clr-namespace:SoulLink.Controls"
+        xmlns:vm="clr-namespace:SoulLink.Views"
+        Title="SoulLink · 跨会话执行器"
+        Width="1240" Height="820" MinWidth="1040" MinHeight="700"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="CanResizeWithGrip" UseLayoutRounding="True"
+        FontFamily="{StaticResource UiFont}"
+        TextOptions.TextFormattingMode="Ideal">
+
+    <Window.Resources>
+        <Storyboard x:Key="FadeIn">
+            <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.45">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseOut" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+        </Storyboard>
+    </Window.Resources>
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" />
+    </WindowChrome.WindowChrome>
+
+    <!-- 外层容器。圆角由 DWM 负责，这里只铺底色，不再画边框（避免和内部玻璃层叠出两道框） -->
+    <Grid x:Name="RootLayer" Margin="0">
+        <Border x:Name="Shell" CornerRadius="0" Background="{StaticResource WindowBackground}" BorderThickness="0">
+            <Grid>
+                <ctl:AuroraBackdrop x:Name="Backdrop" />
+
+                <!-- ★ 不再画内层边框：它的 Margin 会形成一圈矩形，和 DWM 的弧形边不一致，
+                     看起来就是「圆角窗口里套了个方框」。圆角完全交给 DWM。 -->
+
+                <!-- ★ 顶部留 10px：DWM 圆角半径约 8px，内容顶到边缘会把角盖成方形 -->
+                <Grid Margin="20,10,20,16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="64" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- ═══ 标题栏 ═══ -->
+                    <Grid Grid.Row="0" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Grid Width="34" Height="34">
+                                <Ellipse Fill="#22FFFFFF" />
+                                <Ellipse Width="26" Height="26">
+                                    <Ellipse.Fill>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="#FF7C5CFF" Offset="0" />
+                                            <GradientStop Color="#FF4FE3FF" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Ellipse.Fill>
+                                    <Ellipse.Effect>
+                                        <DropShadowEffect BlurRadius="18" ShadowDepth="0" Opacity="0.9" Color="#FF4FE3FF" />
+                                    </Ellipse.Effect>
+                                </Ellipse>
+                                <Ellipse Width="9" Height="9" Fill="#FFFFFFFF" />
+                            </Grid>
+                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" />
+                                <TextBlock Text="跨会话静默执行器 · SYSTEM 通道" FontSize="10.5" Foreground="{StaticResource TextMuted}" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
+                                    WindowChrome.IsHitTestVisibleInChrome="True">
+                            <Border CornerRadius="12" Padding="11,5" Margin="0,0,12,0" Background="#16FFFFFF" BorderBrush="#28FFFFFF" BorderThickness="1">
+                                <StackPanel Orientation="Horizontal">
+                                    <ctl:GlowDot Width="9" Height="9" x:Name="EngineDot" VerticalAlignment="Center"
+                                                 Color="#FF41F0C0" />
+                                    <TextBlock x:Name="EngineText" Text="引擎就绪" Margin="7,0,0,0" FontSize="11.5"
+                                               Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
+                            <Button x:Name="BtnCollapseNav" Style="{StaticResource WindowButton}"
+                                    Width="34" Margin="0,0,6,0" Click="BtnToggleNav_Click"
+                                    ToolTip="收起 / 展开侧栏">
+                                <TextBlock Text="&#xE700;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                            </Button>
+                            <Button x:Name="BtnMin" Style="{StaticResource WindowButton}" Click="BtnMin_Click" ToolTip="最小化">
+                                <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                            </Button>
+                            <Button x:Name="BtnMax" Style="{StaticResource WindowButton}" Click="BtnMax_Click" ToolTip="最大化">
+                                <TextBlock Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                            </Button>
+                            <Button x:Name="BtnClose" Style="{StaticResource WindowButton}" Click="BtnClose_Click" ToolTip="关闭">
+                                <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- ═══ 主体 ═══ -->
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <!-- ★ 固定 56px：收起时放图标栏，展开时侧栏以浮层盖在上面，
+                                 画面尺寸**永不变化**，所以不会闪 -->
+                            <ColumnDefinition x:Name="NavColumn" Width="56" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- ① 图标栏：恒定 56px 宽，永远占位 -->
+                        <Border Grid.Column="0" x:Name="NavRail" Panel.ZIndex="10"
+                                Style="{StaticResource NavSurface}"
+                                Margin="0,4,0,0" Padding="3,12"
+                                MouseEnter="NavRail_MouseEnter" MouseLeave="NavRail_MouseLeave">
+                            <Grid>
+                                <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <StackPanel x:Name="RailIcons" VerticalAlignment="Top">
+                                <!-- 汉堡 ⇄ 侧栏切换（与浮层标题行等高）-->
+                                <Button x:Name="BtnHamburger" Style="{StaticResource WindowButton}"
+                                        Width="42" Height="36" HorizontalAlignment="Center"
+                                        Click="BtnToggleNav_Click" ToolTip="展开 / 收起侧栏">
+                                    <TextBlock x:Name="HamburgerGlyph" Text="&#xE700;"
+                                               FontFamily="Segoe MDL2 Assets" FontSize="13" />
+                                </Button>
+
+                                <!-- 分隔线：与浮层里同一位置（高 1 + 上下各 10）-->
+                                <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
+
+                                <!-- 导航图标：每行 38px，和浮层文字行严格对齐 -->
+                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                        HorizontalAlignment="Center" Tag="launch" Click="RailIcon_Click"
+                                        ToolTip="启动台">
+                                    <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
+                                </Button>
+                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                        HorizontalAlignment="Center" Tag="console" Click="RailIcon_Click"
+                                        ToolTip="中控台">
+                                    <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
+                                </Button>
+                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                        HorizontalAlignment="Center" Tag="sessions" Click="RailIcon_Click"
+                                        ToolTip="在线会话">
+                                    <TextBlock Text="&#xE772;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
+                                </Button>
+                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                        HorizontalAlignment="Center" Tag="procs" Click="RailIcon_Click"
+                                        ToolTip="会话进程">
+                                    <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
+                                </Button>
+                                <Button Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                        HorizontalAlignment="Center" Tag="cli" Click="RailIcon_Click"
+                                        ToolTip="命令行">
+                                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
+                                </Button>
+                                <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" VerticalAlignment="Bottom">
+                                <Button x:Name="BtnThemeBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                        HorizontalAlignment="Center" Click="BtnTheme_Click" ToolTip="主题：跟随系统">
+                                    <TextBlock x:Name="ThemeGlyphBottom" Text="&#xE708;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
+                                </Button>
+                                <Button x:Name="BtnSettingsBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                        HorizontalAlignment="Center" Click="GeneralSettings_Click" ToolTip="应用设置">
+                                    <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
+                                </Button>
+                            </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- ② 展开的侧栏：Popup 独立窗口（解决空域遮挡）
+                             ★ 行结构必须与左侧图标栏**逐行等高**，否则会错位 -->
+                        <Popup x:Name="NavPopup" Placement="Right" PlacementTarget="{Binding ElementName=NavRail}"
+                               HorizontalOffset="0" VerticalOffset="0"
+                               AllowsTransparency="True" StaysOpen="True" PopupAnimation="None"
+                               Opened="NavPopup_Opened" Closed="NavPopup_Closed">
+                            <!-- Padding 与图标栏一致：7 左右 · 12 上下；这样第一行基线相同 -->
+                            <Border x:Name="NavPanel" Width="190" Margin="0" Height="{Binding ActualHeight, ElementName=NavRail}"
+                                    Style="{StaticResource NavSurface}" Padding="10,12" CornerRadius="0,18,18,0"
+                                    MouseLeave="NavPanel_MouseLeave"
+                                    MouseEnter="NavPanel_MouseEnter">
+                                <Grid>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <StackPanel>
+                                    <!-- 标题行：与汉堡按钮等高 36 -->
+                                    <Border Height="36" Margin="0,0,0,0" Padding="6,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="控制台" Style="{StaticResource Caption}"
+                                                       VerticalAlignment="Center" />
+                                            <Button Grid.Column="1" Style="{StaticResource WindowButton}"
+                                                    Width="28" Height="26" Click="BtnToggleNav_Click"
+                                                    ToolTip="收起侧栏">
+                                                <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- 分隔线：与图标栏同位置（10+1+10 = 21px 总高）-->
+                                    <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="6,10,6,10" />
+
+                                    <!-- 导航项：每行 38px、只有文字，与图标行一一对齐 -->
+                                    <Button Style="{StaticResource NavTextButton}" Tag="launch"
+                                            Height="38" Click="RailIcon_Click" Content="启动台" />
+                                    <Button Style="{StaticResource NavTextButton}" Tag="console"
+                                            Height="38" Click="RailIcon_Click" Content="中控台" />
+                                    <Button Style="{StaticResource NavTextButton}" Tag="sessions"
+                                            Height="38" Click="RailIcon_Click" Content="在线会话" />
+                                    <Button Style="{StaticResource NavTextButton}" Tag="procs"
+                                            Height="38" Click="RailIcon_Click" Content="会话进程" />
+                                    <Button Style="{StaticResource NavTextButton}" Tag="cli"
+                                            Height="38" Click="RailIcon_Click" Content="命令行" />
+
+                                    <!-- 分隔线后是开关与状态 -->
+                                    <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="6,10,6,10" />
+
+                                    <CheckBox x:Name="AutoHideNavCheck" Grid.Row="2" Style="{StaticResource GlassCheckBox}"
+                                              Content="鼠标悬停展开" Margin="6,4,0,10"
+                                              Checked="AutoHideNav_Changed" Unchecked="AutoHideNav_Changed" />
+
+                                    <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="12,10" VerticalAlignment="Bottom">
+                                        <StackPanel>
+                                            <TextBlock Text="当前会话" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="SelfSessionText" Text="—" Style="{StaticResource Mono}"
+                                                       Margin="0,4,0,0" />
+                                            <TextBlock x:Name="SelfUserText" Text="—" Style="{StaticResource Caption}"
+                                                       Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                                </Grid>
+                            </Border>
+                        </Popup>
+
+                        <!-- 右侧页面容器 -->
+                        <Grid Grid.Column="1">
+                            <Grid x:Name="PageAutomation" Visibility="Collapsed">
+                                <vm:AutomationPage x:Name="AutomationView" />
+                            </Grid>
+                            <Grid x:Name="PageLaunch" Visibility="Visible">
+                                <vm:LaunchPage x:Name="LaunchView" />
+                            </Grid>
+                            <Grid x:Name="PageConsole" Visibility="Collapsed">
+                                <vm:ConsolePage x:Name="ConsoleView" />
+                            </Grid>
+                            <Grid x:Name="PageSessions" Visibility="Collapsed">
+                                <vm:SessionsPage x:Name="SessionsView" />
+                            </Grid>
+                            <Grid x:Name="PageProcs" Visibility="Collapsed">
+                                <vm:ProcessPage x:Name="ProcsView" />
+                            </Grid>
+                            <Grid x:Name="PageCli" Visibility="Collapsed">
+                                <vm:CliPage x:Name="CliView" />
+                            </Grid>
+                            <Grid x:Name="PageSettings" Visibility="Collapsed">
+                                <vm:SettingsPage x:Name="SettingsView" />
+                            </Grid>
+                        </Grid>
+                    </Grid>
+                </Grid>
+
+                <!-- 拖拽缩放区 -->
+                <Grid Margin="8" Background="Transparent" IsHitTestVisible="False" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

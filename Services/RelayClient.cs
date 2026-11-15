@@ -1,0 +1,231 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Pipes;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using SoulLink.Models;
+
+namespace SoulLink.Services
+{
+    /// <summary>
+    /// 宿主侧的注入客户端。
+    ///
+    /// 链路：SYSTEM 计划任务把 SoulLink.exe --relay 投进目标会话 → 代理连回本机命名管道 →
+    /// 宿主发 JSON 指令（move / moverel / click / wheel / windows…）→ 代理在**目标会话内部**
+    /// 调 mouse_event / SetCursorPos。
+    ///
+    /// 为什么不能在宿主直接 injection：输入队列按会话隔离，跨会话的合成输入不会落到目标桌面。
+    /// </summary>
+    public sealed class RelayClient : IDisposable
+    {
+        private NamedPipeServerStream? _pipe;
+        private StreamReader? _reader;
+        private StreamWriter? _writer;
+        private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
+        private readonly object _sync = new object();
+        private CancellationTokenSource? _cts;
+        private volatile bool _disposed;
+
+        public string PipeName { get; }
+        public int SessionId { get; }
+        public string UserName { get; }
+        public bool IsConnected { get; private set; }
+        public string AgentInfo { get; private set; } = "";
+        public int ScreenWidth { get; private set; }
+        public int ScreenHeight { get; private set; }
+
+        /// <summary>收到代理连接 / 断开</summary>
+        public event Action<RelayClient, bool>? StateChanged;
+
+        public RelayClient(string userName, int sessionId)
+        {
+            UserName = userName;
+            SessionId = sessionId;
+            // 管道名带随机后缀，避免多实例 / 多会话串线
+            PipeName = "SoulLink_Relay_" + sessionId + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+        }
+
+        // ── 投送 ─────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 用 SYSTEM 通道把代理投进目标会话并等待它连回来。
+        /// 免安装：schtasks 建的一次性任务用完即删，不留服务、不留残留。
+        /// </summary>
+        public async Task<(bool ok, string message)> DeployAsync(Account account, string password, int timeoutMs = 20000)
+        {
+            // 用 SoulLink.exe 自己当代理 —— 自包含单文件，目标会话里不需要任何运行时
+            string self = SystemLauncher.ResolveSelfExe();
+            if (!File.Exists(self)) return (false, "找不到 SoulLink.exe 本体：" + self);
+
+            _cts = new CancellationTokenSource();
+
+            // 先把管道建好再投放，避免代理连回来时宿主还没准备好
+            var accepted = AcceptAgentAsync(timeoutMs, _cts.Token);
+
+            // 走 SYSTEM 通道投送（schtasks /ru SYSTEM → CreateProcessAsUser）
+            var launch = await SystemLauncher.LaunchAsync(
+                SessionId, self, "--relay " + PipeName,
+                interactive: false, bootstrapExe: self).ConfigureAwait(false);
+
+            if (!launch.Ok)
+            {
+                _cts.Cancel();
+                return (false, "投送注入代理失败：" + launch.Message);
+            }
+
+            LogBus.Info("注入代理已投送", "会话 " + SessionId + " · PID " + launch.Pid
+                + " · " + launch.ElapsedMs + " ms");
+
+            bool connected = await accepted.ConfigureAwait(false);
+            if (!connected)
+                return (false, "注入代理已启动（PID " + launch.Pid + "）但没有连回宿主管道。"
+                    + "可能是目标会话不接受后台进程，或杀软拦截了命名管道。");
+
+            // 握手：问一下代理的环境
+            var pong = await SendAsync(new { Cmd = "ping" }, 5000).ConfigureAwait(false);
+            if (pong != null && pong.Ok)
+            {
+                AgentInfo = pong.Info;
+                ScreenWidth = pong.ScreenWidth;
+                ScreenHeight = pong.ScreenHeight;
+                return (true, "代理就绪 · " + AgentInfo + " · 屏幕 " + ScreenWidth + "x" + ScreenHeight);
+            }
+            return (true, "代理已连接（ping 无响应，可能正在启动）");
+        }
+
+        private async Task<bool> AcceptAgentAsync(int timeoutMs, CancellationToken ct)
+        {
+            try
+            {
+                var pipe = new NamedPipeServerStream(PipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                _pipe = pipe;
+
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(timeoutMs);
+                await pipe.WaitForConnectionAsync(timeoutCts.Token).ConfigureAwait(false);
+
+                _reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, leaveOpen: true);
+                _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
+                IsConnected = true;
+                lock (_sync) Monitor.PulseAll(_sync);
+                StateChanged?.Invoke(this, true);
+                LogBus.Ok("注入代理已连接", "会话 " + SessionId + " · 管道 " + PipeName);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                LogBus.Warn("等待注入代理超时", "会话 " + SessionId + " · " + timeoutMs + " ms");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LogBus.Error("建立注入管道失败", ex.Message);
+                return false;
+            }
+        }
+
+        // ── 指令 ─────────────────────────────────────────────────────────────
+
+        public sealed class RelayResponse
+        {
+            public bool Ok { get; set; }
+            public string Message { get; set; } = "";
+            public int X { get; set; }
+            public int Y { get; set; }
+            public int ScreenWidth { get; set; }
+            public int ScreenHeight { get; set; }
+            public string Info { get; set; } = "";
+            public List<string> Windows { get; set; } = new List<string>();
+        }
+
+        private static readonly JsonSerializerOptions Json = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+        /// <summary>发一条指令并等待回复。未连接返回 null。</summary>
+        public async Task<RelayResponse?> SendAsync(object request, int timeoutMs = 4000)
+        {
+            if (_disposed) return null;
+            if (!IsConnected || _writer == null || _reader == null) return null;
+
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (!IsConnected) return null;
+                string payload = JsonSerializer.Serialize(request, Json);
+                await _writer.WriteLineAsync(payload).ConfigureAwait(false);
+
+                var readTask = _reader.ReadLineAsync();
+                var done = await Task.WhenAny(readTask, Task.Delay(timeoutMs)).ConfigureAwait(false);
+                if (done != readTask)
+                {
+                    LogBus.Warn("注入代理响应超时", request?.ToString() ?? "");
+                    return null;
+                }
+                string? line = await readTask.ConfigureAwait(false);
+                if (line == null) { MarkDisconnected(); return null; }
+                return JsonSerializer.Deserialize<RelayResponse>(line, Json);
+            }
+            catch (Exception ex)
+            {
+                LogBus.Warn("注入指令失败", ex.Message);
+                MarkDisconnected();
+                return null;
+            }
+            finally { _gate.Release(); }
+        }
+
+        private void MarkDisconnected()
+        {
+            if (!IsConnected) return;
+            IsConnected = false;
+            StateChanged?.Invoke(this, false);
+        }
+
+        // ── 便捷方法 ─────────────────────────────────────────────────────────
+
+        public Task<RelayResponse?> MoveAsync(int x, int y)
+            => SendAsync(new { Cmd = "move", X = x, Y = y });
+
+        public Task<RelayResponse?> MoveRelAsync(int dx, int dy)
+            => SendAsync(new { Cmd = "moverel", Dx = dx, Dy = dy });
+
+        public Task<RelayResponse?> ClickAsync(int x, int y, string button = "left", int count = 1)
+            => SendAsync(new { Cmd = "click", X = x, Y = y, Button = button, Count = count });
+
+        public Task<RelayResponse?> DownAsync(string button = "left")
+            => SendAsync(new { Cmd = "down", Button = button });
+
+        public Task<RelayResponse?> UpAsync(string button = "left")
+            => SendAsync(new { Cmd = "up", Button = button });
+
+        public Task<RelayResponse?> WheelAsync(int delta)
+            => SendAsync(new { Cmd = "wheel", Delta = delta });
+
+        // 注意：键盘**不走注入**。RDP 原生就带键盘转发，
+        // 只要控件拿到焦点即可（见 RdpConsole.GiveKeyboardFocus / GrabFocusOnConnect）。
+
+        public Task<RelayResponse?> CursorAsync() => SendAsync(new { Cmd = "cursor" });
+        public Task<RelayResponse?> ForegroundAsync() => SendAsync(new { Cmd = "foreground" });
+        public Task<RelayResponse?> WindowsAsync() => SendAsync(new { Cmd = "windows" });
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            try { _cts?.Cancel(); } catch { }
+            try { if (IsConnected) _writer?.WriteLine(JsonSerializer.Serialize(new { Cmd = "exit" })); } catch { }
+            try { _pipe?.Dispose(); } catch { }
+            try { _reader?.Dispose(); } catch { }
+            try { _writer?.Dispose(); } catch { }
+            try { _cts?.Dispose(); } catch { }
+            IsConnected = false;
+        }
+    }
+}

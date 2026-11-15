@@ -1,0 +1,64 @@
+<Window x:Class="SoulLink.Views.LogoffConfirmWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctl="clr-namespace:SoulLink.Controls"
+        Title="注销用户" Width="480" SizeToContent="Height"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ShowInTaskbar="False" FontFamily="{StaticResource UiFont}">
+    <Grid Margin="18">
+        <Grid.Effect>
+            <DropShadowEffect BlurRadius="38" ShadowDepth="0" Opacity="0.85" Color="#FF02040A" />
+        </Grid.Effect>
+        <Border CornerRadius="20" BorderBrush="#38FFFFFF" BorderThickness="1" ClipToBounds="True">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#FF0A1020" Offset="0" />
+                    <GradientStop Color="#FF171126" Offset="0.65" />
+                    <GradientStop Color="#FF0B0F22" Offset="1" />
+                </LinearGradientBrush>
+            </Border.Background>
+            <Grid>
+                <ctl:AuroraBackdrop Opacity="0.5" IsHitTestVisible="False" />
+                <StackPanel Margin="26,24,26,22">
+                    <Grid MouseLeftButtonDown="DragArea_MouseLeftButtonDown">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="42" Height="42" CornerRadius="13" Background="#18FF6B8B"
+                                BorderBrush="#44FF6B8B" BorderThickness="1" VerticalAlignment="Top">
+                            <TextBlock Text="&#xE7E8;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                       Foreground="{StaticResource RoseBrush}" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="14,0,0,0">
+                            <TextBlock Text="注销这个用户？" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimary}" />
+                            <TextBlock x:Name="AccountText" FontSize="12" Margin="0,5,0,0"
+                                       Foreground="{StaticResource TextMuted}" />
+                        </StackPanel>
+                    </Grid>
+                    <Border Style="{StaticResource GlassPanel}" Margin="0,22,0,0" Padding="15,13">
+                        <StackPanel>
+                            <TextBlock Text="所有正在运行的程序都会被关闭" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{StaticResource RoseBrush}" />
+                            <TextBlock x:Name="SessionText" TextWrapping="Wrap" LineHeight="20" FontSize="11.5"
+                                       Foreground="{StaticResource TextSecondary}" Margin="0,7,0,0" />
+                            <TextBlock Text="未保存的内容将丢失，此操作不可恢复。" TextWrapping="Wrap"
+                                       Style="{StaticResource Caption}" Margin="0,3,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="只是暂时不看画面？请使用「断开」，用户会继续挂机。"
+                               Style="{StaticResource Caption}" Margin="2,14,2,0" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+                        <Button x:Name="CancelButton" Content="取消" Style="{StaticResource GhostButton}"
+                                Padding="22,9" IsCancel="True" IsDefault="True" />
+                        <Button Content="注销并关闭" Style="{StaticResource DangerButton}"
+                                Padding="22,9" Margin="10,0,0,0" Click="Confirm_Click" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
