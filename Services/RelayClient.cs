@@ -64,7 +64,7 @@ namespace SoulLink.Services
             UserName = userName;
             SessionId = sessionId;
             // 管道名带随机后缀，避免多实例 / 多会话串线
-            PipeName = "SoulLink_Relay_" + sessionId + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            PipeName = AppIdentity.RelayPipePrefix + sessionId + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
         }
 
         // ── 投送 ─────────────────────────────────────────────────────────────

@@ -16,8 +16,10 @@ namespace SoulLink.Services
     /// </summary>
     public static class Ipc
     {
-        private const string PipeName = "SoulLink.IPC.v1";
-        private const string MutexName = "Global\\SoulLink.SingleInstance.v1";
+        // ★ 名字由 AppIdentity 派生（按程序文件名），改 exe 名即完成隔离：
+        //   测试版 SoulLink.exe、挂机验证版 SoulLink-Stable.exe 各自独立单实例、独立 IPC。
+        private static string PipeName => AppIdentity.IpcPipeName;
+        private static string MutexName => AppIdentity.MutexName;
 
         private static readonly JsonSerializerOptions Opt = new JsonSerializerOptions
         {

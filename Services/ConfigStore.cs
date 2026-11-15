@@ -37,8 +37,8 @@ namespace SoulLink.Services
             }
         }
 
-        public static string ConfigDir =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SoulLink");
+        // ★ 配置目录同样按身份隔离，两个版本互不干扰各自的账号与设置。
+        public static string ConfigDir => AppIdentity.ConfigDir;
 
         public static string StatePath => Path.Combine(ConfigDir, "state.json");
 

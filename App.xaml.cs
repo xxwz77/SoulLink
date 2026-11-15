@@ -285,7 +285,9 @@ namespace SoulLink
 
         private void CreateTray()
         {
-            _tray = new TrayIcon("SoulLink · 跨会话执行器");
+            _tray = new TrayIcon(string.Equals(AppIdentity.Name, "SoulLink", StringComparison.OrdinalIgnoreCase)
+                ? "SoulLink · 跨会话执行器"
+                : "SoulLink · 挂机验证版");
             _tray.ShowRequested += () => Dispatcher.Invoke(ShowMainWindow);
             _tray.ExitRequested += () => Dispatcher.Invoke(ExitApp);
             _tray.QuickOpenRequested += () => Dispatcher.Invoke(async () => await RunLastActionAsync());

@@ -149,7 +149,7 @@ namespace SoulLink.Services
 
             // 1) 准备 job 文件
             string stamp = DateTime.Now.ToString("yyyyMMddHHmmssfff") + "_" + Guid.NewGuid().ToString("N").Substring(0, 6);
-            string dir = Path.Combine(Path.GetTempPath(), "SoulLink", "jobs");
+            string dir = Path.Combine(AppIdentity.TempRoot, "jobs");
             Directory.CreateDirectory(dir);
 
             string jobPath = Path.Combine(dir, "job_" + stamp + ".json");
@@ -179,7 +179,7 @@ namespace SoulLink.Services
             }
 
             // 2) 用一个一次性的计划任务把它拉成 SYSTEM
-            string taskName = "SoulLinkRun_" + Guid.NewGuid().ToString("N").Substring(0, 12);
+            string taskName = AppIdentity.TaskPrefix + Guid.NewGuid().ToString("N").Substring(0, 12);
             bool taskCreated = false;
             try
             {
@@ -284,25 +284,32 @@ namespace SoulLink.Services
             return Q(self) + " --system-run " + Q(jobPath);
         }
 
-        /// <summary>定位 SoulLink.exe：优先当前进程（正常运行时就是它自己）。</summary>
+        /// <summary>
+        /// 定位自身 exe：优先当前进程。
+        /// ★ 不能只认 "SoulLink" 前缀：挂机验证版叫 SoulLink-Stable.exe，
+        ///   写死前缀会退回错误的 exe，导致 SYSTEM 引导进程身份错乱。
+        /// </summary>
         public static string ResolveSelfExe()
         {
             string path = Environment.ProcessPath ?? "";
-            if (!string.IsNullOrEmpty(path) &&
-                Path.GetFileName(path).StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase))
-                return path;
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                string file = Path.GetFileNameWithoutExtension(path);
+                // 认当前身份名，也兼容任何 SoulLink* 变体
+                if (string.Equals(file, AppIdentity.Name, StringComparison.OrdinalIgnoreCase) ||
+                    file.StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase))
+                    return path;
+            }
 
-            // 被别的宿主（测试程序）调用时，退回 SoulLink 的已知产物位置
+            // 被别的宿主（测试程序）调用时，退回当前身份对应的产物位置
             string baseDir = AppContext.BaseDirectory;
-            string candidate = Path.Combine(baseDir, "SoulLink.exe");
+            string candidate = Path.Combine(baseDir, AppIdentity.Name + ".exe");
             if (File.Exists(candidate)) return candidate;
 
             try
             {
                 var self = Process.GetCurrentProcess().MainModule?.FileName ?? "";
-                if (File.Exists(self) &&
-                    Path.GetFileName(self).StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase))
-                    return self;
+                if (File.Exists(self)) return self;
             }
             catch { }
 

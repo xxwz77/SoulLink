@@ -70,6 +70,14 @@ namespace SoulLink.Views
 
             Loaded += MainWindow_Loaded;
             ShowVersion();
+            // ★ 非默认身份（如挂机验证版 SoulLink-Stable.exe）在标题上加标识，
+            //   避免两个窗口标题完全相同、分不清哪个是哪个。
+            try
+            {
+                if (!string.Equals(AppIdentity.Name, "SoulLink", StringComparison.OrdinalIgnoreCase))
+                    Title = "SoulLink · 挂机验证版";
+            }
+            catch { }
             Loaded += (_, __) => ThemeManager.Apply();
             Closing += MainWindow_Closing;
             StateChanged += (_, __) => UpdateMaxGlyph();

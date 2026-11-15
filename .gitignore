@@ -44,3 +44,7 @@ releases/**/*.exe
 # Portable distribution packages (large binaries)
 releases/*.zip
 releases/SoulLink-v*-portable/
+
+# Stable variant binaries
+dist/stable/
+out/
