@@ -52,6 +52,9 @@ namespace SoulLink.Services
         private LowLevelKeyboardProc? _proc;   // 必须保持引用，否则会被 GC 回收导致回调崩溃
         private bool _keyDown;
 
+        // 自维护的修饰键状态（钩子里 GetAsyncKeyState 不可靠，见 Callback 注释）
+        private bool _ctrl, _alt, _shift, _win;
+
         /// <summary>要监听的热键（仅键盘组合；鼠标键走 LowLevelMouseHook）。</summary>
         public HotkeySpec? Spec { get; set; }
 
@@ -90,32 +93,63 @@ namespace SoulLink.Services
 
             try
             {
-                var spec = Spec;
-                if (spec != null && !spec.IsMouse && spec.Key != 0)
-                {
-                    int msg = wParam.ToInt32();
-                    bool isDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-                    bool isUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+                int msg = wParam.ToInt32();
+                bool isDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+                bool isUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 
-                    var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-                    if (info.vkCode == spec.Key)
+                var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+                uint vk = info.vkCode;
+                bool injected = (info.flags & 0x10) != 0;
+
+                // ★ 自己维护修饰键状态，不要用 GetAsyncKeyState。
+                //   原因：钩子回调发生在按键事件**分发过程中**，
+                //   GetAsyncKeyState 在这个时刻读修饰键并不可靠，
+                //   实测会返回 False，导致热键永远判定"修饰键不匹配"→ 按了没反应。
+                //   钩子能看到每一个 KEYDOWN/KEYUP，自己记账才是准的。
+                if (!injected)
+                {
+                    if (vk == 0x11) _ctrl = isDown;          // Ctrl
+                    else if (vk == 0x12) _alt = isDown;      // Alt
+                    else if (vk == 0x10) _shift = isDown;    // Shift
+                    else if (vk == 0x5B || vk == 0x5C) _win = isDown;  // Win
+                }
+
+                var spec = Spec;
+                if (spec == null || spec.IsMouse || spec.Key == 0)
+                    return CallNextHookEx(_hook, nCode, wParam, lParam);
+
+                // 临时诊断：记录所有按键
+                if (isDown)
+                {
+                    SoulLink.Controls.RdpConsole.Debug("KB vk=" + vk
+                        + "(" + HotkeySpec.KeyName(vk) + ")"
+                        + " 监听=" + spec.Key + "(" + HotkeySpec.KeyName(spec.Key) + ")"
+                        + " ctrl=" + _ctrl + " alt=" + _alt
+                        + " 注入=" + injected);
+                }
+
+                if (vk != spec.Key)
+                    return CallNextHookEx(_hook, nCode, wParam, lParam);
+
+                // 修饰键是否匹配（用自维护状态）
+                bool modsOk = _ctrl == spec.Ctrl && _alt == spec.Alt
+                           && _shift == spec.Shift && _win == spec.Win;
+
+                if (isDown && !_keyDown)
+                {
+                    _keyDown = true;
+                    if (modsOk)
                     {
-                        if (isDown && !_keyDown)
-                        {
-                            _keyDown = true;
-                            if (spec.ModifiersMatch())
-                            {
-                                try { Pressed?.Invoke(); } catch { }
-                                return (IntPtr)1;   // 吞掉，别再传给 RDP
-                            }
-                        }
-                        else if (isUp)
-                        {
-                            _keyDown = false;
-                            // 抬起也吞掉，避免远端收到"半截"组合键
-                            if (spec.ModifiersMatch()) return (IntPtr)1;
-                        }
+                        SoulLink.Controls.RdpConsole.Debug("热键命中 vk=" + vk
+                            + "(" + HotkeySpec.KeyName(vk) + ") 注入=" + injected);
+                        try { Pressed?.Invoke(); } catch { }
+                        return (IntPtr)1;   // 吞掉，别再传给 RDP
                     }
+                }
+                else if (isUp)
+                {
+                    _keyDown = false;
+                    if (modsOk) return (IntPtr)1;
                 }
             }
             catch { }

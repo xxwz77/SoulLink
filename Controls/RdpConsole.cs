@@ -97,9 +97,9 @@ namespace SoulLink.Controls
         private int _captureCenterY;
         private DateTime _lastInject = DateTime.MinValue;
 
-        /// <summary>光标顶到画面边缘的起始时刻（用于应急释放，防止用户被困住）。</summary>
-        private DateTime _edgePushSince = DateTime.MinValue;
-
+        /// <summary>待发送的转视角累积位移（合并高频事件，避免 IPC 过密）。</summary>
+        private int _pendLookX;
+        private int _pendLookY;
 
         private uint _scaleFactor = 100;
         private bool _hasConnected;
@@ -200,7 +200,6 @@ namespace SoulLink.Controls
                 else
                 {
                     ReleaseCapture("离开页面");
-                    CursorClip.Release();   // 兜底：切页绝不能把光标留在矩形里
                     UninstallMouseHook();
                 }
             };
@@ -208,7 +207,6 @@ namespace SoulLink.Controls
             Unloaded += (_, __) =>
             {
                 ReleaseCapture("卸载");
-                CursorClip.Release();   // 兜底：控件卸载必须松开
                 UninstallMouseHook();
                 DetachOwnerWindow();
             };
@@ -364,28 +362,26 @@ namespace SoulLink.Controls
 
             if (_accelToken < 0) _accelToken = PointerAcceleration.PushDisabled();
 
-            // ★ 把光标限制在画面矩形内，但**不隐藏、不居中**。
-            //   ClipCursor 让光标真实移动、真实可见，只是出不了这个矩形 ——
-            //   这才是"游戏无边框窗口化"的手感，拖地图和点击都用真实落点。
-            //   之前"钉中心 + 相对注入"会让拖拽轨迹锯齿化（用户实测反馈）。
-            bool clipped = CursorClip.Apply(r.left, r.top, r.width, r.height);
+            // ★★★ 不碰光标！★★★
+            //
+            //   用户明确要求"真实状态"：转视角时游戏自己隐藏光标，
+            //   任务/地图/桌面时游戏自己显示光标。我们**绝不能**制造假光标。
+            //
+            //   所以这里什么都不做：
+            //     · 不 ClipCursor（那会在画面里造出一个被约束的光标）
+            //     · 不 Cursor.Hide（那是假的隐藏，游戏并不知道）
+            //     · 不 SetCursorPos 居中（那是假的定位）
+            //
+            //   真正的转视角靠 RelayAgent 在原地调 mouse_event 相对位移，
+            //   游戏读 Raw Input 后自己转、自己决定光标显不显示 ——
+            //   和"人在那个会话里手动转视角"完全一样。
             _captureCenterX = r.left + r.width / 2;
             _captureCenterY = r.top + r.height / 2;
-            _edgePushSince = DateTime.MinValue;
-
-            // 光标原本在画面外的话，挪进来，避免一进模式就被系统弹到矩形边缘
-            var cur = System.Windows.Forms.Cursor.Position;
-            bool curInside = cur.X >= r.left && cur.X < r.left + r.width
-                          && cur.Y >= r.top && cur.Y < r.top + r.height;
-            if (!curInside) NativeInput.SetCursorPos(_captureCenterX, _captureCenterY);
-
-            if (!clipped) Debug("警告：ClipCursor 失败，光标可能跑出画面");
 
             EnsureToggleHotkey();
 
-            // ★ 关键：SetCursorPos + Cursor.Hide 会把键盘焦点从 RDP 控件上抢走，
-            //   导致锁定后键盘完全没反应（用户反馈）。
-            //   锁定不影响键盘通道，所以这里必须把焦点重新交回控件。
+            // ★ 把键盘焦点交回 RDP 控件。
+            //   转视角期间键盘应该照常送到游戏（我们只接管鼠标）。
             GiveKeyboardFocus();
 
             // 兜底：个别情况下焦点同步要等一帧，稍后再补一次
@@ -403,9 +399,16 @@ namespace SoulLink.Controls
         /// </summary>
         private void EnsureToggleHotkey()
         {
-            // 幂等：已注册就跳过（否则会自己和自己抢，第二次必失败）
-            if (_escapeHotkey != null) return;
-            if (_hotkeyTried && _hotkeySpec == ToggleHotkey) return;
+            // ★ 幂等判断要看"已注册用的规格"是否等于当前想要的热键。
+            //   原来只判断 _escapeHotkey != null 就返回，导致：
+            //   · 第一次用默认 Ctrl+Alt+Q 注册成功
+            //   · 用户改成 Ctrl+Alt+J 后，这里直接 return，新热键永远没注册
+            //   现在：规格不一致就先释放再重注册；一致才跳过。
+            if (_escapeHotkey != null && _hotkeySpec == ToggleHotkey) return;
+
+            var old = _escapeHotkey;
+            _escapeHotkey = null;
+            try { old?.Dispose(); } catch { }
 
             _hotkeyTried = true;
             _hotkeySpec = ToggleHotkey;
@@ -428,14 +431,12 @@ namespace SoulLink.Controls
 
             Debug("热键触发: target=" + target + " IsConnected=" + IsConnected + " _captured=" + _captured);
 
-            // ★ 退出必须无条件放行！
-            //   进入自由视角后光标被 ClipCursor 限制在画面内，用户点不到画面外的任何按钮，
-            //   热键是唯一出口。任何前置条件（IsConnected / Input 就绪 / 画面可用）
-            //   一旦不成立就把用户永久困住 —— 之前这里就有 IsConnected 判断。
+            // ★ 退出必须无条件放行。
+            //   热键是脱离转视角状态的主要通道，任何前置条件（IsConnected / Input 就绪）
+            //   一旦不成立就可能把用户卡在模式里 —— 所以退出分支放在最前面。
             if (target == ConsoleInputMode.Pointer)
             {
                 SetInputMode(ConsoleInputMode.Pointer);
-                CursorClip.Release();
                 return;
             }
 
@@ -448,16 +449,13 @@ namespace SoulLink.Controls
             if (!ok && _captured) ReleaseCapture("热键兜底");
         }
 
-        private void ReleaseCapture(string reason)
+                private void ReleaseCapture(string reason)
         {
             ReleasePointerCapture();
             if (!_captured) { ReleaseAccel(); ReleaseAccel(); return; }
             _captured = false;
             _keyboardFocusRetry = 20;
 
-            // ★ 必须解除限制，否则用户的鼠标会被永久困在画面矩形里
-            CursorClip.Release();
-            try { System.Windows.Forms.Cursor.Show(); } catch { }
             ReleaseAccel();
 
             Debug("退出鼠标锁定（" + reason + "）");
@@ -542,46 +540,82 @@ namespace SoulLink.Controls
                 //   靠 CursorClip 在系统层面把它限制在视口矩形内。
                 if (ev.IsMove)
                 {
-                    // 只要还在矩形内就完全放行；万一系统把光标送到外面（多屏/切页瞬间），
-                    // 立刻拉回矩形内最近的位置，避免跑到别的窗口。
-                    var rect0 = ViewportScreenRect();
-                    if (rect0 != null)
+                    // ── 自由视角转视角 ──────────────────────────────────────────
+                    //
+                    // ★ 为什么必须在**目标会话内部**做相对位移：
+                    //   游戏读 Raw Input（原始输入），只认硬件式的相对移动。
+                    //   RDP 原生通道送过去的是绝对坐标（SetCursorPos 语义），
+                    //   游戏视角完全不转 —— 这就是"视角无法转动"的根因。
+                    //   唯一有效的办法是让 RelayAgent 在那个会话里调 mouse_event(MOVE)，
+                    //   和人在那台机器上真实转鼠标完全等价。
+                    //
+                    // ★ 光标：我们**不碰**。
+                    //   转视角时游戏自己隐藏光标（它认为鼠标正在被"锁定"），
+                    //   任务/地图时游戏自己显示光标 —— 这是真实状态。
+                    //   之前用 ClipCursor / Cursor.Hide 造出来的都是假光标，用户明确否决。
+                    //
+                    // ★ 不做任何"这个场景该不该转"的判断。
+                    //
+                    //   用户明确：转不转是**游戏自己**决定的（任务界面不该转、大地图该转，
+                    //   游戏比我们清楚）。我们唯一要做的是把**真实鼠标数据**喂给它，
+                    //   做法和人在那台机器上真实移动鼠标完全一致：
+                    //     · 相对位移 → mouse_event(MOVE, dx, dy)（Raw Input 认这个）
+                    //     · 按键     → mouse_event(DOWN/UP)
+                    //   全部在目标会话内部执行（RelayAgent），所以游戏收到的是
+                    //   完整的真实输入流，它自己决定转视角还是拖拽、要不要显示光标。
+                    if (!ev.HasRawDelta) return true;
+                    int dwx = ev.RawDeltaX;
+                    int dwy = ev.RawDeltaY;
+                    if (dwx == 0 && dwy == 0) return true;
+
+                    // 累积后按阈值发送，避免 IPC 过密导致卡顿
+                    _pendLookX += dwx;
+                    _pendLookY += dwy;
+                    var now0 = DateTime.UtcNow;
+                    bool big0 = Math.Abs(_pendLookX) >= 2 || Math.Abs(_pendLookY) >= 2;
+                    if (big0 || (now0 - _lastInject).TotalMilliseconds >= 8)
                     {
-                        var r0 = rect0.Value;
-                        int cx = Math.Max(r0.left, Math.Min(ev.X, r0.left + r0.width - 2));
-                        int cy = Math.Max(r0.top, Math.Min(ev.Y, r0.top + r0.height - 2));
-                        if (cx != ev.X || cy != ev.Y) NativeInput.SetCursorPos(cx, cy);
-
-                        // ★ 应急出口：光标若撞到画面边缘（用户想甩出去），
-                        //   并且已经持续一段时间仍无法退出（热键失效等），
-                        //   主动释放，避免用户被永久困在画面里。
-                        bool atEdge = cx != ev.X || cy != ev.Y;
-                        if (atEdge)
-                        {
-                            if (_edgePushSince == DateTime.MinValue) _edgePushSince = DateTime.UtcNow;
-                            else if ((DateTime.UtcNow - _edgePushSince).TotalSeconds >= 3)
-                            {
-                                _edgePushSince = DateTime.MinValue;
-                                ReleaseCapture("边缘停留 3 秒（应急释放）");
-                                return false;
-                            }
-                        }
-                        else _edgePushSince = DateTime.MinValue;
+                        int sx0 = _pendLookX, sy0 = _pendLookY;
+                        _pendLookX = 0;
+                        _pendLookY = 0;
+                        _lastInject = now0;
+                        _ = InjectLookAsync(sx0, sy0);
                     }
-                        return false;   // ★ 关键：放行，让 RDP 原生通道拿到真实绝对坐标
-                }
 
-                // ★ 鼠标侧键（XButton）在自由视角下作为"退出"快捷键。
-                //   原因：进入模式后光标被限制在画面内，用户点不到画面外的工具栏按钮，
-                //   热键若是键盘组合还可能被 RDP 抢走 —— 必须有鼠标侧的出口。
-                if (ev.IsXButton1Down || ev.IsXButton2Down)
-                {
-                    ReleaseCapture("侧键退出");
-                    InputActivity?.Invoke(this, "已退出自由视角（侧键）");
-                    SetInputMode(ConsoleInputMode.Pointer);
+                    // 吞掉本地移动：不让宿主机光标跑到别的窗口，
+                    // 也避免 RDP 原生通道再发一份绝对坐标，污染游戏看到的输入。
                     return true;
                 }
 
+                // ── 按键：同样走注入，让游戏收到完整的真实输入流 ──
+                //
+                // ★ 为什么不能放行给 RDP 原生通道：
+                //   那条路发的是**绝对坐标**语义，而我们的光标是由相对位移驱动的，
+                //   两边位置对不上，点击会落错地方。走注入才能保证 down/up
+                //   发生在游戏认为的光标位置上。
+                if (ev.IsLeftDown || ev.IsRightDown || ev.IsMiddleDown
+                    || ev.IsXButton1Down || ev.IsXButton2Down)
+                {
+                    // 侧键仍然作为退出快捷键，优先处理
+                    if (ev.IsXButton1Down || ev.IsXButton2Down)
+                    {
+                        ReleaseCapture("侧键退出");
+                        InputActivity?.Invoke(this, "已退出自由视角（侧键）");
+                        SetInputMode(ConsoleInputMode.Pointer);
+                        return true;
+                    }
+                    _ = InjectButtonAsync(ButtonNameOf(ev), true);
+                    return true;
+                }
+                if (ev.IsLeftUp || ev.IsRightUp || ev.IsMiddleUp || ev.Message == 0x020C)
+                {
+                    // 侧键抬起也要吞掉，避免远端残留按下态
+                    if (ev.Message == 0x020C) return true;
+                    _ = InjectButtonAsync(ButtonNameOf(ev), false);
+                    return true;
+                }
+
+                // 滚轮放行（RDP 原生通道处理，不影响落点）
                 return false;
             }
             catch

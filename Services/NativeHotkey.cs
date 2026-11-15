@@ -129,6 +129,7 @@ namespace SoulLink.Services
                 if (spec.Key != 0)
                 {
                     hk._keyHook = new LowLevelKeyboardHook { Spec = spec };
+
                     hk._keyHook.Pressed = () =>
                     {
                         // 钩子线程 → UI 线程
