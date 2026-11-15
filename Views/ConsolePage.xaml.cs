@@ -54,8 +54,11 @@ namespace SoulLink.Views
                     window.Deactivated += (_, __) => Dispatcher.InvokeAsync(() =>
                     {
                         BusyPopup.IsOpen = false;
-                        // ★ 主窗口失活时立刻收起保护层，避免它盖在别的应用上方。
-                        try { if (ShieldPopup != null) ShieldPopup.IsOpen = false; } catch { }
+                        // ★ 失焦**不再收起保护层**。
+                        //   收起会导致"点回窗口的那一下穿透到 RDP"，在挂机场景下
+                        //   等于误操作游戏（BGI 拖地图时尤其致命）。
+                        //   保持挂着，同时重新计算尺寸/位置，确保它仍贴合视口。
+                        UpdateShield();
                     });
                     window.Activated += (_, __) => Dispatcher.InvokeAsync(() =>
                     {
@@ -141,15 +144,23 @@ namespace SoulLink.Views
             {
                 if (ShieldPopup == null) return;
                 var win = Window.GetWindow(this);
-                bool foreground = win != null && win.IsActive && win.IsVisible
-                                  && win.WindowState != WindowState.Minimized;
+                bool visible = win != null && win.IsVisible && win.WindowState != WindowState.Minimized;
+
+                // ★ 不再要求主窗口 IsActive。
+                //   原来"失焦就隐藏"是为了避免 Popup 盖住别的软件，
+                //   但代价是：点回窗口的那一下会**穿透到 RDP**（激活点击先于遮罩恢复），
+                //   用户在挂机场景下会误操作游戏（实测）。
+                //
+                //   现在：只要本版窗口可见且未最小化，遮罩就保持挂着的状态。
+                //   盖到别的软件上的问题由「失焦时缩到视口内 + 不可见即收起」解决，
+                //   见下方 SyncShieldSize 与 Window.Deactivated 的处理。
                 bool want = App.Config.Settings.RdpCaptureOnClick
                             && _viewing?.Console != null
                             && _viewing.Console.IsConnected
                             && !_viewing.Console.IsLooking
                             && !_shieldReleased
                             && ViewPage.Visibility == Visibility.Visible
-                            && foreground;
+                            && visible;
                 if (want) SyncShieldSize();
                 ShieldPopup.IsOpen = want;
             }
