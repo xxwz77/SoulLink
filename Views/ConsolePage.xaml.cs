@@ -233,12 +233,215 @@ namespace SoulLink.Views
                 _autoConnectTried = true;
                 // ★ 后台执行，绝不 await：开机自启时界面必须立即可操作。
                 //   上次卡死的教训：任何会话查询/连接上的同步等待都会冻住 UI。
-                _ = Task.Run(AutoConnectAsync);
+                // ★ 只保留会话监控这一条投送路径。
+                //   原来的 AutoConnectAsync 会和监控同时投送，导致同一会话出现
+                //   多个 --relay 代理（实测会话 4 出现 2~3 个），互相争用输入。
+                //   监控已经覆盖"启动即连接 + 晚登录账号"两种场景，无需旧路径。
+                StartSessionWatch();
             }
         }
 
         private bool _autoConnectTried;
         private bool _autoConnectRunning;
+
+        // ── 会话监控：配置里的账号一出现就投送通道 ──────────────────────────
+
+        private System.Windows.Threading.DispatcherTimer? _sessionWatch;
+        /// <summary>已经投送过（或正在等待）的账号 Id，避免重复触发。</summary>
+        private readonly HashSet<string> _deployHandled = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 启动会话监控：每隔几秒查一次在线会话，
+        /// 命中「在自动连接列表里、且尚未投送」的账号就发起投送。
+        /// 这样不依赖启动瞬间的快照 —— 账号晚一点登录也能被接上。
+        /// </summary>
+        private void StartSessionWatch()
+        {
+            try
+            {
+                if (_sessionWatch != null) return;
+                _sessionWatch = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(5)
+                };
+                int tickCount = 0;
+                _sessionWatch.Tick += async (_, __) =>
+                {
+                    tickCount++;
+                    try
+                    {
+                        await ScanAndDeployAsync();
+                        if (tickCount % 6 == 1) Debug("会话监控 tick#" + tickCount + " 完成");
+                    }
+                    catch (Exception ex) { Debug("会话监控 tick#" + tickCount + " 异常：" + ex.Message); }
+                };
+                _sessionWatch.Start();
+                Debug("会话监控已启动（每 5 秒扫描，命中后等 " +
+                      RdpConsole.SessionSettleSeconds + " 秒稳定再投送）");
+            }
+            catch (Exception ex) { Debug("启动会话监控失败：" + ex.Message); }
+        }
+
+        /// <summary>
+        /// 会话首次被看到的时间（账号 Id → 该会话号的起始时刻）。
+        /// 用途：只有"同一个会话号连续在线满 12 秒"才投送通道。
+        /// 会话号变了（重新登录）就重新计时。
+        /// </summary>
+        private readonly Dictionary<string, (int sessionId, DateTime since)> _sessionSeen
+            = new Dictionary<string, (int, DateTime)>(StringComparer.Ordinal);
+
+        /// <summary>已经主动发起过 RDP 登录的账号（每账号只试一次，避免反复重连）。</summary>
+        private readonly HashSet<string> _loginRequested = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>自动连接串行闸门：切画面是全局操作，必须一个个来。</summary>
+        private readonly System.Threading.SemaphoreSlim _autoConnectGate
+            = new System.Threading.SemaphoreSlim(1, 1);
+
+        private async Task ScanAndDeployAsync()
+        {
+            try
+            {
+                var ids = App.Config.Settings.AutoConnectAccountIds;
+                if (ids == null || ids.Count == 0) return;
+
+                // 尚未投送、且仍在配置列表里的账号
+                var watching = new List<(UserRow row, string caption)>();
+                foreach (var id in ids)
+                {
+                    if (_deployHandled.Contains(id)) continue;
+                    foreach (var r in _rows)
+                        if (string.Equals(r.Account.Id, id, StringComparison.Ordinal))
+                        { watching.Add((r, r.Account.Caption)); break; }
+                }
+                // 清理已从配置移除的账号的计时
+                var stale = new List<string>();
+                foreach (var k in _sessionSeen.Keys)
+                    if (!ids.Contains(k)) stale.Add(k);
+                foreach (var k in stale) _sessionSeen.Remove(k);
+
+                if (watching.Count == 0) return;
+
+                var sessions = await SessionService.QueryAsync().ConfigureAwait(true);
+                var now = DateTime.UtcNow;
+
+                foreach (var (row, caption) in watching)
+                {
+                    var s = SessionService.Find(sessions, row.Account.UserName);
+                    // ★ 没有会话 **或** 会话是断开（Disc）状态 → 都要主动连接。
+                    //   Disc 只是"用户还登录着但没连"，RDP 连上即可恢复桌面；
+                    //   只处理"完全没会话"会漏掉绝大多数挂机场景（用户实测：
+                    //   账号一直显示"断开"，程序从不去拉起）。
+                    bool needConnect = s == null || s.Id <= 0
+                                       || string.Equals(s.State, "Disc", StringComparison.OrdinalIgnoreCase);
+                    if (needConnect)
+                    {
+                        if (_sessionSeen.Remove(row.Account.Id))
+                            Debug("会话监控：「" + caption + "」会话不可用，计时清零");
+
+                        // 每个账号只主动登录一次，避免反复重连把会话搅乱
+                        if (_loginRequested.Add(row.Account.Id))
+                        {
+                            Debug("会话监控：「" + caption + "」会话不可用（"
+                                  + (s == null ? "无会话" : s.State) + "），主动发起 RDP 连接");
+                            _ = Task.Run(async () =>
+                            {
+                                // ★ 串行化：切画面是全局操作，多个账号同时切会互相打断。
+                                await _autoConnectGate.WaitAsync();
+                                try
+                                {
+                                    // ★ 必须先切到这个账号的画面才能连接。
+                                    //   实测：后台账号的 Console 不在 ViewportHost 里，
+                                    //   WindowsFormsHost 没有父窗口，ActiveX 创建失败
+                                    //   （错误：无法创建 RDP 控件）。
+                                    //   所以自动连接必须串行：切页 → 连接 → 下一个。
+                                    int sid = s?.Id ?? 0;
+                                    bool ok = false;
+                                    string msg = "";
+                                    await Dispatcher.InvokeAsync(async () =>
+                                    {
+                                        try
+                                        {
+                                            await ShowViewPageAsync(row);
+                                            var console = row.Console;
+                                            if (console == null) { msg = "Console 为空"; return; }
+                                            console.BindAccount(row.Account);
+                                            // ShowViewPageAsync 内部已连接时不再重复
+                                            if (console.IsConnected) { ok = true; return; }
+                                            await ConnectAsync(row);
+                                            ok = row.Console?.IsConnected == true;
+                                            if (!ok) msg = "连接未建立";
+                                        }
+                                        catch (Exception ex) { msg = ex.Message; }
+                                    });
+
+                                    Debug(ok ? ("自动连接成功：" + caption + "（会话 " + sid + "）")
+                                             : ("自动连接失败：" + caption + " → " + msg));
+
+                                    if (ok)
+                                    {
+                                        _openedIds.Add(row.Account.Id);
+                                        _deployHandled.Remove(row.Account.Id);
+                                    }
+                                    else
+                                    {
+                                        _loginRequested.Remove(row.Account.Id);
+                                    }
+                                    await Dispatcher.InvokeAsync(RenderTabs);
+                                }
+                                catch (Exception ex) { Debug("自动登录异常：" + caption + " → " + ex.Message); }
+                                finally { _autoConnectGate.Release(); }
+                            });
+                        }
+                        continue;
+                    }
+
+                    // 会话号变化 → 重新计时
+                    if (!_sessionSeen.TryGetValue(row.Account.Id, out var rec) || rec.sessionId != s.Id)
+                    {
+                        _sessionSeen[row.Account.Id] = (s.Id, now);
+                        Debug("会话监控：「" + caption + "」会话 " + s.Id + " 上线，开始计时（需满 "
+                              + RdpConsole.SessionSettleSeconds + " 秒）");
+                        continue;
+                    }
+
+                    int onlineSec = (int)(now - rec.since).TotalSeconds;
+                    if (onlineSec < RdpConsole.SessionSettleSeconds)
+                    {
+                        // 还没满 12 秒，继续等
+                        continue;
+                    }
+
+                    // ★ 已在线满 12 秒 → 投送
+                    _deployHandled.Add(row.Account.Id);
+                    Debug("会话监控：「" + caption + "」已在线 " + onlineSec + " 秒，开始投送通道");
+
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            if (row.Console == null)
+                                await Dispatcher.InvokeAsync(() => InitializeConsole(row));
+                            row.Console?.SetForegroundActive(false);
+
+                            var console = await Dispatcher.InvokeAsync(() => row.Console);
+                            if (console == null) return;
+
+                            bool ok = await console.StartInputBySessionAsync().ConfigureAwait(false);
+                            Debug(ok ? "会话监控：通道投送成功 " + caption
+                                     : "会话监控：通道投送跳过 " + caption);
+                            await Dispatcher.InvokeAsync(RenderTabs);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug("会话监控投送异常：" + ex.Message);
+                            _deployHandled.Remove(row.Account.Id);   // 允许下轮重试
+                            _sessionSeen.Remove(row.Account.Id);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex) { Debug("会话扫描异常：" + ex.Message); }
+        }
 
         /// <summary>
         /// 启动后自动连接配置的 RDP 用户（可多个）。

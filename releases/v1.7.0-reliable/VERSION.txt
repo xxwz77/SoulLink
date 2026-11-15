@@ -1,0 +1,9 @@
+版本: v1.7.0-reliable
+日期: 2026-11-16
+新增: 应用启动自动连接（Disc/无会话都会主动拉起）+ 会话稳定 12 秒后统一投送
+修复: 后台账号创建 RDP 控件失败（必须先切画面）
+      Account 为 null 导致投送静默跳过
+      三条投送路径并存导致重复代理
+      投送阻塞 UI 线程（ConfigureAwait(true)）
+      多账号并发投送（schtasks 冲突）
+SoulLink.exe SHA256: 2F427235A02EBAFA325330E1E00AEE67C76C892D55B5A7017A8BA0935A570EFC

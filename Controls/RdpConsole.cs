@@ -38,6 +38,23 @@ namespace SoulLink.Controls
 
         public Account? Account { get; private set; }
 
+        /// <summary>
+        /// 绑定账号但不连接 RDP。
+        ///
+        /// ★ 必须单独提供：Account 原来只在 ConnectAsync 里赋值，
+        ///   而"按会话号投送通道"的场景下这个 Console 可能从未连接过 RDP，
+        ///   于是 Account 为 null → 投送被静默跳过（用户实测：监控说"开始投送"
+        ///   却始终没有代理进程）。
+        /// </summary>
+        private Account? _boundAccount;
+
+        public void BindAccount(Account account)
+        {
+            if (account == null) return;
+            _boundAccount = account;
+            Account ??= account;
+        }
+
         /// <summary>当前会话的输入控制器（注入代理 + 坐标换算）。没连上时为 null。</summary>
         public SessionInput? Input { get; private set; }
         /// <summary>当前会话号（注入要用）</summary>
@@ -246,15 +263,29 @@ namespace SoulLink.Controls
         ///
         /// 返回 true = 已投送；false = 该账号当前无会话（未登录）。
         /// </summary>
+        /// <summary>会话发现后，等待多久再投送（给会话留出稳定时间）。</summary>
+        public const int SessionSettleSeconds = 12;
+
         public async Task<bool> StartInputBySessionAsync()
         {
             try
             {
-                if (_disposed || !InjectEnabled) return false;
-                var acc = Account;
-                if (acc == null) return false;
-                if (Input?.Relay.IsConnected == true) return true;
+                if (_disposed) { Debug("投送通道：已销毁"); return false; }
+                if (!InjectEnabled) { Debug("投送通道：注入被禁用"); return false; }
+                // ★ Account 在未连过 RDP 的 Console 上是 null（它只在 ConnectAsync 里赋值）。
+                //   多账号挂机时后台账号可能从未连接，这里从外部绑定的账号兜底。
+                var acc = Account ?? _boundAccount;
+                if (acc == null) { Debug("投送通道：Account 为空（未绑定）"); return false; }
+                if (Input?.Relay.IsConnected == true)
+                {
+                    Debug("投送通道：已有连接，直接复用");
+                    return true;
+                }
+                Debug("投送通道：开始查询会话（账号 " + acc.UserName + "）");
 
+                // ★ 这里只做「查会话 + 投送」，**不在这里等待**。
+                //   "在线满 12 秒"由会话监控层统一计时（见 ConsolePage.ScanAndDeployAsync），
+                //   否则两处各自计时会互相打架、重复等待。
                 var sessions = await SessionService.QueryAsync().ConfigureAwait(true);
                 var s = SessionService.Find(sessions, acc.UserName);
                 if (s == null || s.Id <= 0)
@@ -1510,8 +1541,15 @@ namespace SoulLink.Controls
                             SetStatus("已连接 · 会话 " + activeSessionId + " · " + account.UserName);
                             LogBus.Ok("RDP 已连上 " + account.Caption,
                                 "地址 " + host + " · 耗时 " + sw.ElapsedMilliseconds + " ms");
-                            if (connection == _connectionGeneration)
+                            // ★ 连接成功后**不再直接投送**：投送统一由会话监控负责
+                            //   （它在会话稳定 12 秒后触发），避免与监控重复投送。
+                            //   注意：非自动连接场景（手动打开画面）仍需要通道，
+                            //   所以这里只在没配自动连接时才投送。
+                            bool autoManaged = App.Config.Settings.AutoConnectAccountIds?.Count > 0;
+                            if (!autoManaged && connection == _connectionGeneration)
                                 BeginInput(activeSessionId, account, password);
+                            else if (autoManaged)
+                                Debug("连接成功；通道交由会话监控统一投送（会话 " + activeSessionId + "）");
                             return (true, "已连接（" + sw.ElapsedMilliseconds + " ms）");
                         }
                     }
@@ -1798,10 +1836,67 @@ namespace SoulLink.Controls
         /// </summary>
         private async void BeginInput(int sessionId, Account account, string password)
         {
-            if (!InjectEnabled || _disposed || !InputAllowed || System.Threading.Interlocked.CompareExchange(ref _inputStartPending, 1, 0) != 0)
+            // ★ 不能要求 InputAllowed（前台 + 可见）。
+            //   多账号挂机时后台账号的 Console 不在 ViewportHost 里、也不是前台，
+            //   InputAllowed 恒为 false，导致通道根本建不起来 → 监控层反复重试
+            //   → 同一账号出现多个 --relay 进程（会话 3 一度有两个），
+            //   表现为"无法自由切换账号"（用户实测）。
+            //   通道属于连接状态，与"是否正在看这个画面"解耦；前台限制只用于拦截键鼠消息。
+            if (!InjectEnabled || _disposed
+                || System.Threading.Interlocked.CompareExchange(ref _inputStartPending, 1, 0) != 0)
                 return;
+
+            // ★ 已有可用通道且会话号相同 → 直接复用，绝不重复投送。
+            //   RelayClient 每次投送都会新建一条命名管道和一个代理进程，
+            //   重复投送会在同一会话里留下多个 --relay（实测会话 4 出现三个），
+            //   它们争用同一个桌面输入，表现为"切到该账号后操作异常 / 无法切换"。
+            if (Input?.Relay.IsConnected == true && CurrentSessionId == sessionId)
+            {
+                System.Threading.Interlocked.Exchange(ref _inputStartPending, 0);
+                Debug("通道已存在且会话相同（" + sessionId + "），跳过重复投送");
+                return;
+            }
+
+            // ★ 同一会话正在投送中 → 直接放弃。
+            //   _inputStartPending 只防同一 Console 重入，挡不住不同路径
+            //   （监控投送 / 切页重建 / 连接后投送）同时进入同一会话。
+            if (!DeployingSessions.TryAdd(sessionId, 0))
+            {
+                System.Threading.Interlocked.Exchange(ref _inputStartPending, 0);
+                Debug("会话 " + sessionId + " 正在投送中，本次跳过");
+                return;
+            }
+            try
+            {
+                await BeginInputCore(sessionId, account, password);
+            }
+            catch (Exception ex)
+            {
+                Debug("投送异常：" + ex.Message);
+            }
+            finally
+            {
+                DeployingSessions.TryRemove(sessionId, out _);
+                // ★ 必须在这里兜底重置：BeginInputCore 内部若提前 return，
+                //   它自己的 finally 只覆盖内部逻辑；这条外层路径要保证标志一定归零，
+                //   否则后续所有投送都会被 "已在进行中" 挡掉（表现为通道再也建不起来）。
+                System.Threading.Interlocked.Exchange(ref _inputStartPending, 0);
+            }
+        }
+
+        /// <summary>正在投送的会话号集合（跨 Console 实例，按会话去重）。</summary>
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte>
+            DeployingSessions = new System.Collections.Concurrent.ConcurrentDictionary<int, byte>();
+
+        private async Task BeginInputCore(int sessionId, Account account, string password)
+        {
             await StopInputAsync().ConfigureAwait(true);
             int generation = System.Threading.Interlocked.Increment(ref _inputGeneration);
+
+            // ★ 投送前清理该会话遗留的孤儿代理进程。
+            //   重复投送会在同一会话留下多个 --relay，它们争用同一桌面输入，
+            //   表现为切到该账号后操作异常（实测会话 4 出现两个）。
+            try { Services.RelayClient.KillOrphanAgents(sessionId); } catch { }
 
             CurrentSessionId = sessionId;
             try
@@ -1810,7 +1905,10 @@ namespace SoulLink.Controls
                     _toggleHotkey = App.Config.Settings.LockHotkey;
 
                 var relay = new RelayClient(account.UserName, sessionId);
-                var (ok, msg) = await relay.DeployAsync(account, password).ConfigureAwait(true);
+                // ★ ConfigureAwait(false)：投送包含 schtasks 建任务 + 等代理连回管道，
+                //   最长 20 秒。若回到 UI 线程继续，界面会在这段时间无法响应
+                //   （用户实测：多账号自动投送时卡死）。后续对控件的操作会显式切回 UI。
+                var (ok, msg) = await relay.DeployAsync(account, password).ConfigureAwait(false);
 
                 if (!ok)
                 {
@@ -1822,11 +1920,16 @@ namespace SoulLink.Controls
                     return;
                 }
 
-                if (generation != _inputGeneration || _disposed || !InputAllowed)
+                // ★ 这里只判"是否过期/已销毁"，不判 InputAllowed。
+                //   否则后台账号投送成功后会被立刻丢弃，代理成了孤儿进程，
+                //   监控层又重试 → 同一会话出现多个 --relay（实测会话 3 有两个）。
+                if (generation != _inputGeneration || _disposed)
                 {
                     relay.Dispose();
                     return;
                 }
+                // 投送在后台线程完成，这里切回 UI 线程再继续操作控件
+                await Dispatcher.InvokeAsync(() => { }).Task.ConfigureAwait(true);
                 var input = new SessionInput(relay) { Sensitivity = 1.0 };
                 LookSensitivity = App.Config.Settings.LookSensitivity > 0
                     ? App.Config.Settings.LookSensitivity

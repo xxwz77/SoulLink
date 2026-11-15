@@ -131,9 +131,32 @@ namespace SoulLink.Services
         /// ★ 必须显式传入：Environment.ProcessPath 在别的宿主（测试程序、命令行工具）里会指向那个程序，
         ///   而不是 SoulLink.exe，导致引导进程根本不是我们的 --system-run 实现。
         /// </param>
+        /// <summary>
+        /// 投送串行化闸门。
+        ///
+        /// ★ 必须串行：每次投送都会创建/运行/删除一个 SYSTEM 计划任务，
+        ///   多个账号同时投送时 schtasks 会并发操作同一批任务名与临时文件，
+        ///   表现为互相阻塞甚至整体卡死（用户实测：多账号自动投送时界面冻住）。
+        ///   这里用信号量保证同一时刻只有一个投送在进行。
+        /// </summary>
+        private static readonly System.Threading.SemaphoreSlim LaunchGate =
+            new System.Threading.SemaphoreSlim(1, 1);
+
         public static async Task<Result> LaunchAsync(int sessionId, string exePath, string arguments,
             string workingDir = "", bool interactive = true, string? bootstrapExe = null,
             CancellationToken ct = default)
+        {
+            await LaunchGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                return await LaunchCoreAsync(sessionId, exePath, arguments, workingDir,
+                    interactive, bootstrapExe, ct).ConfigureAwait(false);
+            }
+            finally { LaunchGate.Release(); }
+        }
+
+        private static async Task<Result> LaunchCoreAsync(int sessionId, string exePath, string arguments,
+            string workingDir, bool interactive, string? bootstrapExe, CancellationToken ct)
         {
             var sw = Stopwatch.StartNew();
 

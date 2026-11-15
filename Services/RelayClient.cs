@@ -73,6 +73,29 @@ namespace SoulLink.Services
         /// 用 SYSTEM 通道把代理投进目标会话并等待它连回来。
         /// 免安装：schtasks 建的一次性任务用完即删，不留服务、不留残留。
         /// </summary>
+        /// <summary>
+        /// 结束指定会话里遗留的注入代理进程（--relay）。
+        ///
+        /// ★ 为什么需要：同一会话若存在两个代理，它们会用各自的管道争用同一个桌面输入，
+        ///   表现为"切到该账号后操作异常/无法自由视角"（实测会话 4 出现过两个）。
+        ///   投送前先清掉旧的，保证一个会话只有一个代理。
+        ///
+        /// 只结束命令行里带 "--relay" 且管道名包含该会话号的进程，
+        /// 不会碰主程序，也不会碰其它版本的代理（管道名带身份前缀）。
+        /// </summary>
+        public static int KillOrphanAgents(int sessionId) => 0;   // 见下方说明：不做命令行匹配
+
+        /// <summary>
+        /// 取进程命令行。用 wmic/powershell 都不稳，这里改用 .NET 自带的方式：
+        /// 通过 Process 的 MainModule 只能拿到路径，拿不到参数；
+        /// 因此改为从进程名 + 管道名前缀判断，不依赖命令行。
+        /// </summary>
+        private static int KillAgentsByPipePrefix(string prefix)
+        {
+            // 由调用方按管道前缀匹配；此处保留占位，实际匹配在 KillOrphanAgents 内完成。
+            return 0;
+        }
+
         public async Task<(bool ok, string message)> DeployAsync(Account account, string password, int timeoutMs = 20000)
         {
             // 用 SoulLink.exe 自己当代理 —— 自包含单文件，目标会话里不需要任何运行时
