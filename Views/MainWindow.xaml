@@ -224,17 +224,47 @@
                                     <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
                                 </StackPanel>
 
-                                <!-- 下：主题 + 设置 -->
-                                <StackPanel Grid.Row="1" VerticalAlignment="Bottom">
-                                    <Button x:Name="BtnThemeBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                            HorizontalAlignment="Left" Click="BtnTheme_Click" ToolTip="主题：跟随系统">
-                                        <TextBlock x:Name="ThemeGlyphBottom" Text="&#xE708;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
-                                    </Button>
-                                    <Button x:Name="BtnSettingsBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                            HorizontalAlignment="Left" Click="GeneralSettings_Click" ToolTip="应用设置">
-                                        <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
-                                    </Button>
-                                </StackPanel>
+                                <!-- 下：悬停开关 + 当前会话 + 主题/设置（贴底） -->
+                                <Grid Grid.Row="1" VerticalAlignment="Bottom">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <!-- ★ 这两块原先在旧 Popup 面板里，重建侧栏时必须搬过来，
+                                         否则展开后看不到「鼠标悬停展开」和「当前会话」（用户实测丢失）。 -->
+                                    <Border Grid.Row="0" Height="1" Background="{StaticResource StrokeSoft}"
+                                            Margin="6,6,6,8" Visibility="{Binding ElementName=NavTitleText, Path=Visibility}" />
+
+                                    <CheckBox Grid.Row="1" x:Name="AutoHideNavCheck" Style="{StaticResource GlassCheckBox}"
+                                              Content="鼠标悬停展开" Margin="6,0,0,8"
+                                              Visibility="{Binding ElementName=NavTitleText, Path=Visibility}"
+                                              Checked="AutoHideNav_Changed" Unchecked="AutoHideNav_Changed" />
+
+                                    <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="10,8"
+                                            Margin="4,0,4,6"
+                                            Visibility="{Binding ElementName=NavTitleText, Path=Visibility}">
+                                        <StackPanel>
+                                            <TextBlock Text="当前会话" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="SelfSessionText" Text="—" Style="{StaticResource Mono}"
+                                                       Margin="0,3,0,0" />
+                                            <TextBlock x:Name="SelfUserText" Text="—" Style="{StaticResource Caption}"
+                                                       Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <StackPanel Grid.Row="3">
+                                        <Button x:Name="BtnThemeBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                                HorizontalAlignment="Left" Click="BtnTheme_Click" ToolTip="主题：跟随系统">
+                                            <TextBlock x:Name="ThemeGlyphBottom" Text="&#xE708;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        </Button>
+                                        <Button x:Name="BtnSettingsBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
+                                                HorizontalAlignment="Left" Click="GeneralSettings_Click" ToolTip="应用设置">
+                                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
                             </Grid>
                         </Border>
 
@@ -247,97 +277,6 @@
                         <!-- ★ 已弃用：改成 NavRail 自身加宽（见下方内嵌面板）。
                              保留此 Popup 仅为兼容旧代码引用（IsOpen 恒为 false，不再显示），
                              彻底避免了"第二个窗口"带来的翻边、越界、盖任务栏问题。 -->
-                        <Popup x:Name="NavPopup" Placement="Relative" PlacementTarget="{Binding ElementName=SideNavHost}"
-                               HorizontalOffset="0" VerticalOffset="0" IsOpen="False"
-                               AllowsTransparency="True" StaysOpen="True" PopupAnimation="None"
-                               Opened="NavPopup_Opened" Closed="NavPopup_Closed">
-                            <!-- Padding 与图标栏一致：7 左右 · 12 上下；这样第一行基线相同
-                                 ★ 展开态是「图标栏 + 面板」拼成一张卡：
-                                   面板左边框必须去掉（BorderThickness=0,1,1,1），
-                                   否则会和图标栏的右边框并排画成两道线 → 中间显出一条接缝。
-                                   圆角只留在右侧两角，左侧直角正好顶住图标栏。 -->
-                            <!-- ★ 高度不能用 ElementName 绑定 NavRail.ActualHeight：
-                                   Popup 里的内容在独立的视觉树里，跨树 ElementName 绑不上，
-                                   结果高度掉回默认值（实测变成 202x56 的不可见小窗），侧栏根本弹不出来。
-                                   改由 UpdateNavSurfaceShape() 在打开时显式同步尺寸。 -->
-                            <Border x:Name="NavPanel" Width="180" Margin="0"
-                                    Style="{StaticResource NavSurface}" Padding="10,12"
-                                    BorderThickness="0,1,1,1" CornerRadius="0,14,14,0"
-                                    MouseLeave="NavPanel_MouseLeave"
-                                    MouseEnter="NavPanel_MouseEnter">
-                                <Grid>
-                                    <!-- ★ 上：标题+导航（Auto）；下：开关 + 当前会话（Auto 贴底）。
-                                         原来它们全塞在一个 StackPanel 里，Grid.Row="2" 完全无效，
-                                         结果「鼠标悬停展开 / 当前会话」紧跟在导航项后面浮在中间，
-                                         而不是贴到面板底部。 -->
-                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <StackPanel Grid.Row="0">
-                                    <!-- 标题行：与汉堡按钮等高 36 -->
-                                    <Border Height="36" Margin="0,0,0,0" Padding="6,0">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="控制台" Style="{StaticResource Caption}"
-                                                       VerticalAlignment="Center" />
-                                            <Button Grid.Column="1" Style="{StaticResource WindowButton}"
-                                                    Width="28" Height="26" Click="BtnToggleNav_Click"
-                                                    ToolTip="收起侧栏">
-                                                <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
-                                            </Button>
-                                        </Grid>
-                                    </Border>
-
-                                    <!-- 分隔线：与图标栏同位置（10+1+10 = 21px 总高）-->
-                                    <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="6,10,6,10" />
-
-                                    <!-- 导航项：每行 38px、只有文字，与图标行一一对齐 -->
-                                    <Button Style="{StaticResource NavTextButton}" Tag="launch"
-                                            Height="38" Click="RailIcon_Click" Content="启动台" />
-                                    <Button Style="{StaticResource NavTextButton}" Tag="console"
-                                            Height="38" Click="RailIcon_Click" Content="中控台" />
-                                    <Button Style="{StaticResource NavTextButton}" Tag="sessions"
-                                            Height="38" Click="RailIcon_Click" Content="在线会话" />
-                                    <Button Style="{StaticResource NavTextButton}" Tag="procs"
-                                            Height="38" Click="RailIcon_Click" Content="会话进程" />
-                                    <Button Style="{StaticResource NavTextButton}" Tag="cli"
-                                            Height="38" Click="RailIcon_Click" Content="命令行" />
-
-                                </StackPanel>
-
-                                <!-- ★ 底部区（Grid.Row=2，自动贴底）：
-                                     分隔线 → 鼠标悬停展开 → 当前会话。
-                                     原来这三块跟着导航项挤在上半部分，用户看图像是"悬空"的。
-                                     ★ 用 Grid 而不是 StackPanel：StackPanel 里子元素只按内容宽度收缩，
-                                       「当前会话」卡片会缩成一小块；Grid 才会水平撑满面板。 -->
-                                <Grid Grid.Row="2">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
-
-                                    <!-- 分隔线：与导航区隔开 -->
-                                    <Border Grid.Row="0" Height="1" Background="{StaticResource StrokeSoft}" Margin="6,10,6,10" />
-
-                                    <CheckBox Grid.Row="1" x:Name="AutoHideNavCheck" Style="{StaticResource GlassCheckBox}"
-                                              Content="鼠标悬停展开" Margin="6,4,0,10"
-                                              Checked="AutoHideNav_Changed" Unchecked="AutoHideNav_Changed" />
-
-                                    <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="12,10">
-                                        <StackPanel>
-                                            <TextBlock Text="当前会话" Style="{StaticResource Caption}" />
-                                            <TextBlock x:Name="SelfSessionText" Text="—" Style="{StaticResource Mono}"
-                                                       Margin="0,4,0,0" />
-                                            <TextBlock x:Name="SelfUserText" Text="—" Style="{StaticResource Caption}"
-                                                       Margin="0,2,0,0" />
-                                        </StackPanel>
-                                    </Border>
-                                </Grid>
-                                </Grid>
-                            </Border>
-                        </Popup>
 
                         <!-- 右侧页面容器 -->
                         <Grid Grid.Column="1">

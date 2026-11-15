@@ -1,0 +1,4 @@
+版本: v1.5.2-reliable
+日期: 2026-11-16
+修复: 重建侧栏时丢失「鼠标悬停展开」开关与「当前会话」卡片，已补回
+SoulLink.exe SHA256: 21BAF6F8556841CB4AE7E13DF57F211615EFB0CD3797DB14A72D6AA5FFABF221

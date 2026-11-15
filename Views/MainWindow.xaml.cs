@@ -446,10 +446,7 @@ namespace SoulLink.Views
             bool hovered = button.IsMouseOver;
             if (button.Content is TextBlock glyph)
                 glyph.Foreground = hovered ? (Brush)FindResource("CyanBrush") : (Brush)FindResource("TextMuted");
-            if (NavPanel == null) return;
-            foreach (var textButton in NavPanel.FindChildren<Button>())
-                if (textButton.Tag is string textTag && textTag == tag)
-                    textButton.Foreground = hovered ? (Brush)FindResource("CyanBrush") : (Brush)FindResource("TextMuted");
+            // 展开态文字已在 NavRail 内，处理同一批元素
         }
 
         private void RailIcon_Click(object sender, RoutedEventArgs e)
@@ -539,7 +536,6 @@ namespace SoulLink.Views
             {
                 CancelHideTimer();
                 if (!_autoHide) return;
-                if (NavPanel.IsMouseOver) return;
                 if (NavRail.IsMouseOver) return;
                 SetNavCollapsed(true, "鼠标离开");
             };
@@ -576,7 +572,6 @@ namespace SoulLink.Views
             try
             {
                 // ★ 不再开第二个窗口：图标栏自身变宽，展开时显示文字。
-                NavPopup.IsOpen = false;
 
                 const double collapsedWidth = 56;
                 const double expandedWidth = 180;

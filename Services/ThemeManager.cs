@@ -54,9 +54,8 @@ namespace SoulLink.Services
                 Brush nav = (Brush)styles["NavBackground"];
                 Brush stroke = (Brush)styles["StrokeMid"];
                 mainWindow.NavRail.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "NavBackground");
-                mainWindow.NavPanel.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "NavBackground");
+                // 旧 Popup 面板已移除，侧栏只有一个 Border（NavRail）
                 mainWindow.NavRail.BorderBrush = stroke;
-                mainWindow.NavPanel.BorderBrush = stroke;
 
                 // ★ 收起态：图标栏是独立的圆角卡片，四个角都要圆。
                 //   展开态：它变成整张卡片的左半截，右侧两角必须切成直角去接面板，
