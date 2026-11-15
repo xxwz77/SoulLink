@@ -333,6 +333,8 @@ namespace SoulLink.Views
             row.Console.SetForegroundActive(true);
             _shieldReleased = false;
             UpdateShield();
+            // 从配置页切回来时输入通道可能已被断开，这里补建
+            row.Console.EnsureInputRestored();
 
             if (!row.Console.IsConnected) await ConnectAsync(row);
         }
@@ -1098,6 +1100,20 @@ namespace SoulLink.Views
             // 钩子检测到视口内点击 → 收起保护层（Popup 自身事件可能收不到）
             c.ShieldReleaseRequested += _ =>
                 Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) ReleaseShieldByHook(); });
+            // 进入自由视角 → 隐藏保护层；退出 → 复位后重新挂上
+            c.ShieldVisibleRequested += (_, visible) =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (!ReferenceEquals(row, _viewing)) return;
+                    if (!visible)
+                    {
+                        try { if (ShieldPopup != null) ShieldPopup.IsOpen = false; } catch { }
+                        return;
+                    }
+                    // 退出自由视角：视为"操作完毕"，重新进入需点击状态
+                    _shieldReleased = false;
+                    UpdateShield();
+                });
             row.Console = c;
         }
 

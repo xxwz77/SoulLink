@@ -67,6 +67,9 @@ namespace SoulLink.Controls
         /// <summary>视口内发生左键按下：请外层撤掉保护层。</summary>
         public event Action<RdpConsole>? ShieldReleaseRequested;
 
+        /// <summary>请求外层显示/隐藏保护层（进入自由视角时隐藏，退出时恢复）。</summary>
+        public event Action<RdpConsole, bool>? ShieldVisibleRequested;
+
         /// <summary>保护层被点掉：把键鼠真正交给 RDP。</summary>
         public void OnShieldReleased()
         {
@@ -226,11 +229,31 @@ namespace SoulLink.Controls
                 InputModeChanged?.Invoke(this, InputMode);
                 ReleaseCapture("离开当前控制台");
                 UninstallMouseHook();
-                _ = StopInputAsync();
+                // ★ 不要在这里停注入代理。
+                //   切到配置页只是"看不见"，会话和代理都还活着；
+                //   停掉后切回来不会自动重建，表现为"按侧键没反应/进不去自由视角"。
+                //   真正需要停止的场景（断开、销毁）由 Disconnect/Dispose 负责。
             }
         }
 
         private bool InputAllowed => _activeState == 0 && !_disposed && IsVisible;
+
+        /// <summary>切回画面时调用：如果输入通道已断开，重建一次。</summary>
+        public void EnsureInputRestored()
+        {
+            try
+            {
+                if (_disposed || !IsConnected) return;
+                if (Input?.Relay.IsConnected == true) return;
+                if (CurrentSessionId <= 0) return;
+                var acc = Account;
+                if (acc == null) return;
+                _ = StopInputAsync();
+                BeginInput(CurrentSessionId, acc, ConfigStore.GetPassword(acc));
+                Debug("切回画面：重建输入通道 会话=" + CurrentSessionId);
+            }
+            catch (Exception ex) { Debug("重建输入通道失败：" + ex.Message); }
+        }
 
         /// <summary>只有前台可见控制台可接收热键；退出自由视角不受连接状态限制。</summary>
         public bool CanUseToggleHotkey
@@ -548,6 +571,8 @@ namespace SoulLink.Controls
             _captured = true;
             InputMode = ConsoleInputMode.FreeLook;
             InputModeChanged?.Invoke(this, InputMode);
+            // 自由视角要接管鼠标，请外层撤掉保护层（否则 Popup 会盖在上面挡住操作）
+            try { ShieldVisibleRequested?.Invoke(this, false); } catch { }
 
             // 不在自由视角开关时修改系统鼠标加速。
             // SystemParametersInfo 会向所有顶层窗口广播设置变化，实测可造成系统级卡顿。
@@ -704,6 +729,9 @@ namespace SoulLink.Controls
             ReleaseInjectedButtonsAsync();
             // 先排队抬起；代理断开仍会 releaseall，不把释放指令自己清掉。
             ResetLookQueue();
+            // ★ 无论之前是否在自由视角，都要恢复保护层。
+            //   原实现在 !wasCaptured 时直接 return，导致"关掉自由视角后不会重新上锁"。
+            try { ShieldVisibleRequested?.Invoke(this, true); } catch { }
             if (!wasCaptured) return;
             _keyboardFocusRetry = 20;
             Debug("退出自由视角（" + reason + "）");
