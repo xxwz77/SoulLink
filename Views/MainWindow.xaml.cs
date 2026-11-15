@@ -98,6 +98,9 @@ namespace SoulLink.Views
             {
                 if (App.Config.Settings.ThemeMode == 0)
                     Dispatcher.Invoke(() => { ThemeManager.Apply(); Background = (System.Windows.Media.Brush)Application.Current.Resources["WindowBackground"]; });
+
+                // 强调色会随用户换主题/换壁纸变化，重新取一次，不用等下次激活。
+                try { Dispatcher.BeginInvoke(new Action(UpdateBorderColor)); } catch { }
             };
 
             // 恢复上次的侧栏偏好
@@ -138,7 +141,16 @@ namespace SoulLink.Views
         }
 
         /// <summary>
-        /// 激活时使用系统主题强调色，未激活时使用灰色，符合 Windows 原生行为。
+        /// 激活时使用系统主题强调色，未激活时交回系统原生边框，符合 Windows 原生行为。
+        ///
+        /// ★ 关键修复（边框没有用上系统强调色）：
+        ///   DWMWA_BORDER_COLOR 要的是 COLORREF（0x00BBGGRR，alpha 必须是 0x00）。
+        ///   旧代码直接把 0xFFRRGGBB 的 ARGB 传进去，DWM 一律返回 E_INVALIDARG，
+        ///   边框从来没被改过色 —— 于是永远显示系统默认边框。
+        ///   颜色换算与校验都在 WindowCorners.SetBorderColor 里完成。
+        ///
+        /// ★ 未激活时传 DWMWA_COLOR_DEFAULT 而不是写死的深灰：
+        ///   这样失焦后的边框和资源管理器等原生窗口完全一致（本机实测 #ABABAB）。
         /// </summary>
         private void UpdateBorderColor()
         {
@@ -146,12 +158,21 @@ namespace SoulLink.Views
             {
                 var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
                 if (hwnd == IntPtr.Zero) return;
-                uint color = IsActive
-                    ? SoulLink.Services.WindowCorners.GetSystemAccentColor()
-                    : 0xFF3A3F4B;
-                SoulLink.Services.WindowCorners.SetBorderColor(hwnd, color);
+
+                if (!IsActive)
+                {
+                    SoulLink.Services.WindowCorners.ResetBorderColor(hwnd);
+                    return;
+                }
+
+                uint accent = SoulLink.Services.WindowCorners.GetSystemAccentColor();
+                SoulLink.Services.WindowCorners.SetBorderColor(hwnd, accent);
+                App.Breadcrumb($"边框色 accent=#{accent & 0xFFFFFF:X6}");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                App.AppendErrorLog("MainWindow.UpdateBorderColor", ex);
+            }
         }
 
         protected override void OnActivated(EventArgs e)

@@ -1,7 +1,7 @@
 # SoulLink 交接文档
 
 > 给接手的新会话看。**只写本会话实际验证过的结论**；未验证的会标「待验证」，不要当成已完成。
-> 最后更新：2026-11-15
+> 最后更新：2026-11-15（边框强调色修复）
 > 完整历史踩坑记录见 [HANDOFF.archive-2026-11-15.md](HANDOFF.archive-2026-11-15.md)（旧文档，2026-11-14 至 15 日，含 12.1~12.94 全部细节）。
 
 ---
@@ -79,8 +79,36 @@ public interface IMsTscNonScriptable
 - `AllowsTransparency=True` 的分层窗口里，RDP ActiveX 能连上、会话是 Active，但**画面永远全黑**。
 - 主窗口因此用 `AllowsTransparency=False` + 非客户区自绘。
 - 圆角只能靠 DWM：`WindowCorners.ApplyRounded`（`DWMWA_WINDOW_CORNER_PREFERENCE`）。
-- 边框颜色随激活状态：激活用系统强调色（`WindowCorners.GetSystemAccentColor`），未激活灰色。
 - 顶部多余横幅用 `WM_NCCALCSIZE` 返回 0 去掉（`MainWindow.WndProc`）。**不要**用 `DWMWA_BORDER_COLOR` 把系统主题色边框改成深色（用户明确要求保留系统主题色）。
+
+### 4.2.1 ★ 应用边框用系统强调色（本会话修复，两条都是实测结论）
+
+**坑一：`DWMWA_BORDER_COLOR` 要的是 COLORREF，不是 ARGB。**
+
+- 取值格式是 **`0x00BBGGRR`**，最高字节 alpha **必须为 0x00**。
+- 传 `0xFFRRGGBB`（ARGB）→ DWM 返回 **`E_INVALIDARG (0x80070057)`**，边框**静默保持原样**。
+  旧代码一直传 ARGB，所以「设置边框颜色」从未生效过，看到的永远是系统默认边框。
+- 两个特殊值：`0xFFFFFFFF` = `DWMWA_COLOR_DEFAULT`（恢复原生），`0xFFFFFFFE` = `DWMWA_COLOR_NONE`（不画边框）。
+- 已落地：`WindowCorners.SetBorderColor` 接收 ARGB，内部 `ArgbToColorRef` 换算；
+  `ResetBorderColor` 用于未激活态。**传值前后务必看返回值，别假设成功。**
+
+**坑二：强调色不能取 `DwmGetColorizationColor`。**
+
+| 来源 | 本机实测值 | 能否用作边框色 |
+| --- | --- | --- |
+| 注册表 `HKCU\Software\Microsoft\Windows\DWM` → `ColorizationColor` | `#F091C1` | ✅ **正确**，与原生窗口逐像素一致 |
+| `DwmGetColorizationColor` | `#E48AB7`（`blend=true`，开启透明效果后是**混合后**的着色） | ❌ 偏暗偏灰 |
+| 注册表 `AccentColor` / `AccentColorMenu` | `#F091C1`（COLORREF `0xFFC191F0`，需转换） | ✅ 兜底 |
+
+取值顺序已固定为：**注册表 ColorizationColor → DwmGetColorizationColor → 注册表 AccentColor → 硬编码蓝色**。
+
+**行为（已实测）**：
+
+- 激活态四边 = 强调色 `#F091C1`；与资源管理器激活态顶边 `#F091C1` **逐像素相同**（`docs/fix-accent-border-active.png`）。
+- 未激活态交回 `DWMWA_COLOR_DEFAULT`，实测 `#B2B2B3` 灰边，与原生窗口失焦表现一致（`docs/fix-accent-border-inactive.png`）。
+- 改系统强调色后会**实时刷新**（`SystemEvents.UserPreferenceChanged` 钩子）：实测改蓝立即变 `#3A8BD5`，改回立即可复原。
+- 应用内深浅主题切换**不影响**边框色（本来就该跟系统强调色走），三种模式下实测均为 `#F091C1`。
+- 最大化时四边无色属**正常**：原生窗口最大化同样不出边框，不是缺陷。
 
 ### 4.3 RDP 空域（Airspace）：WPF 浮层盖不住画面
 
@@ -185,6 +213,7 @@ SoulLink/
 | 过场不覆盖其他用户画面 | ✅ | `docs/transition-other-user.png`、`transition-complete.png` |
 | 浅色侧栏随主题变浅、无中间缝 | ✅ | `docs/fix-light-sidebar.png` |
 | 系统主题色边框 + 无顶部粉条 | ✅ | `docs/window-top-caption.png`、`window-top-crop.png` |
+| 边框真正用上系统强调色（COLORREF 修复） | ✅ 激活 `#F091C1` / 失活灰边，与原生窗口逐像素一致 | `docs/fix-accent-border-active.png`、`fix-accent-border-inactive.png` |
 | 统一自绘弹窗替代 MessageBox | ✅ | `Views/AppDialog` |
 | 自动化配置组 + 顺序执行 + 每日定时 | ✅ 保存与界面 | `docs/verify-automation.png` |
 
@@ -198,7 +227,8 @@ SoulLink/
 2. **浅色模式跨页面文字对比度**：侧栏已修，启动台/在线会话/会话详情页是否全部达标未逐页确认。
 3. **自动化实际执行**：只验证了配置保存与界面，未实际跑过一条龙流程与定时触发。
 4. **应用设置页（`SettingsPage`）**：已移除 RDP 凭据区，但页面内仍有「修改密码/地址/移除」按钮绑定的旧事件处理，需要确认没有残留入口或空操作。
-5. **窗口最大化下的边框/圆角**：只在普通窗口状态验证过。
+5. **窗口最大化下的边框/圆角**：已确认最大化时无边框属正常（原生窗口同样如此），
+   圆角与拖拽还原在最大化/还原切换后正常；但**最大化下的圆角裁切**仍未逐像素核对过。
 6. **多用户同时注销**：只验证了 A2 注销期间切 A3，未测试两个用户同时注销。
 
 ---
@@ -249,6 +279,7 @@ git revert <hash>                          # 撤销已提交的错误
 
 | 提交 | 说明 |
 | --- | --- |
+| 本次 | 修复边框未使用系统强调色（COLORREF 格式 + 强调色取值来源） |
 | `6ad4676` | 修复窗口顶部额外粉条，边框随激活状态用系统主题色 |
 | `4f897f8` | 添加版本管理与安全回退说明 |
 | `bac46e8` | 稳定基线 |
@@ -268,6 +299,8 @@ git revert <hash>                          # 撤销已提交的错误
 | 侧栏浅色下仍是深色 | 局部固定背景覆盖主题，需用 `NavBackground` 动态资源 |
 | 输入框与下拉框不等高 | 统一 `GlassTextBox` / ComboBox 高度与内边距 |
 | 窗口四周粉色粗边 | 不是 `DWMWA_BORDER_COLOR`，是顶部非客户区横条；用 `WM_NCCALCSIZE` 去掉 |
+| 边框怎么都不变色 | `DWMWA_BORDER_COLOR` 传了 ARGB；必须 COLORREF（`0x00BBGGRR`，alpha=0），否则 `E_INVALIDARG` 静默失效（4.2.1） |
+| 边框色偏暗偏灰 | 用了 `DwmGetColorizationColor`（混合着色）；改读注册表 `DWM\ColorizationColor`（4.2.1） |
 
 ---
 
