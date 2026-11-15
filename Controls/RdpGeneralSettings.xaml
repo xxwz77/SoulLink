@@ -11,7 +11,7 @@
     <StackPanel>
      <CheckBox x:Name="CaptureClickCheck" Style="{StaticResource GlassCheckBox}"
                Content="点击画面才捕获键鼠，移出立即释放" />
-     <TextBlock Text="切页、失焦、最小化、断开时也会释放；自由视角仍可手动开启。"
+     <TextBlock Text="切页、失焦、最小化、断开时也会释放；自由视角需手动开启。用于防止意外滑动影响 BGI 地图拖动。"
                 Style="{StaticResource Caption}" Margin="28,8,0,0" TextWrapping="Wrap" />
 
      <!-- 灵敏度：标签左、数值右。
