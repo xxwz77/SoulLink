@@ -226,7 +226,10 @@
 
                                 <!-- 下：悬停开关 + 当前会话 + 主题/设置（贴底） -->
                                 <Grid Grid.Row="1" VerticalAlignment="Bottom">
+                                    <!-- ★ 必须有 4 行：分隔线 / 悬停开关 / 当前会话 / 主题设置。
+                                         少了第 4 行时 Row="3" 会回落到第 0 行，底部 UI 重叠（用户实测）。 -->
                                     <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
