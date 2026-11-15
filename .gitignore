@@ -37,3 +37,6 @@ AxMSTSCLib.dll
 *.bak
 Thumbs.db
 Desktop.ini
+
+# Release binaries are kept locally for rollback, not in git
+releases/**/*.exe
