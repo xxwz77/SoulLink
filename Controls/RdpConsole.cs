@@ -97,13 +97,10 @@ namespace SoulLink.Controls
         private int _captureCenterY;
         private DateTime _lastInject = DateTime.MinValue;
 
-        /// <summary>自由视角下上一次鼠标事件的位置（用于相邻差分）。</summary>
-        private int _lastMoveX;
-        private int _lastMoveY;
+        /// <summary>光标顶到画面边缘的起始时刻（用于应急释放，防止用户被困住）。</summary>
+        private DateTime _edgePushSince = DateTime.MinValue;
 
-        /// <summary>待发送的转视角累积位移（合并高频事件，避免丢角度）。</summary>
-        private int _pendLookX;
-        private int _pendLookY;
+
         private uint _scaleFactor = 100;
         private bool _hasConnected;
         private LowLevelMouseHook? _mouseHook;
@@ -200,12 +197,18 @@ namespace SoulLink.Controls
             IsVisibleChanged += (_, __) =>
             {
                 if (IsVisible) { InstallMouseHook(); EnsureToggleHotkey(); }
-                else { ReleaseCapture("离开页面"); UninstallMouseHook(); }
+                else
+                {
+                    ReleaseCapture("离开页面");
+                    CursorClip.Release();   // 兜底：切页绝不能把光标留在矩形里
+                    UninstallMouseHook();
+                }
             };
 
             Unloaded += (_, __) =>
             {
                 ReleaseCapture("卸载");
+                CursorClip.Release();   // 兜底：控件卸载必须松开
                 UninstallMouseHook();
                 DetachOwnerWindow();
             };
@@ -319,7 +322,11 @@ namespace SoulLink.Controls
         {
             if (mode == ConsoleInputMode.FreeLook)
             {
-                if (Input == null) return (false, "注入未就绪，无法进入自由视角");
+                // 不再要求 Input（注入通道）就绪。
+                // ClipCursor 模式只做「把光标限制在画面内」，移动/点击/拖拽全走
+                // RDP 原生通道，不需要注入代理。
+                // 原来这里 Input == null 就直接拒绝，会让 Disc 会话（注入待命）
+                // 永远进不了自由视角，而用户恰恰需要先转视角观察。
                 if (!BeginCapture("手动切换"))
                     return (false, "画面不在可用状态，无法进入自由视角");
             }
@@ -357,14 +364,22 @@ namespace SoulLink.Controls
 
             if (_accelToken < 0) _accelToken = PointerAcceleration.PushDisabled();
 
-            NativeInput.SetCursorPos(_captureCenterX, _captureCenterY);
-            // ★ 基准位必须同步成中心点，否则第一次移动会把"旧光标 → 中心"这段
-            //   跳变当成真实位移，视角会猛地甩一下。
-            _lastMoveX = _captureCenterX;
-            _lastMoveY = _captureCenterY;
-            _pendLookX = 0;
-            _pendLookY = 0;
-            try { System.Windows.Forms.Cursor.Hide(); } catch { }
+            // ★ 把光标限制在画面矩形内，但**不隐藏、不居中**。
+            //   ClipCursor 让光标真实移动、真实可见，只是出不了这个矩形 ——
+            //   这才是"游戏无边框窗口化"的手感，拖地图和点击都用真实落点。
+            //   之前"钉中心 + 相对注入"会让拖拽轨迹锯齿化（用户实测反馈）。
+            bool clipped = CursorClip.Apply(r.left, r.top, r.width, r.height);
+            _captureCenterX = r.left + r.width / 2;
+            _captureCenterY = r.top + r.height / 2;
+            _edgePushSince = DateTime.MinValue;
+
+            // 光标原本在画面外的话，挪进来，避免一进模式就被系统弹到矩形边缘
+            var cur = System.Windows.Forms.Cursor.Position;
+            bool curInside = cur.X >= r.left && cur.X < r.left + r.width
+                          && cur.Y >= r.top && cur.Y < r.top + r.height;
+            if (!curInside) NativeInput.SetCursorPos(_captureCenterX, _captureCenterY);
+
+            if (!clipped) Debug("警告：ClipCursor 失败，光标可能跑出画面");
 
             EnsureToggleHotkey();
 
@@ -410,6 +425,20 @@ namespace SoulLink.Controls
         {
             // 正在锁 → 解锁；否则 → 上锁
             var target = _captured ? ConsoleInputMode.Pointer : ConsoleInputMode.FreeLook;
+
+            Debug("热键触发: target=" + target + " IsConnected=" + IsConnected + " _captured=" + _captured);
+
+            // ★ 退出必须无条件放行！
+            //   进入自由视角后光标被 ClipCursor 限制在画面内，用户点不到画面外的任何按钮，
+            //   热键是唯一出口。任何前置条件（IsConnected / Input 就绪 / 画面可用）
+            //   一旦不成立就把用户永久困住 —— 之前这里就有 IsConnected 判断。
+            if (target == ConsoleInputMode.Pointer)
+            {
+                SetInputMode(ConsoleInputMode.Pointer);
+                CursorClip.Release();
+                return;
+            }
+
             if (!IsConnected)
             {
                 InputActivity?.Invoke(this, "画面尚未连接，无法进入自由视角");
@@ -422,10 +451,12 @@ namespace SoulLink.Controls
         private void ReleaseCapture(string reason)
         {
             ReleasePointerCapture();
-            if (!_captured) { ReleaseAccel(); return; }
+            if (!_captured) { ReleaseAccel(); ReleaseAccel(); return; }
             _captured = false;
             _keyboardFocusRetry = 20;
 
+            // ★ 必须解除限制，否则用户的鼠标会被永久困在画面矩形里
+            CursorClip.Release();
             try { System.Windows.Forms.Cursor.Show(); } catch { }
             ReleaseAccel();
 
@@ -465,7 +496,8 @@ namespace SoulLink.Controls
         ///
         /// ★ 两种模式，语义要清楚：
         ///   锁定关闭（默认）：**完全放行**，鼠标事件走 RDP 原生通道，行为跟直接开游戏窗口一样。
-        ///   锁定开启：光标钉在画面中心并隐藏，移动即转视角，点击在当前位置生效。
+        ///   锁定开启（自由视角）：用 ClipCursor 把光标限制在画面矩形内，
+        ///                        **仍然全部放行** —— 落点/拖拽/点击都是真实位置。
         ///
         /// 任何异常都立刻放行，绝不让用户动不了鼠标。
         /// </summary>
@@ -494,75 +526,59 @@ namespace SoulLink.Controls
                 if (!_captured)
                     return false;
 
-                // ── 锁定中（自由视角）─────────────────────────────────────────────
+                // ── 自由视角：光标限制在画面内，其余全部交给 RDP 原生通道 ──
                 //
-                // ★ 核心约束（用户反馈，务必保持）：
-                //   自由视角**只负责转视角，绝不能影响鼠标落点**。
-                //   要能正常拖动地图、点击传送。
+                // ★ 这才是"游戏无边框窗口化"的手感（用户明确要求的效果）：
+                //   光标**真实移动**、真实可见，只是不许离开画面矩形；
+                //   移动/点击/拖拽全走 RDP 原生绝对坐标，落点就是用户看到的位置。
                 //
-                // ★ 为什么按键不能"放行给 RDP 原生通道"（曾经这么写，是错的）：
-                //   自由视角下我们把本地光标 SetCursorPos 钉在画面中心，
-                //   RDP 原生通道发出去的点击坐标因此永远等于中心点 ——
-                //   用户点哪里都落到屏幕正中，拖拽也拖不动，看起来就是"点不中/拖不动"。
+                // ★ 为什么不再用"钉中心 + mouse_event 相对位移"（上一版的做法，已废弃）：
+                //   拖拽时远端光标被相对位移推着走，而本地光标每帧被 SetCursorPos 拽回中心，
+                //   两个位置互相打架，拖地图就是一顿一顿的锯齿（用户实测：抖动更严重了）。
+                //   相对位移/钉中心只适合"纯转视角、不点不拖"的场景。
                 //
-                //   正确做法：按键改走注入通道（down/up），远端光标停在它自己的位置，
-                //   和视角转动解耦。视角照转，落点照旧，两者互不干扰。
+                // ★ 这里只需保证一件事：光标不能跑出画面。
+                //   钩子里不放行任何事件（全部 return false），
+                //   靠 CursorClip 在系统层面把它限制在视口矩形内。
                 if (ev.IsMove)
                 {
-                    // ★ 用「与上一次事件的差」而不是「与中心的差」。
-                    //   与中心做差看起来更直观，但 SetCursorPos 回中心后钩子仍会收到
-                    //   中间过渡事件（系统把光标从 A 挪到中心也是一次移动），
-                    //   同一个物理位移会被反复算进去 —— 表现为视角"飘"、指针抖动。
-                    //   相邻差分只取真实位移，回中心的过程不参与计算。
-                    int dx = ev.X - _lastMoveX;
-                    int dy = ev.Y - _lastMoveY;
-                    _lastMoveX = ev.X;
-                    _lastMoveY = ev.Y;
-
-                    // 光标回中心，保证可以无限转（不回中心会撞到屏幕边缘）
-                    NativeInput.SetCursorPos(_captureCenterX, _captureCenterY);
-                    // 回中心之后，下一次事件要按中心重新起算，否则会把
-                    // "中心 → 新位置"这段跳变算成一次巨大的位移
-                    _lastMoveX = _captureCenterX;
-                    _lastMoveY = _captureCenterY;
-
-                    if (dx == 0 && dy == 0) return true;
-
-                    // 极少数情况下焦点会被外部抢走，锁定期间持续保住
-                    if (_ax != null && !_ax.ContainsFocus && _keyboardFocusRetry-- > 0)
+                    // 只要还在矩形内就完全放行；万一系统把光标送到外面（多屏/切页瞬间），
+                    // 立刻拉回矩形内最近的位置，避免跑到别的窗口。
+                    var rect0 = ViewportScreenRect();
+                    if (rect0 != null)
                     {
-                        try { _ax.Focus(); } catch { }
-                    }
+                        var r0 = rect0.Value;
+                        int cx = Math.Max(r0.left, Math.Min(ev.X, r0.left + r0.width - 2));
+                        int cy = Math.Max(r0.top, Math.Min(ev.Y, r0.top + r0.height - 2));
+                        if (cx != ev.X || cy != ev.Y) NativeInput.SetCursorPos(cx, cy);
 
-                    // ★ 不再用 5ms 节流丢弃位移：丢弃会让转视角一顿一顿的。
-                    //   累积到阈值再发一次，既减少 IPC 次数又不丢角度。
-                    _pendLookX += dx;
-                    _pendLookY += dy;
-                    var now = DateTime.UtcNow;
-                    bool big = Math.Abs(_pendLookX) >= 3 || Math.Abs(_pendLookY) >= 3;
-                    if (big || (now - _lastInject).TotalMilliseconds >= 8)
-                    {
-                        int sx = _pendLookX, sy = _pendLookY;
-                        _pendLookX = 0;
-                        _pendLookY = 0;
-                        _lastInject = now;
-                        _ = InjectLookAsync(sx, sy);
+                        // ★ 应急出口：光标若撞到画面边缘（用户想甩出去），
+                        //   并且已经持续一段时间仍无法退出（热键失效等），
+                        //   主动释放，避免用户被永久困在画面里。
+                        bool atEdge = cx != ev.X || cy != ev.Y;
+                        if (atEdge)
+                        {
+                            if (_edgePushSince == DateTime.MinValue) _edgePushSince = DateTime.UtcNow;
+                            else if ((DateTime.UtcNow - _edgePushSince).TotalSeconds >= 3)
+                            {
+                                _edgePushSince = DateTime.MinValue;
+                                ReleaseCapture("边缘停留 3 秒（应急释放）");
+                                return false;
+                            }
+                        }
+                        else _edgePushSince = DateTime.MinValue;
                     }
-                    return true;
+                        return false;   // ★ 关键：放行，让 RDP 原生通道拿到真实绝对坐标
                 }
 
-                // 滚轮：放行（RDP 原生处理，不影响落点）
-                if (ev.IsWheel) return false;
-
-                // 鼠标按键：改走注入，绝不让本地中心的坐标污染远端落点。
-                if (ev.IsLeftDown || ev.IsRightDown || ev.IsMiddleDown || ev.IsXButton1Down || ev.IsXButton2Down)
+                // ★ 鼠标侧键（XButton）在自由视角下作为"退出"快捷键。
+                //   原因：进入模式后光标被限制在画面内，用户点不到画面外的工具栏按钮，
+                //   热键若是键盘组合还可能被 RDP 抢走 —— 必须有鼠标侧的出口。
+                if (ev.IsXButton1Down || ev.IsXButton2Down)
                 {
-                    _ = InjectButtonAsync(ButtonNameOf(ev), true);
-                    return true;
-                }
-                if (ev.IsLeftUp || ev.IsRightUp || ev.IsMiddleUp || ev.Message == 0x020C /*WM_XBUTTONUP*/)
-                {
-                    _ = InjectButtonAsync(ButtonNameOf(ev), false);
+                    ReleaseCapture("侧键退出");
+                    InputActivity?.Invoke(this, "已退出自由视角（侧键）");
+                    SetInputMode(ConsoleInputMode.Pointer);
                     return true;
                 }
 
