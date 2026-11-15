@@ -370,28 +370,18 @@ namespace SoulLink.Relay
                         int remY = totalDy - (totalDy / steps) * steps;
                         if (remX != 0 || remY != 0) mouse_event(MOUSEEVENTF_MOVE, remX, remY, 0, IntPtr.Zero);
 
-                        // ★ 光标贴着屏幕边缘时，相对位移会被"吃掉"（鼠标撞墙就动不了）。
-                        //   转视角时这是致命问题：往右转到头就再也转不动了。
-                        //   办法：撞墙后把光标挪回屏幕中心，再让宿主下一个指令继续。
+                        // ★ 不再做"贴边回中"。
+                        //   原实现：远端光标一旦贴边就 SetCursorPos 到屏幕中心。
+                        //   游戏看到光标位置突变，表现为"画面被猛地拽一下" —— 快速移动时最明显。
+                        //   这与"给游戏真实鼠标数据"的原则冲突，已移除。
                         GetCursorPos(out POINT pNow);
-                        int sw = GetSystemMetrics(SM_CXSCREEN);
-                        int sh = GetSystemMetrics(SM_CYSCREEN);
-                        bool atEdge = pNow.X <= 1 || pNow.Y <= 1 || pNow.X >= sw - 2 || pNow.Y >= sh - 2;
-
-                        string extra = "";
-                        if (atEdge)
-                        {
-                            int cx = sw / 2, cy = sh / 2;
-                            SetCursorPos(cx, cy);
-                            extra = " · 光标贴边已回中";
-                        }
 
                         return new Response
                         {
                             Ok = true,
                             X = pNow.X,
                             Y = pNow.Y,
-                            Message = "相对移动 " + totalDx + "," + totalDy + " (steps=" + steps + ")" + extra
+                            Message = "相对移动 " + totalDx + "," + totalDy + " (steps=" + steps + ")"
                         };
                     }
 

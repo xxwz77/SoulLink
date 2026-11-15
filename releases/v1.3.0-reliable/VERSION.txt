@@ -1,0 +1,5 @@
+版本: v1.3.0-reliable
+日期: 2026-11-15
+修复: 移除 RelayAgent 远端贴边回中（画面被拽的根因）
+状态: 画面连续 + 光标限制在窗口内（实机验证通过）
+SoulLink.exe SHA256: 541FF6A4B67FABD5EFA56CB3EE3D6E950BF0AF1623E537E4095A8E5BBD4C4651
