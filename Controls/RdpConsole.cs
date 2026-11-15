@@ -93,6 +93,7 @@ namespace SoulLink.Controls
         private int _keyboardFocusRetry = 20;
         private int _captureCenterX;
         private int _captureCenterY;
+        private RawMouseInput? _rawInput;
         private LookInputQueue? _lookQueue;
         private readonly object _lookQueueSync = new();
         private int _lastMoveX = int.MinValue;
@@ -154,6 +155,14 @@ namespace SoulLink.Controls
                 lock (_lookQueueSync)
                     return _lookQueue ??= new LookInputQueue(() => Input!, () => LookSensitivity, Debug);
             }
+        }
+
+        /// <summary>Raw Input 位移回调：只入队，不做 IO。</summary>
+        private void OnRawDelta(int dx, int dy)
+        {
+            if (!_captured) return;
+            _lastInputAt = DateTime.UtcNow;
+            LookQueue.EnqueueMove(dx, dy);
         }
 
         private void ResetLookQueue()
@@ -520,6 +529,39 @@ namespace SoulLink.Controls
             _captureCenterX = r.left + r.width / 2;
             _captureCenterY = r.top + r.height / 2;
 
+            // ── 采集硬件级相对位移（只读，不拦截、不动光标）──
+            // 失败不影响进入：回退到旧的坐标差分。
+            try
+            {
+                var win = _ownerWindow ?? Window.GetWindow(this);
+                if (win != null)
+                {
+                    _rawInput ??= RawMouseInput.TryCreate(win);
+                    if (_rawInput != null)
+                    {
+                        _rawInput.Diagnostic = Debug;
+                        _rawInput.Moved = OnRawDelta;
+                        if (!_rawInput.Start())
+                        {
+                            _rawInput.Dispose();
+                            _rawInput = null;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { Debug("Raw Input 初始化失败（回退差分）：" + ex.Message); }
+
+            // ── 把光标约束在 RDP 视口内（不缩小区域、不钉中心）──
+            // 位移已由 Raw Input 提供，这里只防止光标跑到别的窗口。
+            try
+            {
+                if (CursorClip.Apply(r.left, r.top, r.width, r.height))
+                    Debug("光标已约束在视口内：" + r.left + "," + r.top + " " + r.width + "x" + r.height);
+                else
+                    Debug("光标约束失败（不影响转视角）");
+            }
+            catch (Exception ex) { Debug("光标约束异常：" + ex.Message); }
+
             _lastInputAt = DateTime.UtcNow;
             StartLockWatchdog();
             EnsureToggleHotkey();
@@ -615,6 +657,9 @@ namespace SoulLink.Controls
             InputMode = ConsoleInputMode.Pointer;
             InputModeChanged?.Invoke(this, InputMode);
             StopLockWatchdog();
+            // 任何退出路径都必须松开光标约束（含失焦、切页、断开、看门狗、异常）
+            try { CursorClip.Release(); } catch { }
+            try { _rawInput?.Stop(); } catch { }
             ReleasePointerCapture();
             ReleaseInjectedButtonsAsync();
             // 先排队抬起；代理断开仍会 releaseall，不把释放指令自己清掉。
@@ -671,6 +716,46 @@ namespace SoulLink.Controls
         {
             try
             {
+                // ★★★ 自由视角期间：退出热键必须在本机完成 ★★★
+                //
+                // 事故根因：进入自由视角后本机钩子吞掉鼠标，A2 会话永远收不到侧键，
+                // 于是"目标会话接收器"那条退出通道彻底失效 —— 必然进得去出不来。
+                // 因此锁定时直接在本机判定并解锁，不再依赖目标会话。
+                if (_captured && !ev.IsInjected)
+                {
+                    var spec = HotkeySpec.Parse(App.Config.Settings.LockHotkey);
+                    bool isMouseSpec = spec?.IsMouse == true;
+                    bool down = ev.IsLeftDown || ev.IsRightDown || ev.IsMiddleDown
+                                || ev.IsXButton1Down || ev.IsXButton2Down;
+
+                    // ① 配置的热键就是鼠标键：本机判定
+                    if (isMouseSpec && down && spec != null
+                        && spec.MatchesMouse(ev) && spec.ModifiersMatch())
+                    {
+                        Debug("自由视角中，本机热键鼠标退出：" + spec);
+                        _captured = false;
+                        InputMode = ConsoleInputMode.Pointer;
+                        Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("本机热键退出")));
+                        return false;
+                    }
+
+                    // ② 固定应急出口：XButton1（鼠标侧键4）始终可退出。
+                    //    热键配成键盘时键盘可能直达 RDP，这条是唯一可靠的本机出口。
+                    if (ev.IsXButton1Down)
+                    {
+                        Debug("自由视角中，本机应急侧键退出（XButton1）");
+                        _captured = false;
+                        InputMode = ConsoleInputMode.Pointer;
+                        Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("本机应急侧键退出")));
+                        return false;
+                    }
+
+                    // 热键鼠标按钮不注入游戏，避免重复触发
+                    if (isMouseSpec && spec != null && (spec.MatchesMouse(ev)
+                        || (spec.MouseButton == "X1" && ev.Message == 0x020C)))
+                        return false;
+                }
+
                 // ── 硬兜底（与 RDP/热键完全无关）──
                 // 自由视角下若窗口已不是前台，说明用户在别处；
                 // 这里直接解锁并放行，避免"进了出不来"。
@@ -681,6 +766,8 @@ namespace SoulLink.Controls
                 {
                     _captured = false;
                     InputMode = ConsoleInputMode.Pointer;
+                    // 立即解除约束，不等 UI 线程
+                    try { CursorClip.Release(); } catch { }
                     Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("窗口不在前台（兜底）")));
                     return false;
                 }
@@ -752,6 +839,11 @@ namespace SoulLink.Controls
                     //     · 按键     → mouse_event(DOWN/UP)
                     //   全部在目标会话内部执行（RelayAgent），所以游戏收到的是
                     //   完整的真实输入流，它自己决定转视角还是拖拽、要不要显示光标。
+                    // Raw Input 生效时：位移已由 OnRawDelta 处理，
+                    // 这里只吞掉旧式移动，避免 RDP 再发一份绝对坐标。
+                    if (_rawInput?.IsActive == true) return true;
+
+                    // 回退路径：Raw Input 不可用时才用坐标差分。
                     if (_lastMoveX == int.MinValue) { _lastMoveX = ev.X; _lastMoveY = ev.Y; return true; }
                     int dwx = ev.X - _lastMoveX;
                     int dwy = ev.Y - _lastMoveY;
@@ -807,9 +899,10 @@ namespace SoulLink.Controls
             }
             catch (Exception ex)
             {
-                // 低级钩子中不等待 UI、不写文件、不释放队列。先放行保证系统鼠标可用。
+                // 低级钩子中不等待 UI、不写文件。但**必须**解除光标约束，否则鼠标被困。
                 _captured = false;
                 InputMode = ConsoleInputMode.Pointer;
+                try { CursorClip.Release(); } catch { }
                 try { Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("回调异常：" + ex.GetType().Name))); } catch { }
                 return false;
             }

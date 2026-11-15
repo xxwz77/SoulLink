@@ -702,6 +702,41 @@ git revert <hash>                          # 撤销已提交的错误
 | 客户端捕获 | Moonlight 用 `SDL_SetRelativeMouseMode(SDL_TRUE)`，持续拿 `xrel/yrel`，再 `LiSendMouseMoveEvent`；失败时退化为隐藏光标 | **可借鉴**。Windows 下 SDL 在 RDP 会话里用**空光标**才能持续拿到相对移动（源码注释明确写了 RDP） |
 | 目标机注入 | Sunshine `platform/windows/input.cpp` 用 `libvirtualhid`（`move_relative`）+ ViGEm；鼠标描述符是 5 键 + 16 位相对 XY + 滚轮 + AC Pan，无 report-id | **本机被许可证阻断**，见下 |
 
+### 4.2.11 ★ 自由视角最终方案：Raw Input 位移 + 视口约束（2026-11-15 实测通过）
+
+**三个条件同时达成，已由用户实机确认**：视角连续、鼠标不出窗口、退出正常。
+
+**为什么这次成功（与 4.2.10 事故版本的区别是关键）**：
+
+| 项目 | 事故版本（❌） | 现行版本（✅） |
+| --- | --- | --- |
+| Raw Input 标志 | `NOLEGACY \| CAPTUREMOUSE` | **仅 `INPUTSINK`** |
+| 对旧式消息 | 切断（退出链路失效） | **完全不影响** |
+| 光标 | 被限制后无法解除 | `ClipCursor` 到**整个视口**，所有退出路径都释放 |
+| 退出通道 | 只有目标会话热键（已断） | 本机热键 + 应急侧键 + 看门狗 + 救援工具 |
+| 位移来源 | 依赖光标坐标差分 | **Raw Input `lLastX/lLastY`** |
+
+**最终链路**：
+
+```text
+本机 Raw Input（INPUTSINK，只读）
+  → lLastX/lLastY 硬件级相对位移
+  → LookInputQueue（有界合并）
+  → IPC
+  → A2 会话内 mouse_event(MOVE)（游戏读 Raw Input，视角连续）
+
+同时：ClipCursor 把光标约束在 RDP 视口内（不缩小、不钉中心）
+```
+
+**必须保留的四道退出保险**：
+1. **本机**侧键退出（`_captured` 时在钩子内直接判定，不依赖目标会话）；
+2. **固定应急出口**：XButton1 永远可退出（热键配成键盘时也能用）；
+3. **看门狗**：45 秒无输入自动解锁；
+4. **`dist\sl-rescue.exe`**：手机 UU 终端可用，解除约束 + 杀进程 + 释放按键。
+
+**`ClipCursor` 释放点（缺一个就会困住用户）**：
+`ReleaseCapture` / 窗口失焦 / 钩子异常 / `App.OnExit`（`ForceRelease`）/ 断开 / 切页。
+
 ### 4.2.10 ★ 全局输入捕获的事故与铁律（2026-11-15 严重事故）
 
 **事故**：尝试用 `RIDEV_CAPTUREMOUSE | RIDEV_NOLEGACY` 实现"鼠标留在窗口内"后，

@@ -365,6 +365,8 @@ namespace SoulLink
             //   绝不能把「指针加速」留在关闭状态（这是污染系统设置）。
             try { Services.PointerAcceleration.ForceRestore(); } catch { }
             try { System.Windows.Forms.Cursor.Show(); } catch { }
+            // ★ 关键：绝不能把光标约束留在系统里（否则用户鼠标被困在旧矩形内）。
+            try { Services.CursorClip.ForceRelease(); } catch { }
 
             _tray?.Dispose();
             base.OnExit(e);
