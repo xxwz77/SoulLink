@@ -163,5 +163,8 @@ namespace SoulLink.Services
 
         public bool IsXButton1Down => Message == 0x020B && IsXButton1;
         public bool IsXButton2Down => Message == 0x020B && !IsXButton1;
+
+        /// <summary>侧键抬起（WM_XBUTTONUP = 0x020C）。</summary>
+        public bool IsXButtonUp => Message == 0x020C;
     }
 }

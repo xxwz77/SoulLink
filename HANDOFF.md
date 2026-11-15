@@ -1,7 +1,7 @@
 # SoulLink 交接文档
 
 > 给接手的新会话看。**只写本会话实际验证过的结论**；未验证的会标「待验证」，不要当成已完成。
-> 最后更新：2026-11-15（通用设置持久化 + 滑动条样式 + 侧栏对齐 + 边框强调色）
+> 最后更新：2026-11-15（热键修复 + 自由视角鼠标落点 + 通用设置持久化 + 侧栏对齐 + 边框强调色）
 > 完整历史踩坑记录见 [HANDOFF.archive-2026-11-15.md](HANDOFF.archive-2026-11-15.md)（旧文档，2026-11-14 至 15 日，含 12.1~12.94 全部细节）。
 
 ---
@@ -225,6 +225,69 @@ public RdpGeneralSettings() { InitializeComponent(); Loaded += (_, __) => LoadSe
 原因是两个 `TextBlock` 都没写 `Grid.Column`，全落在第 0 列。凡是用 `Grid.ColumnDefinitions`
 布局的都要显式写 `Grid.Column`。
 
+### 4.2.5 ★ 热键三连坑（本会话修复）
+
+**坑一：`ToString()` 与 `Parse()` 往返不一致**
+
+- `HotkeySpec.ToString()` 输出中文名「鼠标侧键4」，但 `Parse()` 原来只认英文 `mouse4`/`x1`。
+- 结果：`ConfigStore` 存下去的中文名读回来 `Parse` 得到 **null** → 热键配置整个丢失。
+- 修复：`Parse()` 增加中文分支（鼠标左键/右键/中键/侧键4/侧键5）。
+- **教训：凡是 `ToString` 会被持久化的类型，`Parse` 必须能读回自己的输出。**
+
+**坑二：`Loaded` 里只同步了一部分全局设置**
+
+- `RdpConsole.HookInput` 的 `Loaded` 原来只写了 `CaptureOnClick = ...`，
+  **没有调用 `ApplyGlobalSettings()`**，于是 `ToggleHotkey` 永远停在字段初值 `Ctrl+Alt+Q`。
+- 用户改的热键在配置里是对的，但注册的永远是默认值。
+- 日志证据：`EnsureToggleHotkey: spec='Ctrl+Alt+Q'` 而配置文件里是 `Ctrl+Alt+K`。
+- 修复：`Loaded` 直接调 `ApplyGlobalSettings()`（它一并同步灵敏度、热键、点击捕获）。
+
+**坑三：辅助窗口被 `Hide()` 后收不到 `WM_HOTKEY`**
+
+- `RegisterHotKey` 把 `WM_HOTKEY` 投递到**该窗口的消息队列**。
+- 原实现 `helper.Hide()` 之后，`WndProc` 完全收不到消息（`RegisterHotKey` 却返回 true，日志还显示"已注册"）。
+- 修复：**不要 Hide**，改为保持显示 + 挪到屏幕外 + 全透明：
+
+```csharp
+helper.Show();
+helper.Width = 1; helper.Height = 1;
+helper.Left = -32000; helper.Top = -32000;
+helper.Opacity = 0;
+```
+
+**验证限制（重要）**：`SendInput`/`keybd_event` 模拟的按键**无法触发 `RegisterHotKey` 的系统热键**，
+所以"按热键"这一步没法用脚本自动化验证，只能由人手按。
+本会话通过日志确认了注册正确（`锁定热键已注册：Ctrl+Alt+K`、`parsed=鼠标侧键4`），
+但**实际按键触发需要人工确认**。
+
+### 4.2.6 ★ 自由视角不能影响鼠标落点
+
+**症状**：开启自由视角后，无法正常拖动地图与点击传送。
+
+**根因**：自由视角下本地光标被 `SetCursorPos` 钉在画面中心，而按键事件当时是
+`return false`（放行给 RDP 原生通道）。RDP 发出去的点击坐标因此**永远等于中心点** ——
+用户点哪里都落到屏幕正中，拖拽也拖不动。
+
+**修复**：按键改走注入通道，远端光标停在它自己的位置，和视角转动解耦：
+
+```csharp
+// 滚轮：放行（不影响落点）
+if (ev.IsWheel) return false;
+
+// 鼠标按键：走注入，down/up 分离（拖拽需要按住不放）
+if (ev.IsLeftDown || ev.IsRightDown || ev.IsMiddleDown || ev.IsXButton1Down || ev.IsXButton2Down) {
+    _ = InjectButtonAsync(ButtonNameOf(ev), true);
+    return true;
+}
+if (ev.IsLeftUp || ev.IsRightUp || ev.IsMiddleUp || ev.Message == 0x020C /*WM_XBUTTONUP*/) {
+    _ = InjectButtonAsync(ButtonNameOf(ev), false);
+    return true;
+}
+```
+
+- **必须用 `down`/`up` 而不是 `click`**：拖拽地图要的是"按住不放 + 移动 + 松开"。
+- `WM_XBUTTONUP = 0x020C` 原来在 `MouseHookEvent` 里没有判定，已补 `IsXButtonUp`。
+
 ### 4.3 RDP 空域（Airspace）：WPF 浮层盖不住画面
 
 - RDP 是 `WindowsFormsHost` 里的 ActiveX，永远绘制在 WPF 之上，`Panel.ZIndex` 无效。
@@ -334,6 +397,9 @@ SoulLink/
 | RDP 通用设置真正持久化 | ✅ 重启后灵敏度/点击捕获/热键均保持 | `docs/fix-general-settings-slider.png` |
 | 滑动条改为玻璃风 | ✅ 青紫渐变轨道 + 发光圆点 | 同上 |
 | 灵敏度标签与数值重叠 | ✅ 补 `Grid.Column` | 同上 |
+| 热键 ToString/Parse 往返一致 | ✅ `parsed=鼠标侧键4` 不再为 null | 日志证据 |
+| 热键真正用上配置里的值 | ✅ `锁定热键已注册：Ctrl+Alt+K` | 日志证据 |
+| 自由视角不影响鼠标落点 | ⚠️ 代码已改（按键走注入 down/up），**待人工按键确认** | 见 4.2.6 |
 | 统一自绘弹窗替代 MessageBox | ✅ | `Views/AppDialog` |
 | 自动化配置组 + 顺序执行 + 每日定时 | ✅ 保存与界面 | `docs/verify-automation.png` |
 
@@ -400,7 +466,8 @@ git revert <hash>                          # 撤销已提交的错误
 
 | 提交 | 说明 |
 | --- | --- |
-| 本次 | 通用设置持久化失效 + 滑动条换玻璃风 + 标签重叠 |
+| 本次 | 热键往返/生效修复 + 自由视角不再影响鼠标落点 |
+| `a703c2a` | 通用设置持久化失效 + 滑动条换玻璃风 + 标签重叠 |
 | `55c52a7` | 侧栏高度对齐右侧卡片、左右边距对称、底部区贴底 |
 | `435f801` | 修复侧栏收起态无圆角/无边距、展开态接缝 |
 | `f38d912` | 修复边框未使用系统强调色（COLORREF 格式 + 强调色取值来源） |
@@ -433,6 +500,10 @@ git revert <hash>                          # 撤销已提交的错误
 | 侧栏底部开关/会话卡片悬在中间 | 三类元素塞在 `StackPanel` 里，`Grid.Row` 无效；要放进 `Grid.Row="2"`（4.2.2） |
 | 设置保存了下次打开又变回去 | 控件构造期事件把默认值写进配置：`_loading` 必须**初始 true**（4.2.3） |
 | 标签和数值叠在一起 | `Grid.ColumnDefinitions` 里忘了写 `Grid.Column`，全挤在第 0 列（4.2.4） |
+| 热键改了不生效 | `Loaded` 没调 `ApplyGlobalSettings()`，注册的永远是字段初值（4.2.5） |
+| 热键"注册成功"但按了没反应 | 辅助窗口被 `Hide()`，收不到 `WM_HOTKEY`；保持显示挪到屏幕外（4.2.5） |
+| 热键配置读回来变成 null | `ToString` 输出中文名但 `Parse` 只认英文，往返不一致（4.2.5） |
+| 自由视角下点不中、拖不动 | 按键放行给 RDP，但本地光标钉在中心 → 点击坐标恒为中心（4.2.6） |
 
 ---
 

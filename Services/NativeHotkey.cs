@@ -100,7 +100,18 @@ namespace SoulLink.Services
                 if (!RegisterHotKey(src.Handle, id, mods | MOD_NOREPEAT, vk)) { helper.Close(); return null; }
                 var hk = new NativeHotkey(src, id, onPressed) { _owner = helper, Registered = label };
                 src.AddHook(hk.WndProc);
-                helper.Hide();
+
+                // ★ 不要 Hide()！
+                //   RegisterHotKey 的 WM_HOTKEY 是投递到该窗口的消息队列的，
+                //   窗口一旦被 Hide（SW_HIDE），部分系统版本就不再分发这条消息，
+                //   表现为"注册成功但按了没反应"（实测：WndProc 完全收不到 WM_HOTKEY）。
+                //   正确做法是让窗口一直"显示"着，只是挪到屏幕外 + 全透明 + 不进任务栏。
+                helper.Show();
+                helper.Width = 1;
+                helper.Height = 1;
+                helper.Left = -32000;
+                helper.Top = -32000;
+                helper.Opacity = 0;
                 return hk;
             }
             catch { try { helper?.Close(); } catch { } return null; }

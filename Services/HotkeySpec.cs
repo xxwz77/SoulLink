@@ -117,6 +117,15 @@ namespace SoulLink.Services
                     case "mousemiddle": r.MouseButton = "Middle"; continue;
                     case "mouse4": case "x1": r.MouseButton = "X1"; continue;
                     case "mouse5": case "x2": r.MouseButton = "X2"; continue;
+
+                    // ★ 必须同时认 ToString() 产生的中文名。
+                    //   ToString 输出「鼠标侧键4」，而这里原来只认 "mouse4"/"x1"，
+                    //   于是 ConfigStore 存下去的中文名读回来 Parse 结果为 null —— 热键配置整个丢失。
+                    case "鼠标左键": r.MouseButton = "Left"; continue;
+                    case "鼠标右键": r.MouseButton = "Right"; continue;
+                    case "鼠标中键": r.MouseButton = "Middle"; continue;
+                    case "鼠标侧键4": case "鼠标键4": r.MouseButton = "X1"; continue;
+                    case "鼠标侧键5": case "鼠标键5": r.MouseButton = "X2"; continue;
                 }
                 foreach (var kv in VkNames)
                     if (string.Equals(kv.Value, p, StringComparison.OrdinalIgnoreCase)) { r.Key = kv.Key; break; }

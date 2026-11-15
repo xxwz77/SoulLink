@@ -177,14 +177,13 @@ namespace SoulLink.Controls
 
             Loaded += (_, __) =>
             {
-                CaptureOnClick = App.Config.Settings.RdpCaptureOnClick;
-                if (CaptureOnClick)
-                {
-                    ReleasePointerCapture();
-                    _captureWatch = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
-                    _captureWatch.Tick += (_, __) => WatchPointerCapture();
-                    _captureWatch.Start();
-                }
+                // ★ 必须走 ApplyGlobalSettings 而不是只赋 CaptureOnClick：
+                //   热键（ToggleHotkey）和灵敏度都在里面同步。
+                //   原来这里只设了 CaptureOnClick，导致 ToggleHotkey 永远是字段初值
+                //   "Ctrl+Alt+Q"，用户在通用设置里改的热键根本不生效（实测日志：
+                //   EnsureToggleHotkey spec='Ctrl+Alt+Q' parsed=Ctrl+Alt+Q，而配置里是 Ctrl+Alt+K）。
+                ApplyGlobalSettings();
+
                 AttachOwnerWindow();
                 InstallMouseHook();
                 EnsureToggleHotkey();
@@ -481,12 +480,19 @@ namespace SoulLink.Controls
                 if (!_captured)
                     return false;
 
-                // ── 锁定中：只做「移动 → 转视角」，其余一律放行 ──
+                // ── 锁定中（自由视角）─────────────────────────────────────────────
                 //
-                // ★ 设计原则（用户定的，别改回去）：
-                //   锁定只是"增加转视角效果"，**不是接管整个鼠标**。
-                //   点击 / 拖拽 / 右键 / 滚轮 全部交给 RDP 原生通道，
-                //   这样行为和直接开游戏窗口完全一致，键盘也照常工作。
+                // ★ 核心约束（用户反馈，务必保持）：
+                //   自由视角**只负责转视角，绝不能影响鼠标落点**。
+                //   要能正常拖动地图、点击传送。
+                //
+                // ★ 为什么按键不能"放行给 RDP 原生通道"（曾经这么写，是错的）：
+                //   自由视角下我们把本地光标 SetCursorPos 钉在画面中心，
+                //   RDP 原生通道发出去的点击坐标因此永远等于中心点 ——
+                //   用户点哪里都落到屏幕正中，拖拽也拖不动，看起来就是"点不中/拖不动"。
+                //
+                //   正确做法：按键改走注入通道（down/up），远端光标停在它自己的位置，
+                //   和视角转动解耦。视角照转，落点照旧，两者互不干扰。
                 if (ev.IsMove)
                 {
                     int dx = ev.X - _captureCenterX;
@@ -510,7 +516,21 @@ namespace SoulLink.Controls
                     return true;
                 }
 
-                // 按键类事件：放行，让 RDP 自己处理（点击/拖拽/滚轮都在这里）
+                // 滚轮：放行（RDP 原生处理，不影响落点）
+                if (ev.IsWheel) return false;
+
+                // 鼠标按键：改走注入，绝不让本地中心的坐标污染远端落点。
+                if (ev.IsLeftDown || ev.IsRightDown || ev.IsMiddleDown || ev.IsXButton1Down || ev.IsXButton2Down)
+                {
+                    _ = InjectButtonAsync(ButtonNameOf(ev), true);
+                    return true;
+                }
+                if (ev.IsLeftUp || ev.IsRightUp || ev.IsMiddleUp || ev.Message == 0x020C /*WM_XBUTTONUP*/)
+                {
+                    _ = InjectButtonAsync(ButtonNameOf(ev), false);
+                    return true;
+                }
+
                 return false;
             }
             catch
@@ -555,6 +575,35 @@ namespace SoulLink.Controls
                 if (r?.Ok != true) Debug("自由视角点击失败：" + (r?.Message ?? "无响应"));
             }
             catch (Exception ex) { Debug("自由视角点击异常：" + ex.Message); }
+        }
+
+        /// <summary>把钩子事件映射成注入通道认识的按钮名。</summary>
+        private static string ButtonNameOf(MouseHookEvent ev)
+        {
+            if (ev.IsRightDown || ev.IsRightUp) return "right";
+            if (ev.IsMiddleDown || ev.IsMiddleUp) return "middle";
+            if (ev.IsXButton1Down || ev.IsXButton2Down || ev.IsXButtonUp)
+                return ev.IsXButton1 ? "x1" : "x2";
+            return "left";
+        }
+
+        /// <summary>
+        /// 自由视角下的按键注入（按下/抬起分离）。
+        ///
+        /// ★ 必须走 down/up 而不是 click：拖拽地图要的是"按住不放 + 移动 + 松开"，
+        ///   一次性 click 根本拖不动。
+        /// ★ 远端光标保持在它自己的位置，不受本地被钉在中心的影响。
+        /// </summary>
+        private async Task InjectButtonAsync(string button, bool down)
+        {
+            var input = Input;
+            if (input == null) return;
+            try
+            {
+                if (down) await input.Relay.DownAsync(button).ConfigureAwait(false);
+                else await input.Relay.UpAsync(button).ConfigureAwait(false);
+            }
+            catch (Exception ex) { Debug("自由视角按键注入失败：" + ex.Message); }
         }
 
         private async Task InjectLookAsync(int dx, int dy)

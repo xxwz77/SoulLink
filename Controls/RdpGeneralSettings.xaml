@@ -34,7 +34,8 @@
        <ColumnDefinition Width="*" />
        <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
-      <TextBlock Grid.Column="0" Text="退出自由视角的热键" Style="{StaticResource Label}" VerticalAlignment="Center" />
+      <TextBlock Grid.Column="0" Text="切换自由视角的热键" Style="{StaticResource Label}" VerticalAlignment="Center"
+                 ToolTip="按一次进入自由视角，再按一次切回指针模式（可反复启停）" />
       <ctl:HotkeyRecorder Grid.Column="1" x:Name="GlobalHotkey" Style="{StaticResource GhostButton}" Width="180" Height="36" />
      </Grid>
     </StackPanel>
