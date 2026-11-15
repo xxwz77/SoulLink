@@ -61,6 +61,25 @@ namespace SoulLink.Controls
         /// <summary>一条人类可读的状态文字</summary>
         public event Action<RdpConsole, string>? StatusChanged;
 
+        /// <summary>光标移出画面：请外层重新挂上保护层。</summary>
+        public event Action<RdpConsole>? ShieldRearmRequested;
+
+        /// <summary>视口内发生左键按下：请外层撤掉保护层。</summary>
+        public event Action<RdpConsole>? ShieldReleaseRequested;
+
+        /// <summary>保护层被点掉：把键鼠真正交给 RDP。</summary>
+        public void OnShieldReleased()
+        {
+            try
+            {
+                _pointerCaptured = true;
+                PointerCaptureEnabled = true;
+                GiveKeyboardFocus();
+                Debug("保护层已解除（用户点击）");
+            }
+            catch { }
+        }
+
         public bool IsConnected
         {
             get
@@ -708,7 +727,12 @@ namespace SoulLink.Controls
             var cursor = System.Windows.Forms.Cursor.Position;
             bool inside = cursor.X >= rect.Value.left && cursor.X < rect.Value.left + rect.Value.width
                        && cursor.Y >= rect.Value.top && cursor.Y < rect.Value.top + rect.Value.height;
+            bool wasCaptured = _pointerCaptured;
             if (!inside || (_ownerWindow != null && !_ownerWindow.IsActive)) ReleasePointerCapture();
+
+            // 光标移出画面：通知外层重新挂保护层（只报一次）
+            if (wasCaptured && !_pointerCaptured && !inside)
+                ShieldRearmRequested?.Invoke(this);
         }
 
         private void ReleasePointerCapture()
@@ -816,16 +840,25 @@ namespace SoulLink.Controls
                     if (rect == null) return false;
                     bool inside = ev.X >= rect.Value.left && ev.X < rect.Value.left + rect.Value.width
                                && ev.Y >= rect.Value.top && ev.Y < rect.Value.top + rect.Value.height;
+                    // ★ 这里**绝不能吞移动事件**。
+                    //   实测：WH_MOUSE_LL 里 return true 会让 Windows 连本机光标一起冻住
+                    //   （光标停在原地、外面也进不来）。挡鼠标交给上层的 Popup 保护层去做，
+                    //   Popup 是真实窗口，光标可以自由移动。
+                    //
+                    //   这个分支只负责"点击解锁"：第一次左键按下时把控制权交给 RDP。
                     if (!_pointerCaptured && inside && ev.Message == 0x0201)
                     {
                         _pointerCaptured = true;
                         PointerCaptureEnabled = true;
                         Dispatcher.InvokeAsync(GiveKeyboardFocus);
                         InputActivity?.Invoke(this, "键鼠已捕获 · 移出画面即释放");
-                        // 激活点击必须送达 RDP，控件才能获得键盘焦点；只拦截未激活的移动。
+                        Debug("钩子检测到视口内左键按下 → 请求解除保护层");
+                        // 通知外层把 Popup 收起来（保护层可能因 z 序/透明没收到自己的点击事件）
+                        try { ShieldReleaseRequested?.Invoke(this); } catch { }
                         return false;
                     }
-                    if (!_pointerCaptured && inside) return true;
+                    // 其余事件一律放行（含移动），由 Popup 保护层负责不送到 RDP
+                    return false;
                 }
                 // 原生相对模式由 RDP 自己捕获窗口内鼠标并发送位移；
                 // 不再吞掉移动，也不再重复调用 moverel。

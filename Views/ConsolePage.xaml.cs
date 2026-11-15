@@ -51,8 +51,20 @@ namespace SoulLink.Views
                 var window = Window.GetWindow(this);
                 if (window != null)
                 {
-                    window.Deactivated += (_, __) => Dispatcher.InvokeAsync(() => BusyPopup.IsOpen = false);
-                    window.Activated += (_, __) => Dispatcher.InvokeAsync(() => { if (_busyVisible) BusyPopup.IsOpen = true; });
+                    window.Deactivated += (_, __) => Dispatcher.InvokeAsync(() =>
+                    {
+                        BusyPopup.IsOpen = false;
+                        // ★ 主窗口失活时立刻收起保护层，避免它盖在别的应用上方。
+                        try { if (ShieldPopup != null) ShieldPopup.IsOpen = false; } catch { }
+                    });
+                    window.Activated += (_, __) => Dispatcher.InvokeAsync(() =>
+                    {
+                        if (_busyVisible) BusyPopup.IsOpen = true;
+                        UpdateShield();
+                    });
+                    // 窗口位置/大小变化时，Popup 需要重新贴到视口上
+                    window.LocationChanged += (_, __) => UpdateShield();
+                    window.SizeChanged += (_, __) => UpdateShield();
                 }
             };
             // ★ 连接遮罩必须跟着「画面视口」走，不是跟着整个页面走。
@@ -60,8 +72,8 @@ namespace SoulLink.Views
             //   切页/侧栏展开/窗口缩放时视口变了它不变，遮罩就和画面不重合
             //   （用户反馈：连接动画没有自适应窗口大小）。
             //   改成监听 ViewportHost 自身的 SizeChanged，并补一次首帧对齐。
-            ViewportHost.SizeChanged += (_, __) => SyncBusyOverlaySize();
-            Loaded += (_, __) => SyncBusyOverlaySize();
+            ViewportHost.SizeChanged += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
+            Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
             Loaded += (_, __) => Activate();
 
             double sens = App.Config.Settings.LookSensitivity > 0 ? App.Config.Settings.LookSensitivity : 4.0;
@@ -111,6 +123,91 @@ namespace SoulLink.Views
                 }
             }
             catch { }
+        }
+
+        // ── 保护层（点击画面才把键鼠交给 RDP）──────────────────────────────
+
+        /// <summary>保护层是否已被用户点掉（离开视口或切页后重置）。</summary>
+        private bool _shieldReleased;
+
+        /// <summary>
+        /// 同步保护层显示状态。
+        /// 条件：勾选「点击画面才捕获」+ 已连接 + 非自由视角 + 未点掉 + 主窗口在前台。
+        /// ★ 主窗口不在前台时一律关闭，避免 Popup 盖到别的应用上。
+        /// </summary>
+        private void UpdateShield()
+        {
+            try
+            {
+                if (ShieldPopup == null) return;
+                var win = Window.GetWindow(this);
+                bool foreground = win != null && win.IsActive && win.IsVisible
+                                  && win.WindowState != WindowState.Minimized;
+                bool want = App.Config.Settings.RdpCaptureOnClick
+                            && _viewing?.Console != null
+                            && _viewing.Console.IsConnected
+                            && !_viewing.Console.IsLooking
+                            && !_shieldReleased
+                            && ViewPage.Visibility == Visibility.Visible
+                            && foreground;
+                if (want) SyncShieldSize();
+                ShieldPopup.IsOpen = want;
+            }
+            catch { }
+        }
+
+        private void SyncShieldSize()
+        {
+            try
+            {
+                double w = ViewportHost.ActualWidth;
+                double h = ViewportHost.ActualHeight;
+                if (w <= 0 || h <= 0) return;
+                if (ShieldOverlay != null) { ShieldOverlay.Width = w; ShieldOverlay.Height = h; }
+                if (ShieldPopup != null) { ShieldPopup.HorizontalOffset = 0; ShieldPopup.VerticalOffset = 0; }
+            }
+            catch { }
+        }
+
+        /// <summary>用户点击保护层：撤掉它，把键鼠交给 RDP。</summary>
+        private void ShieldOverlay_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+            _shieldReleased = true;
+            ShieldPopup.IsOpen = false;
+            try { _viewing?.Console?.OnShieldReleased(); } catch { }
+            if (InputText != null) InputText.Text = "已接管键鼠 · 光标移出画面后重新保护";
+            Debug("保护层已解除（用户点击保护层）");
+        }
+
+        private void ShieldOverlay_MouseUp(object sender, MouseButtonEventArgs e)
+        {
+            // 兜底：某些情况下 Down 没派发（Popup 抢焦点），Up 也能解锁
+            if (_shieldReleased) return;
+            e.Handled = true;
+            _shieldReleased = true;
+            ShieldPopup.IsOpen = false;
+            try { _viewing?.Console?.OnShieldReleased(); } catch { }
+            if (InputText != null) InputText.Text = "已接管键鼠 · 光标移出画面后重新保护";
+            Debug("保护层已解除（MouseUp 兜底）");
+        }
+
+        /// <summary>由钩子回报：视口内发生了左键按下（保护层没能收到事件时用）。</summary>
+        public void ReleaseShieldByHook()
+        {
+            if (_shieldReleased) return;
+            _shieldReleased = true;
+            try { if (ShieldPopup != null) ShieldPopup.IsOpen = false; } catch { }
+            if (InputText != null) InputText.Text = "已接管键鼠 · 光标移出画面后重新保护";
+            Debug("保护层已解除（钩子回报点击）");
+        }
+
+        /// <summary>光标离开视口后重新挂上保护层。</summary>
+        private void RearmShield()
+        {
+            if (!_shieldReleased) return;
+            _shieldReleased = false;
+            UpdateShield();
         }
 
         public void Activate()
@@ -207,6 +304,8 @@ namespace SoulLink.Views
             foreach (var row in _rows)
                 row.Console?.SetForegroundActive(false);
             _viewing = null;
+            _shieldReleased = false;
+            try { if (ShieldPopup != null) ShieldPopup.IsOpen = false; } catch { }
             ConfigPage.Visibility = Visibility.Visible;
             SetBusyVisible(false);
             ViewPage.Visibility = Visibility.Collapsed;
@@ -232,6 +331,8 @@ namespace SoulLink.Views
             ViewportHost.Children.Add(row.Console);
             row.Console.OnShown();
             row.Console.SetForegroundActive(true);
+            _shieldReleased = false;
+            UpdateShield();
 
             if (!row.Console.IsConnected) await ConnectAsync(row);
         }
@@ -261,6 +362,7 @@ namespace SoulLink.Views
                 var (ok, msg) = await row.Console.ConnectAsync(row.Account, App.Config.Settings, sessionId);
                 SetBusyVisible(!ok);
                 if (!ok) BusyText.Text = msg;
+                if (ReferenceEquals(row, _viewing)) UpdateShield();
                 RenderTabs();
             }
             catch (Exception ex)
@@ -990,6 +1092,12 @@ namespace SoulLink.Views
                 Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) InputText.Text = t; });
             c.InputModeChanged += (_, m) =>
                 Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) ApplyModeUi(m); });
+            // 光标移出画面 → 重新挂保护层
+            c.ShieldRearmRequested += _ =>
+                Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) RearmShield(); });
+            // 钩子检测到视口内点击 → 收起保护层（Popup 自身事件可能收不到）
+            c.ShieldReleaseRequested += _ =>
+                Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) ReleaseShieldByHook(); });
             row.Console = c;
         }
 
