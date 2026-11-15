@@ -655,6 +655,94 @@
         </Setter>
     </Style>
 
+    <!-- ════════════ Slider（玻璃风） ════════════ -->
+    <!-- ★ 默认 WPF Slider 是白色粗条 + 方头，和本应用玻璃风完全不搭。
+         这里整体重做模板：
+           · 轨道 4px 圆角，已填充段用青色渐变，未填充段是低透明度白
+           · 滑块 16px 圆点，带青色描边与外发光，悬停/拖动时放大
+           · 去掉默认的刻度线（TickFrequency 仍保留以支持离散取值） -->
+    <Style x:Key="GlassSliderThumb" TargetType="Thumb">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <Grid Width="18" Height="18" Background="Transparent">
+                        <Ellipse x:Name="Halo" Width="18" Height="18" Opacity="0">
+                            <Ellipse.Fill>
+                                <RadialGradientBrush>
+                                    <GradientStop Color="#884FE3FF" Offset="0.0" />
+                                    <GradientStop Color="#004FE3FF" Offset="1.0" />
+                                </RadialGradientBrush>
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <Ellipse x:Name="Core" Width="12" Height="12" Fill="#FFFFFFFF"
+                                 Stroke="{StaticResource CyanBrush}" StrokeThickness="2" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Halo" Property="Opacity" Value="1" />
+                            <Setter TargetName="Core" Property="Width" Value="13" />
+                            <Setter TargetName="Core" Property="Height" Value="13" />
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="Halo" Property="Opacity" Value="1" />
+                            <Setter TargetName="Core" Property="Width" Value="14" />
+                            <Setter TargetName="Core" Property="Height" Value="14" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GlassSlider" TargetType="Slider">
+        <Setter Property="Height" Value="24" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="IsMoveToPointEnabled" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Slider">
+                    <Grid VerticalAlignment="Center">
+                        <Border Height="4" CornerRadius="2" Background="#26FFFFFF" />
+                        <!-- 已填充段：用青色→紫罗兰渐变，和标题栏光晕呼应 -->
+                        <Track x:Name="PART_Track">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="{x:Static Slider.DecreaseLarge}" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border Height="4" CornerRadius="2">
+                                                <Border.Background>
+                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                        <GradientStop Color="{StaticResource Cyan}" Offset="0" />
+                                                        <GradientStop Color="{StaticResource Violet}" Offset="1" />
+                                                    </LinearGradientBrush>
+                                                </Border.Background>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="{x:Static Slider.IncreaseLarge}" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border Height="4" Background="Transparent" />
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource GlassSliderThumb}"
+                                       Width="18" Height="18" Margin="0,0,0,0" />
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ════════════ ComboBox（玻璃风） ════════════ -->
     <Style x:Key="ComboToggle" TargetType="ToggleButton">
         <Setter Property="Cursor" Value="Hand" />

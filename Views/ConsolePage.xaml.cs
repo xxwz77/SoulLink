@@ -70,8 +70,15 @@ namespace SoulLink.Views
             double sens = App.Config.Settings.LookSensitivity > 0 ? App.Config.Settings.LookSensitivity : 4.0;
             if (SensSlider != null)
             {
+                // ★ 必须先屏蔽 ValueChanged 再赋值：
+                //   工具栏浮层里的 SensSlider 和「RDP 通用设置」共用同一个设置项，
+                //   而 XAML 里写死 Value="4"。构造时直接赋值会触发 SensSlider_ValueChanged，
+                //   它无脑 ConfigStore.Save(...) —— 结果用户保存的灵敏度在下次启动时被覆盖。
+                //   （实测：写入 9.5 → 重启后变成 1/4）
+                _suppressSensSave = true;
                 SensSlider.Value = Math.Min(12, Math.Max(1, sens));
                 if (SensText != null) SensText.Text = sens.ToString("0.0") + "x";
+                _suppressSensSave = false;
             }
             if (HotkeyBtn != null)
             {
@@ -677,12 +684,92 @@ namespace SoulLink.Views
             GeneralSettingsPanel.Visibility = Visibility.Collapsed;
         }
 
+        /// <summary>
+        /// 用户配置页里"改了就立刻存"的控件。
+        ///
+        /// ★ 为什么需要：这些下拉框/复选框原来**没有绑定任何事件**，
+        ///   改完不点「保存配置」就等于没改，用户反馈"设置好了下次打开又没了"。
+        ///   这里统一挂上自动保存，跟通用设置页的行为保持一致。
+        /// </summary>
+        private void HookAutoSave()
+        {
+            if (_autoSaveHooked) return;
+            _autoSaveHooked = true;
+
+            foreach (var box in new[] { DepthCombo, ScaleCombo, PerformanceCombo, NetworkCombo, AudioCombo, KeyboardCombo })
+                box.SelectionChanged += (_, __) => AutoSaveConfig();
+
+            foreach (var check in new[] { AutoDiscCheck, AudioCaptureCheck, ClipboardCheck, PrintersCheck,
+                                          SmartCardsCheck, PortsCheck, DrivesCheck })
+            {
+                check.Checked += (_, __) => AutoSaveConfig();
+                check.Unchecked += (_, __) => AutoSaveConfig();
+            }
+        }
+
+        private bool _autoSaveHooked;
+        private bool _suppressAutoSave;
+        private bool _loadingConfig;
+
+        /// <summary>
+        /// 把当前表单里的"非文本"选项写回账号并保存。
+        /// 文本类字段（名字/地址/端口/分辨率）仍需点「保存配置」——避免边输边存把密码框清空。
+        /// </summary>
+        private void AutoSaveConfig()
+        {
+            if (_suppressAutoSave || _loadingConfig) return;
+            var row = _editing;
+            if (row == null) return;
+
+            var a = row.Account;
+            a.RdpColorDepth = TagOf(DepthCombo, a.RdpColorDepth > 0 ? a.RdpColorDepth : 32);
+            a.RdpScaleMode = TagOf(ScaleCombo, a.RdpScaleMode);
+            a.RdpPerformanceMode = TagOf(PerformanceCombo, a.RdpPerformanceMode);
+            a.RdpNetworkConnectionType = TagOf(NetworkCombo, a.RdpNetworkConnectionType);
+            a.RdpAudioMode = TagOf(AudioCombo, a.RdpAudioMode);
+            a.RdpKeyboardHookMode = TagOf(KeyboardCombo, a.RdpKeyboardHookMode);
+
+            a.RdpAutoDisconnect = AutoDiscCheck.IsChecked == true;
+            a.RdpAudioCapture = AudioCaptureCheck.IsChecked == true;
+            a.RdpRedirectClipboard = ClipboardCheck.IsChecked == true;
+            a.RdpRedirectPrinters = PrintersCheck.IsChecked == true;
+            a.RdpRedirectSmartCards = SmartCardsCheck.IsChecked == true;
+            a.RdpRedirectPorts = PortsCheck.IsChecked == true;
+            a.RdpRedirectDrives = DrivesCheck.IsChecked == true;
+
+            ConfigStore.Save(App.Config);
+            try { ConsoleView_ApplyToOpenConsoles(a); } catch { }
+            CfgSub.Text = "已保存 · " + DateTime.Now.ToString("HH:mm:ss");
+        }
+
+        /// <summary>让已打开的画面立刻用上新参数（只对同一账号生效）。</summary>
+        private void ConsoleView_ApplyToOpenConsoles(SoulLink.Models.Account account)
+        {
+            foreach (Window window in Application.Current.Windows)
+                foreach (var console in FindConsoles(window))
+                    if (console.Account?.Id == account.Id) console.ApplyGlobalSettings();
+        }
+
+        private static System.Collections.Generic.IEnumerable<RdpConsole> FindConsoles(DependencyObject root)
+        {
+            if (root is RdpConsole console) yield return console;
+            for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+                foreach (var nested in FindConsoles(System.Windows.Media.VisualTreeHelper.GetChild(root, i)))
+                    yield return nested;
+        }
+
         private void LoadConfigFields(UserRow row)
         {
             NoSelectionHint.Visibility = Visibility.Collapsed;
             GeneralSettingsPanel.Visibility = Visibility.Collapsed;
             _showGeneralSettings = false;
             ConfigPanel.Visibility = Visibility.Visible;
+
+            HookAutoSave();
+
+            // 填表期间不要触发自动保存，否则会把刚读出来的值原样写回去、
+            // 还可能把 CfgSub 改成"已保存"。
+            _loadingConfig = true;
 
             var a = row.Account;
             CfgTitle.Text = a.Caption;
@@ -716,6 +803,8 @@ namespace SoulLink.Views
 
             AutoDiscCheck.IsChecked = a.RdpAutoDisconnect;
             PasswordBox.Password = "";
+
+            _loadingConfig = false;
         }
 
         private static void SelectByTag(ComboBox box, string tag)
@@ -937,11 +1026,16 @@ namespace SoulLink.Views
 
         private void BtnSens_Click(object sender, RoutedEventArgs e) => ShowGeneralSettings();
 
+        /// <summary>构造/同步期间屏蔽工具栏灵敏度滑块的写回，避免把默认值覆盖掉已保存的设置。</summary>
+        private bool _suppressSensSave;
+
         private void SensSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (SensText == null) return;
             double v = Math.Round(e.NewValue, 1);
             SensText.Text = v.ToString("0.0") + "x";
+            if (_suppressSensSave) return;
+
             if (_viewing?.Console != null) _viewing.Console.LookSensitivity = v;
             try { App.Config.Settings.LookSensitivity = v; ConfigStore.Save(App.Config); } catch { }
         }

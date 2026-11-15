@@ -1,7 +1,7 @@
 # SoulLink 交接文档
 
 > 给接手的新会话看。**只写本会话实际验证过的结论**；未验证的会标「待验证」，不要当成已完成。
-> 最后更新：2026-11-15（侧栏对齐 + 几何 + 边框强调色修复）
+> 最后更新：2026-11-15（通用设置持久化 + 滑动条样式 + 侧栏对齐 + 边框强调色）
 > 完整历史踩坑记录见 [HANDOFF.archive-2026-11-15.md](HANDOFF.archive-2026-11-15.md)（旧文档，2026-11-14 至 15 日，含 12.1~12.94 全部细节）。
 
 ---
@@ -180,6 +180,51 @@ NavPanel.Height           = NavRail.ActualHeight;
 - 收起态：左边距 20 DIP，与右侧卡片对称；上下边框与右侧卡片齐平（y=111 / y=1144）。
 - 展开态：rail 右缘 → panel 左缘**无亮线**；底部区贴底、撑满宽度。
 
+### 4.2.3 ★ WPF 控件构造期事件会把默认值写进配置（本会话修复）
+
+**症状**：「RDP 通用设置」改完保存了，下次启动又变回去（灵敏度总被冲回 1/4）。
+
+**根因**：`InitializeComponent()` 建立模板时，`Slider` 会**先按 XAML 里的 `Minimum` 发一次 `ValueChanged`**
+（`old=0.00 new=1.00`）。那一刻 `_loading` 还是 `false`（它原本在 `LoadSettings()` 里才置 true，
+而 `LoadSettings` 挂在 `Loaded` 上，还没执行），于是这条"默认值"被当成用户操作写进了配置：
+
+```
+Sensitivity_Changed(new=1.0) → Settings.LookSensitivity = 1 → ConfigStore.Save()
+```
+
+用户保存的 9.5 就这样在每次启动时被覆盖成 1。
+
+**修复**：`_loading` **字段初始值直接写成 `true`**，让构造期事件一律被挡掉；
+`LoadSettings()` 里读完真实配置后再置回 `false`。
+
+```csharp
+private bool _loading = true;   // ★ 必须初始 true
+public RdpGeneralSettings() { InitializeComponent(); Loaded += (_, __) => LoadSettings(); }
+```
+
+**同类隐患（一并修了）**：`ConsolePage` 工具栏浮层里还有一个 `SensSlider`（XAML 写死 `Value="4"`），
+和通用设置共用同一项设置。构造函数里给它赋值同样会触发 `ValueChanged` 写回配置。
+已加 `_suppressSensSave` 守卫包住初始化赋值。
+
+**排查手法**：这类"值被悄悄覆盖"光看代码很难定位。加一行临时日志即可一击命中——
+把 `old/new/loading` 都打出来，日志里 `loading=False` 就是元凶（诊断代码已移除）。
+
+**实机验证**：写入 `LookSensitivity=8.5 / RdpCaptureOnClick=false` → 启动 → 两项均原样保持；
+滑块位置与数值文字同步（`docs/fix-general-settings-slider.png`）。
+
+### 4.2.4 ★ 滑动条样式（`GlassSlider`）
+
+默认 WPF Slider 是白色粗条 + 方头，和本应用玻璃风完全不搭。已在 `Theme/Styles.xaml` 重做模板：
+
+- 轨道 4px 圆角；已填充段用 **青→紫罗兰渐变**（和标题栏光晕呼应），未填充段是低透明度白。
+- 滑块 12px 圆点，白色填充 + 青色描边；悬停/拖动时放大并亮起光晕。
+- `IsMoveToPointEnabled=True`：点轨道任意位置直接跳过去，不用拖。
+- 去掉默认刻度线，但保留 `TickFrequency` 以支持离散取值。
+
+**顺带修的 UI 缺陷**：通用设置页里「自由视角灵敏度」标签和数值曾经**重叠在一起**，
+原因是两个 `TextBlock` 都没写 `Grid.Column`，全落在第 0 列。凡是用 `Grid.ColumnDefinitions`
+布局的都要显式写 `Grid.Column`。
+
 ### 4.3 RDP 空域（Airspace）：WPF 浮层盖不住画面
 
 - RDP 是 `WindowsFormsHost` 里的 ActiveX，永远绘制在 WPF 之上，`Panel.ZIndex` 无效。
@@ -286,6 +331,9 @@ SoulLink/
 | 边框真正用上系统强调色（COLORREF 修复） | ✅ 激活 `#F091C1` / 失活灰边，与原生窗口逐像素一致 | `docs/fix-accent-border-active.png`、`fix-accent-border-inactive.png` |
 | 侧栏收起态圆角 + 四周边距 | ✅ 左 10 / 上 4 / 下 16 DIP，四角圆 | `docs/fix-sidebar-collapsed.png` |
 | 侧栏展开态无缝拼接 | ✅ 无接缝、上下边界与图标栏对齐 | `docs/fix-sidebar-expanded.png` |
+| RDP 通用设置真正持久化 | ✅ 重启后灵敏度/点击捕获/热键均保持 | `docs/fix-general-settings-slider.png` |
+| 滑动条改为玻璃风 | ✅ 青紫渐变轨道 + 发光圆点 | 同上 |
+| 灵敏度标签与数值重叠 | ✅ 补 `Grid.Column` | 同上 |
 | 统一自绘弹窗替代 MessageBox | ✅ | `Views/AppDialog` |
 | 自动化配置组 + 顺序执行 + 每日定时 | ✅ 保存与界面 | `docs/verify-automation.png` |
 
@@ -296,6 +344,7 @@ SoulLink/
 以下**不要当成已完成**：
 
 1. **点击捕获（`RdpCaptureOnClick`）的完整手感**：首次点击已改为送达 RDP，但“移出即释放、重新点击才接管”的多场景（切页、失焦、最小化）尚未逐项实测。
+   注：该项的**保存与回显**已修好（4.2.3），重启后能正确保持。
 2. **浅色模式跨页面文字对比度**：侧栏已修，启动台/在线会话/会话详情页是否全部达标未逐页确认。
 3. **自动化实际执行**：只验证了配置保存与界面，未实际跑过一条龙流程与定时触发。
 4. **应用设置页（`SettingsPage`）**：已移除 RDP 凭据区，但页面内仍有「修改密码/地址/移除」按钮绑定的旧事件处理，需要确认没有残留入口或空操作。
@@ -351,7 +400,8 @@ git revert <hash>                          # 撤销已提交的错误
 
 | 提交 | 说明 |
 | --- | --- |
-| 本次 | 侧栏高度对齐右侧卡片、左右边距对称、底部区贴底 |
+| 本次 | 通用设置持久化失效 + 滑动条换玻璃风 + 标签重叠 |
+| `55c52a7` | 侧栏高度对齐右侧卡片、左右边距对称、底部区贴底 |
 | `435f801` | 修复侧栏收起态无圆角/无边距、展开态接缝 |
 | `f38d912` | 修复边框未使用系统强调色（COLORREF 格式 + 强调色取值来源） |
 | `6ad4676` | 修复窗口顶部额外粉条，边框随激活状态用系统主题色 |
@@ -381,6 +431,8 @@ git revert <hash>                          # 撤销已提交的错误
 | 侧栏与右侧卡片高度不齐 | rail 上写了 `Margin="...,4,...,16"`；外边距应由外层内容区提供，rail 不再加（4.2.2） |
 | 侧栏左右边距不对称 | 外层已有 `Margin(20,...)`，rail 又加了一次左边距 → 40 DIP（4.2.2） |
 | 侧栏底部开关/会话卡片悬在中间 | 三类元素塞在 `StackPanel` 里，`Grid.Row` 无效；要放进 `Grid.Row="2"`（4.2.2） |
+| 设置保存了下次打开又变回去 | 控件构造期事件把默认值写进配置：`_loading` 必须**初始 true**（4.2.3） |
+| 标签和数值叠在一起 | `Grid.ColumnDefinitions` 里忘了写 `Grid.Column`，全挤在第 0 列（4.2.4） |
 
 ---
 
