@@ -99,7 +99,7 @@
                     </Grid>
 
                     <!-- ═══ 主体 ═══ -->
-                    <Grid Grid.Row="1">
+                    <Grid Grid.Row="1" x:Name="SideNavHost">
                         <Grid.ColumnDefinitions>
                             <!-- ★ 固定 56px：收起时放图标栏，展开时侧栏以浮层盖在上面，
                                  画面尺寸**永不变化**，所以不会闪 -->
@@ -107,10 +107,13 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
-                        <!-- ① 图标栏：恒定 56px 宽，永远占位 -->
+                        <!-- ① 图标栏：恒定 56px 宽，永远占位
+                             ★ 四边留白与右侧内容面板一致（内容区 Margin=20,10,20,16）：
+                               左边 10、上边 4、下边 16。收起时它是一个独立圆角卡片，
+                               不能贴死窗口左边框（用户反馈：挨得太近）。 -->
                         <Border Grid.Column="0" x:Name="NavRail" Panel.ZIndex="10"
                                 Style="{StaticResource NavSurface}"
-                                Margin="0,4,0,0" Padding="3,12"
+                                Margin="10,4,0,16" Padding="3,12"
                                 MouseEnter="NavRail_MouseEnter" MouseLeave="NavRail_MouseLeave">
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -169,13 +172,26 @@
 
                         <!-- ② 展开的侧栏：Popup 独立窗口（解决空域遮挡）
                              ★ 行结构必须与左侧图标栏**逐行等高**，否则会错位 -->
-                        <Popup x:Name="NavPopup" Placement="Right" PlacementTarget="{Binding ElementName=NavRail}"
+                        <!-- ★ Placement 必须相对 NavRail 的**内容区**精确对齐：
+                               NavRail 有 Margin，Popup 会按外框算位置，实测顶/底各差 2px、右边差 2px，
+                               中间就会露出一条窗口底色的缝。改成 Placement=Relative + 代码里
+                               用 NavRail 相对本 Grid 的实际偏移来定位（见 UpdateNavSurfaceShape）。 -->
+                        <Popup x:Name="NavPopup" Placement="Relative" PlacementTarget="{Binding ElementName=SideNavHost}"
                                HorizontalOffset="0" VerticalOffset="0"
                                AllowsTransparency="True" StaysOpen="True" PopupAnimation="None"
                                Opened="NavPopup_Opened" Closed="NavPopup_Closed">
-                            <!-- Padding 与图标栏一致：7 左右 · 12 上下；这样第一行基线相同 -->
-                            <Border x:Name="NavPanel" Width="190" Margin="0" Height="{Binding ActualHeight, ElementName=NavRail}"
-                                    Style="{StaticResource NavSurface}" Padding="10,12" CornerRadius="0,18,18,0"
+                            <!-- Padding 与图标栏一致：7 左右 · 12 上下；这样第一行基线相同
+                                 ★ 展开态是「图标栏 + 面板」拼成一张卡：
+                                   面板左边框必须去掉（BorderThickness=0,1,1,1），
+                                   否则会和图标栏的右边框并排画成两道线 → 中间显出一条接缝。
+                                   圆角只留在右侧两角，左侧直角正好顶住图标栏。 -->
+                            <!-- ★ 高度不能用 ElementName 绑定 NavRail.ActualHeight：
+                                   Popup 里的内容在独立的视觉树里，跨树 ElementName 绑不上，
+                                   结果高度掉回默认值（实测变成 202x56 的不可见小窗），侧栏根本弹不出来。
+                                   改由 UpdateNavSurfaceShape() 在打开时显式同步尺寸。 -->
+                            <Border x:Name="NavPanel" Width="180" Margin="0"
+                                    Style="{StaticResource NavSurface}" Padding="10,12"
+                                    BorderThickness="0,1,1,1" CornerRadius="0,14,14,0"
                                     MouseLeave="NavPanel_MouseLeave"
                                     MouseEnter="NavPanel_MouseEnter">
                                 <Grid>

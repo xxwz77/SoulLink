@@ -57,8 +57,11 @@ namespace SoulLink.Services
                 mainWindow.NavPanel.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "NavBackground");
                 mainWindow.NavRail.BorderBrush = stroke;
                 mainWindow.NavPanel.BorderBrush = stroke;
-                mainWindow.NavRail.CornerRadius = new CornerRadius(14, 0, 0, 14);
-                mainWindow.NavPanel.CornerRadius = new CornerRadius(0, 14, 14, 0);
+
+                // ★ 收起态：图标栏是独立的圆角卡片，四个角都要圆。
+                //   展开态：它变成整张卡片的左半截，右侧两角必须切成直角去接面板，
+                //   否则两段圆角之间会夹出一个豁口。
+                mainWindow.UpdateNavSurfaceShape(mainWindow.IsNavCollapsedForTheme);
             }
             foreach (Window window in Application.Current.Windows)
                 if (window is SoulLink.Views.MainWindow main)

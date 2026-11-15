@@ -1,7 +1,7 @@
 # SoulLink 交接文档
 
 > 给接手的新会话看。**只写本会话实际验证过的结论**；未验证的会标「待验证」，不要当成已完成。
-> 最后更新：2026-11-15（边框强调色修复）
+> 最后更新：2026-11-15（侧栏几何 + 边框强调色修复）
 > 完整历史踩坑记录见 [HANDOFF.archive-2026-11-15.md](HANDOFF.archive-2026-11-15.md)（旧文档，2026-11-14 至 15 日，含 12.1~12.94 全部细节）。
 
 ---
@@ -110,6 +110,55 @@ public interface IMsTscNonScriptable
 - 应用内深浅主题切换**不影响**边框色（本来就该跟系统强调色走），三种模式下实测均为 `#F091C1`。
 - 最大化时四边无色属**正常**：原生窗口最大化同样不出边框，不是缺陷。
 
+### 4.2.2 ★ 侧边栏两态几何（本会话修复，实测结论）
+
+侧栏是「收起 = 独立圆角卡片 / 展开 = 图标栏 + Popup 面板拼成一张卡」，两块必须严丝合缝。
+
+**布局基线**
+
+- 内容区 `Grid Margin="20,10,20,16"`，主体行高 = 690 DIP（本机 150% 缩放，1770×1170 物理 = 1180×780 DIP）。
+- `NavRail` 的 `Margin="10,4,0,16"`：左边 10 与内容区左边距对齐，上 4、下 16 同理。
+  **收起态不能贴死窗口左边框**（用户反馈：挨得太近）。
+- 列宽写死 56，`NavRail` 减掉左右 Margin 后 `ActualWidth = 46`。**别把 56 直接当 rail 宽度用。**
+
+**坑一：Popup 的 `ElementName` 绑定不跨视觉树**
+
+- Popup 内容在独立视觉树里，`Height="{Binding ActualHeight, ElementName=NavRail}"` **绑不上**，
+  高度掉回默认值 → 面板塌成一个 202×56 的不可见小窗，**侧栏根本弹不出来**（且日志无任何报错）。
+- 必须在代码里显式同步：`NavPanel.Height = NavRail.ActualHeight`。
+
+**坑二：`Placement="Right"` 会按 Margin 外框算，差 2px**
+
+- `NavRail` 带 Margin 时 Popup 定位偏 2px，露出窗口底色形成竖缝。
+- 改用 `Placement="Relative"` + `PlacementTarget` 指向外层 Grid，再自己算偏移：
+
+```csharp
+var offset = NavRail.TranslatePoint(new Point(0, 0), SideNavHost);
+NavPopup.HorizontalOffset = offset.X + NavRail.ActualWidth - 2;  // -2 盖住 rail 的右边框
+NavPopup.VerticalOffset   = offset.Y;                            // ★ 必须加，漏了顶部高 4 DIP
+NavPanel.Height           = NavRail.ActualHeight;
+```
+
+**坑三：两条 1px 边框并排 = 一条看得见的接缝**
+
+- rail 有右边框、panel 有左边框，并排就显出一条 `#505469` 亮线。
+- 解法：`NavPanel.BorderThickness = "0,1,1,1"`（不画左边），再把 Popup 左移 2px 盖住 rail 边框。
+- 只移 1px 仍会露 1px 亮线（抗锯齿），**取 2px**。
+
+**圆角**
+
+- 收起：`NavRail.CornerRadius = 14`（四角全圆）。
+- 展开：`NavRail.CornerRadius = (14,0,0,14)` + `NavPanel.CornerRadius = (0,14,14,0)`，
+  拼接处两边都直角，外侧两角圆 —— 合起来是一张完整卡片。
+- 两态切换统一走 `MainWindow.UpdateNavSurfaceShape(bool collapsed)`，
+  `ThemeManager.Apply()` 也调它（否则主题刷新会把圆角写回旧值）。
+
+**实机验证**（`docs/fix-sidebar-collapsed.png`、`fix-sidebar-expanded.png`）
+
+- 收起态：左边距 10 DIP，四角圆角清晰。
+- 展开态：rail 右缘 `x=111` → panel 左缘 `x=112`，中间**无亮线**；
+  panel 底边框 `y=1120`，与 rail 底边一致。
+
 ### 4.3 RDP 空域（Airspace）：WPF 浮层盖不住画面
 
 - RDP 是 `WindowsFormsHost` 里的 ActiveX，永远绘制在 WPF 之上，`Panel.ZIndex` 无效。
@@ -214,6 +263,8 @@ SoulLink/
 | 浅色侧栏随主题变浅、无中间缝 | ✅ | `docs/fix-light-sidebar.png` |
 | 系统主题色边框 + 无顶部粉条 | ✅ | `docs/window-top-caption.png`、`window-top-crop.png` |
 | 边框真正用上系统强调色（COLORREF 修复） | ✅ 激活 `#F091C1` / 失活灰边，与原生窗口逐像素一致 | `docs/fix-accent-border-active.png`、`fix-accent-border-inactive.png` |
+| 侧栏收起态圆角 + 四周边距 | ✅ 左 10 / 上 4 / 下 16 DIP，四角圆 | `docs/fix-sidebar-collapsed.png` |
+| 侧栏展开态无缝拼接 | ✅ 无接缝、上下边界与图标栏对齐 | `docs/fix-sidebar-expanded.png` |
 | 统一自绘弹窗替代 MessageBox | ✅ | `Views/AppDialog` |
 | 自动化配置组 + 顺序执行 + 每日定时 | ✅ 保存与界面 | `docs/verify-automation.png` |
 
@@ -279,7 +330,8 @@ git revert <hash>                          # 撤销已提交的错误
 
 | 提交 | 说明 |
 | --- | --- |
-| 本次 | 修复边框未使用系统强调色（COLORREF 格式 + 强调色取值来源） |
+| 本次 | 修复侧栏收起态无圆角/无边距、展开态接缝 |
+| `f38d912` | 修复边框未使用系统强调色（COLORREF 格式 + 强调色取值来源） |
 | `6ad4676` | 修复窗口顶部额外粉条，边框随激活状态用系统主题色 |
 | `4f897f8` | 添加版本管理与安全回退说明 |
 | `bac46e8` | 稳定基线 |
@@ -301,6 +353,9 @@ git revert <hash>                          # 撤销已提交的错误
 | 窗口四周粉色粗边 | 不是 `DWMWA_BORDER_COLOR`，是顶部非客户区横条；用 `WM_NCCALCSIZE` 去掉 |
 | 边框怎么都不变色 | `DWMWA_BORDER_COLOR` 传了 ARGB；必须 COLORREF（`0x00BBGGRR`，alpha=0），否则 `E_INVALIDARG` 静默失效（4.2.1） |
 | 边框色偏暗偏灰 | 用了 `DwmGetColorizationColor`（混合着色）；改读注册表 `DWM\ColorizationColor`（4.2.1） |
+| 侧栏点了没反应、弹不出来 | Popup 里对 NavRail 的 `ElementName` 绑定不跨视觉树，高度塌掉；改用代码赋值（4.2.2） |
+| 侧栏展开中间有条竖缝 | rail 右边框与 panel 左边框并排；panel 不画左边 + Popup 左移 2px 盖住（4.2.2） |
+| 侧栏展开比图标栏高/矮一截 | 漏了 `VerticalOffset = offset.Y`，或高度没跟 `NavRail.ActualHeight` 同步（4.2.2） |
 
 ---
 

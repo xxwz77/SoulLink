@@ -526,6 +526,8 @@ namespace SoulLink.Views
             }
             catch { }
 
+            UpdateNavSurfaceShape(collapsed);
+
             if (HamburgerGlyph != null)
                 HamburgerGlyph.Text = collapsed ? "\uE700" : "\uE76B";
 
@@ -538,8 +540,77 @@ namespace SoulLink.Views
             if (changed) App.Breadcrumb("侧栏 " + (collapsed ? "收起" : "展开") + " · " + reason);
         }
 
+        /// <summary>供 ThemeManager 读取当前侧栏状态（主题刷新时要用）。</summary>
+        internal bool IsNavCollapsedForTheme => _navCollapsed;
+
+        /// <summary>
+        /// 侧栏两态的圆角：
+        ///   收起 = 独立卡片，四角全圆；
+        ///   展开 = 图标栏 + Popup 面板拼成一张卡，图标栏右侧两角必须变直角，
+        ///          否则面板的直角边会紧贴着图标栏的圆角，中间露出豁口。
+        /// </summary>
+        internal void UpdateNavSurfaceShape(bool collapsed)
+        {
+            try
+            {
+                if (NavRail != null)
+                    NavRail.CornerRadius = collapsed
+                        ? new CornerRadius(14)
+                        : new CornerRadius(14, 0, 0, 14);
+
+                if (NavPanel != null)
+                {
+                    NavPanel.CornerRadius = new CornerRadius(0, 14, 14, 0);
+                    // 左边界不画：面板左边正好压在图标栏右边上，两条线会并成一条粗缝。
+                    NavPanel.BorderThickness = new Thickness(0, 1, 1, 1);
+
+                    // ★ Popup 内容在独立视觉树里，ElementName 绑定不到 NavRail，
+                    //   高度必须在这里显式对齐，否则面板会塌成一条小窗、看不见。
+                    // ★ 位置也不能靠 Placement=Right：NavRail 带 Margin 时 Popup 按外框算，
+                    //   实测会偏 2px，露出窗口底色形成接缝。这里按 NavRail 相对 Grid 的
+                    //   实际偏移精确重合：面板左边 === 图标栏右边。
+                    if (!collapsed && NavRail != null && SideNavHost != null)
+                    {
+                        var offset = NavRail.TranslatePoint(new Point(0, 0), SideNavHost);
+
+                        // 左移 2px 盖住 NavRail 自己的右边框：
+                        // 两条 1px 边框并排会显出一条比背景亮的竖线（实测 #505469），
+                        // 这就是用户看到的"接缝"。面板左边界本来就不画，正好用来遮这一条。
+                        // 实测只盖 1px 仍会露出 1px 亮线，所以按 border(1) + 抗锯齿(1) 取 2。
+                        NavPopup.HorizontalOffset = offset.X + NavRail.ActualWidth - 2;
+
+                        // ★ 垂直也必须跟 rail 对齐：NavRail 有 Margin 上边距 4，
+                        //   漏掉这一项面板顶部会高出 rail 一截（实测高 4 DIP），
+                        //   用户看到的就是"面板顶着标题栏、和图标栏错位"。
+                        NavPopup.VerticalOffset = offset.Y;
+
+                        // 高度与 rail 完全一致，否则面板会比 rail 短一截，四角露出缺口。
+                        NavPanel.Height = NavRail.ActualHeight;
+
+                        // 打开瞬间 NavPanel 还没参与布局，Popup 会按旧高度定位。
+                        // 强制走一次测量-排布，让 Popup 立刻按新尺寸摆好，避免首帧错位。
+                        NavPanel.Measure(new Size(NavPanel.Width, NavPanel.Height));
+                        NavPanel.Arrange(new Rect(0, 0, NavPanel.Width, NavPanel.Height));
+                        NavPanel.UpdateLayout();
+                    }
+                    else if (NavPanel != null)
+                    {
+                        NavPanel.ClearValue(FrameworkElement.HeightProperty);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                App.AppendErrorLog("MainWindow.UpdateNavSurfaceShape", ex);
+            }
+        }
+
         private void NavPopup_Opened(object sender, EventArgs e) { }
-        private void NavPopup_Closed(object sender, EventArgs e) { _navCollapsed = true; }
+        private void NavPopup_Closed(object sender, EventArgs e)
+        {
+            _navCollapsed = true;
+            UpdateNavSurfaceShape(true);
+        }
 
         private void SaveNavPref()
         {
