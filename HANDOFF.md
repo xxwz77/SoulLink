@@ -1,7 +1,7 @@
 # SoulLink 交接文档
 
 > 给接手的新会话看。**只写本会话实际验证过的结论**；未验证的会标「待验证」，不要当成已完成。
-> 最后更新：2026-11-15（热键修复 + 自由视角鼠标落点 + 通用设置持久化 + 侧栏对齐 + 边框强调色）
+> 最后更新：2026-11-15（热键双通道 + 转视角防抖 + 遮罩自适应 + 自由视角鼠标落点 + 通用设置持久化 + 侧栏对齐 + 边框强调色）
 > 完整历史踩坑记录见 [HANDOFF.archive-2026-11-15.md](HANDOFF.archive-2026-11-15.md)（旧文档，2026-11-14 至 15 日，含 12.1~12.94 全部细节）。
 
 ---
@@ -260,6 +260,30 @@ helper.Opacity = 0;
 本会话通过日志确认了注册正确（`锁定热键已注册：Ctrl+Alt+K`、`parsed=鼠标侧键4`），
 但**实际按键触发需要人工确认**。
 
+### 4.2.5.1 ★ 热键被 RDP 抢走（本会话补修）
+
+**症状**：用户反馈"快捷键切换还是没有生效。好像直接作用于 RDP，前台收不到。"
+
+**根因**：RDP 控件的 `KeyboardHookMode=1`（"发送到远端"）在输入链路里优先抢占按键，
+Ctrl+Alt+K 被直接送进远端会话，前台收不到，`RegisterHotKey` 的 `WM_HOTKEY` 永远不触发。
+
+**修复**：新增 `Services/LowLevelKeyboardHook.cs`（`WH_KEYBOARD_LL`），
+与 `RegisterHotKey` **双通道并存**：
+
+- 低级键盘钩子在输入链路里比窗口/热键处理都靠前，能抢在 RDP 之前拦下按键。
+- 命中时 `return 1` 吞掉，避免远端收到"半截"组合键。
+- 键抬起也吞掉，防止远端残留按下态。
+- 回调通过 `Dispatcher.BeginInvoke` 切回 UI 线程再执行。
+
+**同时修的隐患**：`RegisterKeyboard` 原来只接收 `label` 字符串，内部再用
+`HotkeySpec.Parse(label)` 重建 spec。这个二次往返多余且脆弱 ——
+改为直接把 `HotkeySpec` 对象传进去。
+
+**验证限制（重要）**：`SendInput`/`keybd_event` 注入的事件**不会被低级键盘钩子接收**
+（Windows 的 `LLKHF_INJECTED` 机制），所以"按热键"这一步无法脚本自动化。
+本会话已通过日志确认钩子安装成功（`键盘钩子安装: 成功 spec=Ctrl+Alt+K`），
+**实际按键触发需人工确认**。
+
 ### 4.2.6 ★ 自由视角不能影响鼠标落点
 
 **症状**：开启自由视角后，无法正常拖动地图与点击传送。
@@ -287,6 +311,60 @@ if (ev.IsLeftUp || ev.IsRightUp || ev.IsMiddleUp || ev.Message == 0x020C /*WM_XB
 
 - **必须用 `down`/`up` 而不是 `click`**：拖拽地图要的是"按住不放 + 移动 + 松开"。
 - `WM_XBUTTONUP = 0x020C` 原来在 `MouseHookEvent` 里没有判定，已补 `IsXButtonUp`。
+
+### 4.2.7 ★ 自由视角转视角"发飘/抖动"（本会话修复）
+
+**症状**：用户反馈"自由视角下拖动地图可以了，但是好像有点飘（鼠标指针抖动）"。
+
+**根因**：原来用 `ev.X - _captureCenterX`（**与中心做差**）。
+但 `SetCursorPos` 把光标挪回中心的过程本身也会产生 WM_MOUSEMOVE，
+同一个物理位移被反复算进去 → 视角发飘、指针抖动。
+
+**修复**：改用**相邻事件差分**（`ev.X - _lastMoveX`），并在回中心后
+把基准位重置成中心点，避免"中心 → 新位置"的跳变被算成巨大位移。
+
+同时去掉 5ms 节流丢位移的做法（会让转视角一顿一顿的），
+改为**累积到阈值再发**（|dx|≥3 或 |dy|≥3，或距上次 ≥8ms）：
+
+```csharp
+int dx = ev.X - _lastMoveX;
+int dy = ev.Y - _lastMoveY;
+_lastMoveX = ev.X; _lastMoveY = ev.Y;
+
+NativeInput.SetCursorPos(_captureCenterX, _captureCenterY);
+_lastMoveX = _captureCenterX;   // 回中心后重新起算
+_lastMoveY = _captureCenterY;
+
+_pendLookX += dx; _pendLookY += dy;
+bool big = Math.Abs(_pendLookX) >= 3 || Math.Abs(_pendLookY) >= 3;
+if (big || (now - _lastInject).TotalMilliseconds >= 8) { /* 发送并清零 */ }
+```
+
+进入自由视角时（`BeginCapture`）必须把 `_lastMoveX/_lastMoveY` 同步成中心点，
+否则第一次移动会甩一下。
+
+### 4.2.8 ★ 连接遮罩不跟随视口（本会话修复）
+
+**症状**：用户反馈"连接用户的时候，连接动画没有自适应窗口大小"。
+
+**根因**：`BusyOverlay` 固定 `Width=900 / Height=620`，
+只在 `ConsolePage.SizeChanged` 时更新。Popup 的内容**不会**自动跟随
+`PlacementTarget` 伸缩，切页/侧栏/窗口缩放时视口变了它不变。
+
+**修复**：改为监听 `ViewportHost.SizeChanged` + `Loaded` + `Activate()` +
+`SetBusyVisible(true)`，统一走 `SyncBusyOverlaySize()`：
+
+```csharp
+private void SyncBusyOverlaySize() {
+    double w = ViewportHost.ActualWidth, h = ViewportHost.ActualHeight;
+    if (w <= 0 || h <= 0) return;
+    BusyOverlay.Width = w; BusyOverlay.Height = h;
+    BusyPopup.HorizontalOffset = 0; BusyPopup.VerticalOffset = 0;
+}
+```
+
+**实机验证**：`docs/fix-busy-overlay-fit.png` —— 遮罩左边缘对齐图标栏右侧、
+右边缘对齐窗口右侧，完全铺满视口。
 
 ### 4.3 RDP 空域（Airspace）：WPF 浮层盖不住画面
 
@@ -399,7 +477,10 @@ SoulLink/
 | 灵敏度标签与数值重叠 | ✅ 补 `Grid.Column` | 同上 |
 | 热键 ToString/Parse 往返一致 | ✅ `parsed=鼠标侧键4` 不再为 null | 日志证据 |
 | 热键真正用上配置里的值 | ✅ `锁定热键已注册：Ctrl+Alt+K` | 日志证据 |
-| 自由视角不影响鼠标落点 | ⚠️ 代码已改（按键走注入 down/up），**待人工按键确认** | 见 4.2.6 |
+| 自由视角不影响鼠标落点 | ✅ 用户已确认"拖动地图可以了" | 见 4.2.6 |
+| 热键不被 RDP 抢走 | ⚠️ 已加低级键盘钩子（日志确认装上了），**待人工按键确认** | 见 4.2.5.1 |
+| 自由视角转视角不抖 | ⚠️ 已改相邻差分 + 累积发送，**待人工手感确认** | 见 4.2.7 |
+| 连接遮罩自适应窗口 | ✅ 铺满视口 | `docs/fix-busy-overlay-fit.png` |
 | 统一自绘弹窗替代 MessageBox | ✅ | `Views/AppDialog` |
 | 自动化配置组 + 顺序执行 + 每日定时 | ✅ 保存与界面 | `docs/verify-automation.png` |
 
@@ -466,7 +547,8 @@ git revert <hash>                          # 撤销已提交的错误
 
 | 提交 | 说明 |
 | --- | --- |
-| 本次 | 热键往返/生效修复 + 自由视角不再影响鼠标落点 |
+| 本次 | 热键被 RDP 抢走 + 转视角抖动 + 连接遮罩不跟随视口 |
+| `ff7029b` | 热键往返/生效修复 + 自由视角不再影响鼠标落点 |
 | `a703c2a` | 通用设置持久化失效 + 滑动条换玻璃风 + 标签重叠 |
 | `55c52a7` | 侧栏高度对齐右侧卡片、左右边距对称、底部区贴底 |
 | `435f801` | 修复侧栏收起态无圆角/无边距、展开态接缝 |
@@ -504,6 +586,9 @@ git revert <hash>                          # 撤销已提交的错误
 | 热键"注册成功"但按了没反应 | 辅助窗口被 `Hide()`，收不到 `WM_HOTKEY`；保持显示挪到屏幕外（4.2.5） |
 | 热键配置读回来变成 null | `ToString` 输出中文名但 `Parse` 只认英文，往返不一致（4.2.5） |
 | 自由视角下点不中、拖不动 | 按键放行给 RDP，但本地光标钉在中心 → 点击坐标恒为中心（4.2.6） |
+| 热键"直接作用在 RDP"、前台没反应 | RDP 的 KeyboardHookMode=1 抢先；用 WH_KEYBOARD_LL 双通道（4.2.5.1） |
+| 自由视角转视角发飘/抖动 | 用了"与中心做差"，回中心的移动被重复计算；改相邻差分（4.2.7） |
+| 连接遮罩比画面大一圈/小一圈 | Popup 不随 PlacementTarget 伸缩，要手动同步宽高（4.2.8） |
 
 ---
 

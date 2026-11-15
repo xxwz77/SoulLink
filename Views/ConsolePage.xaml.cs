@@ -55,16 +55,13 @@ namespace SoulLink.Views
                     window.Activated += (_, __) => Dispatcher.InvokeAsync(() => { if (_busyVisible) BusyPopup.IsOpen = true; });
                 }
             };
-            BusyOverlay.Width = 900;
-            BusyOverlay.Height = 620;
-            SizeChanged += (_, __) =>
-            {
-                if (ViewportHost.ActualWidth > 0 && ViewportHost.ActualHeight > 0)
-                {
-                    BusyOverlay.Width = ViewportHost.ActualWidth;
-                    BusyOverlay.Height = ViewportHost.ActualHeight;
-                }
-            };
+            // ★ 连接遮罩必须跟着「画面视口」走，不是跟着整个页面走。
+            //   原来固定 900x620、只在 ConsolePage.SizeChanged 时更新，
+            //   切页/侧栏展开/窗口缩放时视口变了它不变，遮罩就和画面不重合
+            //   （用户反馈：连接动画没有自适应窗口大小）。
+            //   改成监听 ViewportHost 自身的 SizeChanged，并补一次首帧对齐。
+            ViewportHost.SizeChanged += (_, __) => SyncBusyOverlaySize();
+            Loaded += (_, __) => SyncBusyOverlaySize();
             Loaded += (_, __) => Activate();
 
             double sens = App.Config.Settings.LookSensitivity > 0 ? App.Config.Settings.LookSensitivity : 4.0;
@@ -88,11 +85,40 @@ namespace SoulLink.Views
             }
         }
 
+        /// <summary>
+        /// 让连接遮罩严格铺满画面视口。
+        /// Popup 的内容不会自动跟随 PlacementTarget 伸缩，必须手动同步宽高，
+        /// 否则遮罩会比画面小一圈或大一圈（用户反馈：没有自适应窗口大小）。
+        /// </summary>
+        private void SyncBusyOverlaySize()
+        {
+            try
+            {
+                double w = ViewportHost.ActualWidth;
+                double h = ViewportHost.ActualHeight;
+                if (w <= 0 || h <= 0) return;
+
+                if (BusyOverlay != null)
+                {
+                    BusyOverlay.Width = w;
+                    BusyOverlay.Height = h;
+                }
+                // Placement=Relative 时偏移归零，遮罩左上角与视口左上角重合
+                if (BusyPopup != null)
+                {
+                    BusyPopup.HorizontalOffset = 0;
+                    BusyPopup.VerticalOffset = 0;
+                }
+            }
+            catch { }
+        }
+
         public void Activate()
         {
             RebuildUserList();
             RenderTabs();
             _initialized = true;
+            SyncBusyOverlaySize();
         }
 
         // ── 标签卡 ───────────────────────────────────────────────────────────
@@ -242,6 +268,7 @@ namespace SoulLink.Views
 
         private void SetBusyVisible(bool visible)
         {
+            if (visible) SyncBusyOverlaySize();   // 显示前再对一次，避免用了旧尺寸
             _busyVisible = visible;
             var owner = Window.GetWindow(this);
             BusyPopup.IsOpen = visible && ViewPage.Visibility == Visibility.Visible

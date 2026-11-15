@@ -32,6 +32,7 @@ namespace SoulLink.Services
         private readonly Action _callback;
         private Window? _owner;
         private LowLevelMouseHook? _mouseHook;
+        private LowLevelKeyboardHook? _keyHook;
         private bool _disposed;
 
         public string Registered { get; private set; } = "";
@@ -55,7 +56,9 @@ namespace SoulLink.Services
         public static NativeHotkey? Register(HotkeySpec spec, Action onPressed)
         {
             if (spec.IsMouse) return RegisterMouse(spec, onPressed);
-            return RegisterKeyboard(spec.ToModifiers(), spec.Key, spec.ToString(), onPressed);
+            // ★ 直接把 spec 传进去，不要只传 label 再在内部 Parse 一次。
+            //   二次解析是多余的往返，任何格式偏差都会让"注册的键"和"钩子监听的键"对不上。
+            return RegisterKeyboard(spec, onPressed);
         }
 
         private static NativeHotkey? RegisterMouse(HotkeySpec spec, Action onPressed)
@@ -78,9 +81,14 @@ namespace SoulLink.Services
             catch { return null; }
         }
 
-        private static NativeHotkey? RegisterKeyboard(uint mods, uint vk, string label, Action onPressed)
+        private static NativeHotkey? RegisterKeyboard(HotkeySpec spec, Action onPressed)
         {
+            uint mods = spec.ToModifiers();
+            uint vk = spec.Key;
+            string label = spec.ToString();
             Window? helper = null;
+            HwndSource? src = null;
+            bool hotkeyOk = false;
             try
             {
                 helper = new Window
@@ -94,24 +102,48 @@ namespace SoulLink.Services
                     Top = -32000, Left = -32000
                 };
                 helper.Show();
-                var src = PresentationSource.FromVisual(helper) as HwndSource;
+                src = PresentationSource.FromVisual(helper) as HwndSource;
                 if (src == null) { helper.Close(); return null; }
                 int id = ++_nextId;
-                if (!RegisterHotKey(src.Handle, id, mods | MOD_NOREPEAT, vk)) { helper.Close(); return null; }
-                var hk = new NativeHotkey(src, id, onPressed) { _owner = helper, Registered = label };
+                hotkeyOk = RegisterHotKey(src.Handle, id, mods | MOD_NOREPEAT, vk);
+
+                var hk = new NativeHotkey(hotkeyOk ? src : null, id, onPressed) { _owner = helper, Registered = label };
                 src.AddHook(hk.WndProc);
 
                 // ★ 不要 Hide()！
                 //   RegisterHotKey 的 WM_HOTKEY 是投递到该窗口的消息队列的，
                 //   窗口一旦被 Hide（SW_HIDE），部分系统版本就不再分发这条消息，
                 //   表现为"注册成功但按了没反应"（实测：WndProc 完全收不到 WM_HOTKEY）。
-                //   正确做法是让窗口一直"显示"着，只是挪到屏幕外 + 全透明 + 不进任务栏。
                 helper.Show();
                 helper.Width = 1;
                 helper.Height = 1;
                 helper.Left = -32000;
                 helper.Top = -32000;
                 helper.Opacity = 0;
+
+                // ★ 双保险：再装一个全局低级键盘钩子。
+                //   RDP 控件的 KeyboardHookMode=1 会在输入链路里抢走按键，
+                //   那时 RegisterHotKey 的 WM_HOTKEY 根本不会来（用户实测：
+                //   "快捷键好像直接作用在 RDP，前台收不到"）。
+                //   低级钩子比窗口/热键处理都靠前，能把它拦下来。
+                if (spec.Key != 0)
+                {
+                    hk._keyHook = new LowLevelKeyboardHook { Spec = spec };
+                    hk._keyHook.Pressed = () =>
+                    {
+                        // 钩子线程 → UI 线程
+                        try { hk._owner?.Dispatcher.BeginInvoke(new Action(() => { try { onPressed(); } catch { } })); }
+                        catch { }
+                    };
+                    if (!hk._keyHook.Install()) { hk._keyHook.Dispose(); hk._keyHook = null; }
+                }
+
+                // 两条通道都没建立才算失败
+                if (!hotkeyOk && hk._keyHook == null)
+                {
+                    try { helper.Close(); } catch { }
+                    return null;
+                }
                 return hk;
             }
             catch { try { helper?.Close(); } catch { } return null; }
@@ -144,6 +176,8 @@ namespace SoulLink.Services
             try { _source?.RemoveHook(WndProc); } catch { }
             var mh = _mouseHook; _mouseHook = null;
             try { mh?.Dispose(); } catch { }
+            var kh = _keyHook; _keyHook = null;
+            try { kh?.Dispose(); } catch { }
             try { _owner?.Close(); } catch { }
             _owner = null;
         }

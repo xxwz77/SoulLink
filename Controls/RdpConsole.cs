@@ -96,6 +96,14 @@ namespace SoulLink.Controls
         private int _captureCenterX;
         private int _captureCenterY;
         private DateTime _lastInject = DateTime.MinValue;
+
+        /// <summary>自由视角下上一次鼠标事件的位置（用于相邻差分）。</summary>
+        private int _lastMoveX;
+        private int _lastMoveY;
+
+        /// <summary>待发送的转视角累积位移（合并高频事件，避免丢角度）。</summary>
+        private int _pendLookX;
+        private int _pendLookY;
         private uint _scaleFactor = 100;
         private bool _hasConnected;
         private LowLevelMouseHook? _mouseHook;
@@ -350,6 +358,12 @@ namespace SoulLink.Controls
             if (_accelToken < 0) _accelToken = PointerAcceleration.PushDisabled();
 
             NativeInput.SetCursorPos(_captureCenterX, _captureCenterY);
+            // ★ 基准位必须同步成中心点，否则第一次移动会把"旧光标 → 中心"这段
+            //   跳变当成真实位移，视角会猛地甩一下。
+            _lastMoveX = _captureCenterX;
+            _lastMoveY = _captureCenterY;
+            _pendLookX = 0;
+            _pendLookY = 0;
             try { System.Windows.Forms.Cursor.Hide(); } catch { }
 
             EnsureToggleHotkey();
@@ -495,12 +509,24 @@ namespace SoulLink.Controls
                 //   和视角转动解耦。视角照转，落点照旧，两者互不干扰。
                 if (ev.IsMove)
                 {
-                    int dx = ev.X - _captureCenterX;
-                    int dy = ev.Y - _captureCenterY;
-                    if (dx == 0 && dy == 0) return true;
+                    // ★ 用「与上一次事件的差」而不是「与中心的差」。
+                    //   与中心做差看起来更直观，但 SetCursorPos 回中心后钩子仍会收到
+                    //   中间过渡事件（系统把光标从 A 挪到中心也是一次移动），
+                    //   同一个物理位移会被反复算进去 —— 表现为视角"飘"、指针抖动。
+                    //   相邻差分只取真实位移，回中心的过程不参与计算。
+                    int dx = ev.X - _lastMoveX;
+                    int dy = ev.Y - _lastMoveY;
+                    _lastMoveX = ev.X;
+                    _lastMoveY = ev.Y;
 
-                    // 光标立刻拉回中心，保证下一次还是纯相对量（可无限转）
+                    // 光标回中心，保证可以无限转（不回中心会撞到屏幕边缘）
                     NativeInput.SetCursorPos(_captureCenterX, _captureCenterY);
+                    // 回中心之后，下一次事件要按中心重新起算，否则会把
+                    // "中心 → 新位置"这段跳变算成一次巨大的位移
+                    _lastMoveX = _captureCenterX;
+                    _lastMoveY = _captureCenterY;
+
+                    if (dx == 0 && dy == 0) return true;
 
                     // 极少数情况下焦点会被外部抢走，锁定期间持续保住
                     if (_ax != null && !_ax.ContainsFocus && _keyboardFocusRetry-- > 0)
@@ -508,11 +534,20 @@ namespace SoulLink.Controls
                         try { _ax.Focus(); } catch { }
                     }
 
+                    // ★ 不再用 5ms 节流丢弃位移：丢弃会让转视角一顿一顿的。
+                    //   累积到阈值再发一次，既减少 IPC 次数又不丢角度。
+                    _pendLookX += dx;
+                    _pendLookY += dy;
                     var now = DateTime.UtcNow;
-                    if ((now - _lastInject).TotalMilliseconds < 5) return true;
-                    _lastInject = now;
-
-                    _ = InjectLookAsync(dx, dy);
+                    bool big = Math.Abs(_pendLookX) >= 3 || Math.Abs(_pendLookY) >= 3;
+                    if (big || (now - _lastInject).TotalMilliseconds >= 8)
+                    {
+                        int sx = _pendLookX, sy = _pendLookY;
+                        _pendLookX = 0;
+                        _pendLookY = 0;
+                        _lastInject = now;
+                        _ = InjectLookAsync(sx, sy);
+                    }
                     return true;
                 }
 
