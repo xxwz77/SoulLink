@@ -98,6 +98,55 @@ namespace SoulLink.Controls
         private int _lastMoveX = int.MinValue;
         private int _lastMoveY = int.MinValue;
 
+        /// <summary>锁定看门狗：自由视角下长时间没有任何输入事件就自动解锁。</summary>
+        private System.Windows.Threading.DispatcherTimer? _lockWatchdog;
+        private DateTime _lastInputAt = DateTime.MinValue;
+        private const int LockWatchdogSeconds = 45;
+
+        /// <summary>
+        /// 看门狗：自由视角下若连续 N 秒没有真实输入，自动解锁。
+        /// 目的是"人已经离开/卡住"时也能恢复，不依赖键盘是否送到前台。
+        /// </summary>
+        private void StartLockWatchdog()
+        {
+            _lockWatchdog ??= new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(5)
+            };
+            _lockWatchdog.Tick -= OnWatchdogTick;
+            _lockWatchdog.Tick += OnWatchdogTick;
+            _lockWatchdog.Start();
+        }
+
+        private void StopLockWatchdog()
+        {
+            try { _lockWatchdog?.Stop(); } catch { }
+            if (_lockWatchdog != null) _lockWatchdog.Tick -= OnWatchdogTick;
+        }
+
+        private void OnWatchdogTick(object? sender, EventArgs e)
+        {
+            if (!_captured)
+            {
+                StopLockWatchdog();
+                return;
+            }
+            double idle = (DateTime.UtcNow - _lastInputAt).TotalSeconds;
+            if (idle < LockWatchdogSeconds) return;
+            // 同步落盘：这是关键安全事件，必须能在异步日志队列未刷盘时查到。
+            try
+            {
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(ConfigStore.ConfigDir, "watchdog.log"),
+                    DateTime.Now.ToString("HH:mm:ss.fff") + " 自动解锁 idle=" + (int)idle + "s" + Environment.NewLine,
+                    new System.Text.UTF8Encoding(false));
+            }
+            catch { }
+            Debug("看门狗：自由视角空闲 " + (int)idle + " 秒，自动解锁");
+            InputActivity?.Invoke(this, "自由视角空闲超时，已自动解除锁定");
+            ReleaseCapture("看门狗超时");
+        }
+
         private LookInputQueue LookQueue
         {
             get
@@ -162,12 +211,15 @@ namespace SoulLink.Controls
             {
                 try
                 {
-                    if (_activeState != 0 || _disposed || !IsVisible || _ownerWindow == null || !_ownerWindow.IsActive
-                        || _ownerWindow.WindowState == WindowState.Minimized || System.Windows.Application.Current == null)
-                        return false;
+                    // ★ 退出永远放行：只要正在自由视角，任何条件都不能挡住解锁。
+                    //   这是"进了出不来"事故的直接教训——锁定状态下必须无条件可退。
+                    if (_captured) return true;
+                    if (_disposed || !IsVisible) return false;
+                    if (_ownerWindow == null || !_ownerWindow.IsActive) return false;
+                    if (_ownerWindow.WindowState == WindowState.Minimized) return false;
                     // ActiveX 不会让 WPF 稳定看到 ContainsFocus / Mouse.DirectlyOver。
-                    // 不能用这两个条件阻断热键，否则用户按了也被判为“不属于画面”。
-                    return _captured || (HotkeyArmed && IsConnected);
+                    // 不能用这两个条件阻断热键，否则用户按了也被判为"不属于画面"。
+                    return HotkeyArmed && IsConnected;
                 }
                 catch { return false; }
             }
@@ -383,6 +435,9 @@ namespace SoulLink.Controls
             var h = _mouseHook;
             _mouseHook = null;
             try { h?.Dispose(); } catch { }
+
+            // 钩子卸载后看门狗已无意义，必须停掉，避免隐藏页继续计时。
+            StopLockWatchdog();
         }
 
         /// <summary>切换输入模式。进入自由视角前会先确认一切就绪。</summary>
@@ -465,6 +520,8 @@ namespace SoulLink.Controls
             _captureCenterX = r.left + r.width / 2;
             _captureCenterY = r.top + r.height / 2;
 
+            _lastInputAt = DateTime.UtcNow;
+            StartLockWatchdog();
             EnsureToggleHotkey();
 
             // ★ 把键盘焦点交回 RDP 控件。
@@ -557,6 +614,7 @@ namespace SoulLink.Controls
             _captured = false;
             InputMode = ConsoleInputMode.Pointer;
             InputModeChanged?.Invoke(this, InputMode);
+            StopLockWatchdog();
             ReleasePointerCapture();
             ReleaseInjectedButtonsAsync();
             // 先排队抬起；代理断开仍会 releaseall，不把释放指令自己清掉。
@@ -606,10 +664,26 @@ namespace SoulLink.Controls
         ///
         /// 任何异常都立刻放行，绝不让用户动不了鼠标。
         /// </summary>
+        /// <summary>硬兜底：自由视角持续时，窗口失焦超过该时长就自动退出。</summary>
+        private DateTime _captureEnteredAt = DateTime.MinValue;
+
         private bool OnGlobalMouse(MouseHookEvent ev)
         {
             try
             {
+                // ── 硬兜底（与 RDP/热键完全无关）──
+                // 自由视角下若窗口已不是前台，说明用户在别处；
+                // 这里直接解锁并放行，避免"进了出不来"。
+                // 任何真实鼠标事件都算"有人在操作"，刷新看门狗
+                if (_captured) _lastInputAt = DateTime.UtcNow;
+
+                if (_captured && _ownerWindow != null && !_ownerWindow.IsActive)
+                {
+                    _captured = false;
+                    InputMode = ConsoleInputMode.Pointer;
+                    Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("窗口不在前台（兜底）")));
+                    return false;
+                }
                 if (_disposed) { _captured = false; return false; }
                 if (IsConfiguredHotkeyMouse(ev))
                 {
@@ -880,9 +954,10 @@ namespace SoulLink.Controls
 
         private void OnRelayHotkey()
         {
+            // 锁定状态下的退出无条件放行；只有"进入"才需要当前控制台资格。
             if (!_captured && !CanUseToggleHotkey)
             {
-                Debug("丢弃非当前控制台热键事件");
+                Debug("丢弃非当前控制台热键事件（非锁定态）");
                 return;
             }
             Debug("收到目标会话热键事件 · UI线程=" + Dispatcher.CheckAccess()
