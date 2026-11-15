@@ -456,12 +456,33 @@ namespace SoulLink.Controls
                 return (true, mode == ConsoleInputMode.FreeLook ? "已进入自由视角" : "已切回指针模式");
             if (mode == ConsoleInputMode.FreeLook)
             {
-                // 相对注入不可用时不能吞掉本机鼠标，否则用户会失去操作出口。
-                if (!IsConnected || Input == null || !Input.Relay.IsConnected || !_inputUsable)
+                // ★ 相对注入不可用时不能吞掉本机鼠标，但也不能被一个"过期缓存"永久挡住。
+                //   _inputUsable 只在代理首次探测时写过一次；之后 StopInputAsync 会置 false，
+                //   而代理重连后没有任何地方恢复它 —— 曾导致"热键收到了却进不去"。
+                //   这里：管道连通但标志为 false 时，当场重新探测一次。
+                if (!IsConnected || Input == null || !Input.Relay.IsConnected)
                 {
-                    const string unavailable = "相对输入通道尚未就绪，不能进入自由视角。请等待「注入就绪」，并确保当前 RDP 已连接活动桌面。";
+                    const string unavailable = "相对输入通道尚未连接，不能进入自由视角。请等待「注入就绪」。";
                     InputActivity?.Invoke(this, unavailable);
-                    Debug("拒绝进入自由视角：输入通道未就绪");
+                    Debug("拒绝进入自由视角：通道未连接");
+                    return (false, unavailable);
+                }
+                if (!_inputUsable)
+                {
+                    Debug("输入标志为 false，当场重新探测一次");
+                    try
+                    {
+                        var (usable, why) = Input.CheckUsableAsync().GetAwaiter().GetResult();
+                        _inputUsable = usable;
+                        Debug("重新探测结果 usable=" + usable + " · " + why);
+                    }
+                    catch (Exception ex) { Debug("重新探测异常：" + ex.Message); }
+                }
+                if (!_inputUsable)
+                {
+                    const string unavailable = "相对输入通道尚未就绪，不能进入自由视角。请点「重新连接」后再试。";
+                    InputActivity?.Invoke(this, unavailable);
+                    Debug("拒绝进入自由视角：探测后仍不可用");
                     return (false, unavailable);
                 }
                 if (!BeginCapture("手动切换"))
@@ -733,6 +754,7 @@ namespace SoulLink.Controls
                         && spec.MatchesMouse(ev) && spec.ModifiersMatch())
                     {
                         Debug("自由视角中，本机热键鼠标退出：" + spec);
+                        _localHotkeyHandledAt = DateTime.UtcNow;   // 让目标会话忽略回声
                         _captured = false;
                         InputMode = ConsoleInputMode.Pointer;
                         Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("本机热键退出")));
@@ -744,6 +766,7 @@ namespace SoulLink.Controls
                     if (ev.IsXButton1Down)
                     {
                         Debug("自由视角中，本机应急侧键退出（XButton1）");
+                        _localHotkeyHandledAt = DateTime.UtcNow;   // 让目标会话忽略回声
                         _captured = false;
                         InputMode = ConsoleInputMode.Pointer;
                         Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("本机应急侧键退出")));
@@ -1045,8 +1068,20 @@ namespace SoulLink.Controls
             catch (Exception ex) { Debug("目标热键配置异常：" + ex.Message); }
         }
 
+        /// <summary>本机刚处理过热键的时间点，用于让目标会话忽略同一次按键。</summary>
+        private DateTime _localHotkeyHandledAt = DateTime.MinValue;
+
         private void OnRelayHotkey()
         {
+            // ★ 同一次侧键会被两条通道各收一次：
+            //   本机钩子（立即生效）+ A2 会话接收器（IPC 转发）。
+            //   本机处理过之后，目标会话的回声必须在短时间内忽略，
+            //   否则会出现"退出后马上又被锁回去"（按钮闪一下）。
+            if ((DateTime.UtcNow - _localHotkeyHandledAt).TotalMilliseconds < 400)
+            {
+                Debug("忽略目标会话热键回声（本机刚处理过）");
+                return;
+            }
             // 锁定状态下的退出无条件放行；只有"进入"才需要当前控制台资格。
             if (!_captured && !CanUseToggleHotkey)
             {
