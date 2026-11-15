@@ -69,6 +69,7 @@ namespace SoulLink.Views
             };
 
             Loaded += MainWindow_Loaded;
+            ShowVersion();
             Loaded += (_, __) => ThemeManager.Apply();
             Closing += MainWindow_Closing;
             StateChanged += (_, __) => UpdateMaxGlyph();
@@ -341,6 +342,47 @@ namespace SoulLink.Views
                 App.AppendErrorLog("LaunchView.Activate", ex);
                 App.Breadcrumb("LaunchView.Activate FAILED: " + ex.Message);
             }
+        }
+
+        /// <summary>标题栏副标题显示版本号（从程序集读取，升版本后自动跟随）。</summary>
+        private void ShowVersion()
+        {
+            try
+            {
+                if (VersionText == null) return;
+                var asm = System.Reflection.Assembly.GetExecutingAssembly();
+                var ver = asm.GetName().Version;
+                // ★ 单文件发布时 asm.Location 为空，不能直接用 FileVersionInfo。
+                //   优先读 InformationalVersion（csproj 的 <Version>），退回程序集版本。
+                string? info = null;
+                try
+                {
+                    var attrs = asm.GetCustomAttributes(
+                        typeof(System.Reflection.AssemblyInformationalVersionAttribute), false);
+                    if (attrs != null && attrs.Length > 0)
+                        info = ((System.Reflection.AssemblyInformationalVersionAttribute)attrs[0])
+                                   .InformationalVersion;
+                }
+                catch { }
+                string text;
+                if (!string.IsNullOrWhiteSpace(info))
+                {
+                    int plus = info!.IndexOf('+');      // 去掉 SourceRevisionId 后缀
+                    if (plus > 0) info = info.Substring(0, plus);
+                    text = "v" + TrimRevision(info);
+                }
+                else text = "v" + TrimRevision(ver?.ToString() ?? "1.0.0");
+                VersionText.Text = text;
+                VersionText.ToolTip = "SoulLink " + text + " · 多用户挂机中控台";
+            }
+            catch { if (VersionText != null) VersionText.Text = "v1.0.0"; }
+        }
+
+        private static string TrimRevision(string version)
+        {
+            var parts = (version ?? "").Split('.');
+            if (parts.Length >= 3) return parts[0] + "." + parts[1] + "." + parts[2];
+            return version;
         }
 
         private void OnEngineStatus(bool ok, string detail)

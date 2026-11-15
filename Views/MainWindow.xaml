@@ -67,7 +67,7 @@
                             </Grid>
                             <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
                                 <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" />
-                                <TextBlock Text="跨会话静默执行器 · SYSTEM 通道" FontSize="10.5" Foreground="{StaticResource TextMuted}" />
+                                <TextBlock x:Name="VersionText" FontSize="10.5" Foreground="{StaticResource TextMuted}" />
                             </StackPanel>
                         </StackPanel>
 

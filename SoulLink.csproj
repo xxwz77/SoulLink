@@ -11,8 +11,8 @@
     <RootNamespace>SoulLink</RootNamespace>
     <AssemblyName>SoulLink</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.0</Version>
-    <FileVersion>1.1.0.0</FileVersion>
+    <Version>1.4.1</Version>
+    <FileVersion>1.4.1.0</FileVersion>
     <AssemblyTitle>SoulLink 多用户挂机中控台</AssemblyTitle>
     <Product>SoulLink</Product>
     <Description>多用户会话中控台：内嵌 RDP 画面 + 跨会话投送 + 鼠标注入转视角</Description>
