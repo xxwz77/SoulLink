@@ -536,18 +536,39 @@ namespace SoulLink.Services
             }
         }
 
+        /// <summary>
+        /// 控制台工具（query user / tasklist 等）的输出编码。
+        ///
+        /// ★ 必须用**系统 ANSI/OEM 代码页**解码，不能用 Encoding.Default：
+        ///   .NET Core 里 Encoding.Default 恒为 UTF-8，而中文系统的 query user
+        ///   输出是 GBK(936)。实测错配后状态字段变成乱码（“运行中” → “������”），
+        ///   NormalizeState 无法识别 → 所有会话被丢弃 → 会话号变成 0
+        ///   → 注入代理投送失败「无效的会话 ID：0」（用户实测）。
+        ///
+        /// 取值顺序：GetACP（ANSI 代码页，最可靠）→ OEMCodePage → 936 兜底。
+        /// </summary>
         public static System.Text.Encoding ConsoleEncoding()
         {
-            try
+            try { System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance); }
+            catch { }
+
+            foreach (int cp in new[] { GetACP(), 936 })
             {
-                int cp = System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage;
-                try { return System.Text.Encoding.GetEncoding(cp); }
+                try
+                {
+                    if (cp <= 0) continue;
+                    // 只接受 ANSI/OEM 代码页（936/1252/932...），排除 65001
+                    if (cp == 65001) continue;
+                    return System.Text.Encoding.GetEncoding(cp);
+                }
                 catch { }
-                System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-                return System.Text.Encoding.GetEncoding(cp);
             }
-            catch { return System.Text.Encoding.UTF8; }
+            try { return System.Text.Encoding.GetEncoding(936); } catch { }
+            return System.Text.Encoding.UTF8;
         }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern int GetACP();
 
         private static string Q(string s) => "\"" + (s ?? "").Replace("\"", "\\\"") + "\"";
 

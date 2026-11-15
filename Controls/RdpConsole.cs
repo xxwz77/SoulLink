@@ -255,6 +255,65 @@ namespace SoulLink.Controls
             catch (Exception ex) { Debug("重建输入通道失败：" + ex.Message); }
         }
 
+        // ── 通道自动重建 ─────────────────────────────────────────────────────
+
+        private System.Windows.Threading.DispatcherTimer? _rebuildTimer;
+        private int _rebuildAttempt;
+        private const int MaxRebuildAttempts = 5;
+
+        /// <summary>
+        /// 安排一次通道重建（指数退避，最多 5 次）。
+        /// 触发来源：relay 断开事件、连接后探测失败。
+        /// </summary>
+        private void ScheduleInputRebuild(string reason)
+        {
+            try
+            {
+                if (_disposed || !IsConnected) return;
+                if (Input?.Relay.IsConnected == true) return;   // 已经好了
+                if (CurrentSessionId <= 0) return;
+
+                if (_rebuildAttempt >= MaxRebuildAttempts)
+                {
+                    Debug("通道重建已达上限（" + MaxRebuildAttempts + " 次），停止重试：" + reason);
+                    InputActivity?.Invoke(this, "注入通道重建失败，请点「重新连接」");
+                    return;
+                }
+                _rebuildAttempt++;
+
+                // 退避：2s、4s、8s、16s、30s
+                int delayMs = Math.Min(30000, 2000 * (1 << (_rebuildAttempt - 1)));
+                Debug("安排通道重建 #" + _rebuildAttempt + "（" + reason + "），" + delayMs + "ms 后执行");
+
+                _rebuildTimer?.Stop();
+                _rebuildTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(delayMs)
+                };
+                _rebuildTimer.Tick += (_, __) =>
+                {
+                    _rebuildTimer?.Stop();
+                    try
+                    {
+                        if (_disposed || !IsConnected) return;
+                        if (Input?.Relay.IsConnected == true) { _rebuildAttempt = 0; return; }
+                        Debug("执行通道重建 #" + _rebuildAttempt);
+                        InputActivity?.Invoke(this, "正在重建注入通道…");
+                        EnsureInputRestored();
+                    }
+                    catch (Exception ex) { Debug("通道重建异常：" + ex.Message); }
+                };
+                _rebuildTimer.Start();
+            }
+            catch (Exception ex) { Debug("安排重建失败：" + ex.Message); }
+        }
+
+        /// <summary>通道恢复正常时清零重试计数。</summary>
+        private void ResetRebuildCounter()
+        {
+            _rebuildAttempt = 0;
+        }
+
         /// <summary>只有前台可见控制台可接收热键；退出自由视角不受连接状态限制。</summary>
         public bool CanUseToggleHotkey
         {
@@ -1321,6 +1380,7 @@ namespace SoulLink.Controls
                 {
                     int curState = 0;
                     try { curState = (int)_ocx!.Connected; } catch { }
+
                     if (curState == 1)
                     {
                         stableHits++;
@@ -1333,18 +1393,33 @@ namespace SoulLink.Controls
                             GiveKeyboardFocus();
                             ConnectionChanged?.Invoke(this, true);
                             // 自动登录会新建会话：连接成功后必须重新解析真实会话号，不能继续用 0。
+                            // ★ 必须轮询等会话出现：刚 Connect() 成功时，
+                            //   RDP 服务端可能还没把新会话登记到会话列表里，
+                            //   立刻查询会拿不到 → sessionId 仍是 0 →
+                            //   BeginInput(0) 报「无效的会话 ID：0」（用户实测）。
                             int activeSessionId = sessionId;
-                            try
+                            for (int attempt = 0; attempt < 20; attempt++)
                             {
-                                var activeSessions = await SessionService.QueryAsync().ConfigureAwait(true);
-                                var activeSession = SessionService.Find(activeSessions, account.UserName);
-                                if (activeSession != null && activeSession.Id > 0)
+                                try
                                 {
-                                    activeSessionId = activeSession.Id;
-                                    Debug("连接后真实会话号=" + activeSessionId + (sessionId != activeSessionId ? "（由 " + sessionId + " 更新）" : ""));
+                                    var activeSessions = await SessionService.QueryAsync().ConfigureAwait(true);
+                                    var activeSession = SessionService.Find(activeSessions, account.UserName);
+                                    if (activeSession != null && activeSession.Id > 0)
+                                    {
+                                        activeSessionId = activeSession.Id;
+                                        Debug("连接后真实会话号=" + activeSessionId
+                                              + (sessionId != activeSessionId ? "（由 " + sessionId + " 更新）" : "")
+                                              + (attempt > 0 ? "（等待 " + attempt + " 次）" : ""));
+                                        break;
+                                    }
                                 }
+                                catch (Exception ex) { Debug("回读会话号失败（第 " + attempt + " 次）: " + ex.Message); }
+
+                                if (attempt == 0) Debug("会话尚未登记，开始轮询等待…");
+                                await Task.Delay(500).ConfigureAwait(true);
                             }
-                            catch (Exception ex) { Debug("回读会话号失败: " + ex.Message); }
+                            if (activeSessionId <= 0)
+                                Debug("警告：等待 10 秒后仍未拿到会话号，注入代理可能无法投送");
 
                             // ★ 账号校验：环回地址与会话的对应关系随启动顺序变化，
                             //   地址配错时连接仍会"成功"，但连到的是别人 —— 表现为
@@ -1705,6 +1780,8 @@ namespace SoulLink.Controls
                     relay.Dispose();
                     Debug("注入代理投送失败：" + msg);
                     InputActivity?.Invoke(this, "注入不可用：" + msg);
+                    // ★ 投送失败同样重试：会话刚登录/杀软临时拦截都可能是一过性的
+                    ScheduleInputRebuild("投送失败");
                     return;
                 }
 
@@ -1726,6 +1803,27 @@ namespace SoulLink.Controls
                 input.Relay.HotkeyPressed += (_, key) =>
                 {
                     try { Dispatcher.BeginInvoke(new Action(OnRelayHotkey)); } catch { }
+                };
+
+                // ★ 通道断开后自动重建。
+                //   原来通道只在"连接成功那一刻"建一次，代理中途挂掉或首次失败后
+                //   没有任何自愈能力，只能靠用户手动点「重新连接」——
+                //   表现为"按热键没反应 / 无法进入自由视角"（实测多次）。
+                input.Relay.StateChanged += (_, up) =>
+                {
+                    if (up) return;
+                    // ★ 只有当前这条通道断开才重试。
+                    //   若 Input 已被替换/置空（主动重连、切会话），说明是我们自己
+                    //   在停它，不应再触发重建（否则会无限循环）。
+                    try
+                    {
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (!ReferenceEquals(Input, input)) return;
+                            ScheduleInputRebuild("通道断开");
+                        }));
+                    }
+                    catch { }
                 };
                 SyncMapperViewport();
 
@@ -1750,6 +1848,18 @@ namespace SoulLink.Controls
                 }
                 _inputUsable = usable;
                 SyncRelayHotkey("代理就绪");
+
+                if (usable)
+                {
+                    // 通道真正可用 → 清零重试计数
+                    ResetRebuildCounter();
+                }
+                else
+                {
+                    // 通道建立了但探测不可用（会话桌面还没切过来等），也安排重试
+                    ScheduleInputRebuild("探测不可用");
+                }
+
                 InputActivity?.Invoke(this, usable ? ("注入就绪 · " + why) : ("注入待命 · " + why));
                 Debug("输入探测：" + (usable ? "就绪 · " : "待命 · ") + why);
 
@@ -1761,6 +1871,7 @@ namespace SoulLink.Controls
             {
                 Debug("建立输入通道异常：" + ex.Message);
                 InputActivity?.Invoke(this, "注入异常：" + ex.Message);
+                ScheduleInputRebuild("建立异常");
             }
             finally { System.Threading.Interlocked.Exchange(ref _inputStartPending, 0); }
         }
@@ -1768,6 +1879,11 @@ namespace SoulLink.Controls
         private async Task StopInputAsync()
         {
             System.Threading.Interlocked.Increment(ref _inputGeneration);
+            // ★ 停掉等待中的重建定时器：否则"主动停止"会被当成"通道断开"，
+            //   重建 → 再停 → 再重建，形成死循环。
+            _rebuildTimer?.Stop();
+            _rebuildTimer = null;
+
             var old = Input;
             Input = null;
             _inputUsable = false;

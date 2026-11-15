@@ -359,17 +359,45 @@ namespace SoulLink.Views
             try
             {
                 var sessions = await SessionService.QueryAsync();
+                // 诊断：把查询到的会话列表打出来，便于定位"会话查不到"的根因
+                Debug("查询会话：共 " + sessions.Count + " 条 · "
+                      + string.Join(" | ", System.Linq.Enumerable.Select(sessions,
+                          x => x.UserName + "#" + x.Id + "=" + x.State)));
                 var s = SessionService.Find(sessions, row.Account.UserName);
+                Debug("匹配账号「" + row.Account.UserName + "」→ "
+                      + (s != null ? ("ID=" + s.Id + " 状态=" + s.State) : "未找到"));
+
+                // ★ 会话暂未出现时**要等一会儿**，不要立刻当成"未登录"。
+                //   实测：用户刚点登录，会话还没建立完（query user 里登录时间比
+                //   我们查询晚 1 秒），此时拿到 sessionId=0，
+                //   后续投送注入代理就会失败：无效的会话 ID：0（用户实测）。
+                //   这里轮询最多 15 秒，等会话真正出现。
+                if (s == null)
+                {
+                    BusyText.Text = "等待用户「" + row.Account.Caption + "」的会话就绪…";
+                    Debug("会话暂未出现，开始轮询等待（最多 15 秒）");
+                    for (int i = 0; i < 15 && s == null; i++)
+                    {
+                        await Task.Delay(1000);
+                        try
+                        {
+                            var again = await SessionService.QueryAsync();
+                            s = SessionService.Find(again, row.Account.UserName);
+                            if (s != null)
+                                Debug("会话已出现：ID=" + s.Id + "（等待 " + (i + 1) + " 秒）");
+                        }
+                        catch { }
+                    }
+                }
 
                 // ★ 会话不存在**不是错误**——RDP 会用它自己的登录流程新建一个会话。
                 //   （HANDOFF 10.2 实测：用户注销时 Connect() 会自动登录并建出新会话）
-                //   所以这里不再拦截，只用它来决定「要不要先踢下线」和日志用。
                 int sessionId = s?.Id ?? 0;
 
                 if (s == null)
                 {
                     BusyText.Text = "用户「" + row.Account.Caption + "」当前未登录，正在尝试用保存的凭据登录…";
-                    Debug("会话不存在，走 RDP 自动登录流程");
+                    Debug("等待 15 秒后仍无会话，走 RDP 自动登录流程");
                 }
 
                 var (ok, msg) = await row.Console.ConnectAsync(row.Account, App.Config.Settings, sessionId);

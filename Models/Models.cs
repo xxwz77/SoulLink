@@ -61,12 +61,16 @@ namespace SoulLink.Models
         /// <summary>自定义图标（PNG 的 base64），为空则用首字母色块</summary>
         public string IconBase64 { get; set; } = "";
 
-        // ── 每用户独立的画面参数（0 = 跟随全局设置）──────────────
-        public int RdpWidth { get; set; } = 0;
-        public int RdpHeight { get; set; } = 0;
+        // ── 每用户独立的画面参数 ──────────────────────────────────
+        // ★ 默认值直接给具体数值（不再用 0 表示"跟随全局"）：
+        //   这些是每个账号自己的连接参数，不该依赖全局设置，
+        //   否则新建账号后还要逐个调整（用户明确要求：新建即为这套值）。
+        public int RdpWidth { get; set; } = 1920;
+        public int RdpHeight { get; set; } = 1080;
         /// <summary>0=跟随窗口 1=拉伸 2=原大小</summary>
-        public int RdpScaleMode { get; set; } = 0;
-        public int RdpColorDepth { get; set; } = 0;
+        public int RdpScaleMode { get; set; } = 1;
+        /// <summary>色深：16 位在挂机场景下带宽更省、帧率更稳</summary>
+        public int RdpColorDepth { get; set; } = 16;
         public bool RdpAutoDisconnect { get; set; } = true;
         public bool RdpLowBandwidth { get; set; } = false;
         /// <summary>音频输出：0=本机播放 1=远端播放 2=禁用</summary>
