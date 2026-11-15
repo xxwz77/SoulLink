@@ -1345,7 +1345,57 @@ namespace SoulLink.Controls
                                 }
                             }
                             catch (Exception ex) { Debug("回读会话号失败: " + ex.Message); }
-                            SetStatus("已连接 · 会话 " + activeSessionId);
+
+                            // ★ 账号校验：环回地址与会话的对应关系随启动顺序变化，
+                            //   地址配错时连接仍会"成功"，但连到的是别人 —— 表现为
+                            //   "注入代理投送失败 / 无法进入自由视角"，且没有任何提示。
+                            //   这里连上后按实际会话号反查登录用户，与配置比对。
+                            try
+                            {
+                                var verifySessions = await SessionService.QueryAsync().ConfigureAwait(true);
+                                SessionInfo? actual = null;
+                                foreach (var s in verifySessions)
+                                    if (s.Id == activeSessionId) { actual = s; break; }
+                                string actualUser = actual?.UserName ?? "";
+                                bool mismatch = !string.IsNullOrWhiteSpace(actualUser)
+                                    && !string.Equals(actualUser, account.UserName, StringComparison.OrdinalIgnoreCase);
+
+                                if (mismatch)
+                                {
+                                    // 定位目标账号真正所在的会话，自动纠正配置的地址。
+                                    SessionInfo? target = SessionService.Find(verifySessions, account.UserName);
+                                    string hint = target != null
+                                        ? "该账号当前在会话 " + target.Id + "，地址应为 127.0.0." + target.Id
+                                        : "该账号当前未登录";
+                                    Debug("账号不匹配：配置=" + account.UserName + " 实际=" + actualUser
+                                          + " 地址=" + host + " 会话=" + activeSessionId + " · " + hint);
+                                    LogBus.Warn("RDP 地址与账号不匹配",
+                                        host + " 实际登录的是 " + actualUser + "，不是 " + account.UserName + " · " + hint);
+
+                                    // 自动写回正确地址，下次连接直接生效
+                                    if (target != null && target.Id > 0)
+                                    {
+                                        string fixedHost = "127.0.0." + target.Id;
+                                        try
+                                        {
+                                            account.RdpHost = fixedHost;
+                                            ConfigStore.Save(App.Config);
+                                            Debug("已自动修正地址：" + host + " → " + fixedHost);
+                                        }
+                                        catch (Exception ex) { Debug("自动修正地址失败：" + ex.Message); }
+
+                                        SetStatus("地址已自动更正为 " + fixedHost + " · 请点「重新连接」");
+                                        LogBus.Ok("已自动更正 RDP 地址",
+                                            account.Caption + " → " + fixedHost + "（会话 " + target.Id + "）");
+                                        return (false, "RDP 地址与账号不符，已自动更正为 " + fixedHost
+                                                     + "，请点「重新连接」。");
+                                    }
+                                    SetStatus("地址不匹配 · " + host + " 实际是 " + actualUser);
+                                }
+                            }
+                            catch (Exception ex) { Debug("账号校验失败: " + ex.Message); }
+
+                            SetStatus("已连接 · 会话 " + activeSessionId + " · " + account.UserName);
                             LogBus.Ok("RDP 已连上 " + account.Caption,
                                 "地址 " + host + " · 耗时 " + sw.ElapsedMilliseconds + " ms");
                             if (connection == _connectionGeneration)
