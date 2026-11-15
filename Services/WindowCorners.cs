@@ -53,6 +53,35 @@ namespace SoulLink.Services
             catch { return false; }
         }
 
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmGetColorizationColor(out uint colorization, out bool opaqueBlend);
+
+        [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetCurrentThemeName(System.Text.StringBuilder theme, int length, System.Text.StringBuilder color, int colorLength, System.Text.StringBuilder size, int sizeLength);
+
+        /// <summary>
+        /// 读取当前系统主题强调色（用于激活窗口的边框）。
+        /// 优先使用 DWM 的着色色，回退到注册表 AccentColor。
+        /// </summary>
+        public static uint GetSystemAccentColor()
+        {
+            try
+            {
+                if (DwmGetColorizationColor(out uint c, out _) == 0 && (c & 0xFFFFFF) != 0)
+                    return 0xFF000000u | (c & 0xFFFFFFu);
+            }
+            catch { }
+
+            try
+            {
+                object? v = Microsoft.Win32.Registry.GetValue(
+                    @"HKEY_CURRENT_USER\Software\Microsoft\Windows\DWM", "ColorizationColor", null);
+                if (v is int i && (i & 0xFFFFFF) != 0) return 0xFF000000u | ((uint)i & 0xFFFFFFu);
+            }
+            catch { }
+            return 0xFF4F7CD8; // 系统取不到时使用接近 Windows 默认的蓝色
+        }
+
         /// <summary>设置窗口边框颜色（含标题栏和四周细边）。传 0xFFFFFFFF 表示用系统默认。</summary>
         public static bool SetBorderColor(IntPtr hwnd, uint bgr)
         {

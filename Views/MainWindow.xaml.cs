@@ -65,6 +65,7 @@ namespace SoulLink.Views
             {
                 ApplyDwmCorners();
                 HookWindowChrome();
+                // 保留系统主题色边框；顶部额外横条由 WM_NCCALCSIZE 的非客户区高度处理。
             };
 
             Loaded += MainWindow_Loaded;
@@ -127,12 +128,42 @@ namespace SoulLink.Views
             {
                 var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
                 bool ok = SoulLink.Services.WindowCorners.ApplyRounded(hwnd);
+                UpdateBorderColor();
                 App.Breadcrumb("DWM 圆角: " + (ok ? "已应用" : "不支持（Win10 或更早）"));
             }
             catch (Exception ex)
             {
                 App.AppendErrorLog("MainWindow.ApplyDwmCorners", ex);
             }
+        }
+
+        /// <summary>
+        /// 激活时使用系统主题强调色，未激活时使用灰色，符合 Windows 原生行为。
+        /// </summary>
+        private void UpdateBorderColor()
+        {
+            try
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                if (hwnd == IntPtr.Zero) return;
+                uint color = IsActive
+                    ? SoulLink.Services.WindowCorners.GetSystemAccentColor()
+                    : 0xFF3A3F4B;
+                SoulLink.Services.WindowCorners.SetBorderColor(hwnd, color);
+            }
+            catch { }
+        }
+
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            UpdateBorderColor();
+        }
+
+        protected override void OnDeactivated(EventArgs e)
+        {
+            base.OnDeactivated(e);
+            UpdateBorderColor();
         }
 
         /// <summary>
@@ -154,6 +185,8 @@ namespace SoulLink.Views
         }
 
         private const int WM_NCHITTEST = 0x0084;
+        private const int WM_NCCALCSIZE = 0x0083;
+        private const int WM_NCPAINT = 0x0085;
         private const int HTCLIENT = 1;
         private const int HTCAPTION = 2;
         private const int HTLEFT = 10;
@@ -167,6 +200,13 @@ namespace SoulLink.Views
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            // 顶部非客户区标题横条不属于应用内容，去掉多余高度，保留系统细边框。
+            if (msg == WM_NCCALCSIZE && wParam != IntPtr.Zero)
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+
             if (msg != WM_NCHITTEST) return IntPtr.Zero;
 
             try
