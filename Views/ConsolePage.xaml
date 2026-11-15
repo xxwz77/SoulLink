@@ -26,7 +26,7 @@
                     <!-- 画面操作（只在用户页显示）-->
                     <StackPanel x:Name="ViewOps" Orientation="Horizontal" Visibility="Collapsed">
                         <Button x:Name="BtnMode" Style="{StaticResource GhostButton}" Padding="12,5"
-                                Click="BtnMode_Click" ToolTip="自由视角：光标固定在画面内，移动即转视角">
+                                Click="BtnMode_Click" ToolTip="自由视角：移动经目标会话内相对注入转为视角；不隐藏、不定位、不裁剪本机光标">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock x:Name="ModeGlyph" Text="&#xE785;" FontFamily="Segoe MDL2 Assets"
                                            FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,0" />

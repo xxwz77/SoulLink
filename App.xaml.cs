@@ -348,6 +348,9 @@ namespace SoulLink
 
         public void ExitApp()
         {
+            // 显式关闭模式下，先释放全局钩子与注入代理，再结束进程。
+            foreach (Window window in Current.Windows)
+                if (window is MainWindow main) main.ForceClose();
             try { ConfigStore.Save(Config); } catch { }
             _cts.Cancel();
             _tray?.Dispose();

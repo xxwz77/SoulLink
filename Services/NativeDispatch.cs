@@ -406,6 +406,20 @@ namespace SoulLink.Services
             try { Ocx = GetOcx(); } catch { Ocx = null; }
         }
 
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                var ocx = Ocx;
+                Ocx = null!;
+                if (ocx != null && System.Runtime.InteropServices.Marshal.IsComObject(ocx))
+                {
+                    try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(ocx); } catch { }
+                }
+            }
+            base.Dispose(disposing);
+        }
+
         /// <summary>必须显式创建过一次句柄，GetOcx 才有值。</summary>
         public void EnsureCreated()
         {

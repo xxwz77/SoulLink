@@ -35,11 +35,12 @@
        <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="切换自由视角的热键" Style="{StaticResource Label}" VerticalAlignment="Center"
-                 ToolTip="按一次进入自由视角，再按一次切回指针模式（可反复启停）" />
+                 ToolTip="支持单键、修饰键组合、鼠标中键/侧键；录制后立即生效" />
       <ctl:HotkeyRecorder Grid.Column="1" x:Name="GlobalHotkey" Style="{StaticResource GhostButton}" Width="180" Height="36" />
      </Grid>
     </StackPanel>
    </Border>
+   <TextBlock Text="支持键盘单键/组合键与鼠标中键、侧键（可带 Ctrl/Alt/Shift/Win）。录制完成立即生效；按 Esc 取消。&#x0a;旧热键在录制期间暂停。若设置左键为热键，需另用键盘打开画面，避免无法点击。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="2,10,0,0" />
    <TextBlock x:Name="SavedText" Text="修改会立即保存，并同步到所有已打开的用户画面。"
               Style="{StaticResource Caption}" Margin="2,12,0,0" />
   </StackPanel>

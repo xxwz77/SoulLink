@@ -72,6 +72,7 @@ namespace SoulLink.Controls
   private void Save()
   {
    ConfigStore.Save(App.Config);
+   SoulLink.Views.ConsolePage.NotifyGlobalSettingsChanged();
    foreach (Window window in Application.Current.Windows)
     foreach (var console in FindConsoles(window)) console.ApplyGlobalSettings();
    if (SavedText != null) SavedText.Text = "已保存 · 所有用户共用 · " + DateTime.Now.ToString("HH:mm:ss");

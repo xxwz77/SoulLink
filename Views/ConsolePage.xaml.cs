@@ -204,6 +204,8 @@ namespace SoulLink.Views
 
         private void ShowConfigPage()
         {
+            foreach (var row in _rows)
+                row.Console?.SetForegroundActive(false);
             _viewing = null;
             ConfigPage.Visibility = Visibility.Visible;
             SetBusyVisible(false);
@@ -215,6 +217,8 @@ namespace SoulLink.Views
 
         private async Task ShowViewPageAsync(UserRow row)
         {
+            foreach (var item in _rows)
+                item.Console?.SetForegroundActive(ReferenceEquals(item, row));
             _viewing = row;
             _openedIds.Add(row.Account.Id);   // 打开过的才进标签卡
             ConfigPage.Visibility = Visibility.Collapsed;
@@ -227,6 +231,7 @@ namespace SoulLink.Views
             if (row.Console == null) InitializeConsole(row);
             ViewportHost.Children.Add(row.Console);
             row.Console.OnShown();
+            row.Console.SetForegroundActive(true);
 
             if (!row.Console.IsConnected) await ConnectAsync(row);
         }
@@ -973,8 +978,13 @@ namespace SoulLink.Views
         }
 
         /// <summary>创建一个用户对应的 RdpConsole（尚未连接）。</summary>
+        public static event Action? GlobalSettingsChanged;
+        public static void NotifyGlobalSettingsChanged() => GlobalSettingsChanged?.Invoke();
+
         private void InitializeConsole(UserRow row)
         {
+            GlobalSettingsChanged -= OnGlobalSettingsChanged;
+            GlobalSettingsChanged += OnGlobalSettingsChanged;
             var c = new RdpConsole();
             c.InputActivity += (_, t) =>
                 Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) InputText.Text = t; });
@@ -1041,7 +1051,7 @@ namespace SoulLink.Views
             {
                 BtnMode.Style = (Style)FindResource("PrimaryButton");
                 ModeLabel.Text = "自由视角中";
-                InputText.Text = "鼠标已锁定 · 移动即转视角 · " + hk + " 解锁";
+                InputText.Text = "自由视角 · 相对注入已接管鼠标 · " + hk + " 切回指针";
             }
             else
             {
@@ -1056,6 +1066,19 @@ namespace SoulLink.Views
         /// <summary>构造/同步期间屏蔽工具栏灵敏度滑块的写回，避免把默认值覆盖掉已保存的设置。</summary>
         private bool _suppressSensSave;
 
+        private void OnGlobalSettingsChanged()
+        {
+            try
+            {
+                HotkeyBtn.SetSpec(HotkeySpec.Parse(App.Config.Settings.LockHotkey));
+                _suppressSensSave = true;
+                SensSlider.Value = App.Config.Settings.LookSensitivity;
+                SensText.Text = App.Config.Settings.LookSensitivity.ToString("0.0") + "x";
+                if (_viewing?.Console != null) ApplyModeUi(_viewing.Console.InputMode);
+            }
+            finally { _suppressSensSave = false; }
+        }
+
         private void SensSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (SensText == null) return;
@@ -1065,6 +1088,7 @@ namespace SoulLink.Views
 
             if (_viewing?.Console != null) _viewing.Console.LookSensitivity = v;
             try { App.Config.Settings.LookSensitivity = v; ConfigStore.Save(App.Config); } catch { }
+            GlobalSettingsChanged?.Invoke();
         }
 
         private void OnHotkeyRecorded(HotkeySpec? spec)
@@ -1072,10 +1096,20 @@ namespace SoulLink.Views
             if (spec == null) return;
             var c = _viewing?.Console;
             if (c == null) { InputText.Text = "先打开一个用户画面"; return; }
-            c.ToggleHotkey = spec.ToString();
             App.Config.Settings.LockHotkey = spec.ToString();
             try { ConfigStore.Save(App.Config); } catch { }
-            InputText.Text = "锁定热键 → " + spec.ToString();
+            // 与通用设置相同：所有已打开控制台实时更新，而不是只改当前实例。
+            foreach (Window window in Application.Current.Windows)
+                ApplyHotkeyToVisualTree(window, spec.ToString());
+            HotkeyBtn.SetSpec(spec);
+            InputText.Text = "自由视角热键已实时生效 → " + spec.ToString();
+        }
+
+        private static void ApplyHotkeyToVisualTree(DependencyObject root, string hotkey)
+        {
+            if (root is RdpConsole console) console.ToggleHotkey = hotkey;
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+                ApplyHotkeyToVisualTree(VisualTreeHelper.GetChild(root, i), hotkey);
         }
 
         private async void BtnReconnect_Click(object sender, RoutedEventArgs e)

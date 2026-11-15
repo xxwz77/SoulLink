@@ -164,7 +164,7 @@ namespace SoulLink.Services
 
         public void Dispose()
         {
-            try { EndLookAsync().Wait(500); } catch { }
+            // 释放由 RelayClient.Dispose 统一 releaseall，禁止在 UI 上等待按键请求。
             try { Relay.Dispose(); } catch { }
         }
     }

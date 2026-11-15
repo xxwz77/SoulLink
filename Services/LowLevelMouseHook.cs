@@ -106,7 +106,8 @@ namespace SoulLink.Services
                     X = info.pt.X,
                     Y = info.pt.Y,
                     WheelDelta = msg == WM_MOUSEWHEEL ? (int)(short)((info.mouseData >> 16) & 0xFFFF) : 0,
-                    IsXButton1 = ((info.mouseData >> 16) & 0xFFFF) == 1
+                    IsXButton1 = ((info.mouseData >> 16) & 0xFFFF) == 1,
+                    IsInjected = (info.flags & 0x01) != 0
                 };
 
                 // 逐点差分：两个相邻鼠标事件之间的位移。
@@ -140,6 +141,8 @@ namespace SoulLink.Services
         public int X { get; set; }
         public int Y { get; set; }
         public int WheelDelta { get; set; }
+        /// <summary>脚本/注入产生的事件不用于触发热键，避免形成反馈循环。</summary>
+        public bool IsInjected { get; set; }
 
         /// <summary>
         /// 原始物理位移（未经指针加速）。WH_MOUSE_LL 的 MSLLHOOKSTRUCT 里没有这个字段，

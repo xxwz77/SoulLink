@@ -1,20 +1,12 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace SoulLink.Services
 {
     /// <summary>
-    /// 全局低级键盘钩子（WH_KEYBOARD_LL）。
-    ///
-    /// ★ 为什么必须用它，不能只靠 RegisterHotKey：
-    ///   RDP 控件的 KeyboardHookMode=1（"发送到远端"）会在输入链路里抢占按键，
-    ///   用户按 Ctrl+Alt+K 时键值被直接送进远端会话，前台（本进程）收不到，
-    ///   RegisterHotKey 的 WM_HOTKEY 也就永远不触发 ——
-    ///   现象就是"热键好像直接作用在 RDP 上，前台没反应"（用户实测反馈）。
-    ///
-    ///   低级键盘钩子在输入链路里比窗口和热键处理都更靠前，
-    ///   且后安装的钩子会先于先安装的执行，正好能抢在 RDP 之前拿到按键。
-    ///   这与本项目鼠标那边用 WH_MOUSE_LL 的原因是同一个（见 LowLevelMouseHook）。
+    /// 本机物理键盘钩子。只负责识别热键，不向 RDP 或目标会话发送输入。
+    /// WH_KEYBOARD_LL 在 RDP 的窗口键盘处理之前运行，可阻止热键泄漏给游戏。
     /// </summary>
     public sealed class LowLevelKeyboardHook : IDisposable
     {
@@ -23,6 +15,7 @@ namespace SoulLink.Services
         private const int WM_KEYUP = 0x0101;
         private const int WM_SYSKEYDOWN = 0x0104;
         private const int WM_SYSKEYUP = 0x0105;
+        private const uint LLKHF_INJECTED = 0x10;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct KBDLLHOOKSTRUCT
@@ -46,21 +39,52 @@ namespace SoulLink.Services
         private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-        private static extern IntPtr GetModuleHandle(string lpModuleName);
+        private static extern IntPtr GetModuleHandle(string? lpModuleName);
 
-        private IntPtr _hook = IntPtr.Zero;
-        private LowLevelKeyboardProc? _proc;   // 必须保持引用，否则会被 GC 回收导致回调崩溃
-        private bool _keyDown;
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
 
-        // 自维护的修饰键状态（钩子里 GetAsyncKeyState 不可靠，见 Callback 注释）
-        private bool _ctrl, _alt, _shift, _win;
+        private IntPtr _hook;
+        private LowLevelKeyboardProc? _proc;
+        private HotkeySpec? _spec;
+        private readonly HotkeyMatcher _matcher = new HotkeyMatcher(null);
+        private uint _modifiers;
+        private static uint _sharedModifiers;
+        private static int _installedCount;
 
-        /// <summary>要监听的热键（仅键盘组合；鼠标键走 LowLevelMouseHook）。</summary>
-        public HotkeySpec? Spec { get; set; }
+        /// <summary>安装/重挂时同步物理修饰键；回调内不读取异步按键状态。</summary>
+        public static uint CurrentModifiers => Volatile.Read(ref _installedCount) > 0
+            ? Volatile.Read(ref _sharedModifiers)
+            : ReadPhysicalModifiers();
 
-        /// <summary>热键被按下时触发（在钩子线程里，回调要尽量轻）。</summary>
+        public static uint ReadPhysicalModifiers()
+        {
+            uint mask = 0;
+            if ((GetAsyncKeyState(0x11) & 0x8000) != 0) mask |= HotkeySpec.CtrlMask;
+            if ((GetAsyncKeyState(0x12) & 0x8000) != 0) mask |= HotkeySpec.AltMask;
+            if ((GetAsyncKeyState(0x10) & 0x8000) != 0) mask |= HotkeySpec.ShiftMask;
+            if ((GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0)
+                mask |= HotkeySpec.WinMask;
+            return mask;
+        }
+
+        public HotkeySpec? Spec
+        {
+            get => _spec;
+            set
+            {
+                _spec = value;
+                _matcher.Spec = value;
+            }
+        }
+
+        /// <summary>是否处于可使用该热键的 RDP 画面。回调必须轻量且不能操作输入。</summary>
+        public Func<bool>? CanTrigger { get; set; }
+
+        /// <summary>自由视角中允许吞掉组合键的修饰键，避免 Alt/Ctrl 半截泄漏。</summary>
+        public Func<bool>? CanSuppressModifiers { get; set; }
+
         public Action? Pressed { get; set; }
-
         public bool IsHooked => _hook != IntPtr.Zero;
 
         public bool Install()
@@ -69,9 +93,13 @@ namespace SoulLink.Services
             _proc = Callback;
             try
             {
-                IntPtr hMod = GetModuleHandle(null);
-                _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, hMod, 0);
-                return _hook != IntPtr.Zero;
+                // 新安装的 LL 钩子会排在已安装的 RDP 钩子之前；重挂见 Rearm()。
+                _modifiers = ReadPhysicalModifiers();
+                Volatile.Write(ref _sharedModifiers, _modifiers);
+                _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
+                if (_hook == IntPtr.Zero) return false;
+                Interlocked.Increment(ref _installedCount);
+                return true;
             }
             catch
             {
@@ -80,81 +108,63 @@ namespace SoulLink.Services
             }
         }
 
+        /// <summary>
+        /// RDP 获得焦点后重挂本机钩子，修正两个 LL 钩子的先后顺序。
+        /// 只在 UI 消息处理路径调用，不在另一个钩子回调里嵌套重挂。
+        /// </summary>
+        public bool Rearm()
+        {
+            if (_hook == IntPtr.Zero) return false;
+            Uninstall();
+            return Install();
+        }
+
         public void Uninstall()
         {
             if (_hook == IntPtr.Zero) return;
             try { UnhookWindowsHookEx(_hook); } catch { }
             _hook = IntPtr.Zero;
+            Interlocked.Decrement(ref _installedCount);
+            _modifiers = 0;
+            Volatile.Write(ref _sharedModifiers, 0);
+
         }
+
+        private IntPtr Next(int nCode, IntPtr wParam, IntPtr lParam)
+            => CallNextHookEx(_hook, nCode, wParam, lParam);
 
         private IntPtr Callback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode < 0) return CallNextHookEx(_hook, nCode, wParam, lParam);
-
+            if (nCode < 0) return Next(nCode, wParam, lParam);
             try
             {
                 int msg = wParam.ToInt32();
                 bool isDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
                 bool isUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+                if (!isDown && !isUp) return Next(nCode, wParam, lParam);
 
                 var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-                uint vk = info.vkCode;
-                bool injected = (info.flags & 0x10) != 0;
-
-                // ★ 自己维护修饰键状态，不要用 GetAsyncKeyState。
-                //   原因：钩子回调发生在按键事件**分发过程中**，
-                //   GetAsyncKeyState 在这个时刻读修饰键并不可靠，
-                //   实测会返回 False，导致热键永远判定"修饰键不匹配"→ 按了没反应。
-                //   钩子能看到每一个 KEYDOWN/KEYUP，自己记账才是准的。
-                if (!injected)
+                bool swallow = _matcher.Key(info.vkCode, isDown,
+                    (info.flags & LLKHF_INJECTED) != 0,
+                    CanTrigger?.Invoke() == true,
+                    CanSuppressModifiers?.Invoke() == true,
+                    out bool matched);
+                _modifiers = _matcher.Modifiers;
+                Volatile.Write(ref _sharedModifiers, _modifiers);
+                if (matched)
                 {
-                    if (vk == 0x11) _ctrl = isDown;          // Ctrl
-                    else if (vk == 0x12) _alt = isDown;      // Alt
-                    else if (vk == 0x10) _shift = isDown;    // Shift
-                    else if (vk == 0x5B || vk == 0x5C) _win = isDown;  // Win
+                    SoulLink.Controls.RdpConsole.Debug("本机热键命中：" + _spec
+                        + " vk=" + info.vkCode + " mods=" + _modifiers + " injected=False");
+                    try { Pressed?.Invoke(); } catch { }
                 }
-
-                var spec = Spec;
-                if (spec == null || spec.IsMouse || spec.Key == 0)
-                    return CallNextHookEx(_hook, nCode, wParam, lParam);
-
-                // 临时诊断：记录所有按键
-                if (isDown)
-                {
-                    SoulLink.Controls.RdpConsole.Debug("KB vk=" + vk
-                        + "(" + HotkeySpec.KeyName(vk) + ")"
-                        + " 监听=" + spec.Key + "(" + HotkeySpec.KeyName(spec.Key) + ")"
-                        + " ctrl=" + _ctrl + " alt=" + _alt
-                        + " 注入=" + injected);
-                }
-
-                if (vk != spec.Key)
-                    return CallNextHookEx(_hook, nCode, wParam, lParam);
-
-                // 修饰键是否匹配（用自维护状态）
-                bool modsOk = _ctrl == spec.Ctrl && _alt == spec.Alt
-                           && _shift == spec.Shift && _win == spec.Win;
-
-                if (isDown && !_keyDown)
-                {
-                    _keyDown = true;
-                    if (modsOk)
-                    {
-                        SoulLink.Controls.RdpConsole.Debug("热键命中 vk=" + vk
-                            + "(" + HotkeySpec.KeyName(vk) + ") 注入=" + injected);
-                        try { Pressed?.Invoke(); } catch { }
-                        return (IntPtr)1;   // 吞掉，别再传给 RDP
-                    }
-                }
-                else if (isUp)
-                {
-                    _keyDown = false;
-                    if (modsOk) return (IntPtr)1;
-                }
+                return swallow ? (IntPtr)1 : Next(nCode, wParam, lParam);
             }
-            catch { }
-
-            return CallNextHookEx(_hook, nCode, wParam, lParam);
+            catch (Exception ex)
+            {
+                // 识别失败时放行，绝不能让键盘失效。
+                SoulLink.Controls.RdpConsole.Debug("键盘热键识别异常：" + ex.Message);
+                return Next(nCode, wParam, lParam);
+            }
         }
 
         public void Dispose() => Uninstall();

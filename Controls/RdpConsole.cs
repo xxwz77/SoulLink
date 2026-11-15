@@ -8,7 +8,6 @@ using System.Windows.Forms.Integration;
 using System.Windows.Input;
 using SoulLink.Models;
 using SoulLink.Services;
-using SoulLink.Services;   // IMsRdpExtendedSettings 在 SoulLink.Services 命名空间
 
 namespace SoulLink.Controls
 {
@@ -90,16 +89,36 @@ namespace SoulLink.Controls
 
         /// <summary>画面是否处于「自由视角」捕获状态。</summary>
         private bool _captured;
-        private int _accelToken = -1;
         /// <summary>锁定期间补焦点的重试次数（避免无限制调用 Focus）。</summary>
         private int _keyboardFocusRetry = 20;
         private int _captureCenterX;
         private int _captureCenterY;
-        private DateTime _lastInject = DateTime.MinValue;
+        private LookInputQueue? _lookQueue;
+        private readonly object _lookQueueSync = new();
+        private int _lastMoveX = int.MinValue;
+        private int _lastMoveY = int.MinValue;
 
-        /// <summary>待发送的转视角累积位移（合并高频事件，避免 IPC 过密）。</summary>
-        private int _pendLookX;
-        private int _pendLookY;
+        private LookInputQueue LookQueue
+        {
+            get
+            {
+                lock (_lookQueueSync)
+                    return _lookQueue ??= new LookInputQueue(() => Input!, () => LookSensitivity, Debug);
+            }
+        }
+
+        private void ResetLookQueue()
+        {
+            LookInputQueue? queue;
+            lock (_lookQueueSync)
+            {
+                queue = _lookQueue;
+                _lookQueue = null;
+            }
+            // Dispose 内部会先取消位移、保留按键释放语义；不阻塞 UI。
+            queue?.Dispose();
+            _lastMoveX = _lastMoveY = int.MinValue;
+        }
 
         private uint _scaleFactor = 100;
         private bool _hasConnected;
@@ -109,6 +128,50 @@ namespace SoulLink.Controls
 
         /// <summary>系统热键：开启锁定时注册，按一下就退出（默认 Ctrl+Alt+Q）。</summary>
         private NativeHotkey? _escapeHotkey;
+        internal bool HotkeyArmed { get; set; }
+        private int _hotkeyToggleVersion;
+        private readonly System.Collections.Generic.HashSet<string> _injectedButtons
+            = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private bool _inputUsable;
+        private int _inputGeneration;
+        private int _connectionGeneration;
+        private int _inputStartPending;
+        private bool _nativeRelativeMouse;
+        private int _activeState; // 0=前台允许输入，1=后台/已撤销
+        public void SetForegroundActive(bool active)
+        {
+            System.Threading.Interlocked.Exchange(ref _activeState, active ? 0 : 1);
+            HotkeyArmed = active;
+            if (!active)
+            {
+                _captured = false;
+                InputMode = ConsoleInputMode.Pointer;
+                InputModeChanged?.Invoke(this, InputMode);
+                ReleaseCapture("离开当前控制台");
+                UninstallMouseHook();
+                _ = StopInputAsync();
+            }
+        }
+
+        private bool InputAllowed => _activeState == 0 && !_disposed && IsVisible;
+
+        /// <summary>只有前台可见控制台可接收热键；退出自由视角不受连接状态限制。</summary>
+        public bool CanUseToggleHotkey
+        {
+            get
+            {
+                try
+                {
+                    if (_activeState != 0 || _disposed || !IsVisible || _ownerWindow == null || !_ownerWindow.IsActive
+                        || _ownerWindow.WindowState == WindowState.Minimized || System.Windows.Application.Current == null)
+                        return false;
+                    // ActiveX 不会让 WPF 稳定看到 ContainsFocus / Mouse.DirectlyOver。
+                    // 不能用这两个条件阻断热键，否则用户按了也被判为“不属于画面”。
+                    return _captured || (HotkeyArmed && IsConnected);
+                }
+                catch { return false; }
+            }
+        }
 
         /// <summary>
         /// 自由视角灵敏度倍率。
@@ -151,7 +214,6 @@ namespace SoulLink.Controls
                 _escapeHotkey = null;
                 try { old?.Dispose(); } catch { }
 
-                _hotkeyTried = false;      // 允许用新组合重新注册
                 EnsureToggleHotkey();
             }
         }
@@ -196,11 +258,10 @@ namespace SoulLink.Controls
 
             IsVisibleChanged += (_, __) =>
             {
-                if (IsVisible) { InstallMouseHook(); EnsureToggleHotkey(); }
-                else
+                if (IsVisible && _activeState == 0) { InstallMouseHook(); EnsureToggleHotkey(); }
+                else if (!IsVisible)
                 {
-                    ReleaseCapture("离开页面");
-                    UninstallMouseHook();
+                    SetForegroundActive(false);
                 }
             };
 
@@ -238,8 +299,17 @@ namespace SoulLink.Controls
             _ownerHooked = false;
         }
 
-        private void OnOwnerActivated(object? sender, EventArgs e) { }
-        private void OnOwnerDeactivated(object? sender, EventArgs e) => ReleaseCapture("窗口失去焦点");
+        private void OnOwnerActivated(object? sender, EventArgs e)
+        {
+            if (IsVisible) EnsureToggleHotkey();
+        }
+        private void OnOwnerDeactivated(object? sender, EventArgs e)
+        {
+            _captured = false;
+            InputMode = ConsoleInputMode.Pointer;
+            ReleaseCapture("窗口失去焦点");
+            UninstallMouseHook();
+        }
         private void OnOwnerStateChanged(object? sender, EventArgs e)
         {
             if (_ownerWindow?.WindowState != WindowState.Normal) ReleaseCapture("窗口状态变化");
@@ -289,6 +359,7 @@ namespace SoulLink.Controls
 
         private void InstallMouseHook()
         {
+            if (_disposed || !IsVisible || _ownerWindow == null || !_ownerWindow.IsActive) return;
             if (_mouseHook != null) return;   // ★ 单例，避免泄漏多个钩子
             try
             {
@@ -303,8 +374,7 @@ namespace SoulLink.Controls
 
         private void UninstallMouseHook()
         {
-            try { System.Windows.Forms.Cursor.Show(); } catch { }
-            ReleaseAccel();
+            // 本方案不隐藏、不定位、不裁剪本机光标，也不修改系统鼠标加速。
 
             var hk = _escapeHotkey;
             _escapeHotkey = null;
@@ -318,13 +388,18 @@ namespace SoulLink.Controls
         /// <summary>切换输入模式。进入自由视角前会先确认一切就绪。</summary>
         public (bool ok, string message) SetInputMode(ConsoleInputMode mode)
         {
+            if (mode == InputMode && (mode != ConsoleInputMode.FreeLook || _captured))
+                return (true, mode == ConsoleInputMode.FreeLook ? "已进入自由视角" : "已切回指针模式");
             if (mode == ConsoleInputMode.FreeLook)
             {
-                // 不再要求 Input（注入通道）就绪。
-                // ClipCursor 模式只做「把光标限制在画面内」，移动/点击/拖拽全走
-                // RDP 原生通道，不需要注入代理。
-                // 原来这里 Input == null 就直接拒绝，会让 Disc 会话（注入待命）
-                // 永远进不了自由视角，而用户恰恰需要先转视角观察。
+                // 相对注入不可用时不能吞掉本机鼠标，否则用户会失去操作出口。
+                if (!IsConnected || Input == null || !Input.Relay.IsConnected || !_inputUsable)
+                {
+                    const string unavailable = "相对输入通道尚未就绪，不能进入自由视角。请等待「注入就绪」，并确保当前 RDP 已连接活动桌面。";
+                    InputActivity?.Invoke(this, unavailable);
+                    Debug("拒绝进入自由视角：输入通道未就绪");
+                    return (false, unavailable);
+                }
                 if (!BeginCapture("手动切换"))
                     return (false, "画面不在可用状态，无法进入自由视角");
             }
@@ -343,7 +418,13 @@ namespace SoulLink.Controls
             if (_captured) return true;
 
             var rect = ViewportScreenRect();
-            if (rect == null) { Debug("拒绝进入自由视角：画面不可用（" + reason + "）"); return false; }
+            if (rect == null)
+            {
+                Debug("拒绝进入自由视角：画面不可用（" + reason + "） hostVisible=" + _host.IsVisible
+                    + " size=" + _host.ActualWidth + "x" + _host.ActualHeight
+                    + " owner=" + (_ownerWindow?.IsVisible) + " state=" + _ownerWindow?.WindowState);
+                return false;
+            }
             var r = rect.Value;
 
             _captureCenterX = r.left + r.width / 2;
@@ -358,9 +439,15 @@ namespace SoulLink.Controls
                 return false;
             }
 
+            // 已实测：本机 RelativeMouseMode 仅连接前可设置，连接后修改返回 E_FAIL。
+            // 当前仍使用已验证的目标会话相对注入；后续用专用相对模式连接解决光标捕获。
             _captured = true;
+            InputMode = ConsoleInputMode.FreeLook;
+            InputModeChanged?.Invoke(this, InputMode);
 
-            if (_accelToken < 0) _accelToken = PointerAcceleration.PushDisabled();
+            // 不在自由视角开关时修改系统鼠标加速。
+            // SystemParametersInfo 会向所有顶层窗口广播设置变化，实测可造成系统级卡顿。
+            // 灵敏度只在目标会话的相对位移上计算，不污染用户全局设置。
 
             // ★★★ 不碰光标！★★★
             //
@@ -404,16 +491,23 @@ namespace SoulLink.Controls
             //   · 第一次用默认 Ctrl+Alt+Q 注册成功
             //   · 用户改成 Ctrl+Alt+J 后，这里直接 return，新热键永远没注册
             //   现在：规格不一致就先释放再重注册；一致才跳过。
-            if (_escapeHotkey != null && _hotkeySpec == ToggleHotkey) return;
+            if (_disposed || !IsVisible || _ownerWindow == null || !_ownerWindow.IsActive) return;
+            if (_escapeHotkey != null && _hotkeySpec == ToggleHotkey && IsVisible) return;
 
             var old = _escapeHotkey;
             _escapeHotkey = null;
             try { old?.Dispose(); } catch { }
 
-            _hotkeyTried = true;
             _hotkeySpec = ToggleHotkey;
 
-            _escapeHotkey = NativeHotkey.RegisterFromString(ToggleHotkey, OnToggleHotkey);
+            var spec = HotkeySpec.Parse(ToggleHotkey);
+            if (spec == null || spec.Key == 0 && string.IsNullOrEmpty(spec.MouseButton))
+            {
+                Debug("热键配置无效：" + ToggleHotkey);
+                return;
+            }
+            _escapeHotkey = NativeHotkey.RegisterForConsole(spec, OnToggleHotkey, this);
+            SyncRelayHotkey("配置更新");
 
             if (_escapeHotkey == null)
                 Debug("热键注册失败（可能被占用）：" + ToggleHotkey);
@@ -421,12 +515,19 @@ namespace SoulLink.Controls
                 Debug("锁定热键已注册：" + ToggleHotkey);
         }
 
-        private bool _hotkeyTried;
         private string _hotkeySpec = "";
 
         private void OnToggleHotkey()
         {
-            // 正在锁 → 解锁；否则 → 上锁
+            Debug("执行热键切换 · guard=" + _hotkeyToggleVersion + " UI线程=" + Dispatcher.CheckAccess());
+            // 只有空闲状态(0)才能进入；原实现把比较结果当成 -1 标记，导致所有事件直接返回。
+            if (System.Threading.Interlocked.CompareExchange(ref _hotkeyToggleVersion, 1, 0) != 0) return;
+            try { ToggleFromHotkey(); }
+            finally { System.Threading.Interlocked.Exchange(ref _hotkeyToggleVersion, 0); }
+        }
+
+        private void ToggleFromHotkey()
+        {
             var target = _captured ? ConsoleInputMode.Pointer : ConsoleInputMode.FreeLook;
 
             Debug("热键触发: target=" + target + " IsConnected=" + IsConnected + " _captured=" + _captured);
@@ -445,20 +546,34 @@ namespace SoulLink.Controls
                 InputActivity?.Invoke(this, "画面尚未连接，无法进入自由视角");
                 return;
             }
-            var (ok, _) = SetInputMode(target);
+            var (ok, message) = SetInputMode(target);
+            Debug("热键切换结果 ok=" + ok + " message=" + message + " captured=" + _captured + " mode=" + InputMode);
             if (!ok && _captured) ReleaseCapture("热键兜底");
         }
 
-                private void ReleaseCapture(string reason)
+        private void ReleaseCapture(string reason)
         {
-            ReleasePointerCapture();
-            if (!_captured) { ReleaseAccel(); ReleaseAccel(); return; }
+            bool wasCaptured = _captured;
             _captured = false;
+            InputMode = ConsoleInputMode.Pointer;
+            InputModeChanged?.Invoke(this, InputMode);
+            ReleasePointerCapture();
+            ReleaseInjectedButtonsAsync();
+            // 先排队抬起；代理断开仍会 releaseall，不把释放指令自己清掉。
+            ResetLookQueue();
+            if (!wasCaptured) return;
             _keyboardFocusRetry = 20;
+            Debug("退出自由视角（" + reason + "）");
+        }
 
-            ReleaseAccel();
-
-            Debug("退出鼠标锁定（" + reason + "）");
+        private void ReleaseInjectedButtonsAsync()
+        {
+            _injectedButtons.Clear();
+            var input = Input;
+            if (input?.Relay.IsConnected != true) return;
+            // 退出/断开/销毁三条路径都走这里：无条件释放，避免远端留下按下态。
+            _ = input.Relay.ReleaseAllAsync();
+            Debug("已请求代理释放所有鼠标按键");
         }
 
         private void WatchPointerCapture()
@@ -481,21 +596,13 @@ namespace SoulLink.Controls
             InputActivity?.Invoke(this, "键鼠已释放 · 点击画面可重新捕获");
         }
 
-        private void ReleaseAccel()
-        {
-            int token = _accelToken;
-            if (token < 0) return;
-            _accelToken = -1;
-            try { PointerAcceleration.PopRestore(token); } catch { }
-        }
-
         /// <summary>
         /// 全局鼠标回调。返回 true = 吞掉（不传给宿主桌面和 RDP 控件）。
         ///
         /// ★ 两种模式，语义要清楚：
         ///   锁定关闭（默认）：**完全放行**，鼠标事件走 RDP 原生通道，行为跟直接开游戏窗口一样。
-        ///   锁定开启（自由视角）：用 ClipCursor 把光标限制在画面矩形内，
-        ///                        **仍然全部放行** —— 落点/拖拽/点击都是真实位置。
+        ///   自由视角：吞掉本机鼠标，在目标会话内做相对位移与 down/up 注入；
+        ///             不隐藏、不定位、不裁剪本机光标。
         ///
         /// 任何异常都立刻放行，绝不让用户动不了鼠标。
         /// </summary>
@@ -503,6 +610,22 @@ namespace SoulLink.Controls
         {
             try
             {
+                if (_disposed) { _captured = false; return false; }
+                if (IsConfiguredHotkeyMouse(ev))
+                {
+                    // 该按钮已分配给 SoulLink 模式开关，不再交给 RDP 或游戏注入。
+                    // 这里只吞掉热键按钮自己的 down/up，不转换成任何其他鼠标键。
+                    return _captured && _activeState == 0;
+                }
+                if (ev.IsInjected) return false;
+                if (_captured && _disposed) { _captured = false; return false; }
+                if (_captured && _ownerWindow != null && !_ownerWindow.IsActive)
+                {
+                    _captured = false;
+                    InputMode = ConsoleInputMode.Pointer;
+                    Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("窗口失焦")));
+                    return false;
+                }
                 if (!_captured && CaptureOnClick)
                 {
                     var rect = ViewportScreenRect();
@@ -520,24 +643,16 @@ namespace SoulLink.Controls
                     }
                     if (!_pointerCaptured && inside) return true;
                 }
+                // 原生相对模式由 RDP 自己捕获窗口内鼠标并发送位移；
+                // 不再吞掉移动，也不再重复调用 moverel。
+                if (_nativeRelativeMouse && _captured) return false;
+
                 // ── 未锁定：放行，交给 RDP 自己处理 ──
                 if (!_captured)
                     return false;
 
-                // ── 自由视角：光标限制在画面内，其余全部交给 RDP 原生通道 ──
-                //
-                // ★ 这才是"游戏无边框窗口化"的手感（用户明确要求的效果）：
-                //   光标**真实移动**、真实可见，只是不许离开画面矩形；
-                //   移动/点击/拖拽全走 RDP 原生绝对坐标，落点就是用户看到的位置。
-                //
-                // ★ 为什么不再用"钉中心 + mouse_event 相对位移"（上一版的做法，已废弃）：
-                //   拖拽时远端光标被相对位移推着走，而本地光标每帧被 SetCursorPos 拽回中心，
-                //   两个位置互相打架，拖地图就是一顿一顿的锯齿（用户实测：抖动更严重了）。
-                //   相对位移/钉中心只适合"纯转视角、不点不拖"的场景。
-                //
-                // ★ 这里只需保证一件事：光标不能跑出画面。
-                //   钩子里不放行任何事件（全部 return false），
-                //   靠 CursorClip 在系统层面把它限制在视口矩形内。
+                // ── 自由视角：只向目标会话喂相对鼠标输入，不再走 RDP 绝对坐标 ──
+                // 游戏自行决定转视角、显示光标与处理菜单，我们不造虚拟光标。
                 if (ev.IsMove)
                 {
                     // ── 自由视角转视角 ──────────────────────────────────────────
@@ -563,27 +678,12 @@ namespace SoulLink.Controls
                     //     · 按键     → mouse_event(DOWN/UP)
                     //   全部在目标会话内部执行（RelayAgent），所以游戏收到的是
                     //   完整的真实输入流，它自己决定转视角还是拖拽、要不要显示光标。
-                    if (!ev.HasRawDelta) return true;
-                    int dwx = ev.RawDeltaX;
-                    int dwy = ev.RawDeltaY;
+                    if (_lastMoveX == int.MinValue) { _lastMoveX = ev.X; _lastMoveY = ev.Y; return true; }
+                    int dwx = ev.X - _lastMoveX;
+                    int dwy = ev.Y - _lastMoveY;
+                    _lastMoveX = ev.X; _lastMoveY = ev.Y;
                     if (dwx == 0 && dwy == 0) return true;
-
-                    // 累积后按阈值发送，避免 IPC 过密导致卡顿
-                    _pendLookX += dwx;
-                    _pendLookY += dwy;
-                    var now0 = DateTime.UtcNow;
-                    bool big0 = Math.Abs(_pendLookX) >= 2 || Math.Abs(_pendLookY) >= 2;
-                    if (big0 || (now0 - _lastInject).TotalMilliseconds >= 8)
-                    {
-                        int sx0 = _pendLookX, sy0 = _pendLookY;
-                        _pendLookX = 0;
-                        _pendLookY = 0;
-                        _lastInject = now0;
-                        _ = InjectLookAsync(sx0, sy0);
-                    }
-
-                    // 吞掉本地移动：不让宿主机光标跑到别的窗口，
-                    // 也避免 RDP 原生通道再发一份绝对坐标，污染游戏看到的输入。
+                    LookQueue.EnqueueMove(dwx, dwy);
                     return true;
                 }
 
@@ -593,36 +693,67 @@ namespace SoulLink.Controls
                 //   那条路发的是**绝对坐标**语义，而我们的光标是由相对位移驱动的，
                 //   两边位置对不上，点击会落错地方。走注入才能保证 down/up
                 //   发生在游戏认为的光标位置上。
-                if (ev.IsLeftDown || ev.IsRightDown || ev.IsMiddleDown
-                    || ev.IsXButton1Down || ev.IsXButton2Down)
+                if (ev.IsLeftDown || ev.IsRightDown || ev.IsMiddleDown)
                 {
-                    // 侧键仍然作为退出快捷键，优先处理
-                    if (ev.IsXButton1Down || ev.IsXButton2Down)
+                    if (!IsRelativeInputReady)
                     {
-                        ReleaseCapture("侧键退出");
-                        InputActivity?.Invoke(this, "已退出自由视角（侧键）");
-                        SetInputMode(ConsoleInputMode.Pointer);
+                        _captured = false;
+                        InputMode = ConsoleInputMode.Pointer;
+                        Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("相对输入通道断开")));
+                        return false;
+                    }
+                    string button = ButtonNameOf(ev);
+                    _injectedButtons.Add(button);
+                    LookQueue.EnqueueButton(button, true);
+                    return true;
+                }
+                if (ev.IsLeftUp || ev.IsRightUp || ev.IsMiddleUp)
+                {
+                    string button = ButtonNameOf(ev);
+                    if (Input?.Relay.IsConnected == true)
+                    {
+                        LookQueue.EnqueueButton(button, false);
+                        _injectedButtons.Remove(button);
                         return true;
                     }
-                    _ = InjectButtonAsync(ButtonNameOf(ev), true);
-                    return true;
-                }
-                if (ev.IsLeftUp || ev.IsRightUp || ev.IsMiddleUp || ev.Message == 0x020C)
-                {
-                    // 侧键抬起也要吞掉，避免远端残留按下态
-                    if (ev.Message == 0x020C) return true;
-                    _ = InjectButtonAsync(ButtonNameOf(ev), false);
-                    return true;
+                    _injectedButtons.Clear();
+                    _captured = false;
+                    InputMode = ConsoleInputMode.Pointer;
+                    Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("相对输入通道断开")));
+                    return false;
                 }
 
-                // 滚轮放行（RDP 原生通道处理，不影响落点）
-                return false;
+                // 滚轮也注入当前远端位置，不能让 RDP 再补一份本机绝对坐标。
+                if (ev.IsWheel && IsRelativeInputReady)
+                {
+                    LookQueue.EnqueueWheel(ev.WheelDelta);
+                    return true;
+                }
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
-                ReleaseCapture("回调异常");
+                // 低级钩子中不等待 UI、不写文件、不释放队列。先放行保证系统鼠标可用。
+                _captured = false;
+                InputMode = ConsoleInputMode.Pointer;
+                try { Dispatcher.BeginInvoke(new Action(() => ReleaseCapture("回调异常：" + ex.GetType().Name))); } catch { }
                 return false;
             }
+        }
+
+        private static bool IsConfiguredHotkeyMouse(MouseHookEvent ev)
+        {
+            var spec = HotkeySpec.Parse(App.Config.Settings.LockHotkey);
+            if (spec == null || !spec.IsMouse) return false;
+            return spec.MouseButton switch
+            {
+                "Left" => ev.IsLeftDown || ev.IsLeftUp,
+                "Right" => ev.IsRightDown || ev.IsRightUp,
+                "Middle" => ev.IsMiddleDown || ev.IsMiddleUp,
+                "X1" => ev.Message is 0x020B or 0x020C && ev.IsXButton1,
+                "X2" => ev.Message is 0x020B or 0x020C && !ev.IsXButton1,
+                _ => false
+            };
         }
 
         private async Task InjectClickAsync(double uiX, double uiY, string button = "left")
@@ -643,74 +774,12 @@ namespace SoulLink.Controls
             catch (Exception ex) { Debug("注入点击失败：" + ex.Message); }
         }
 
-        /// <summary>
-        /// 自由视角下的点击：**在光标当前位置直接点，不做任何定位**。
-        ///
-        /// ★ 不能走 ClickUiAsync —— 那个会先 SetCursorPos 再点，
-        ///   而捕获状态下游标本来就锁在中心，结果每次点击都跳回中心（实测反馈）。
-        ///   自由视角里"准星"就是当前光标位置，原地按下抬起即可。
-        /// </summary>
-        private async Task InjectClickAtCursorAsync(string button)
-        {
-            var input = Input;
-            if (input == null) return;
-            try
-            {
-                var r = await input.Relay.ClickAsync(0, 0, button, 1).ConfigureAwait(false);
-                if (r?.Ok != true) Debug("自由视角点击失败：" + (r?.Message ?? "无响应"));
-            }
-            catch (Exception ex) { Debug("自由视角点击异常：" + ex.Message); }
-        }
-
         /// <summary>把钩子事件映射成注入通道认识的按钮名。</summary>
         private static string ButtonNameOf(MouseHookEvent ev)
         {
             if (ev.IsRightDown || ev.IsRightUp) return "right";
             if (ev.IsMiddleDown || ev.IsMiddleUp) return "middle";
-            if (ev.IsXButton1Down || ev.IsXButton2Down || ev.IsXButtonUp)
-                return ev.IsXButton1 ? "x1" : "x2";
             return "left";
-        }
-
-        /// <summary>
-        /// 自由视角下的按键注入（按下/抬起分离）。
-        ///
-        /// ★ 必须走 down/up 而不是 click：拖拽地图要的是"按住不放 + 移动 + 松开"，
-        ///   一次性 click 根本拖不动。
-        /// ★ 远端光标保持在它自己的位置，不受本地被钉在中心的影响。
-        /// </summary>
-        private async Task InjectButtonAsync(string button, bool down)
-        {
-            var input = Input;
-            if (input == null) return;
-            try
-            {
-                if (down) await input.Relay.DownAsync(button).ConfigureAwait(false);
-                else await input.Relay.UpAsync(button).ConfigureAwait(false);
-            }
-            catch (Exception ex) { Debug("自由视角按键注入失败：" + ex.Message); }
-        }
-
-        private async Task InjectLookAsync(int dx, int dy)
-        {
-            var input = Input;
-            if (input == null) return;
-            try
-            {
-                // 灵敏度直接作用在注入前的位移量上（不依赖缩放，避免高 DPI 变慢）
-                double sens = LookSensitivity;
-                int sx = (int)Math.Round(dx * sens);
-                int sy = (int)Math.Round(dy * sens);
-                await input.LookRawAsync(sx, sy).ConfigureAwait(false);
-            }
-            catch { }
-        }
-
-        private async Task InjectWheelAsync(int delta)
-        {
-            var input = Input;
-            if (input == null) return;
-            try { await input.WheelAsync(delta).ConfigureAwait(false); } catch { }
         }
 
         /// <summary>页面重新显示时调用：重新确认可见性并补装钩子。</summary>
@@ -765,7 +834,61 @@ namespace SoulLink.Controls
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern IntPtr SetFocus(IntPtr hWnd);
 
+        private bool SetNativeRelativeMouse(bool enabled)
+        {
+            if (_ocx == null) return false;
+            try
+            {
+                dynamic settings = _ocx.AdvancedSettings6;
+                settings.RelativeMouseMode = enabled;
+                bool actual = settings.RelativeMouseMode;
+                _nativeRelativeMouse = actual;
+                Debug("RDP 原生相对鼠标模式=" + actual + " requested=" + enabled
+                    + " connected=" + IsConnected);
+                return actual == enabled;
+            }
+            catch (Exception ex)
+            {
+                _nativeRelativeMouse = false;
+                Debug("设置 RDP 原生相对鼠标失败：" + ex.Message);
+                return false;
+            }
+        }
+
         public bool IsLooking => _captured;
+        private bool IsRelativeInputReady => Input?.Relay.IsConnected == true && _inputUsable;
+
+        private int _hotkeyConfigVersion;
+
+        private async void SyncRelayHotkey(string reason)
+        {
+            var input = Input;
+            if (input == null || !input.Relay.IsConnected) return;
+            int version = System.Threading.Interlocked.Increment(ref _hotkeyConfigVersion);
+            string label = ToggleHotkey;
+            try
+            {
+                // 热键配置不需要 trace；避免每个按键都同步写目标用户日志。
+                var response = await input.Relay.ConfigureHotkeyAsync(label, trace: false);
+                if (version != _hotkeyConfigVersion || !ReferenceEquals(Input, input)) return;
+                Debug("目标热键配置(" + reason + ")=" + (response?.Message ?? "无响应") + " · " + ToggleHotkey);
+                if (response?.Ok != true)
+                    InputActivity?.Invoke(this, "目标热键接收器未就绪，可暂时使用工具栏切换");
+            }
+            catch (Exception ex) { Debug("目标热键配置异常：" + ex.Message); }
+        }
+
+        private void OnRelayHotkey()
+        {
+            if (!_captured && !CanUseToggleHotkey)
+            {
+                Debug("丢弃非当前控制台热键事件");
+                return;
+            }
+            Debug("收到目标会话热键事件 · UI线程=" + Dispatcher.CheckAccess()
+                + " connected=" + IsConnected + " input=" + _inputUsable + " captured=" + _captured);
+            OnToggleHotkey();
+        }
 
         private void SetStatus(string text)
         {
@@ -775,15 +898,9 @@ namespace SoulLink.Controls
         /// <summary>把连接过程的细节落到 %LOCALAPPDATA%\SoulLink\rdp-debug.log，方便排查。</summary>
         internal static void Debug(string message)
         {
-            try
-            {
-                System.IO.Directory.CreateDirectory(ConfigStore.ConfigDir);
-                System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(ConfigStore.ConfigDir, "rdp-debug.log"),
-                    DateTime.Now.ToString("HH:mm:ss.fff") + "  " + message + Environment.NewLine,
-                    new System.Text.UTF8Encoding(false));
-            }
-            catch { }
+            AsyncLog.Append(
+                System.IO.Path.Combine(ConfigStore.ConfigDir, "rdp-debug.log"),
+                DateTime.Now.ToString("HH:mm:ss.fff") + "  " + message + Environment.NewLine);
         }
 
         /// <summary>创建 OCX（幂等）。</summary>
@@ -825,6 +942,9 @@ namespace SoulLink.Controls
                 Debug("已有连接，跳过重复 ConnectAsync");
                 return (true, "已连接");
             }
+
+            int connection = System.Threading.Interlocked.Increment(ref _connectionGeneration);
+            _ = StopInputAsync();
 
             Account = account;
             CaptureOnClick = App.Config.Settings.RdpCaptureOnClick;
@@ -964,7 +1084,8 @@ namespace SoulLink.Controls
                             SetStatus("已连接 · 会话 " + activeSessionId);
                             LogBus.Ok("RDP 已连上 " + account.Caption,
                                 "地址 " + host + " · 耗时 " + sw.ElapsedMilliseconds + " ms");
-                            BeginInput(activeSessionId, account, password);
+                            if (connection == _connectionGeneration)
+                                BeginInput(activeSessionId, account, password);
                             return (true, "已连接（" + sw.ElapsedMilliseconds + " ms）");
                         }
                     }
@@ -1014,6 +1135,7 @@ namespace SoulLink.Controls
             {
                 dynamic secured = ocx.SecuredSettings3;
                 secured.AudioRedirectionMode = Clamp(account.RdpAudioMode, 0, 2);
+                // 普通游戏键盘保持 RDP 原生转发；目标会话接收器只拦配置的热键。
                 secured.KeyboardHookMode = Clamp(account.RdpKeyboardHookMode, 0, 2);
             }
             catch (Exception ex) { Debug("音频/组合键属性失败: " + ex.Message); }
@@ -1022,6 +1144,9 @@ namespace SoulLink.Controls
             try
             {
                 dynamic a6 = ocx.AdvancedSettings6;
+                // 已实测：RelativeMouseMode 连接后可读、写入返回 E_FAIL；
+                // 连接前强开会在部分环境让热键/输入链路异常，不再默认改写。
+                try { Debug("RelativeMouseMode 当前=" + (bool)a6.RelativeMouseMode); } catch { }
                 a6.PublicMode = false;
                 a6.DisplayConnectionBar = false;
 
@@ -1247,8 +1372,10 @@ namespace SoulLink.Controls
         /// </summary>
         private async void BeginInput(int sessionId, Account account, string password)
         {
-            if (!InjectEnabled) return;
+            if (!InjectEnabled || _disposed || !InputAllowed || System.Threading.Interlocked.CompareExchange(ref _inputStartPending, 1, 0) != 0)
+                return;
             await StopInputAsync().ConfigureAwait(true);
+            int generation = System.Threading.Interlocked.Increment(ref _inputGeneration);
 
             CurrentSessionId = sessionId;
             try
@@ -1267,6 +1394,11 @@ namespace SoulLink.Controls
                     return;
                 }
 
+                if (generation != _inputGeneration || _disposed || !InputAllowed)
+                {
+                    relay.Dispose();
+                    return;
+                }
                 var input = new SessionInput(relay) { Sensitivity = 1.0 };
                 LookSensitivity = App.Config.Settings.LookSensitivity > 0
                     ? App.Config.Settings.LookSensitivity
@@ -1277,6 +1409,10 @@ namespace SoulLink.Controls
                 input.Mapper.RemoteHeight = relay.ScreenHeight;
                 Input = input;
                 input.Activity += (i, text) => InputActivity?.Invoke(this, text);
+                input.Relay.HotkeyPressed += (_, key) =>
+                {
+                    try { Dispatcher.BeginInvoke(new Action(OnRelayHotkey)); } catch { }
+                };
                 SyncMapperViewport();
 
                 // 等画面真正稳定再探测。刚连上时远端桌面还没切过来，
@@ -1288,9 +1424,18 @@ namespace SoulLink.Controls
                 {
                     // 再给一次机会：有些会话要 2~3 秒才把桌面切过来
                     await Task.Delay(2000).ConfigureAwait(true);
-                    (usable, why) = await input.CheckUsableAsync().ConfigureAwait(true);
+                    if (ReferenceEquals(Input, input))
+                        (usable, why) = await input.CheckUsableAsync().ConfigureAwait(true);
                 }
 
+                if (!ReferenceEquals(Input, input)) return;
+                if (!InputAllowed)
+                {
+                    _ = StopInputAsync();
+                    return;
+                }
+                _inputUsable = usable;
+                SyncRelayHotkey("代理就绪");
                 InputActivity?.Invoke(this, usable ? ("注入就绪 · " + why) : ("注入待命 · " + why));
                 Debug("输入探测：" + (usable ? "就绪 · " : "待命 · ") + why);
 
@@ -1303,12 +1448,15 @@ namespace SoulLink.Controls
                 Debug("建立输入通道异常：" + ex.Message);
                 InputActivity?.Invoke(this, "注入异常：" + ex.Message);
             }
+            finally { System.Threading.Interlocked.Exchange(ref _inputStartPending, 0); }
         }
 
         private async Task StopInputAsync()
         {
+            System.Threading.Interlocked.Increment(ref _inputGeneration);
             var old = Input;
             Input = null;
+            _inputUsable = false;
             if (old == null) return;
             await Task.Run(() =>
             {
@@ -1368,6 +1516,10 @@ namespace SoulLink.Controls
         /// <summary>断开画面连接（不注销目标会话）。</summary>
         public void Disconnect()
         {
+            System.Threading.Interlocked.Increment(ref _connectionGeneration);
+            ReleaseCapture("断开画面");
+            UninstallMouseHook();
+            _ = StopInputAsync();
             try
             {
                 if (_ocx != null && IsConnected) _ocx.Disconnect();
@@ -1392,7 +1544,13 @@ namespace SoulLink.Controls
         {
             if (_disposed) return;
             _disposed = true;
-            try { StopInputAsync().Wait(800); } catch { }
+            ReleaseCapture("释放控制台");
+            ReleaseInjectedButtonsAsync();   // 兜底：即使 ReleaseCapture 提前返回也要释放
+            UninstallMouseHook();
+            DetachOwnerWindow();
+            _captureWatch?.Stop();
+            ResetLookQueue();
+            _ = StopInputAsync();
             try
             {
                 if (_ocx != null) _ocx.Disconnect();
@@ -1404,7 +1562,12 @@ namespace SoulLink.Controls
             }
             catch { }
             try { _host.Dispose(); } catch { }
+            var ocx = _ocx;
             _ocx = null;
+            if (ocx != null && System.Runtime.InteropServices.Marshal.IsComObject(ocx))
+            {
+                try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(ocx); } catch { }
+            }
             _ax = null;
         }
     }

@@ -78,9 +78,72 @@ namespace SoulLink.Relay
         private const uint MOUSEEVENTF_WHEEL = 0x0800;
         private const uint MOUSEEVENTF_HWHEEL = 0x01000;
         private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+        private const uint MOUSEEVENTF_XDOWN = 0x0080;
+        private const uint MOUSEEVENTF_XUP = 0x0100;
+        private const uint XBUTTON1 = 0x0001;
+        private const uint XBUTTON2 = 0x0002;
+
+        private static void MouseButton(string button, bool down)
+        {
+            button = (button ?? "left").ToLowerInvariant();
+            uint flags;
+            uint data = 0;
+            switch (button)
+            {
+                case "right": flags = down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP; break;
+                case "middle": flags = down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP; break;
+                case "x1": flags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP; data = XBUTTON1; break;
+                case "x2": flags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP; data = XBUTTON2; break;
+                default: flags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP; break;
+            }
+            mouse_event(flags, 0, 0, data, IntPtr.Zero);
+        }
+
+        private static void ReleaseAllMouseButtons()
+        {
+            // 代理退出、宿主断开、异常处理结束都必须兜底释放。
+            foreach (var button in new[] { "left", "right", "middle", "x1", "x2" })
+            {
+                try { MouseButton(button, false); } catch { }
+            }
+        }
 
         private const int SM_CXSCREEN = 0;
         private const int SM_CYSCREEN = 1;
+
+        private static RelayHotkeyReceiver? _hotkeys;
+        private static NamedPipeClientStream? _eventPipe;
+        private static StreamWriter? _eventWriter;
+        private static readonly object EventWriteLock = new object();
+        private static readonly System.Collections.Concurrent.BlockingCollection<string> HotkeyEvents
+            = new(128);
+        private static Task? _eventSender;
+
+        private static void SendHotkey(string value)
+        {
+            // 钩子线程只入队，不执行序列化/管道 IO；队列满则丢弃过期通知，不阻塞系统输入。
+            try { HotkeyEvents.TryAdd(value); } catch { }
+        }
+
+        private static async Task SendHotkeysAsync()
+        {
+            try
+            {
+                foreach (string value in HotkeyEvents.GetConsumingEnumerable())
+                {
+                    try
+                    {
+                        if (_eventWriter == null) continue;
+                        await _eventWriter.WriteLineAsync(JsonSerializer.Serialize(new
+                        {
+                            Event = "hotkey", Value = value
+                        }, Json)).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) { Log("热键事件回传异常：" + ex.Message); }
+                }
+            }
+            catch { }
+        }
 
         private static string _logPath = "";
         private static readonly StringBuilder LogBuf = new StringBuilder();
@@ -88,16 +151,14 @@ namespace SoulLink.Relay
 
         private static void Log(string msg)
         {
+            string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg;
             lock (LogLock)
             {
-                try
-                {
-                    LogBuf.AppendLine(DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg);
-                    if (LogBuf.Length > 20000) LogBuf.Remove(0, LogBuf.Length - 16000);
-                    if (_logPath.Length > 0) File.WriteAllText(_logPath, LogBuf.ToString(), new UTF8Encoding(false));
-                }
-                catch { }
+                LogBuf.AppendLine(line);
+                if (LogBuf.Length > 20000) LogBuf.Remove(0, LogBuf.Length - 16000);
             }
+            // 不在低级钩子回调中打开/重写日志文件。
+            if (_logPath.Length > 0) SoulLink.Services.AsyncLog.Append(_logPath, line + Environment.NewLine);
         }
 
         // ── 消息协议 ─────────────────────────────────────────────────────────
@@ -112,6 +173,14 @@ namespace SoulLink.Relay
             public int Delta { get; set; }
             public string Button { get; set; } = "";
             public int Count { get; set; } = 1;
+            public string Hotkey { get; set; } = "";
+            public bool Trace { get; set; }
+        }
+
+        private sealed class RelayEvent
+        {
+            public string Event { get; set; } = "";
+            public string Value { get; set; } = "";
         }
 
         private sealed class Response
@@ -144,11 +213,23 @@ namespace SoulLink.Relay
 
             Log("relay 启动 pid=" + Process.GetCurrentProcess().Id + " pipe=" + pipeName
                 + " session=" + Process.GetCurrentProcess().SessionId);
+            _hotkeys = new RelayHotkeyReceiver(SendHotkey, Log);
+            try
+            {
+                var eventPipe = new NamedPipeClientStream(".", pipeName + "_Events", PipeDirection.Out, PipeOptions.Asynchronous);
+                eventPipe.Connect(3000);
+                _eventPipe = eventPipe;
+                _eventWriter = new StreamWriter(eventPipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
+                _eventSender = Task.Run(SendHotkeysAsync);
+                Log("热键事件管道已连接");
+            }
+            catch (Exception ex) { Log("热键事件管道连接失败：" + ex.Message); }
 
             var stop = new ManualResetEventSlim(false);
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Set(); };
 
             int idleRounds = 0;
+            AppDomain.CurrentDomain.ProcessExit += (_, __) => ReleaseAllMouseButtons();
             while (!stop.IsSet)
             {
                 try
@@ -160,6 +241,7 @@ namespace SoulLink.Relay
                         Log("已连上宿主管道");
                         idleRounds = 0;
                         ServePipe(pipe, stop);
+                        break; // 宿主消失后不保留孤儿代理和输入状态。
                     }
                 }
                 catch (TimeoutException)
@@ -175,6 +257,14 @@ namespace SoulLink.Relay
                 }
             }
 
+            ReleaseAllMouseButtons();
+            try { _hotkeys?.Dispose(); } catch { }
+            _hotkeys = null;
+            HotkeyEvents.CompleteAdding();
+            try { _eventWriter?.Dispose(); } catch { }
+            try { _eventPipe?.Dispose(); } catch { }
+            _eventWriter = null;
+            _eventPipe = null;
             Log("relay 退出");
             return 0;
         }
@@ -207,7 +297,8 @@ namespace SoulLink.Relay
                 catch { break; }
             }
 
-            Log("宿主断开，等待重连");
+            ReleaseAllMouseButtons();
+            Log("宿主断开，释放鼠标并退出");
         }
 
         private static Response Fail(string message) => new Response { Ok = false, Message = message };
@@ -218,6 +309,14 @@ namespace SoulLink.Relay
         {
             switch ((req.Cmd ?? "").ToLowerInvariant())
             {
+                case "hotkey":
+                    try
+                    {
+                        string message = _hotkeys?.Configure(req.Hotkey, req.Trace) ?? "接收器未启动";
+                        return new Response { Ok = message == "已安装" || message.StartsWith("鼠标") || message == "配置已排队", Message = message };
+                    }
+                    catch (Exception ex) { return Fail("配置热键失败：" + ex.Message); }
+
                 case "ping":
                     return new Response
                     {
@@ -299,18 +398,11 @@ namespace SoulLink.Relay
                 case "click":
                     {
                         int count = req.Count <= 0 ? 1 : Math.Min(req.Count, 5);
-                        uint down, up;
-                        switch ((req.Button ?? "left").ToLowerInvariant())
-                        {
-                            case "right": down = MOUSEEVENTF_RIGHTDOWN; up = MOUSEEVENTF_RIGHTUP; break;
-                            case "middle": down = MOUSEEVENTF_MIDDLEDOWN; up = MOUSEEVENTF_MIDDLEUP; break;
-                            default: down = MOUSEEVENTF_LEFTDOWN; up = MOUSEEVENTF_LEFTUP; break;
-                        }
                         for (int i = 0; i < count; i++)
                         {
-                            mouse_event(down, 0, 0, 0, IntPtr.Zero);
+                            MouseButton(req.Button, true);
                             Thread.Sleep(18);
-                            mouse_event(up, 0, 0, 0, IntPtr.Zero);
+                            MouseButton(req.Button, false);
                             if (i + 1 < count) Thread.Sleep(90);
                         }
                         GetCursorPos(out POINT pc);
@@ -319,18 +411,16 @@ namespace SoulLink.Relay
 
                 // 按下/抬起分开控制：转视角时要「按住右键 + 相对移动 + 松开」
                 case "down":
-                    {
-                        uint f = (req.Button ?? "left").ToLowerInvariant() == "right" ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_LEFTDOWN;
-                        mouse_event(f, 0, 0, 0, IntPtr.Zero);
-                        return new Response { Ok = true, Message = (req.Button ?? "left") + " 按下" };
-                    }
+                    MouseButton(req.Button, true);
+                    return new Response { Ok = true, Message = (req.Button ?? "left") + " 按下" };
 
                 case "up":
-                    {
-                        uint f = (req.Button ?? "left").ToLowerInvariant() == "right" ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
-                        mouse_event(f, 0, 0, 0, IntPtr.Zero);
-                        return new Response { Ok = true, Message = (req.Button ?? "left") + " 抬起" };
-                    }
+                    MouseButton(req.Button, false);
+                    return new Response { Ok = true, Message = (req.Button ?? "left") + " 抬起" };
+
+                case "releaseall":
+                    ReleaseAllMouseButtons();
+                    return new Response { Ok = true, Message = "全部鼠标按键已释放" };
 
                 case "wheel":
                     {
@@ -384,7 +474,7 @@ namespace SoulLink.Relay
 
                 case "exit":
                     Log("收到退出指令");
-                    Environment.Exit(0);
+                    ReleaseAllMouseButtons();
                     return new Response { Ok = true, Message = "bye" };
 
                 default:

@@ -1,7 +1,7 @@
 # SoulLink 交接文档
 
 > 给接手的新会话看。**只写本会话实际验证过的结论**；未验证的会标「待验证」，不要当成已完成。
-> 最后更新：2026-11-15（自由视角确定采用相对注入方案 + 热键五坑 + 各项 UI 修复）
+> 最后更新：2026-11-15（目标会话热键接收器打通 + 退出释放鼠标按键实测修复 + Sunshine 鼠标方案核实）
 > 完整历史踩坑记录见 [HANDOFF.archive-2026-11-15.md](HANDOFF.archive-2026-11-15.md)（旧文档，2026-11-14 至 15 日，含 12.1~12.94 全部细节）。
 
 ---
@@ -689,6 +689,49 @@ git revert <hash>                          # 撤销已提交的错误
 | 改了热键仍注册旧的 | `EnsureToggleHotkey` 只判断 `_escapeHotkey != null` 就 return，没比对规格（4.2.5.1） |
 | 热键在钩子里判「修饰键不匹配」 | 钩子回调里 `GetAsyncKeyState` 不可靠，要自己维护修饰键状态（4.2.5.1） |
 | 连接遮罩比画面大一圈/小一圈 | Popup 不随 PlacementTarget 伸缩，要手动同步宽高（4.2.8） |
+| **想用 libvirtualhid 造虚拟鼠标替代 mouse_event** | **本机不可行**：broker 实测返回 `status=1 / An active license is required to create virtual HID devices.`，Windows 驱动需 LizardByte 许可证。不要再重复尝试（12.x） |
+
+---
+
+### 4.2.9 ★ 阳光串流（Sunshine / Moonlight）鼠标方案的核实结论（2026-11-15 实测）
+
+用户问能否照搬 Sunshine 的鼠标输入。**能借鉴架构，但本机不能直接复用它的虚拟鼠标。**
+
+| 层 | 官方实现 | 结论 |
+| --- | --- | --- |
+| 客户端捕获 | Moonlight 用 `SDL_SetRelativeMouseMode(SDL_TRUE)`，持续拿 `xrel/yrel`，再 `LiSendMouseMoveEvent`；失败时退化为隐藏光标 | **可借鉴**。Windows 下 SDL 在 RDP 会话里用**空光标**才能持续拿到相对移动（源码注释明确写了 RDP） |
+| 目标机注入 | Sunshine `platform/windows/input.cpp` 用 `libvirtualhid`（`move_relative`）+ ViGEm；鼠标描述符是 5 键 + 16 位相对 XY + 滚轮 + AC Pan，无 report-id | **本机被许可证阻断**，见下 |
+
+### 4.3 ★ 退出自由视角后本机鼠标必须仍可点击（2026-11-15 实测修复）
+
+**症状**：退出自由视角或强制关闭应用后，鼠标能移动但**无法点击任何东西**。
+
+**根因**：退出路径只清空"已注入按键"集合，代理侧没有收到释放；若此时队列被清空/重建，
+残留的按下态就永远留在目标会话。
+
+**修复（已实测通过）**：
+
+- `ReleaseInjectedButtonsAsync()` 无条件给目标会话发 `releaseall`（不再依赖集合是否为空）；
+- `Dispose()` 里额外兜底调用一次，防止 `ReleaseCapture` 提前返回；
+- 代理侧 `RelayAgent` 新增 `releaseall` 指令，按 left/right/middle/x1/x2 全部抬起；
+- 代理退出、宿主断开、进程退出三条路径都执行 `ReleaseAllMouseButtons()`。
+
+**实测证据**：
+- 日志每次退出都出现 `已请求代理释放所有鼠标按键`；
+- 终止测试进程后 `GetAsyncKeyState` 检查：`LEFT_DOWN=False / RIGHT_DOWN=False`；
+- 用户确认关闭应用后本机点击恢复正常。
+
+**本机实测（关键，别再试）**：
+- 本机已装 `libvirtualhid` 驱动、broker 与控制工具；也可通过 `\\.\pipe\libvirtualhid-broker` 连上（只读 status 探针成功）。
+- 但 broker 返回：**`status=1`、`An active license is required to create virtual HID devices.`**
+- 也就是说：**Windows 上创建设备需要 LizardByte 商业许可证**；驱动存在 ≠ 可以免费用。
+- 因此“复用本机 libvirtualhid 造虚拟鼠标”这条路**不能作为可行方案**，除非购买授权。已把临时协议组件删除，未接入当前构建。
+
+**另外的重要边界**：「鼠标留在 RDP 窗口内」属于**客户端捕获**问题。Sunshine 的虚拟鼠标解决的是目标机注入，不解决 Window 内捕获；单靠它是达不到“游戏窗口化手感”的。
+
+**若继续推进，顺序应为**：
+1. 先解决本机原生相对捕获（SDL 式，RDP 下需空光标），这是“鼠标不出窗口”的唯一正解。
+2. 目标机注入仍可沿用已验证的 `mouse_event(moverel)`（用户已接受相对注入），或另找**无许可证门槛**的虚拟输入方案。
 
 ---
 

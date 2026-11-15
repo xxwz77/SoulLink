@@ -55,17 +55,18 @@ namespace SoulLink.Services
             return m;
         }
 
-        [DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int vKey);
+        public const uint AltMask = 0x0001;
+        public const uint CtrlMask = 0x0002;
+        public const uint ShiftMask = 0x0004;
+        public const uint WinMask = 0x0008;
 
-        public bool ModifiersMatch()
+        /// <summary>键盘和鼠标钩子共用同一份物理修饰键状态，不在回调里读异步状态。</summary>
+        public bool ModifiersMatch() => LowLevelKeyboardHook.CurrentModifiers == ToModifiers();
+
+        public HotkeySpec Clone() => new HotkeySpec
         {
-            bool ctrl = (GetAsyncKeyState(0x11) & 0x8000) != 0;
-            bool alt = (GetAsyncKeyState(0x12) & 0x8000) != 0;
-            bool shift = (GetAsyncKeyState(0x10) & 0x8000) != 0;
-            bool win = ((GetAsyncKeyState(0x5B) | GetAsyncKeyState(0x5C)) & 0x8000) != 0;
-            return ctrl == Ctrl && alt == Alt && shift == Shift && win == Win;
-        }
+            Ctrl = Ctrl, Alt = Alt, Shift = Shift, Win = Win, Key = Key, MouseButton = MouseButton
+        };
 
         public bool MatchesMouse(MouseHookEvent ev) => MouseButton switch
         {

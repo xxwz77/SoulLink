@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Channels;
 using SoulLink.Models;
 
 namespace SoulLink.Services
@@ -23,10 +24,26 @@ namespace SoulLink.Services
     public sealed class RelayClient : IDisposable
     {
         private NamedPipeServerStream? _pipe;
+        private NamedPipeServerStream? _eventPipe;
         private StreamReader? _reader;
         private StreamWriter? _writer;
-        private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
         private readonly object _sync = new object();
+        private readonly Channel<RelayRequest> _requests = Channel.CreateBounded<RelayRequest>(
+            new BoundedChannelOptions(256)
+            {
+                SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait
+            });
+        private Task? _sender;
+        private readonly struct RelayRequest
+        {
+            public RelayRequest(object payload, TaskCompletionSource<RelayResponse?> completion, int timeoutMs)
+            {
+                Payload = payload; Completion = completion; TimeoutMs = timeoutMs;
+            }
+            public object Payload { get; }
+            public TaskCompletionSource<RelayResponse?> Completion { get; }
+            public int TimeoutMs { get; }
+        }
         private CancellationTokenSource? _cts;
         private volatile bool _disposed;
 
@@ -40,6 +57,7 @@ namespace SoulLink.Services
 
         /// <summary>收到代理连接 / 断开</summary>
         public event Action<RelayClient, bool>? StateChanged;
+        public event Action<RelayClient, string>? HotkeyPressed;
 
         public RelayClient(string userName, int sessionId)
         {
@@ -65,6 +83,7 @@ namespace SoulLink.Services
 
             // 先把管道建好再投放，避免代理连回来时宿主还没准备好
             var accepted = AcceptAgentAsync(timeoutMs, _cts.Token);
+            var events = AcceptEventsAsync(timeoutMs, _cts.Token);
 
             // 走 SYSTEM 通道投送（schtasks /ru SYSTEM → CreateProcessAsUser）
             var launch = await SystemLauncher.LaunchAsync(
@@ -81,6 +100,8 @@ namespace SoulLink.Services
                 + " · " + launch.ElapsedMs + " ms");
 
             bool connected = await accepted.ConfigureAwait(false);
+            bool eventConnected = await events.ConfigureAwait(false);
+            if (!eventConnected) LogBus.Warn("目标热键事件管道未就绪", "会话 " + SessionId);
             if (!connected)
                 return (false, "注入代理已启动（PID " + launch.Pid + "）但没有连回宿主管道。"
                     + "可能是目标会话不接受后台进程，或杀软拦截了命名管道。");
@@ -112,6 +133,7 @@ namespace SoulLink.Services
                 _reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, leaveOpen: true);
                 _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
                 IsConnected = true;
+                _sender = Task.Run(ProcessRequestsAsync);
                 lock (_sync) Monitor.PulseAll(_sync);
                 StateChanged?.Invoke(this, true);
                 LogBus.Ok("注入代理已连接", "会话 " + SessionId + " · 管道 " + PipeName);
@@ -125,6 +147,46 @@ namespace SoulLink.Services
             catch (Exception ex)
             {
                 LogBus.Error("建立注入管道失败", ex.Message);
+                return false;
+            }
+        }
+
+        private async Task<bool> AcceptEventsAsync(int timeoutMs, CancellationToken ct)
+        {
+            try
+            {
+                var pipe = new NamedPipeServerStream(PipeName + "_Events", PipeDirection.In, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                _eventPipe = pipe;
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(timeoutMs);
+                await pipe.WaitForConnectionAsync(timeout.Token).ConfigureAwait(false);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, leaveOpen: true);
+                        while (!_disposed)
+                        {
+                            string? line = await reader.ReadLineAsync().ConfigureAwait(false);
+                            if (line == null) break;
+                            using var json = JsonDocument.Parse(line);
+                            if (json.RootElement.TryGetProperty("Event", out var ev)
+                                && string.Equals(ev.GetString(), "hotkey", StringComparison.OrdinalIgnoreCase)
+                                && json.RootElement.TryGetProperty("Value", out var value))
+                            {
+                                string? key = value.GetString();
+                                if (!string.IsNullOrEmpty(key)) HotkeyPressed?.Invoke(this, key);
+                            }
+                        }
+                    }
+                    catch (Exception ex) { if (!_disposed) LogBus.Warn("目标热键事件读取结束", ex.Message); }
+                });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogBus.Warn("建立目标热键事件管道失败", ex.Message);
                 return false;
             }
         }
@@ -151,34 +213,60 @@ namespace SoulLink.Services
         /// <summary>发一条指令并等待回复。未连接返回 null。</summary>
         public async Task<RelayResponse?> SendAsync(object request, int timeoutMs = 4000)
         {
-            if (_disposed) return null;
-            if (!IsConnected || _writer == null || _reader == null) return null;
-
-            await _gate.WaitAsync().ConfigureAwait(false);
+            if (_disposed || !IsConnected || _cts == null) return null;
+            var completion = new TaskCompletionSource<RelayResponse?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var item = new RelayRequest(request, completion, timeoutMs);
             try
             {
-                if (!IsConnected) return null;
-                string payload = JsonSerializer.Serialize(request, Json);
-                await _writer.WriteLineAsync(payload).ConfigureAwait(false);
-
-                var readTask = _reader.ReadLineAsync();
-                var done = await Task.WhenAny(readTask, Task.Delay(timeoutMs)).ConfigureAwait(false);
-                if (done != readTask)
-                {
-                    LogBus.Warn("注入代理响应超时", request?.ToString() ?? "");
-                    return null;
-                }
-                string? line = await readTask.ConfigureAwait(false);
-                if (line == null) { MarkDisconnected(); return null; }
-                return JsonSerializer.Deserialize<RelayResponse>(line, Json);
+                // 队列满时短暂背压，调用方不等待网络响应；不会无限创建读任务。
+                using var timeout = new CancellationTokenSource(Math.Min(timeoutMs, 150));
+                await _requests.Writer.WriteAsync(item, timeout.Token).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (OperationCanceledException)
             {
-                LogBus.Warn("注入指令失败", ex.Message);
-                MarkDisconnected();
+                LogBus.Warn("注入队列已满，丢弃控制请求", "会话 " + SessionId);
                 return null;
             }
-            finally { _gate.Release(); }
+            using var responseTimeout = new CancellationTokenSource(timeoutMs + 250);
+            try { return await completion.Task.WaitAsync(responseTimeout.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return null; }
+        }
+
+        private async Task ProcessRequestsAsync()
+        {
+            try
+            {
+                await foreach (var item in _requests.Reader.ReadAllAsync().ConfigureAwait(false))
+                {
+                    if (_disposed || !IsConnected || _writer == null || _reader == null)
+                    {
+                        item.Completion.TrySetResult(null);
+                        continue;
+                    }
+                    try
+                    {
+                        string payload = JsonSerializer.Serialize(item.Payload, Json);
+                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_cts!.Token);
+                        timeout.CancelAfter(item.TimeoutMs);
+                        await _writer.WriteLineAsync(payload.AsMemory(), timeout.Token).ConfigureAwait(false);
+                        string? line = await _reader.ReadLineAsync(timeout.Token).ConfigureAwait(false);
+                        if (line == null) { MarkDisconnected(); item.Completion.TrySetResult(null); break; }
+                        item.Completion.TrySetResult(JsonSerializer.Deserialize<RelayResponse>(line, Json));
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!_disposed) LogBus.Warn("注入指令失败", ex.Message);
+                        item.Completion.TrySetResult(null);
+                        MarkDisconnected();
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex) { if (!_disposed) LogBus.Warn("注入发送队列异常", ex.Message); }
+            finally
+            {
+                while (_requests.Reader.TryRead(out var pending)) pending.Completion.TrySetResult(null);
+            }
         }
 
         private void MarkDisconnected()
@@ -211,6 +299,12 @@ namespace SoulLink.Services
         // 注意：键盘**不走注入**。RDP 原生就带键盘转发，
         // 只要控件拿到焦点即可（见 RdpConsole.GiveKeyboardFocus / GrabFocusOnConnect）。
 
+        public Task<RelayResponse?> ReleaseAllAsync()
+            => SendAsync(new { Cmd = "releaseall" }, 250);
+
+        public Task<RelayResponse?> ConfigureHotkeyAsync(string spec, bool trace = false)
+            => SendAsync(new { Cmd = "hotkey", Hotkey = spec ?? "", Trace = trace });
+
         public Task<RelayResponse?> CursorAsync() => SendAsync(new { Cmd = "cursor" });
         public Task<RelayResponse?> ForegroundAsync() => SendAsync(new { Cmd = "foreground" });
         public Task<RelayResponse?> WindowsAsync() => SendAsync(new { Cmd = "windows" });
@@ -220,7 +314,10 @@ namespace SoulLink.Services
             if (_disposed) return;
             _disposed = true;
             try { _cts?.Cancel(); } catch { }
+            try { if (IsConnected) _writer?.WriteLine(JsonSerializer.Serialize(new { Cmd = "releaseall" })); } catch { }
             try { if (IsConnected) _writer?.WriteLine(JsonSerializer.Serialize(new { Cmd = "exit" })); } catch { }
+            _requests.Writer.TryComplete();
+            try { _eventPipe?.Dispose(); } catch { }
             try { _pipe?.Dispose(); } catch { }
             try { _reader?.Dispose(); } catch { }
             try { _writer?.Dispose(); } catch { }

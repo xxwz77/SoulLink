@@ -17,6 +17,8 @@ namespace SoulLink.Controls
     {
         public HotkeySpec? Spec { get; private set; }
         private bool _recording;
+        private bool _ignoreInitialLeft;
+        private int _ignoreLeftUntil;
 
         /// <summary>录制完成（或取消）时触发。</summary>
         public event Action<HotkeySpec?>? Recorded;
@@ -32,6 +34,15 @@ namespace SoulLink.Controls
 
             // 失焦就取消录制，避免卡住
             LostKeyboardFocus += (_, __) => StopRecording();
+            // 预览事件发生在 Button.Click 之前，避免点“停止”时把左键录成热键。
+            PreviewMouseDown += OnRecMouseDown;
+            PreviewMouseUp += (_, e) =>
+            {
+                if (_recording && e.ChangedButton == MouseButton.Left)
+                    _ignoreInitialLeft = false;
+            };
+            IsVisibleChanged += (_, e) => { if (e.NewValue is false) StopRecording(); };
+            Unloaded += (_, __) => StopRecording();
             LostMouseCapture += (_, __) => { };
         }
 
@@ -39,6 +50,11 @@ namespace SoulLink.Controls
         {
             if (_recording) { StopRecording(); return; }
             _recording = true;
+            // WPF CaptureMouse 会为当前激活按钮补发一次逻辑 LeftDown；
+            // 这不是用户要录制的按键，必须等真正松开左键后再开始录制。
+            _ignoreInitialLeft = Mouse.LeftButton == MouseButtonState.Pressed;
+            _ignoreLeftUntil = Environment.TickCount + 300;
+            NativeHotkey.BeginRecording();
             Focusable = true;
             Focus();
             Keyboard.Focus(this);
@@ -56,6 +72,7 @@ namespace SoulLink.Controls
         {
             if (!_recording) return;
             _recording = false;
+            NativeHotkey.EndRecording();
             MouseDown -= OnRecMouseDown;
             try { ReleaseMouseCapture(); } catch { }
             UpdateText();
@@ -65,6 +82,12 @@ namespace SoulLink.Controls
         {
             if (!_recording) return;
             e.Handled = true;
+            if (e.ChangedButton == MouseButton.Left && _ignoreInitialLeft)
+            {
+                if (Mouse.LeftButton == MouseButtonState.Pressed || Environment.TickCount < _ignoreLeftUntil)
+                    return;
+                _ignoreInitialLeft = false;
+            }
 
             string? btn = e.ChangedButton switch
             {
@@ -76,6 +99,11 @@ namespace SoulLink.Controls
                 _ => null
             };
             if (btn == null) return;
+            if (btn == "Left" && _ignoreInitialLeft)
+            {
+                _ignoreInitialLeft = false;
+                return;
+            }
 
             var spec = new HotkeySpec
             {
