@@ -515,6 +515,35 @@
     </Style>
 
     <!-- ════════════ 复选框 ════════════ -->
+    <!-- 分类页签（联机大厅用）：选中时青色描边 + 淡底 -->
+    <Style x:Key="ChipToggle" TargetType="ToggleButton">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+        <Setter Property="Padding" Value="14,7" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="Shell" CornerRadius="9" Padding="{TemplateBinding Padding}"
+                            Background="#12FFFFFF" BorderBrush="#22FFFFFF" BorderThickness="1">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="#44FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Shell" Property="Background" Value="#2E4FE3FF" />
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="#AA4FE3FF" />
+                            <Setter Property="Foreground" Value="#FFBFEFFF" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="GlassCheckBox" TargetType="CheckBox">
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
         <Setter Property="FontSize" Value="12.5" />

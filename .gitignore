@@ -48,3 +48,10 @@ releases/SoulLink-v*-portable/
 # Stable variant binaries
 dist/stable/
 out/
+
+# 服务端发布产物（大二进制，不入库）
+dist-server/
+dist-server-win/
+
+# 更新包目录（只保留源码，bin 通过 Git LFS 或外部分发）
+releases/SoulLink-v*-Update/

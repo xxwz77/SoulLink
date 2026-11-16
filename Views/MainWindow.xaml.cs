@@ -90,9 +90,8 @@ namespace SoulLink.Views
             LaunchView.MainWindowRef = this;
 
 
-            SessionsView.OpenProcessesRequested += s => OpenProcessesOf(s);
-            SessionsView.SaveAsActionRequested += s => SaveSessionAsAction(s);
-            SessionsView.ConnectConsoleRequested += s => ConnectToConsole(s);
+            // 联机大厅是独立页面，不再回连会话相关的动作。
+            // （原来的在线会话页已被 LobbyPage 取代）
             ConsoleView.MainWindowRef = this;
             ConsoleView.AddRequested += () => NavigateTo("sessions");
 
@@ -800,7 +799,7 @@ namespace SoulLink.Views
             {
                 case "automation": AutomationView.Activate(); break;
                 case "console": ConsoleView.Activate(); break;
-                case "sessions": SessionsView.Activate(); break;
+                case "sessions": LobbyView.Refresh(); break;
                 case "procs": ProcsView.Activate(); break;
                 case "cli": CliView.Activate(); break;
                 case "settings": SettingsView.Activate(); break;
@@ -856,6 +855,12 @@ namespace SoulLink.Views
         public void NavigateTo(string tag)
         {
             SetActivePage(tag);
+        }
+
+        /// <summary>启动时直接跳到指定页（供调试/命令行使用）。</summary>
+        public void NavigateToStartup(string tag)
+        {
+            try { SetActivePage(tag); } catch { }
         }
 
 

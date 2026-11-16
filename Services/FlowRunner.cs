@@ -691,6 +691,33 @@ namespace SoulLink.Services
                     case FlowNodeType.ActKeyPress:
                         return await RunInputAsync(a, sessionId, cfg).ConfigureAwait(false);
 
+                    case FlowNodeType.ActJoinRoom:
+                    {
+                        string code = a.Get("code").Trim();
+                        if (code.Length == 0) return (false, "没有填写房间码");
+
+                        // 这个节点作用到哪个账号
+                        string userName = UserOf(accountId, cfg);
+                        if (userName.Length == 0) return (false, "找不到目标账号");
+
+                        // 显示名：优先昵称
+                        string display = userName;
+                        foreach (var acc in cfg.Accounts)
+                            if (string.Equals(acc.UserName, userName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!string.IsNullOrWhiteSpace(acc.DisplayName))
+                                    display = acc.DisplayName;
+                                break;
+                            }
+
+                        // 调服务端加入房间
+                        var join = await LobbyApi.JoinAsync(code, display, "").ConfigureAwait(false);
+                        if (!join.Ok) return (false, join.Message);
+
+                        return (true, join.Message
+                            + (join.Room != null ? "（" + join.Room.Title + "）" : ""));
+                    }
+
                     case FlowNodeType.ActLaunchProcess:
                     {
                         string path = a.Get("path").Trim();

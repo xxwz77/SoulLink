@@ -419,6 +419,18 @@ namespace SoulLink.Models
             // ── 结束（独立类别，琥珀色）──────────────────────────
             Add(new FlowNodeDef
             {
+                Type = FlowNodeType.ActJoinRoom, Kind = FlowNodeKind.Action,
+                Title = "上线房间", Glyph = "\uE8FA",
+                Desc = "用房间码把自己的账号上线到指定联机房间（房间码相当于通行证）",
+                Params =
+                {
+                    new FlowParamDef { Key = "code", Label = "房间码", Kind = FlowParamKind.Text, Default = "",
+                                        Hint = "000000=四人联机  000001=双人联机  000002=小号池；也可以是别人告诉你的私人房间码" }
+                }
+            });
+
+            Add(new FlowNodeDef
+            {
                 Type = FlowNodeType.ActEndFlow, Kind = FlowNodeKind.Terminate,
                 Title = "结束流程", Glyph = "\uE71A",
                 Desc = "立即结束本次流程，不再执行后面的节点，条件同时清零",

@@ -225,6 +225,13 @@ namespace SoulLink
             {
                 ShowMainWindow();
                 Breadcrumb("main window shown: " + (_window?.IsVisible) + " state=" + (_window?.WindowState));
+
+                // 调试用：--page=xxx 直接跳页
+                string? page = null;
+                foreach (var a in Environment.GetCommandLineArgs())
+                    if (a.StartsWith("--page=", StringComparison.OrdinalIgnoreCase))
+                    { page = a.Substring(7); break; }
+                if (page != null) _window?.NavigateToStartup(page);
             }
             catch (Exception ex)
             {

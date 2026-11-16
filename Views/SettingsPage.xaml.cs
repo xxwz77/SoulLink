@@ -28,6 +28,75 @@ namespace SoulLink.Views
             VersionText.Text = "SoulLink v1.0 · " + (Environment.IsPrivilegedProcess ? "管理员权限" : "普通权限");
         }
 
+        /// <summary>输入框为空时显示占位文字。</summary>
+        private void UpdateLobbyPlaceholder()
+        {
+            try
+            {
+                if (LobbyServerPlaceholder == null) return;
+                LobbyServerPlaceholder.Visibility =
+                    string.IsNullOrWhiteSpace(LobbyServerBox.Text)
+                        ? Visibility.Visible : Visibility.Collapsed;
+            }
+            catch { }
+        }
+
+        private void LobbyServerBox_TextChanged(object sender, TextChangedEventArgs e)
+            => UpdateLobbyPlaceholder();
+
+        /// <summary>测试联机大厅服务器是否可达。</summary>
+        private async void LobbyServerTest_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string url = (LobbyServerBox.Text ?? "").Trim();
+                if (url.Length == 0) { LobbyServerStatus.Text = "地址不能为空"; return; }
+                if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    url = "http://" + url;
+
+                LobbyServerStatus.Text = "测试中…";
+
+                string old = Services.LobbyApi.BaseUrl;
+                Services.LobbyApi.BaseUrl = url;
+                var (ok, msg) = await Services.LobbyApi.PingAsync().ConfigureAwait(true);
+                if (!ok) Services.LobbyApi.BaseUrl = old;
+
+                LobbyServerStatus.Text = ok ? ("✓ " + msg) : ("✕ " + msg);
+                LobbyServerStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                    ok ? System.Windows.Media.Color.FromRgb(0x6E, 0xF0, 0xC8)
+                       : System.Windows.Media.Color.FromRgb(0xFF, 0x9B, 0x9B));
+            }
+            catch (Exception ex)
+            {
+                LobbyServerStatus.Text = "✕ " + ex.Message;
+            }
+        }
+
+        /// <summary>保存联机大厅服务器地址。</summary>
+        private void LobbyServerSave_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string url = (LobbyServerBox.Text ?? "").Trim();
+                if (url.Length == 0) { LobbyServerStatus.Text = "地址不能为空"; return; }
+                if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    url = "http://" + url;
+
+                Services.LobbyApi.SaveToConfig(url);
+                LobbyServerBox.Text = Services.LobbyApi.BaseUrl;
+
+                LobbyServerStatus.Text = "✓ 已保存";
+                LobbyServerStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0x6E, 0xF0, 0xC8));
+
+                LogBus.Ok("联机大厅服务器地址已更新：" + Services.LobbyApi.BaseUrl);
+            }
+            catch (Exception ex)
+            {
+                LobbyServerStatus.Text = "✕ " + ex.Message;
+            }
+        }
+
         public void Activate()
         {
             _loading = true;
@@ -35,6 +104,15 @@ namespace SoulLink.Views
             RemoteCheck.IsChecked = App.Config.Settings.AllowRemoteInvoke;
             FallbackCheck.IsChecked = App.Config.Settings.AllowCurrentSessionFallback;
             ConfigPathText.Text = ConfigStore.ConfigPath;
+
+            // 联机大厅服务器地址
+            try
+            {
+                Services.LobbyApi.LoadFromConfig();
+                LobbyServerBox.Text = Services.LobbyApi.BaseUrl;
+                LobbyServerStatus.Text = "";
+            }
+            catch { }
             VersionText.Text = "SoulLink v" + typeof(App).Assembly.GetName().Version?.ToString(3) +
                                " · " + (Environment.IsPrivilegedProcess ? "管理员权限" : "普通权限");
             _loading = false;

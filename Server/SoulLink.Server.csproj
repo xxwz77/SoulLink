@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SoulLink.Server</RootNamespace>
+    <AssemblyName>SoulLink.Server</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- 版本号跟随客户端 -->
+    <Version>1.11.1</Version>
+    <FileVersion>$(Version).0</FileVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <AssemblyTitle>SoulLink 联机大厅服务端</AssemblyTitle>
+    <Product>SoulLink</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SQLite：单文件数据库，适合轻量服务器 -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+  </ItemGroup>
+
+</Project>

@@ -275,6 +275,11 @@ namespace SoulLink.Models
         ActLaunchProcess = 32,
         /// <summary>关闭任意进程。参数 process（进程名）、force（是否强制）</summary>
         ActKillProcess = 33,
+        /// <summary>
+        /// 上线房间：输入房间码，与服务器沟通后把自己上线到指定房间。
+        /// 参数 code（房间码，相当于通行证）
+        /// </summary>
+        ActJoinRoom = 34,
         /// <summary>关闭原神。参数无</summary>
         ActCloseGenshin = 23,
         /// <summary>等待 N 秒。参数 seconds</summary>

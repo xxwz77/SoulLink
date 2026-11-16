@@ -345,6 +345,12 @@ namespace SoulLink.Models
             = new System.Collections.Generic.Dictionary<string, string>(
                 System.StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// 联机大厅服务端地址（例如 http://121.4.78.52:45080）。
+        /// 空 = 用默认地址。
+        /// </summary>
+        public string LobbyServerUrl { get; set; } = "";
+
         // ── 内嵌 RDP 控制台 ────────────────────────────────────────────
         /// <summary>控制台默认分辨率</summary>
         public int RdpWidth { get; set; } = 1280;

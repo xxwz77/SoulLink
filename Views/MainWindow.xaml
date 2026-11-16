@@ -182,7 +182,7 @@
                                                    Foreground="{StaticResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
-                                    <Grid Height="38" Tag="sessions" ToolTip="在线会话"
+                                    <Grid Height="38" Tag="sessions" ToolTip="联机大厅"
                                           Background="Transparent" MouseLeftButtonUp="NavRow_Click">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
@@ -190,7 +190,7 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE772;" Width="42" TextAlignment="Center"
                                                    VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
-                                        <TextBlock x:Name="NavTextSessions" Grid.Column="1" Text="在线会话"
+                                        <TextBlock x:Name="NavTextSessions" Grid.Column="1" Text="联机大厅"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{StaticResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
@@ -293,7 +293,7 @@
                                 <vm:ConsolePage x:Name="ConsoleView" />
                             </Grid>
                             <Grid x:Name="PageSessions" Visibility="Collapsed">
-                                <vm:SessionsPage x:Name="SessionsView" />
+                                <vm:LobbyPage x:Name="LobbyView" />
                             </Grid>
                             <Grid x:Name="PageProcs" Visibility="Collapsed">
                                 <vm:ProcessPage x:Name="ProcsView" />
