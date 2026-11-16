@@ -83,6 +83,10 @@ namespace SoulLink.Relay
         private const uint XBUTTON1 = 0x0001;
         private const uint XBUTTON2 = 0x0002;
 
+        /// <summary>当前处于按下状态的鼠标键。只在真正 down 过之后才记录。</summary>
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> PressedButtons
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
         private static void MouseButton(string button, bool down)
         {
             button = (button ?? "left").ToLowerInvariant();
@@ -97,15 +101,31 @@ namespace SoulLink.Relay
                 default: flags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP; break;
             }
             mouse_event(flags, 0, 0, data, IntPtr.Zero);
+
+            if (down) PressedButtons[button] = true;
+            else PressedButtons.TryRemove(button, out _);
         }
 
+        /// <summary>
+        /// 兜底释放：**只抬起真正按下过的键**。
+        ///
+        /// ★ 原来无条件发送 5 个抬起事件（左/右/中/X1/X2）。
+        ///   孤立的 RIGHTUP 会让目标窗口弹出右键菜单，孤立的 XUP 会被当成
+        ///   "后退/前进"导航 —— 用户实测：每次退出自由视角，各会话桌面都会弹菜单。
+        ///   而且这个代理在每个账号会话里都有一个，所以"所有用户都弹"。
+        /// </summary>
         private static void ReleaseAllMouseButtons()
         {
-            // 代理退出、宿主断开、异常处理结束都必须兜底释放。
-            foreach (var button in new[] { "left", "right", "middle", "x1", "x2" })
+            try
             {
-                try { MouseButton(button, false); } catch { }
+                foreach (var kv in PressedButtons)
+                {
+                    if (!kv.Value) continue;
+                    try { MouseButton(kv.Key, false); } catch { }
+                }
+                PressedButtons.Clear();
             }
+            catch { }
         }
 
         private const int SM_CXSCREEN = 0;

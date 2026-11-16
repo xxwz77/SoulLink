@@ -31,9 +31,38 @@ namespace SoulLink.Services
             catch { }
         });
 
+        /// <summary>
+        /// 日志文件大小上限（5 MB）。超过就轮转：保留一份 .old，其余丢弃。
+        /// ★ 长期挂机必须限制：原来日志无上限，按实际写入速度一年可涨到数 GB。
+        /// </summary>
+        private const long MaxBytes = 5L * 1024 * 1024;
+
+        private static readonly System.Collections.Generic.HashSet<string> Rotated
+            = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         public static void Append(string path, string text)
         {
-            try { Queue.TryAdd(new Entry(path, text, false)); } catch { }
+            try
+            {
+                // 轮转检查只在文件"长到一定程度"时做，避免每次写入都查磁盘
+                if (!Rotated.Contains(path))
+                {
+                    try
+                    {
+                        var fi = new FileInfo(path);
+                        if (fi.Exists && fi.Length > MaxBytes)
+                        {
+                            string old = path + ".old";
+                            try { File.Delete(old); } catch { }
+                            try { File.Move(path, old); } catch { }
+                        }
+                        else Rotated.Add(path);   // 未超限，本进程内不再重复检查
+                    }
+                    catch { }
+                }
+                Queue.TryAdd(new Entry(path, text, false));
+            }
+            catch { }
         }
 
         public static void Write(string path, string text)

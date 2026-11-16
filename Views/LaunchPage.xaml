@@ -223,8 +223,23 @@
                                 <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding UserName}" FontSize="12.5" FontWeight="SemiBold"
                                                Foreground="{StaticResource TextPrimary}" />
-                                    <TextBlock Text="{Binding SubText}" FontSize="10.5" Foreground="{StaticResource TextMuted}"
-                                               Margin="0,2,0,0" />
+                                    <!-- 单行：状态 ● 通道 ● BGI
+                                         分隔圆点颜色固定（灰），不随任何状态变化，
+                                         避免把颜色含义混淆到文字上 -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                        <TextBlock Text="{Binding StateText}" FontSize="10.5"
+                                                   Foreground="{Binding StateBrush}" />
+                                        <TextBlock Text=" ● " FontSize="8" VerticalAlignment="Center"
+                                                   Foreground="#66AABBCC" />
+                                        <TextBlock Text="{Binding ChannelText}" FontSize="10.5"
+                                                   Foreground="{Binding ChannelBrush}" />
+                                        <TextBlock Text=" ● " FontSize="8" VerticalAlignment="Center"
+                                                   Foreground="#66AABBCC"
+                                                   Visibility="{Binding BgiVisibility}" />
+                                        <TextBlock Text="{Binding BgiText}" FontSize="10.5"
+                                                   Foreground="{Binding BgiBrush}"
+                                                   Visibility="{Binding BgiVisibility}" />
+                                    </StackPanel>
                                 </StackPanel>
                                 <Border Grid.Column="2" CornerRadius="6" Padding="7,2" Background="#1CFFFFFF" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding SideText}" FontSize="10" Foreground="{StaticResource TextSecondary}" />
@@ -234,12 +249,40 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
+                <!-- 底部：BGI 实时日志（点击会话即切换到这里显示该账号的日志） -->
                 <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="12,10" Margin="0,10,0,0">
-                    <StackPanel>
-                        <TextBlock Text="提示" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource CyanBrush}" />
-                        <TextBlock x:Name="TipText" Text="点击会话可查看并结束其中的程序；所有操作都在目标用户桌面上静默完成。"
-                                   FontSize="11" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" Margin="0,5,0,0" />
-                    </StackPanel>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0">
+                            <TextBlock x:Name="LogTitle" Text="BGI 实时日志"
+                                       FontSize="11" FontWeight="SemiBold"
+                                       Foreground="{StaticResource CyanBrush}" />
+                            <TextBlock x:Name="LogMeta" Text="点击上方会话查看"
+                                       FontSize="10" Foreground="{StaticResource TextMuted}"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+
+                        <TextBlock x:Name="TipText" Grid.Row="1"
+                                   Text="自动查找会话中的 BetterGI，读取其最新日志。"
+                                   FontSize="10.5" Foreground="{StaticResource TextMuted}"
+                                   TextWrapping="Wrap" Margin="0,5,0,0" />
+
+                        <!-- 日志正文：等宽字体，只读，自动滚到底 -->
+                        <ScrollViewer x:Name="LogScroll" Grid.Row="2" Margin="0,6,0,0"
+                                      MaxHeight="220" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <TextBlock x:Name="LogText" Text=""
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="10" LineHeight="15"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       TextWrapping="Wrap" />
+                        </ScrollViewer>
+                    </Grid>
                 </Border>
             </Grid>
         </Border>

@@ -27,7 +27,10 @@ namespace SoulLink.Views
             InitializeComponent();
             Grid.ItemsSource = _items;
 
-            _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+            // 3 秒：实测每次 query user 约 28ms，3 秒间隔下每天约 2.9 万次进程创建，
+            // 累计 CPU 时间分散在全天，对挂机场景足够且开销可控
+            // （2 秒会把进程创建量推到 4.3 万次，收益不明显）。
+            _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
             _timer.Tick += (_, __) =>
             {
                 if (AutoRefresh.IsChecked == true && IsVisible && !_refreshing) Refresh();
@@ -56,7 +59,7 @@ namespace SoulLink.Views
 
                 CountText.Text = users.Count == 0
                     ? "当前没有用户会话"
-                    : "共 " + users.Count + " 个会话在线 · 每 6 秒自动刷新";
+                    : "共 " + users.Count + " 个会话在线 · 每 3 秒自动刷新";
 
                 if (keep != null)
                 {
@@ -88,7 +91,7 @@ namespace SoulLink.Views
                 return;
             }
             DetailUser.Text = s.UserName;
-            DetailSub.Text = s.Badge + " · 空闲 " + (string.IsNullOrWhiteSpace(s.IdleTime) ? "-" : s.IdleTime);
+            DetailSub.Text = s.Badge + " · 空闲 " + s.IdleDisplay;
             DetailSid.Text = "#" + s.Id;
             DetailConn.Text = string.IsNullOrWhiteSpace(s.SessionName) ? "(无)" : s.SessionName;
         }

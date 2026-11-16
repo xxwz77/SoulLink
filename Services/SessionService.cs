@@ -46,7 +46,65 @@ namespace SoulLink.Services
                     LogonTime = m.Groups["logon"].Value
                 });
             }
+
+            // ★ query user 输出的是**小写**用户名（a1/a2），而账号真实名称是大写（A1/A2）。
+            //   qwinsta 给的是真实大小写，用它校正显示（匹配逻辑本来就是忽略大小写的，
+            //   所以这只是显示问题，不影响自动连接/投送）。
+            try { ApplyRealCasing(list); } catch { }
             return list;
+        }
+
+        /// <summary>用 qwinsta 的真实用户名校正 query user 的大小写。</summary>
+        private static void ApplyRealCasing(List<SessionInfo> list)
+        {
+            if (list.Count == 0) return;
+            string raw;
+            try
+            {
+                // 同步执行：这里已经在后台线程（QueryAsync 内部 await 之后）
+                var psi = new System.Diagnostics.ProcessStartInfo("qwinsta")
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = SystemLauncher.ConsoleEncoding(),
+                    StandardErrorEncoding = SystemLauncher.ConsoleEncoding()
+                };
+                using var p = System.Diagnostics.Process.Start(psi);
+                if (p == null) return;
+                raw = p.StandardOutput.ReadToEnd();
+                if (string.IsNullOrWhiteSpace(raw)) raw = p.StandardError.ReadToEnd();
+                p.WaitForExit(5000);
+            }
+            catch { return; }
+            if (string.IsNullOrWhiteSpace(raw)) return;
+
+            // qwinsta 行格式：<会话名>  <用户名>  <ID>  <状态>  ...
+            foreach (var line in raw.Replace("\r", "").Split('\n'))
+            {
+                var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 3) continue;
+                // 找到数字 ID 的位置
+                int idIdx = -1;
+                for (int i = 1; i < parts.Length; i++)
+                    if (int.TryParse(parts[i], out _)) { idIdx = i; break; }
+                if (idIdx < 2) continue;
+                if (!int.TryParse(parts[idIdx], out int sid)) continue;
+
+                string realUser = parts[idIdx - 1];   // ID 前面那一列是用户名
+                if (string.IsNullOrWhiteSpace(realUser)) continue;
+
+                foreach (var s in list)
+                {
+                    if (s.Id == sid &&
+                        string.Equals(s.UserName, realUser, StringComparison.OrdinalIgnoreCase))
+                    {
+                        s.UserName = realUser;   // 用真实大小写
+                        break;
+                    }
+                }
+            }
         }
 
         /// <summary>把「运行中 / 断开 / Active / Disc」统一成 Active / Disc。</summary>

@@ -263,8 +263,16 @@ namespace SoulLink.Controls
         ///
         /// 返回 true = 已投送；false = 该账号当前无会话（未登录）。
         /// </summary>
-        /// <summary>会话发现后，等待多久再投送（给会话留出稳定时间）。</summary>
-        public const int SessionSettleSeconds = 12;
+        /// <summary>
+        /// 会话发现后，等待多久再投送（给会话留出稳定时间）。
+        ///
+        /// ★ 从 12 秒降到 3 秒的依据（实测）：
+        ///   · schtasks 创建任务 39ms、删除 23ms
+        ///   · 代理启动到连回管道约 26ms
+        ///   投送本身合计 &lt; 100ms，真正要等的是"会话桌面就绪"。
+        ///   3 秒足够覆盖这段，且配合 2 秒扫描，会话出现后约 5 秒即可通道就绪。
+        /// </summary>
+        public const int SessionSettleSeconds = 3;
 
         public async Task<bool> StartInputBySessionAsync()
         {
@@ -1287,11 +1295,68 @@ namespace SoulLink.Controls
         }
 
         /// <summary>把连接过程的细节落到 %LOCALAPPDATA%\SoulLink\rdp-debug.log，方便排查。</summary>
+        /// <summary>
+        /// 运行日志（正常状态**不落盘**）。
+        ///
+        /// ★ 长期挂机不能把每秒的正常状态都写进文件：
+        ///   原来每次热键注册、钩子安装、焦点切换、监控 tick 都写一行，
+        ///   实测 1 小时 4593 行（442KB），一年可达数 GB。
+        ///
+        /// 现在只记录真正有价值的内容：
+        ///   · 异常 / 失败 / 拒绝 / 超时 / 跳过（含"失败""异常""拒绝""超时""错误"等字样）
+        ///   · 关键状态跃迁（连接成功、投送成功、进入/退出自由视角）
+        /// 其余一律丢弃。
+        ///
+        /// 需要完整调试时，命令行加 --verbose-log 即可恢复全量。
+        /// </summary>
         internal static void Debug(string message)
         {
-            AsyncLog.Append(
-                System.IO.Path.Combine(ConfigStore.ConfigDir, "rdp-debug.log"),
-                DateTime.Now.ToString("HH:mm:ss.fff") + "  " + message + Environment.NewLine);
+            if (message == null) return;
+            try
+            {
+                if (!VerboseLog && !IsImportant(message)) return;
+                // 按日期分文件：rdp-debug-20261116.log
+                AsyncLog.Append(
+                    ConfigStore.DailyLogPath("rdp-debug"),
+                    DateTime.Now.ToString("HH:mm:ss.fff") + "  " + message + Environment.NewLine);
+            }
+            catch { }
+        }
+
+        /// <summary>是否记录全量日志（--verbose-log 或环境变量 SOULLINK_VERBOSE_LOG=1）。</summary>
+        internal static bool VerboseLog { get; } = DetectVerbose();
+
+        private static bool DetectVerbose()
+        {
+            try
+            {
+                foreach (var a in Environment.GetCommandLineArgs())
+                    if (a != null && a.Equals("--verbose-log", StringComparison.OrdinalIgnoreCase)) return true;
+                string? env = Environment.GetEnvironmentVariable("SOULLINK_VERBOSE_LOG");
+                return env == "1";
+            }
+            catch { return false; }
+        }
+
+        /// <summary>判断一条日志是否值得落盘（异常/关键跃迁）。</summary>
+        private static bool IsImportant(string m)
+        {
+            // ① 异常类关键词
+            if (m.Contains("失败") || m.Contains("异常") || m.Contains("拒绝")
+                || m.Contains("超时") || m.Contains("错误") || m.Contains("不可用")
+                || m.Contains("跳过") || m.Contains("警告") || m.Contains("不匹配")
+                || m.Contains("无响应") || m.Contains("未就绪"))
+                return true;
+
+            // ② 关键状态跃迁
+            if (m.Contains("注入代理已投送") || m.Contains("注入代理已连接")
+                || m.Contains("进入自由视角") || m.Contains("退出自由视角")
+                || m.Contains("真实会话号") || m.Contains("通道投送成功")
+                || m.Contains("已连上") || m.Contains("连接成功"))
+                return true;
+
+            // ③ 其余（焦点切换、钩子安装、热键注册、监控 tick、边框色…）丢弃
+            return false;
         }
 
         /// <summary>创建 OCX（幂等）。</summary>

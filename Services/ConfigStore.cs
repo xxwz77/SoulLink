@@ -42,6 +42,47 @@ namespace SoulLink.Services
 
         public static string StatePath => Path.Combine(ConfigDir, "state.json");
 
+        /// <summary>
+        /// 按日期分文件的日志路径：rdp-debug-20261116.log
+        ///
+        /// ★ 为什么按天分：长期挂机日志量虽已大幅压缩，但单文件久了仍然不好查，
+        ///   也不利于用户只发某一天的文件过来。
+        /// </summary>
+        public static string DailyLogPath(string prefix)
+        {
+            try
+            {
+                return Path.Combine(ConfigDir, prefix + "-" + DateTime.Now.ToString("yyyyMMdd") + ".log");
+            }
+            catch { return Path.Combine(ConfigDir, prefix + ".log"); }
+        }
+
+        /// <summary>清掉超过 N 天的历史日志（保留最近 N 天）。</summary>
+        public static void PruneDailyLogs(string prefix, int keepDays = 7)
+        {
+            try
+            {
+                if (!Directory.Exists(ConfigDir)) return;
+                var cutoff = DateTime.Now.Date.AddDays(-keepDays);
+                foreach (var f in Directory.GetFiles(ConfigDir, prefix + "-*.log"))
+                {
+                    try
+                    {
+                        string name = Path.GetFileNameWithoutExtension(f);   // rdp-debug-20261116
+                        int dash = name.LastIndexOf('-');
+                        if (dash < 0) continue;
+                        string day = name.Substring(dash + 1);
+                        if (day.Length != 8) continue;
+                        if (!DateTime.TryParseExact(day, "yyyyMMdd", null,
+                                System.Globalization.DateTimeStyles.None, out var d)) continue;
+                        if (d < cutoff) File.Delete(f);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
         public static AppConfig Load()
         {
             try

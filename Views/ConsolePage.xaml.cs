@@ -231,6 +231,8 @@ namespace SoulLink.Views
             if (!_autoConnectTried)
             {
                 _autoConnectTried = true;
+                // 清理超过 7 天的历史日志，避免长期挂机堆积
+                try { ConfigStore.PruneDailyLogs("rdp-debug", 7); } catch { }
                 // ★ 后台执行，绝不 await：开机自启时界面必须立即可操作。
                 //   上次卡死的教训：任何会话查询/连接上的同步等待都会冻住 UI。
                 // ★ 只保留会话监控这一条投送路径。
@@ -262,7 +264,9 @@ namespace SoulLink.Views
                 if (_sessionWatch != null) return;
                 _sessionWatch = new System.Windows.Threading.DispatcherTimer
                 {
-                    Interval = TimeSpan.FromSeconds(5)
+                    // 2 秒扫描：query user 实测仅 ~28ms，开销可接受。
+                    // 配合 3 秒稳定期，会话出现后约 5 秒就能投送出通道。
+                    Interval = TimeSpan.FromSeconds(2)
                 };
                 int tickCount = 0;
                 _sessionWatch.Tick += async (_, __) =>
@@ -276,7 +280,7 @@ namespace SoulLink.Views
                     catch (Exception ex) { Debug("会话监控 tick#" + tickCount + " 异常：" + ex.Message); }
                 };
                 _sessionWatch.Start();
-                Debug("会话监控已启动（每 5 秒扫描，命中后等 " +
+                Debug("会话监控已启动（每 2 秒扫描，命中后等 " +
                       RdpConsole.SessionSettleSeconds + " 秒稳定再投送）");
             }
             catch (Exception ex) { Debug("启动会话监控失败：" + ex.Message); }
@@ -284,7 +288,7 @@ namespace SoulLink.Views
 
         /// <summary>
         /// 会话首次被看到的时间（账号 Id → 该会话号的起始时刻）。
-        /// 用途：只有"同一个会话号连续在线满 12 秒"才投送通道。
+        /// 用途：只有"同一个会话号连续在线满 SessionSettleSeconds 秒"才投送通道。
         /// 会话号变了（重新登录）就重新计时。
         /// </summary>
         private readonly Dictionary<string, (int sessionId, DateTime since)> _sessionSeen
@@ -355,24 +359,14 @@ namespace SoulLink.Views
                                     //   （错误：无法创建 RDP 控件）。
                                     //   所以自动连接必须串行：切页 → 连接 → 下一个。
                                     int sid = s?.Id ?? 0;
-                                    bool ok = false;
-                                    string msg = "";
-                                    await Dispatcher.InvokeAsync(async () =>
-                                    {
-                                        try
-                                        {
-                                            await ShowViewPageAsync(row);
-                                            var console = row.Console;
-                                            if (console == null) { msg = "Console 为空"; return; }
-                                            console.BindAccount(row.Account);
-                                            // ShowViewPageAsync 内部已连接时不再重复
-                                            if (console.IsConnected) { ok = true; return; }
-                                            await ConnectAsync(row);
-                                            ok = row.Console?.IsConnected == true;
-                                            if (!ok) msg = "连接未建立";
-                                        }
-                                        catch (Exception ex) { msg = ex.Message; }
-                                    });
+                                    // ★ 必须在 UI 线程上跑（切画面、建控件），
+                                    //   并且要**真正等它完成**再取结果写日志。
+                                    //   原来写成 InvokeAsync(async () => ...)，那是 async void：
+                                    //   InvokeAsync 立刻返回，ok/msg 还没赋值就打了日志，
+                                    //   于是出现 "自动连接失败：A2 → " 后面空着（用户反馈）。
+                                    var (ok, msg) = await Dispatcher
+                                        .InvokeAsync(() => ConnectOnUiAsync(row))
+                                        .Task.Unwrap();
 
                                     Debug(ok ? ("自动连接成功：" + caption + "（会话 " + sid + "）")
                                              : ("自动连接失败：" + caption + " → " + msg));
@@ -407,11 +401,11 @@ namespace SoulLink.Views
                     int onlineSec = (int)(now - rec.since).TotalSeconds;
                     if (onlineSec < RdpConsole.SessionSettleSeconds)
                     {
-                        // 还没满 12 秒，继续等
+                        // 还没满稳定期，继续等
                         continue;
                     }
 
-                    // ★ 已在线满 12 秒 → 投送
+                    // ★ 已满稳定期 → 投送
                     _deployHandled.Add(row.Account.Id);
                     Debug("会话监控：「" + caption + "」已在线 " + onlineSec + " 秒，开始投送通道");
 
@@ -441,6 +435,31 @@ namespace SoulLink.Views
                 }
             }
             catch (Exception ex) { Debug("会话扫描异常：" + ex.Message); }
+        }
+
+        /// <summary>
+        /// 在 UI 线程上完成"切画面 → 连接"，返回 (是否连上, 失败原因)。
+        /// ★ 切画面与创建 RDP 控件都必须在 UI 线程执行。
+        /// </summary>
+        private async Task<(bool ok, string reason)> ConnectOnUiAsync(UserRow row)
+        {
+            try
+            {
+                if (row.Console == null) InitializeConsole(row);
+                await ShowViewPageAsync(row);
+
+                var console = row.Console;
+                if (console == null) return (false, "Console 为空");
+                console.BindAccount(row.Account);
+
+                // ShowViewPageAsync 内部可能已经连上
+                if (console.IsConnected) return (true, "");
+
+                var cr = await ConnectAsync(row);
+                if (cr.ok && console.IsConnected) return (true, "");
+                return (false, string.IsNullOrWhiteSpace(cr.reason) ? "连接未建立" : cr.reason);
+            }
+            catch (Exception ex) { return (false, "异常：" + ex.Message); }
         }
 
         /// <summary>
@@ -632,9 +651,14 @@ namespace SoulLink.Views
             if (!row.Console.IsConnected) await ConnectAsync(row);
         }
 
-        private async Task ConnectAsync(UserRow row)
+        /// <summary>
+        /// 连接指定账号。返回 (是否成功, 失败原因)。
+        /// ★ 返回原因是为了让自动连接能记录"为什么失败"，
+        ///   否则日志只剩一个空的 "自动连接失败：A2 → "（用户反馈看不出原因）。
+        /// </summary>
+        private async Task<(bool ok, string reason)> ConnectAsync(UserRow row)
         {
-            if (row.Console == null) return;
+            if (row.Console == null) return (false, "Console 未初始化");
             SetBusyVisible(true);
             BusyText.Text = "正在连接 " + row.Account.Caption + " …";
 
@@ -687,12 +711,14 @@ namespace SoulLink.Views
                 if (!ok) BusyText.Text = msg;
                 if (ReferenceEquals(row, _viewing)) UpdateShield();
                 RenderTabs();
+                return (ok, ok ? "" : (string.IsNullOrWhiteSpace(msg) ? "未知原因（ConnectAsync 未返回消息）" : msg));
             }
             catch (Exception ex)
             {
                 BusyText.Text = "连接出错：" + ex.Message;
                 ShowBusyError();
                 App.AppendErrorLog("ConsolePage.Connect", ex);
+                return (false, "异常：" + ex.Message);
             }
         }
 
@@ -706,16 +732,39 @@ namespace SoulLink.Views
             if (!visible) BtnBusyReconnect.Visibility = Visibility.Collapsed;
         }
 
+        /// <summary>
+        /// 控制台页日志。与 RdpConsole.Debug 同样的分级策略：
+        /// 正常状态不落盘，只记录异常/关键跃迁（详见那边的说明）。
+        /// </summary>
         private static void Debug(string msg)
         {
+            if (msg == null) return;
             try
             {
+                if (!RdpConsole.VerboseLog && !IsImportant(msg)) return;
                 System.IO.Directory.CreateDirectory(ConfigStore.ConfigDir);
+                // 按日期分文件，与 RdpConsole 保持一致
                 System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(ConfigStore.ConfigDir, "rdp-debug.log"),
+                    ConfigStore.DailyLogPath("rdp-debug"),
                     DateTime.Now.ToString("HH:mm:ss.fff") + "  [Console] " + msg + Environment.NewLine);
             }
             catch { }
+        }
+
+        private static bool IsImportant(string m)
+        {
+            if (m.Contains("失败") || m.Contains("异常") || m.Contains("拒绝")
+                || m.Contains("超时") || m.Contains("错误") || m.Contains("不可用")
+                || m.Contains("跳过") || m.Contains("警告") || m.Contains("不匹配")
+                || m.Contains("无响应") || m.Contains("未就绪"))
+                return true;
+            if (m.Contains("注入代理已投送") || m.Contains("注入代理已连接")
+                || m.Contains("进入自由视角") || m.Contains("退出自由视角")
+                || m.Contains("真实会话号") || m.Contains("通道投送成功")
+                || m.Contains("已连上") || m.Contains("连接成功")
+                || m.Contains("自动连接"))
+                return true;
+            return false;
         }
 
         /// <summary>

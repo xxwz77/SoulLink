@@ -91,8 +91,8 @@
                         <DataGridTextColumn Header="会话 ID" Binding="{Binding Session.Id}" Width="80" />
                         <DataGridTextColumn Header="连接" Binding="{Binding Session.SessionName}" Width="120" />
                         <DataGridTextColumn Header="状态" Binding="{Binding Session.Badge}" Width="70" />
-                        <DataGridTextColumn Header="空闲" Binding="{Binding Session.IdleTime}" Width="90" />
-                        <DataGridTextColumn Header="登录时间" Binding="{Binding Session.LogonTime}" Width="*" />
+                        <DataGridTextColumn Header="空闲" Binding="{Binding Session.IdleDisplay}" Width="120" />
+                        <DataGridTextColumn Header="登录时间" Binding="{Binding Session.LogonDisplay}" Width="*" />
                     </DataGrid.Columns>
                 </DataGrid>
             </Grid>
