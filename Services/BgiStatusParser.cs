@@ -572,6 +572,35 @@ namespace SoulLink.Services
         /// </summary>
         public string CurrentAction { get; private set; } = "";
 
+        /// <summary>
+        /// 从另一个解析结果里补齐"结构性"字段（配置组 / 任务名 / 一条龙 / 轮次 / 路线）。
+        /// 仅在本对象缺这些字段时采用，避免覆盖更新的数据。
+        /// 拾取与报错统计不在这里处理（由各自流程维护）。
+        /// </summary>
+        public void MergeStructuralFrom(BgiStatus other)
+        {
+            if (other == null) return;
+
+            if (string.IsNullOrEmpty(ConfigGroup) && !string.IsNullOrEmpty(other.ConfigGroup))
+                ConfigGroup = other.ConfigGroup;
+            if (string.IsNullOrEmpty(OneDragonConfig) && !string.IsNullOrEmpty(other.OneDragonConfig))
+                OneDragonConfig = other.OneDragonConfig;
+            if (string.IsNullOrEmpty(TaskName) && !string.IsNullOrEmpty(other.TaskName))
+                TaskName = other.TaskName;
+            if (string.IsNullOrEmpty(FightScript) && !string.IsNullOrEmpty(other.FightScript))
+                FightScript = other.FightScript;
+            if (string.IsNullOrEmpty(RouteFile) && !string.IsNullOrEmpty(other.RouteFile))
+                RouteFile = other.RouteFile;
+            if (string.IsNullOrEmpty(Round) && !string.IsNullOrEmpty(other.Round))
+                Round = other.Round;
+            if (string.IsNullOrEmpty(RoleName) && !string.IsNullOrEmpty(other.RoleName))
+                RoleName = other.RoleName;
+            if (string.IsNullOrEmpty(AreaName) && !string.IsNullOrEmpty(other.AreaName))
+                AreaName = other.AreaName;
+            if (string.IsNullOrEmpty(CurrentAction) && !string.IsNullOrEmpty(other.CurrentAction))
+                CurrentAction = other.CurrentAction;
+        }
+
         /// <summary>是否已有可用状态。</summary>
         public bool HasData =>
             !string.IsNullOrEmpty(Round) || !string.IsNullOrEmpty(TaskName)

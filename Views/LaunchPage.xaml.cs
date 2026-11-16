@@ -961,6 +961,12 @@ namespace SoulLink.Views
                                 {
                                     _bgiStatus.Update(chunk);
                                     ApplyStatusToUi();
+                                    // ★ 每次有新增日志，都安排一次"全量重解析"。
+                                    //   原因：配置组 / 任务名只在任务开始时写一次，
+                                    //   如果那段内容不在初始回填范围内（文件 33MB，
+                                    //   回填只读最后 512KB），增量里永远拿不到 →
+                                    //   界面一直停在"等待日志中的状态信息"（用户实测）。
+                                    ScheduleStatusRebuild(logFile);
                                 },
                                 initialLines: 400,
                                 deepBackfill: true);   // ★ 状态行可能埋在几十万行之前（实测 20261107）
@@ -1125,6 +1131,55 @@ namespace SoulLink.Views
 
         /// <summary>是否已经成功解析出过一次状态。有了就不再回退成占位符。</summary>
         private bool _statusEverResolved;
+
+        // ── 全量重解析（应对"关键信息只在任务开始时写一次"）──
+
+        private DateTime _lastStatusRebuild = DateTime.MinValue;
+        private bool _statusRebuildRunning;
+
+        /// <summary>
+        /// 安排一次全量重解析（节流：最多 3 秒一次）。
+        /// 从文件尾部读一大段（含配置组行），重新构建 BgiStatus。
+        /// </summary>
+        private void ScheduleStatusRebuild(string logFile)
+        {
+            if (_statusRebuildRunning) return;
+            if ((DateTime.Now - _lastStatusRebuild).TotalSeconds < 3) return;
+
+            _lastStatusRebuild = DateTime.Now;
+            _statusRebuildRunning = true;
+
+            string lf = logFile;
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    // 读足够大的一段（16MB 上限），保证能覆盖任务开始那几行
+                    string text = BgiLogWatcher.TailLinesDeep(lf, 4000, 16L * 1024 * 1024);
+                    if (string.IsNullOrEmpty(text)) return;
+
+                    var fresh = new BgiStatus();
+                    fresh.Update(text);
+
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            // 换个账号了就别写回去
+                            if (!string.Equals(_statusFile, lf, StringComparison.OrdinalIgnoreCase)) return;
+
+                            // ★ 只补齐"结构性"字段（配置组/任务名/一条龙/轮次/路线），
+                            //   拾取与报错统计由别的流程维护，避免互相覆盖。
+                            _bgiStatus.MergeStructuralFrom(fresh);
+                            ApplyStatusToUi();
+                        }
+                        catch { }
+                    });
+                }
+                catch { }
+                finally { _statusRebuildRunning = false; }
+            });
+        }
 
         private void ApplyStatusToUi()
         {
