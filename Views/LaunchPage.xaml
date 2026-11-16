@@ -160,6 +160,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
@@ -187,13 +188,6 @@
                                 <TextBlock x:Name="StatusError" Text=""
                                            FontSize="10.5" TextWrapping="Wrap"
                                            Margin="0,3,0,0" Visibility="Collapsed" />
-
-                                <TextBlock x:Name="StatusPicksTitle" Text="本路线拾取"
-                                           FontSize="9.5" Foreground="{StaticResource TextMuted}"
-                                           Margin="0,10,0,0" Visibility="Collapsed" />
-                                <TextBlock x:Name="StatusPicks" Text=""
-                                           FontSize="10.5" Foreground="#FFB8E6C8"
-                                           TextWrapping="Wrap" Margin="0,3,0,0" Visibility="Collapsed" />
                             </StackPanel>
 
                             <StackPanel Grid.Row="1" Grid.ColumnSpan="2">
@@ -207,7 +201,45 @@
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
                             </StackPanel>
 
-                            <!-- ③ 异常/失败信息：单独一行，红色，只在出问题时显示 -->
+                            <!-- ③ 本次拾取：独占整行。点标题可展开"全天 / 按配置组" -->
+                            <Border x:Name="StatusPicksBox" Grid.Row="3" Grid.ColumnSpan="2"
+                                    Margin="0,8,0,0" Padding="10,8" CornerRadius="8"
+                                    Background="#1AB8E6C8" Visibility="Collapsed">
+                                <StackPanel>
+                                    <Grid x:Name="PicksHeader" Background="Transparent"
+                                          Cursor="Hand" MouseLeftButtonUp="PicksHeader_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- 组名：允许换行，不再被截断 -->
+                                        <TextBlock x:Name="StatusPicksTitle" Grid.Column="0" Text="本次拾取"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource TextMuted}"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="PicksExpandHint" Grid.Column="1" Text="▾ 展开全天"
+                                                   FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                                                   VerticalAlignment="Top" Margin="8,0,0,0" />
+                                    </Grid>
+                                    <TextBlock x:Name="StatusPicks" Text=""
+                                               FontSize="11.5" Foreground="#FFC8F0D8"
+                                               TextWrapping="Wrap" LineHeight="19"
+                                               Margin="0,4,0,0" />
+
+                                    <!-- 展开后的"全天 / 按配置组"：
+                                         组名用粗体+亮色，材料用细体+暗色，视觉上分层 -->
+                                    <Border x:Name="DailyPicksPanel" Visibility="Collapsed"
+                                            Margin="0,8,0,0" Padding="9,8" CornerRadius="6"
+                                            Background="#18000000">
+                                        <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollBarVisibility="Disabled">
+                                            <StackPanel x:Name="DailyPicksList" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ④ 异常/失败信息：单独一行，红色，只在出问题时显示 -->
                             <Border x:Name="StatusProblemBox" Grid.Row="2" Grid.ColumnSpan="2"
                                     Margin="0,6,0,0" Padding="8,6" CornerRadius="6"
                                     Background="#2AFF6B6B" Visibility="Collapsed">

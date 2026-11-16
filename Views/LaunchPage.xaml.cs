@@ -866,8 +866,7 @@ namespace SoulLink.Views
                         _statusFile = logFile;            // ★ 同上，用局部变量恢复
                         _bgiStatus = new BgiStatus();
                         _statusEverResolved = false;      // 换账号：允许重新显示占位
-                        StatusPicksTitle.Visibility = Visibility.Collapsed;
-                        StatusPicks.Visibility = Visibility.Collapsed;
+                        StatusPicksBox.Visibility = Visibility.Collapsed;
                         ApplyStatusToUi();
                         StatusMeta.Text = user + " · PID " + pid;
 
@@ -891,11 +890,27 @@ namespace SoulLink.Views
                                 try
                                 {
                                     var (errs, warns, fails) = BgiLogWatcher.CountDailyErrors(lf);
+                                    // 拾取也要扫全天，并且按配置组分类
+                                    var (byGroup, lastGroup) = BgiLogWatcher.CountDailyPicksByGroup(lf);
                                     Dispatcher.InvokeAsync(() =>
                                     {
                                         _bgiStatus.ErrorCount = errs;
                                         _bgiStatus.WarnCount = warns;
                                         _bgiStatus.FailCount = fails;
+
+                                        // 全天分组数据
+                                        _bgiStatus.DailyByGroup.Clear();
+                                        foreach (var g in byGroup)
+                                            _bgiStatus.DailyByGroup[g.Key] = g.Value;
+
+                                        // 本轮 = 最后一个（当前）配置组的拾取
+                                        if (!string.IsNullOrEmpty(lastGroup)
+                                            && byGroup.TryGetValue(lastGroup, out var cur))
+                                        {
+                                            _bgiStatus.RoutePicks.Clear();
+                                            foreach (var kv in cur) _bgiStatus.RoutePicks[kv.Key] = kv.Value;
+                                            _bgiStatus.PicksRoute = lastGroup;
+                                        }
                                         ApplyStatusToUi();
                                     });
                                 }
@@ -926,6 +941,90 @@ namespace SoulLink.Views
             _statusFollower = null;
             _statusFile = "";
             _statusSessionId = 0;
+        }
+
+        /// <summary>拾取面板是否已展开全天详情。</summary>
+        private bool _picksExpanded;
+
+        /// <summary>点击"本轮拾取"标题：展开/收起全天按配置组的统计。</summary>
+        private void PicksHeader_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            _picksExpanded = !_picksExpanded;
+            DailyPicksPanel.Visibility = _picksExpanded ? Visibility.Visible : Visibility.Collapsed;
+            PicksExpandHint.Text = _picksExpanded ? "▴ 收起" : "▾ 展开全天";
+            if (_picksExpanded) RefreshDailyPicksText();
+        }
+
+        /// <summary>
+        /// 刷新"全天 / 按配置组"列表。
+        /// ★ 用 StackPanel 动态生成，而不是一个 TextBlock 拼多行 ——
+        ///   这样组名可以用粗体+亮色、材料用细体+暗色，视觉上能分清层级。
+        /// </summary>
+        private void RefreshDailyPicksText()
+        {
+            try
+            {
+                DailyPicksList.Children.Clear();
+
+                if (_bgiStatus.DailyByGroup.Count == 0)
+                {
+                    DailyPicksList.Children.Add(new System.Windows.Controls.TextBlock
+                    {
+                        Text = "今天还没有拾取记录。",
+                        FontSize = 10,
+                        Foreground = (System.Windows.Media.Brush)FindResource("TextMuted")
+                    });
+                    return;
+                }
+
+                // 按总件数从多到少排配置组，主要的排前面
+                var groups = new List<(string name, Dictionary<string, int> bag, int total)>();
+                foreach (var g in _bgiStatus.DailyByGroup)
+                {
+                    int total = 0;
+                    foreach (var kv in g.Value) total += kv.Value;
+                    if (total > 0) groups.Add((g.Key, g.Value, total));
+                }
+                groups.Sort((a, b) => b.total.CompareTo(a.total));
+
+                bool first = true;
+                foreach (var (name, bag, total) in groups)
+                {
+                    // 组名：粗体 + 亮色，独占一行
+                    var title = new System.Windows.Controls.TextBlock
+                    {
+                        Text = name + "　" + total + " 件",
+                        FontSize = 10,
+                        FontWeight = System.Windows.FontWeights.SemiBold,
+                        Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush"),
+                        TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(0, first ? 0 : 10, 0, 2)
+                    };
+                    DailyPicksList.Children.Add(title);
+                    first = false;
+
+                    // 材料：细体 + 暗色，可换行
+                    var items = new List<(string n, int c)>();
+                    foreach (var kv in bag) items.Add((kv.Key, kv.Value));
+                    items.Sort((a, b) => b.c.CompareTo(a.c));
+
+                    var parts = new List<string>();
+                    foreach (var it in items)
+                        parts.Add(it.c > 1 ? (it.n + "×" + it.c) : it.n);
+
+                    var body = new System.Windows.Controls.TextBlock
+                    {
+                        Text = string.Join(" · ", parts),
+                        FontSize = 10.5,
+                        FontWeight = System.Windows.FontWeights.Normal,
+                        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+                        TextWrapping = TextWrapping.Wrap,
+                        LineHeight = 17
+                    };
+                    DailyPicksList.Children.Add(body);
+                }
+            }
+            catch { }
         }
 
         /// <summary>
@@ -961,8 +1060,7 @@ namespace SoulLink.Views
                     SetText(StatusRoute, "—");
                     SetText(StatusEta, "等待日志中的状态信息…");
                     StatusProblemBox.Visibility = Visibility.Collapsed;
-                    StatusPicksTitle.Visibility = Visibility.Collapsed;
-                    StatusPicks.Visibility = Visibility.Collapsed;
+                    StatusPicksBox.Visibility = Visibility.Collapsed;
                     return;
                 }
 
@@ -997,19 +1095,20 @@ namespace SoulLink.Views
                     StatusError.Visibility = Visibility.Collapsed;
                 }
 
-                // 本路线拾取：有拾取才显示，没有就隐藏（避免空标题占位）
+                // 本轮拾取（当前配置组）：有拾取才显示整块
                 string picks = _bgiStatus.PicksDisplay;
                 if (picks.Length > 0)
                 {
-                    SetText(StatusPicksTitle, "本路线拾取（共 " + _bgiStatus.PickTotal + " 件）");
+                    string gname = string.IsNullOrEmpty(_bgiStatus.PicksRoute)
+                        ? "本次拾取" : ("本轮拾取 · " + _bgiStatus.PicksRoute);
+                    SetText(StatusPicksTitle, gname + "　" + _bgiStatus.PickTotal + " 件");
                     SetText(StatusPicks, picks);
-                    StatusPicksTitle.Visibility = Visibility.Visible;
-                    StatusPicks.Visibility = Visibility.Visible;
+                    StatusPicksBox.Visibility = Visibility.Visible;
+                    if (_picksExpanded) RefreshDailyPicksText();
                 }
                 else
                 {
-                    StatusPicksTitle.Visibility = Visibility.Collapsed;
-                    StatusPicks.Visibility = Visibility.Collapsed;
+                    StatusPicksBox.Visibility = Visibility.Collapsed;
                 }
 
                 // ★ 异常单独占一行（红色框）：失败原因比进度更需要被看到，

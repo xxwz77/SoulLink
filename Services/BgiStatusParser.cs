@@ -60,29 +60,90 @@ namespace SoulLink.Services
         public string PickCount { get; set; } = "";
 
         /// <summary>
-        /// 本路线拾取到的物品统计（名称 → 次数）。
-        /// 在"开始第 N/M 条线路"时清空，因此始终反映**当前路线**的收获。
+        /// 当前**配置组**累计拾取到的物品统计（名称 → 次数）。
+        ///
+        /// ★ 从"本路线"改为"本配置组"：用户看挂机收获时关心的是
+        ///   这一轮跑下来总共捡了什么，而不是某条 1 分钟小路线捡了什么
+        ///   （绝大多数路线只有 0~1 件，按路线统计几乎永远是空的）。
+        ///   只有当配置组真正切换时才清空。
         /// </summary>
         public System.Collections.Generic.Dictionary<string, int> RoutePicks { get; }
             = new System.Collections.Generic.Dictionary<string, int>();
 
-        /// <summary>拾取统计对应的路线名（清空后重新累计时更新）。</summary>
+        /// <summary>拾取统计对应的配置组名（变了才清空重新累计）。</summary>
         public string PicksRoute { get; set; } = "";
 
-        /// <summary>当前路线的物品汇总文字，例如 "污秽的面具×3 · 史莱姆清×2"。</summary>
+        /// <summary>
+        /// 今天每个配置组各捡了什么（配置组名 → 物品 → 次数）。
+        /// 用于"点击展开整天"。
+        /// </summary>
+        public System.Collections.Generic.Dictionary<string,
+            System.Collections.Generic.Dictionary<string, int>> DailyByGroup { get; }
+            = new System.Collections.Generic.Dictionary<string,
+                System.Collections.Generic.Dictionary<string, int>>();
+
+        /// <summary>本轮的配置组名（任务启动时记录）。</summary>
+        public string RoundGroup { get; set; } = "";
+
+        /// <summary>
+        /// 本轮是否在跑。任务结束 → false。
+        /// 用来判断"本轮拾取"是否还有意义。
+        /// </summary>
+        public bool RoundRunning { get; set; }
+
+        /// <summary>全天分组拾取的展示文字（多行）。</summary>
+        public string DailyByGroupDisplay
+        {
+            get
+            {
+                if (DailyByGroup.Count == 0) return "";
+                var sb = new System.Text.StringBuilder();
+                foreach (var g in DailyByGroup)
+                {
+                    int total = 0;
+                    var items = new System.Collections.Generic.List<(string name, int n)>();
+                    foreach (var kv in g.Value)
+                    {
+                        items.Add((kv.Key, kv.Value));
+                        total += kv.Value;
+                    }
+                    if (total == 0) continue;
+
+                    items.Sort((a, b) => b.n.CompareTo(a.n));
+                    var parts = new System.Collections.Generic.List<string>();
+                    int shown = 0;
+                    foreach (var it in items)
+                    {
+                        if (shown++ >= 5) { parts.Add("…"); break; }
+                        parts.Add(it.n > 1 ? (it.name + "×" + it.n) : it.name);
+                    }
+                    sb.AppendLine(g.Key + "（" + total + " 件）");
+                    sb.AppendLine("  " + string.Join(" · ", parts));
+                }
+                return sb.ToString().TrimEnd();
+            }
+        }
+
+        /// <summary>配置组的物品汇总文字，例如 "污秽的面具×3 · 史莱姆清×2"。</summary>
         public string PicksDisplay
         {
             get
             {
                 if (RoutePicks.Count == 0) return "";
+
+                // 按次数从多到少排序，最值钱的/最多的排前面
+                var items = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, int>>();
+                foreach (var kv in RoutePicks) items.Add(kv);
+                items.Sort((a, b) => b.Value.CompareTo(a.Value));
+
                 var list = new System.Collections.Generic.List<string>();
-                foreach (var kv in RoutePicks)
+                foreach (var kv in items)
                     list.Add(kv.Value > 1 ? (kv.Key + "×" + kv.Value) : kv.Key);
-                // 太多就只显示前 6 种，避免撑爆一行
-                if (list.Count > 6)
+                // 最多显示 12 种（原来 8 种，用户反馈显示不全）
+                if (list.Count > 12)
                 {
-                    int more = list.Count - 6;
-                    list = list.GetRange(0, 6);
+                    int more = list.Count - 12;
+                    list = list.GetRange(0, 12);
                     list.Add("…等 " + (6 + more) + " 种");
                 }
                 return string.Join(" · ", list);
@@ -255,17 +316,10 @@ namespace SoulLink.Services
                         RoleName = m.Groups["role"].Value.Trim();
                         RouteProgress = m.Groups["cur"].Value + "/" + m.Groups["total"].Value;
 
-                        // ★ 只在新路线真的不同时才清空拾取统计。
-                        //   原来每次进这个分支都清空，而日志增量里状态行与拾取行
-                        //   的先后顺序不固定，很容易把刚收到的拾取清掉，
-                        //   导致界面"本路线拾取"一直是空。
-                        string newRoute = StripJson(m.Groups["file"].Value);
-                        if (!string.IsNullOrEmpty(newRoute) && newRoute != PicksRoute)
-                        {
-                            RoutePicks.Clear();
-                            PicksRoute = newRoute;
-                        }
-                        RouteFile = newRoute;
+                        // ★ 拾取统计按**配置组**累计，不再按单条路线清空。
+                        //   路线大多只捡 0~1 件，按路线统计几乎永远是空的；
+                        //   用户真正关心的是"这一轮总共捡了什么"。
+                        RouteFile = StripJson(m.Groups["file"].Value);
 
                         RouteEta = Maybe(RxEta.Match(merged), "v");
                         RoundRemain = Maybe(RxRemain.Match(merged), "v");
@@ -335,7 +389,16 @@ namespace SoulLink.Services
                         if (cg.Success)
                         {
                             string g = cg.Groups["g"].Success ? cg.Groups["g"].Value : cg.Groups["g2"].Value;
-                            if (g != "无") ConfigGroup = g;   // "无" 表示当前无配置组，不覆盖
+                            if (g != "无")
+                            {
+                                // ★ 配置组真的换了 → 清空拾取统计，重新累计新一轮
+                                if (!string.IsNullOrEmpty(g) && g != PicksRoute)
+                                {
+                                    RoutePicks.Clear();
+                                    PicksRoute = g;
+                                }
+                                ConfigGroup = g;
+                            }
                             matched = true;
                         }
                     }

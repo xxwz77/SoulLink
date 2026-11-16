@@ -13,7 +13,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- ★ 版本号唯一来源：改这里即可，FileVersion/AssemblyVersion 自动派生。
          历史教训：标签打到 v1.4.3 而这里仍是 1.4.1，标题栏一直显示旧版本。 -->
-    <Version>1.9.0</Version>
+    <Version>1.9.1</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 多用户挂机中控台</AssemblyTitle>
@@ -33,6 +33,7 @@
   </ItemGroup>
 
 </Project>
+
 
 
 

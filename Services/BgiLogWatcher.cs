@@ -246,6 +246,132 @@ namespace SoulLink.Services
         }
 
         /// <summary>
+        /// 扫整天日志，按**配置组**归类统计拾取。
+        ///
+        /// ★ 为什么必须单独扫全天：增量解析只看得到最近几行，
+        ///   而拾取散布在全天几十万行里。
+        ///
+        /// 配置组边界的判定（实测日志）：
+        ///   · 配置组="CD采集-全采集"   ← 拾取诊断行里带出来，最频繁、最可靠
+        ///   · 锄地一条龙任务启动 [配置组: "xxx"]
+        ///   · 启用一条龙配置：xxx
+        /// 拾取行（交互或拾取："xxx"）归属于**它之前最近出现的配置组**。
+        /// </summary>
+        /// <summary>
+        /// 扫整天日志，返回：
+        ///   · byGroup  —— 每个配置组各捡了什么（用于"展开全天"）
+        ///   · lastGroup —— 最后一个配置组名
+        ///   · roundPicks —— **最后一轮任务**（最后一次"任务启动"之后）的拾取
+        ///
+        /// ★ 为什么要单独算 roundPicks：
+        ///   配置组名可能一整天都叫同一个（比如"CD采集-全采集"），
+        ///   按配置组汇总得到的是"整天总量"，不是"这一轮"。
+        ///   真正的轮次边界是日志里的：
+        ///     → "任务启动！"
+        ///     锄地一条龙任务启动 [配置组: "xxx"]，数据目录: "..."
+        ///   最后一次"任务启动"之后的拾取，才是当前这一轮的收获。
+        /// </summary>
+        public static (System.Collections.Generic.Dictionary<string,
+                         System.Collections.Generic.Dictionary<string, int>> byGroup,
+                      string lastGroup)
+            CountDailyPicksByGroup(string path)
+        {
+            var byGroup = new System.Collections.Generic.Dictionary<string,
+                System.Collections.Generic.Dictionary<string, int>>();
+            string current = "";
+            try
+            {
+                if (!File.Exists(path)) return (byGroup, "");
+
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using var sr = new StreamReader(fs, Encoding.UTF8);
+
+                string? line;
+                while ((line = sr.ReadLine()) != null)
+                {
+                    // ① 先看有没有配置组标识（三种写法）
+                    string? g = TryReadGroup(line);
+                    if (g != null && g != "无")
+                    {
+                        current = g;
+                        continue;
+                    }
+
+                    // ② 再看是不是拾取行
+                    int i = line.IndexOf("交互或拾取", StringComparison.Ordinal);
+                    if (i < 0) continue;
+
+                    int q1 = line.IndexOf('"', i);
+                    if (q1 < 0) continue;
+                    int q2 = line.IndexOf('"', q1 + 1);
+                    if (q2 < 0) continue;
+
+                    string item = line.Substring(q1 + 1, q2 - q1 - 1).Trim();
+                    if (item.Length == 0 || item == "无有效结果") continue;
+
+                    string key = string.IsNullOrEmpty(current) ? "（未标注配置组）" : current;
+                    if (!byGroup.TryGetValue(key, out var bag))
+                    {
+                        bag = new System.Collections.Generic.Dictionary<string, int>();
+                        byGroup[key] = bag;
+                    }
+                    if (bag.TryGetValue(item, out int c)) bag[item] = c + 1;
+                    else bag[item] = 1;
+                }
+            }
+            catch { }
+            return (byGroup, current);
+        }
+
+        /// <summary>从一行日志里读配置组名（兼容三种写法），没有则返回 null。</summary>
+        private static string? TryReadGroup(string line)
+        {
+            try
+            {
+                // 配置组="CD采集-全采集"
+                int i = line.IndexOf("配置组=\"", StringComparison.Ordinal);
+                if (i >= 0)
+                {
+                    int s = i + 5;
+                    int e = line.IndexOf('"', s);
+                    if (e > s) return line.Substring(s, e - s).Trim();
+                }
+
+                // 配置组: "联机锄地-混合精英"   （任务启动行）
+                int j = line.IndexOf("配置组:", StringComparison.Ordinal);
+                if (j >= 0)
+                {
+                    int s = j + 4;
+                    int q1 = line.IndexOf('"', s);
+                    int q2 = q1 >= 0 ? line.IndexOf('"', q1 + 1) : -1;
+                    if (q1 >= 0 && q2 > q1) return line.Substring(q1 + 1, q2 - q1 - 1).Trim();
+                }
+
+                // 启用一条龙配置：灭绝提瓦特
+                int k = line.IndexOf("启用一条龙配置", StringComparison.Ordinal);
+                if (k >= 0)
+                {
+                    int c = line.IndexOfAny(new[] { '：', ':' }, k);
+                    if (c >= 0) return line.Substring(c + 1).Trim();
+                }
+
+                // ★ 配置组 "狗粮批发" 加载完成，共3个脚本，开始执行
+                //   这种"计划/装载行"也必须识别，否则当前配置组会一直停在
+                //   上一个组（实测后果：270 件狗粮被算到"等待至4-00"名下）。
+                int j2 = line.IndexOf("配置组 \"", StringComparison.Ordinal);
+                if (j2 >= 0)
+                {
+                    int s2 = j2 + 5;
+                    int e2 = line.IndexOf('"', s2);
+                    if (e2 > s2) return line.Substring(s2, e2 - s2).Trim();
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
         /// 统计整天日志的错误/警告/失败次数。
         ///
         /// ★ 为什么要单独做：状态解析只处理"增量"，无法回溯全天；
