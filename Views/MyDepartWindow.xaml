@@ -112,6 +112,25 @@
                        Foreground="{StaticResource TextMuted}" Margin="0,16,0,0" />
             <StackPanel x:Name="OverviewPanel" Margin="0,6,0,0" />
 
+            <!-- 发车前的准备动作（只影响该账号自己的进程） -->
+            <TextBlock Text="发车前的准备" FontSize="10.5"
+                       Foreground="{StaticResource TextMuted}" Margin="0,16,0,0" />
+
+            <CheckBox x:Name="StopBgiCheck" Content="先停止该账号正在跑的 BGI 脚本（必需）"
+                      Style="{StaticResource GlassCheckBox}" IsChecked="True"
+                      IsEnabled="False"
+                      Margin="0,8,0,0" FontSize="11.5" />
+            <TextBlock Text="运行一条龙和配置组之前，BGI 必须是空闲的，否则会冲突。这一步固定执行，只停这个账号的脚本，不会碰别人的。"
+                       FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                       TextWrapping="Wrap" Margin="20,2,0,0" />
+
+            <CheckBox x:Name="CloseGenshinCheck" Content="先关闭该账号的原神"
+                      Style="{StaticResource GlassCheckBox}"
+                      Margin="0,10,0,0" FontSize="11.5" />
+            <TextBlock Text="只在需要重新登录时勾选。按会话过滤，不影响其他用户。"
+                       FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                       TextWrapping="Wrap" Margin="20,2,0,0" />
+
             <TextBlock x:Name="ErrorText" Text="" FontSize="10.5"
                        Foreground="#FFFF9B9B" TextWrapping="Wrap"
                        Margin="0,10,0,0" Visibility="Collapsed" />

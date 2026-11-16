@@ -254,6 +254,12 @@ namespace SoulLink.Services
             public string DragonName { get; set; } = "";
             public string Groups { get; set; } = "";
             public string Summary { get; set; } = "";
+
+            /// <summary>发车前先停止该账号的 BGI 脚本（默认开，一条龙必需）。</summary>
+            public bool StopBgiFirst { get; set; } = true;
+
+            /// <summary>发车前关闭该账号的原神。</summary>
+            public bool CloseGenshin { get; set; } = false;
         }
 
         /// <summary>兼容旧名称（窗口里用它拼装配置）。</summary>
@@ -264,6 +270,12 @@ namespace SoulLink.Services
             public string DragonName { get; set; } = "";
             public string Groups { get; set; } = "";
             public string Summary { get; set; } = "";
+
+            /// <summary>发车前是否先停止该账号正在跑的 BGI 脚本（一条龙要求空闲）。</summary>
+            public bool StopBgiFirst { get; set; } = true;
+
+            /// <summary>发车前是否关闭该账号的原神。</summary>
+            public bool CloseGenshin { get; set; } = false;
         }
 
         /// <summary>发车。</summary>

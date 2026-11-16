@@ -1570,6 +1570,31 @@ namespace SoulLink.Views
             btnRun.Click += async (_, __) => await RunFlowNowAsync(f);
             btns.Children.Add(btnRun);
 
+            // ★ 编辑按钮（用户反馈：已建立的自动化没有编辑入口）
+            var btnEdit = new Button
+            {
+                Style = (Style)FindResource("IconButton"),
+                Width = 26, Height = 26,
+                Content = new TextBlock
+                {
+                    Text = "\uE70F", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10
+                },
+                ToolTip = "编辑这个自动化",
+                Tag = f,
+                Margin = new Thickness(4, 0, 0, 0)
+            };
+            btnEdit.Click += (_, __) =>
+            {
+                // 找到这个流程绑定的账号
+                Account? acc = null;
+                foreach (var a in App.Config.Accounts)
+                    if (a.Id == f.AccountId) { acc = a; break; }
+                if (acc == null) acc = new Account { Id = f.AccountId, UserName = "未知" };
+
+                OpenFlowEditor(f, acc);
+            };
+            btns.Children.Add(btnEdit);
+
             var btnDel = new Button
             {
                 Style = (Style)FindResource("IconButton"),
@@ -1584,8 +1609,8 @@ namespace SoulLink.Views
             };
             btnDel.Click += (_, __) =>
             {
-                if (MessageBox.Show("确定删除流程「" + f.DisplayName + "」？", "SoulLink",
-                        MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
+                if (!ThemedMessage.Confirm(Window.GetWindow(this), "删除流程",
+                        "确定删除流程「" + f.DisplayName + "」？")) return;
                 App.Config.Automations.RemoveAll(x => x.Id == f.Id);
                 ConfigStore.Save(App.Config);
                 RefreshAutomationList();
@@ -1724,6 +1749,10 @@ namespace SoulLink.Views
             }
         }
 
+        /// <summary>
+        /// 卡片上的 ▶ 按钮：**手动**请求运行一次 → 弹窗显示结果。
+        /// ★ 自动触发（调度器）完全不经过这里，那边只写日志、不弹窗。
+        /// </summary>
         private async Task RunFlowNowAsync(AutomationFlow flow)
         {
             try
@@ -1731,15 +1760,25 @@ namespace SoulLink.Views
                 var sess = _logSession;
                 if (sess == null) return;
 
+                SetRunHint("正在运行「" + flow.DisplayName + "」…", true);
+
                 var result = await FlowRunner.RunAsync(flow, sess.Id, App.Config, manual: true);
                 string detail = string.Join(Environment.NewLine, result.Steps);
-                MessageBox.Show(result.Message + (detail.Length > 0 ? ("\n\n" + detail) : ""),
-                    "执行结果");
+
+                // 手动点击 → 弹窗（主题样式）
+                ThemedMessage.Info(Window.GetWindow(this), "执行结果",
+                    result.Message + (detail.Length > 0 ? ("\n\n" + detail) : ""));
+
+                LogBus.Write(result.Passed ? LogLevel.Ok : LogLevel.Info,
+                    "手动运行「" + flow.DisplayName + "」", result.Message);
+
+                SetRunHint(result.Message, result.Passed);
                 RefreshAutomationList();
             }
             catch (Exception ex)
             {
-                MessageBox.Show("运行失败：" + ex.Message, "SoulLink");
+                LogBus.Error("手动运行失败：" + ex.Message);
+                ThemedMessage.Error(Window.GetWindow(this), "运行失败", ex.Message);
             }
         }
 

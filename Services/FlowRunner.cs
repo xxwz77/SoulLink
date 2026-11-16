@@ -266,7 +266,18 @@ namespace SoulLink.Services
                         continue;
                     }
 
-                    // ── 执行器节点（含独立的"结束流程"类别）──
+                    // ★ 「结束流程」不是真正的执行器，必须在调 RunActionAsync **之前**拦截。
+                    //   否则它会走到 default 分支返回"未知的执行器类型"（用户实测报错）。
+                    if (node.Type == FlowNodeType.ActEndFlow)
+                    {
+                        flowEnded = true;
+                        flow.Disarm();     // 结束流程 → 条件清零
+                        result.Steps.Add("执行：" + node.Title + " → 流程已结束");
+                        result.Steps.Add("流程已结束（条件已清零）");
+                        break;
+                    }
+
+                    // ── 执行器节点 ──
                     string actAcc = TargetAccountId(node, flow.AccountId, cfg);
                     int actSid = TargetSessionId(node, flow.AccountId, sessionId, cfg);
 
@@ -279,15 +290,6 @@ namespace SoulLink.Services
                     LastActionElapsedSeconds = sw.Elapsed.TotalSeconds;
 
                     result.Steps.Add("执行：" + node.Title + " → " + amsg);
-
-                    // 结束流程节点：立即停止
-                    if (node.Type == FlowNodeType.ActEndFlow)
-                    {
-                        flowEnded = true;
-                        flow.Disarm();     // 结束流程 → 条件清零
-                        result.Steps.Add("流程已结束（条件已清零）");
-                        break;
-                    }
 
                     if (!aok)
                     {

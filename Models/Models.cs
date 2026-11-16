@@ -351,6 +351,14 @@ namespace SoulLink.Models
         /// </summary>
         public string LobbyServerUrl { get; set; } = "";
 
+        /// <summary>
+        /// 发车前是否关闭原神（按账号独立）。
+        /// ★ 停 BGI 是固定行为（一条龙/配置组都要求空闲），不需要配置。
+        ///   关原神才是可选项，存在本地即可，不用过服务器。
+        /// </summary>
+        public Dictionary<string, bool> DepartCloseGenshin { get; set; }
+            = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
         // ── 内嵌 RDP 控制台 ────────────────────────────────────────────
         /// <summary>控制台默认分辨率</summary>
         public int RdpWidth { get; set; } = 1280;

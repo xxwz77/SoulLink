@@ -296,6 +296,18 @@ namespace SoulLink.Views
                 var d = await LobbyApi.GetDepartConfigAsync().ConfigureAwait(true);
                 bool has = !string.IsNullOrEmpty(d.Mode);
                 string text = has ? d.Summary : "未设置";
+                if (has)
+                {
+                    var marks = new List<string> { "停BGI" };   // 固定
+                    try
+                    {
+                        if (App.Config.Settings.DepartCloseGenshin != null
+                            && App.Config.Settings.DepartCloseGenshin.TryGetValue(u, out var cg) && cg)
+                            marks.Add("关原神");
+                    }
+                    catch { }
+                    text += "  [" + string.Join(" ", marks) + "]";
+                }
 
                 var row = new Grid { Margin = new Thickness(0, 0, 0, 4) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
@@ -341,7 +353,12 @@ namespace SoulLink.Views
             if (user.Length == 0) { ShowError("请先选择账号。"); return; }
 
             string mode = CurrentMode();
-            var dto = new LobbyApi.UserDepartDto { Mode = mode };
+            var dto = new LobbyApi.UserDepartDto
+            {
+                Mode = mode,
+                StopBgiFirst = true,   // 固定：一条龙/配置组都必须先停 BGI
+                CloseGenshin = CloseGenshinCheck?.IsChecked == true
+            };
 
             if (mode == "action")
             {

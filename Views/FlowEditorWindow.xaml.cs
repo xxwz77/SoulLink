@@ -578,8 +578,7 @@ namespace SoulLink.Views
                     var exist = _flow.Trigger;
                     if (exist != null)
                     {
-                        MessageBox.Show("一个流程只能有一个触发器。\n如需更换，请先右键删除原来的触发器。",
-                            "SoulLink");
+                        ThemedMessage.Info(this, "提示", "一个流程只能有一个触发器。\n如需更换，请先右键删除原来的触发器。");
                         return;
                     }
                 }
@@ -640,7 +639,7 @@ namespace SoulLink.Views
             }
             catch (Exception ex)
             {
-                MessageBox.Show("添加节点失败：" + ex.Message, "SoulLink");
+                ThemedMessage.Info(this, "提示", "添加节点失败：" + ex.Message);
             }
         }
 
@@ -650,9 +649,7 @@ namespace SoulLink.Views
             {
                 if (node.Kind == FlowNodeKind.Trigger)
                 {
-                    var r = MessageBox.Show("删除触发器后整个流程就不会触发了，确定吗？", "SoulLink",
-                        MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-                    if (r != MessageBoxResult.OK) return;
+                    if (!ThemedMessage.Confirm(this, "确认", "删除触发器后整个流程就不会触发了，确定吗？")) return;
                 }
 
                 _flow.Nodes.RemoveAll(n => n.Id == node.Id);
@@ -1336,8 +1333,7 @@ namespace SoulLink.Views
         {
             if (_dirty)
             {
-                var r = MessageBox.Show("有未保存的修改，要保存吗？", "SoulLink",
-                    MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+                var r = ThemedMessage.YesNoCancel(this, "保存", "有未保存的修改，要保存吗？");
                 if (r == MessageBoxResult.Cancel) return;
                 if (r == MessageBoxResult.Yes) Save_Click(null, null!);
             }
@@ -1366,7 +1362,7 @@ namespace SoulLink.Views
                     if (warns.Count > 0)
                         text += "\n\n另外：\n" + string.Join("\n", warns);
 
-                    MessageBox.Show(text, "流程不完整", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    ThemedMessage.Info(this, "流程不完整", text);
 
                     // 选中第一个出问题的节点，方便直接定位
                     foreach (var i in report.Issues)
@@ -1391,19 +1387,17 @@ namespace SoulLink.Views
                     foreach (var i in report.Issues) warns.Add("⚠ " + i.Message);
                     okText += "\n\n提醒：\n" + string.Join("\n", warns);
                 }
-                MessageBox.Show(okText, "SoulLink");
+                ThemedMessage.Info(this, "提示", okText);
             }
             catch (Exception ex)
             {
-                MessageBox.Show("保存失败：" + ex.Message, "SoulLink");
+                ThemedMessage.Info(this, "提示", "保存失败：" + ex.Message);
             }
         }
 
         private void DeleteFlow_Click(object sender, RoutedEventArgs e)
         {
-            var r = MessageBox.Show("确定删除整个流程「" + _flow.DisplayName + "」？", "SoulLink",
-                MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-            if (r != MessageBoxResult.OK) return;
+            if (!ThemedMessage.Confirm(this, "确认", "确定删除整个流程「" + _flow.DisplayName + "」？")) return;
 
             _cfg.Automations.RemoveAll(f => f.Id == _flow.Id);
             ConfigStore.Save(_cfg);
@@ -1424,8 +1418,7 @@ namespace SoulLink.Views
                 {
                     var errs = new List<string>();
                     foreach (var i in vr.Issues) if (i.IsError) errs.Add("• " + i.Message);
-                    MessageBox.Show("这个流程还不能运行，请先修正：\n\n" + string.Join("\n", errs),
-                        "流程不完整", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    ThemedMessage.Info(this, "流程不完整", "这个流程还不能运行，请先修正：\n\n" + string.Join("\n", errs));
                     return;
                 }
 
@@ -1436,7 +1429,7 @@ namespace SoulLink.Views
                 var s = SessionService.Find(sessions, _account.UserName);
                 if (s == null)
                 {
-                    MessageBox.Show("账号 " + _account.UserName + " 当前没有会话，无法执行。", "SoulLink");
+                    ThemedMessage.Info(this, "提示", "账号 " + _account.UserName + " 当前没有会话，无法执行。");
                     return;
                 }
 
@@ -1444,12 +1437,12 @@ namespace SoulLink.Views
                 var result = await FlowRunner.RunAsync(_flow, s.Id, _cfg, manual: true);
 
                 string detail = string.Join(Environment.NewLine, result.Steps);
-                MessageBox.Show(result.Message + (detail.Length > 0 ? ("\n\n" + detail) : ""),
-                    "执行结果");
+                ThemedMessage.Info(this, "执行结果",
+                    result.Message + (detail.Length > 0 ? ("\n\n" + detail) : ""));
             }
             catch (Exception ex)
             {
-                MessageBox.Show("运行失败：" + ex.Message, "SoulLink");
+                ThemedMessage.Info(this, "提示", "运行失败：" + ex.Message);
             }
         }
     }

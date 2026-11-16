@@ -22,6 +22,16 @@
                        FontSize="11" Foreground="{StaticResource TextMuted}"
                        Margin="0,6,0,16" TextWrapping="Wrap" />
 
+            <!-- 进哪个房间（大小号房才显示） -->
+            <StackPanel x:Name="RoomPickerPanel" Visibility="Collapsed" Margin="0,0,0,12">
+                <TextBlock Text="进哪个房间" FontSize="10.5"
+                           Foreground="{StaticResource TextMuted}" />
+                <ComboBox x:Name="RoomCombo" Height="38" Margin="0,5,0,0"
+                          Padding="11,0,6,0" FontSize="13"
+                          Foreground="{StaticResource TextPrimary}"
+                          Background="#30FFFFFF" BorderBrush="#30FFFFFF" BorderThickness="1" />
+            </StackPanel>
+
             <!-- 房间码 -->
             <TextBlock Text="房间码" FontSize="10.5" Foreground="{StaticResource TextMuted}" />
             <TextBox x:Name="CodeBox" Height="38" Margin="0,5,0,0"

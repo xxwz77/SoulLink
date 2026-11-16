@@ -31,11 +31,40 @@ namespace SoulLink.Views
 
         public string RoleName => (RoleBox.Text ?? "").Trim();
 
-        public JoinRoomWindow(string defaultUser)
+        /// <summary>
+        /// 加入房间窗口。
+        /// lockCode 非空时：房间码预填并只读（自己房间的场景）。
+        /// offerRooms 非空时：显示房间选择（大小号房的场景，可分别进大号/小号）。
+        /// </summary>
+        public JoinRoomWindow(string defaultUser, string lockCode = "",
+                              List<(string title, string code)>? offerRooms = null)
         {
             InitializeComponent();
             FillUsers(defaultUser);
-            Loaded += (_, __) => { CodeBox.Focus(); };
+
+            if (!string.IsNullOrEmpty(lockCode))
+            {
+                CodeBox.Text = lockCode;
+                CodeBox.IsReadOnly = true;
+                CodeBox.Opacity = 0.7;
+            }
+
+            if (offerRooms != null && offerRooms.Count > 0)
+            {
+                RoomPickerPanel.Visibility = Visibility.Visible;
+                foreach (var (title, code) in offerRooms)
+                    RoomCombo.Items.Add(new ComboBoxItem { Content = title, Tag = code });
+                RoomCombo.SelectedIndex = 0;
+
+                // 选了房间 → 自动填码
+                RoomCombo.SelectionChanged += (_, __) =>
+                {
+                    if (RoomCombo.SelectedItem is ComboBoxItem it)
+                        CodeBox.Text = it.Tag as string ?? "";
+                };
+            }
+
+            Loaded += (_, __) => { if (!CodeBox.IsReadOnly) CodeBox.Focus(); };
         }
 
         /// <summary>
