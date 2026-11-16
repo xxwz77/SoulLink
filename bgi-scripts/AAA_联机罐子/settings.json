@@ -1,0 +1,89 @@
+[
+  {
+    "name": "myRole",
+    "type": "select",
+    "label": "#############################################\n我的角色\n\n房主 = 开世界、放人、人齐后自动开跑\n队员 = 主动加入房主的世界，人齐后自动开跑\n\n★ 全队只有一个人在房主那边勾\"房主\"，其他都勾\"队员\"",
+    "options": [
+      "房主",
+      "队员"
+    ],
+    "default": "队员"
+  },
+  {
+    "name": "teamSize",
+    "type": "input-text",
+    "label": "#############################################\n队伍人数（含房主自己）\n\n★ 只有队员需要填，房主忽略此项（房主按白名单数量算）\n\n可填 2 / 3 / 4\n  2 = 房主 + 1 个队员\n  3 = 房主 + 2 个队员\n  4 = 房主 + 3 个队员\n\n★ 必须和房主的白名单数量对得上",
+    "default": "4"
+  },
+  {
+    "name": "hostUID",
+    "type": "input-text",
+    "label": "#############################################\n房主的 UID\n\n★ 队员必填：要加入谁的UID\n★ 房主留空\n\n从游戏内好友界面或个人资料页能看到自己的UID"
+  },
+  {
+    "name": "hostName",
+    "type": "input-text",
+    "label": "房主的游戏名\n\n★ 队员填：用于确认进去的是对的人\n★ 房主留空"
+  },
+  {
+    "name": "permissionMode",
+    "type": "select",
+    "label": "#############################################\n房主设置\n\n放人策略\n\n无条件通过 = 谁来都放\n白名单 = 只放名单里的人，其他人拒绝\n\n★ 只有房主生效",
+    "options": [
+      "无条件通过",
+      "白名单"
+    ],
+    "default": "白名单"
+  },
+  {
+    "name": "nameToPermit1",
+    "type": "input-text",
+    "label": "白名单 1\n\n填队友的游戏内名字（有备注名的填备注名）\n\n★ 固定 3 个位置，留空 = 少一个人\n  填 3 个 = 4 人队\n  填 2 个 = 3 人队\n  填 1 个 = 2 人队\n\n★ 只有房主需要填"
+  },
+  {
+    "name": "nameToPermit2",
+    "type": "input-text",
+    "label": "白名单 2\n\n留空就是没有这个人"
+  },
+  {
+    "name": "nameToPermit3",
+    "type": "input-text",
+    "label": "白名单 3\n\n留空就是没有这个人"
+  },
+  {
+    "name": "useAllTargetImages",
+    "type": "checkbox",
+    "label": "白名单匹配使用 targets 目录下全部图片\n\n关闭时：给每个白名单名字自动挑文件名最像的那张\n打开时：所有图片都参与匹配\n\n★ 一般关闭就行",
+    "default": false
+  },
+  {
+    "name": "routePath",
+    "type": "input-text",
+    "label": "路线（每行一条，可以自由填）\n\n三种写法都行：\n  · 具体 json 文件 → 直接跑\n  · 文件夹         → 里面所有 json 按文件名顺序跑\n  · # 开头         → 注释，跳过\n\n路径写绝对路径就行，也可以写相对 BGI 目录的路径。\n\n★ 全队必须配一样的路线",
+    "default": ""
+  },
+  {
+    "name": "waitSeconds",
+    "type": "input-text",
+    "label": "等人上限（秒）\n\n超过这个时间还没凑齐人就放弃本次\n默认 180 秒（3分钟）",
+    "default": "180"
+  },
+  {
+    "name": "startDelaySeconds",
+    "type": "input-text",
+    "label": "开跑前统一等待（秒）\n\n人齐后所有人等同样时长再开跑，用来对齐起跑时间。\n默认 8 秒。网络慢可以调大。",
+    "default": "8"
+  },
+  {
+    "name": "autoPickup",
+    "type": "checkbox",
+    "label": "自动拾取沿途物品\n\n跑路线的同时识别可交互物品并拾取",
+    "default": true
+  },
+  {
+    "name": "runExtra",
+    "type": "checkbox",
+    "label": "跑完主线后执行额外路线\n\n在额外目录里配置，多人跑完后各自继续",
+    "default": false
+  }
+]
