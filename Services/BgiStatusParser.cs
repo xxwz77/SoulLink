@@ -249,6 +249,22 @@ namespace SoulLink.Services
         private static readonly Regex RxCountProgress = new Regex(
             @"当前进度\s*[:：]\s*(?<n>\d+)\s*个\s*$", RegexOptions.Compiled);
 
+        // ★ 当前动作：BGI 的很多任务只输出动作，不输出"路线/进度"。
+        //   例如：开始挖矿 / 动作：下落攻击 / 成功切换角色:"莉奈娅"
+        //   原来这类行全部识别不到 → 界面一直显示"等待日志中的状态信息"
+        //   （用户实测 A1 明明在挖矿，面板却是空的）。
+        private static readonly Regex RxCurrentAction = new Regex(
+            @"^s*(?<act>开始[^，。
+]{1,20}|动作[:：]s*(?<a2>[^
+]{1,20}?)(?:s*结束)?|成功切换角色s*[:：]s*""?(?<role>[^""
+]{1,16}))s*$",
+            RegexOptions.Compiled);
+
+        // 简单的"动作:"行（单独匹配便于取到动作名）
+        private static readonly Regex RxActionLine = new Regex(
+            @"动作[:：]s*(?<name>[^
+]{1,24})", RegexOptions.Compiled);
+
         // ⑥ 拾取物品：交互或拾取："霜仙花"
         private static readonly Regex RxPick = new Regex(
             @"交互或拾取\s*[:：]\s*""(?<item>[^""]+)""", RegexOptions.Compiled);
@@ -307,6 +323,43 @@ namespace SoulLink.Services
                     string merged = (idx + 1 < lines.Length) ? (line + " " + lines[idx + 1]) : line;
 
                     bool matched = false;
+
+                    // ★ 当前动作：BGI 大量任务是"只报动作不报进度"的
+                    //   （挖矿、下落攻击、切换角色…），之前完全没解析，
+                    //   于是界面一直停在"等待日志中的状态信息"（用户实测）。
+                    var am = RxActionLine.Match(merged);
+                    if (am.Success)
+                    {
+                        string act = am.Groups["name"].Value.Trim();
+                        // "下落攻击 结束" 这种收尾行不算当前动作
+                        if (act.EndsWith("结束", StringComparison.Ordinal)) act = "";
+                        if (act.Length > 0) { CurrentAction = act; matched = true; }
+                    }
+                    else
+                    {
+                        // "开始挖矿" 这类独立动作行
+                        int iStart = merged.IndexOf("开始", StringComparison.Ordinal);
+                        if (iStart >= 0)
+                        {
+                            int iEnd = merged.IndexOfAny(new[] { '，', '。', '\r' }, iStart);
+                            string seg = iEnd > iStart
+                                ? merged.Substring(iStart, iEnd - iStart)
+                                : merged.Substring(iStart);
+                            seg = seg.Trim();
+                            if (seg.Length >= 3 && seg.Length <= 20 && !seg.Contains("开始第"))
+                            {
+                                CurrentAction = seg;
+                                matched = true;
+                            }
+                        }
+
+                        var rm = Regex.Match(merged, @"成功切换角色s*[:：]s*""?(?<r>[^""s，。]{1,16})");
+                        if (rm.Success)
+                        {
+                            CurrentAction = "切换角色 " + rm.Groups["r"].Value;
+                            matched = true;
+                        }
+                    }
 
                     // ① 联机锄地（带轮次）
                     var m = RxRound.Match(merged);
@@ -513,12 +566,19 @@ namespace SoulLink.Services
 
         // ── 展示用 ─────────────────────────────────────────────────────
 
+        /// <summary>
+        /// 当前正在做的事（挖矿 / 下落攻击 / 切换角色 等）。
+        /// ★ 很多任务只输出动作、不输出路线进度，没有这个字段界面就会一片空白。
+        /// </summary>
+        public string CurrentAction { get; private set; } = "";
+
         /// <summary>是否已有可用状态。</summary>
         public bool HasData =>
             !string.IsNullOrEmpty(Round) || !string.IsNullOrEmpty(TaskName)
             || !string.IsNullOrEmpty(OneDragonConfig) || !string.IsNullOrEmpty(ConfigGroup)
             || !string.IsNullOrEmpty(FightScript) || !string.IsNullOrEmpty(RouteFile)
-            || !string.IsNullOrEmpty(AreaName) || !string.IsNullOrEmpty(PickCount) || HasProblem;
+            || !string.IsNullOrEmpty(AreaName) || !string.IsNullOrEmpty(PickCount)
+            || !string.IsNullOrEmpty(CurrentAction) || HasProblem;
 
         /// <summary>配置组 / 脚本 / 一条龙配置（优先配置组）。</summary>
         public string GroupDisplay

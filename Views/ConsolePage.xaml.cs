@@ -77,6 +77,35 @@ namespace SoulLink.Views
             //   改成监听 ViewportHost 自身的 SizeChanged，并补一次首帧对齐。
             ViewportHost.SizeChanged += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
             Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
+
+            // ★ WindowsFormsHost 是独立 HWND，**不受 WPF Visibility 控制**：
+            //   本页被切走（Collapsed）时，RDP 控件仍会浮在最上层，
+            //   盖住启动台/设置等其他页面的内容（用户实测"RDP 覆盖别的界面"）。
+            //   所以切走时主动把控件从视觉树摘下来，切回来再挂上。
+            IsVisibleChanged += (_, __) =>
+            {
+                try
+                {
+                    if (IsVisible)
+                    {
+                        // 切回本页：如果当前正在看某个账号且已连接，重新挂上
+                        if (_viewing?.Console != null && _viewing.Console.IsConnected
+                            && !ViewportHost.Children.Contains(_viewing.Console))
+                        {
+                            ViewportHost.Children.Clear();
+                            ViewportHost.Children.Add(_viewing.Console);
+                            _viewing.Console.OnShown();
+                        }
+                    }
+                    else
+                    {
+                        // 切走：摘掉控件（连接状态保留，不 Dispose）
+                        ViewportHost.Children.Clear();
+                        BusyPopup.IsOpen = false;
+                    }
+                }
+                catch { }
+            };
             Loaded += (_, __) => Activate();
 
             double sens = App.Config.Settings.LookSensitivity > 0 ? App.Config.Settings.LookSensitivity : 4.0;
@@ -662,15 +691,37 @@ namespace SoulLink.Views
 
             ViewportHost.Children.Clear();
             if (row.Console == null) InitializeConsole(row);
-            ViewportHost.Children.Add(row.Console);
-            row.Console.OnShown();
+
+            // ★ 关键：RDP 控件是 WindowsFormsHost（独立 HWND），
+            //   一旦加入视觉树就会立刻显示它的"启动画面"（黑底 + 转圈动画），
+            //   而且这个原生子窗口会**盖住所有 WPF 元素**（含左侧导航、顶栏）。
+            //   所以：未连接时先不加入，等连接成功后再挂上去，
+            //   期间显示我们自己的加载提示（纯 WPF，不会盖住任何东西）。
+            bool alreadyConnected = row.Console.IsConnected;
+            if (alreadyConnected)
+            {
+                ViewportHost.Children.Add(row.Console);
+                row.Console.OnShown();
+            }
+
             row.Console.SetForegroundActive(true);
             _shieldReleased = false;
             UpdateShield();
-            // 从配置页切回来时输入通道可能已被断开，这里补建
             row.Console.EnsureInputRestored();
 
-            if (!row.Console.IsConnected) await ConnectAsync(row);
+            if (!alreadyConnected)
+            {
+                var (ok, _) = await ConnectAsync(row);
+                // 连接完成（无论成功失败）才挂上控件；
+                // 失败时控件保持不显示，用户能看到我们的错误提示而不是黑屏。
+                if (ok)
+                {
+                    ViewportHost.Children.Clear();
+                    ViewportHost.Children.Add(row.Console);
+                    row.Console.OnShown();
+                    SetBusyVisible(false);
+                }
+            }
         }
 
         /// <summary>

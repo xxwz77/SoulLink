@@ -86,6 +86,32 @@ namespace SoulLink.Services
         public static int KillOrphanAgents(int sessionId) => 0;   // 见下方说明：不做命令行匹配
 
         /// <summary>
+        /// 所有仍在线的注入通道（按会话号索引）。
+        /// RdpConsole 每次投送成功会登记，断开时移除。
+        /// </summary>
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, RelayClient>
+            LiveRegistry = new System.Collections.Concurrent.ConcurrentDictionary<int, RelayClient>();
+
+        /// <summary>登记一个在线通道（由 RdpConsole 在投送成功后调用）。</summary>
+        public static void Register(int sessionId, RelayClient relay)
+        {
+            if (sessionId > 0 && relay != null) LiveRegistry[sessionId] = relay;
+        }
+
+        /// <summary>注销通道（断开时调用）。</summary>
+        public static void Unregister(int sessionId)
+        {
+            LiveRegistry.TryRemove(sessionId, out _);
+        }
+
+        /// <summary>按会话号找在线通道；没有或已断开则返回 null。</summary>
+        public static RelayClient? FindBySession(int sessionId)
+        {
+            if (LiveRegistry.TryGetValue(sessionId, out var r) && r.IsConnected) return r;
+            return null;
+        }
+
+        /// <summary>
         /// 取进程命令行。用 wmic/powershell 都不稳，这里改用 .NET 自带的方式：
         /// 通过 Process 的 MainModule 只能拿到路径，拿不到参数；
         /// 因此改为从进程名 + 管道名前缀判断，不依赖命令行。
@@ -320,6 +346,10 @@ namespace SoulLink.Services
 
         public Task<RelayResponse?> UpAsync(string button = "left")
             => SendAsync(new { Cmd = "up", Button = button });
+
+        /// <summary>模拟按键（支持 F12 / Ctrl+A 这类组合）。</summary>
+        public Task<RelayResponse?> KeyAsync(string keys, int times = 1) =>
+            SendAsync(new { Cmd = "key", Button = keys, Count = times });
 
         public Task<RelayResponse?> WheelAsync(int delta)
             => SendAsync(new { Cmd = "wheel", Delta = delta });

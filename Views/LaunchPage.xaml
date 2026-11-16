@@ -18,14 +18,20 @@
             <ColumnDefinition Width="360" />
         </Grid.ColumnDefinitions>
 
-        <!-- ══════════ 左：快捷动作 ══════════ -->
+        <!-- ══════════ 左：运行状态 / 快捷动作 / 自动化 ══════════ -->
         <Border Grid.Column="0" Style="{StaticResource GlassCardStrong}" Padding="18,16">
+            <!-- ★ 整栏可以滚动：内容（状态+动作+自动化）变多时不会互相遮挡。
+                 用 ScrollViewer 包住整个 Grid，而不是让某一区域单独滚动 ——
+                 这样三块的相对位置永远稳定，滚动条也只有一个。 -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          PanningMode="VerticalOnly">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />   <!-- 标题 -->
-                    <RowDefinition Height="Auto" />   <!-- 运行状态（始终在顶部） -->
-                    <RowDefinition Height="*" />      <!-- 快捷动作列表（仅主会话） -->
-                    <RowDefinition Height="Auto" />   <!-- 执行按钮（仅主会话） -->
+                    <RowDefinition Height="Auto" />   <!-- 运行状态 -->
+                    <RowDefinition Height="Auto" />   <!-- 快捷动作列表 -->
+                    <RowDefinition Height="Auto" />   <!-- 自动化流程 -->
                 </Grid.RowDefinitions>
 
                 <!-- 页面标题：固定为"运行状态"（左栏主题） -->
@@ -62,7 +68,12 @@
                         </Button>
                     </Grid>
 
+                <!-- ★ ListBox 在 ScrollViewer 里会"无限高"（撑开整页），
+                     所以给它一个上限高度并让它自己滚动。
+                     这样：动作少时高度自适应，动作多时只在本区域内滚动。 -->
                 <ListBox Grid.Row="1" x:Name="ActionList" Style="{StaticResource ActionListBox}"
+                         MaxHeight="240"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
                          SelectionChanged="ActionList_SelectionChanged" Padding="0,2,4,2">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
@@ -136,9 +147,9 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
-                <Border Grid.Row="1" x:Name="EmptyHint" VerticalAlignment="Center" HorizontalAlignment="Center"
-                        Visibility="Collapsed" IsHitTestVisible="False">
-                    <StackPanel HorizontalAlignment="Center">
+                    <!-- 空状态提示：叠在动作列表区域内 -->
+                    <StackPanel x:Name="EmptyHintHost" Grid.Row="1" IsHitTestVisible="False"
+                                Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <Grid Width="66" Height="66" HorizontalAlignment="Center">
                             <Ellipse Stroke="#33C8E0FF" StrokeThickness="1.5" />
                             <Ellipse Width="40" Height="40">
@@ -157,10 +168,9 @@
                         </Grid>
                         <TextBlock Text="还没有快捷动作" FontSize="13" Foreground="{StaticResource TextSecondary}"
                                    HorizontalAlignment="Center" Margin="0,12,0,0" />
-                        <TextBlock Text="点右上角「新建」，只需要：账号 + 程序路径" FontSize="11.5"
+                        <TextBlock Text="点上方「新建」，只需要：账号 + 程序路径" FontSize="11.5"
                                    Foreground="{StaticResource TextMuted}" HorizontalAlignment="Center" Margin="0,5,0,0" />
                     </StackPanel>
-                </Border>
                 </Grid>
 
                 <!-- 运行状态（当前所选会话的 BGI 运行情况） -->
@@ -190,43 +200,62 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
-                            <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
-                                <TextBlock Text="配置组 / 脚本" FontSize="9.5"
+                            <Grid Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="配置组 / 脚本" FontSize="9.5"
                                            Foreground="{StaticResource TextMuted}" />
-                                <TextBlock x:Name="StatusGroup" Text="—"
+                                <TextBlock Grid.Row="1" x:Name="StatusGroup" Text="—"
                                            FontSize="11.5" FontWeight="SemiBold"
                                            Foreground="{StaticResource CyanBrush}"
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
-                            </StackPanel>
+                            </Grid>
 
-                            <!-- 右列：轮次/角色 + 本路线拾取（占满右侧空白） -->
-                            <StackPanel Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Margin="8,0,0,8">
-                                <TextBlock Text="轮次 / 角色" FontSize="9.5"
+                            <!-- 右列：轮次/角色 + 今日报错 -->
+                            <Grid Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Margin="8,0,0,8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="轮次 / 角色" FontSize="9.5"
                                            Foreground="{StaticResource TextMuted}" />
-                                <TextBlock x:Name="StatusRound" Text="—"
+                                <TextBlock Grid.Row="1" x:Name="StatusRound" Text="—"
                                            FontSize="11.5" FontWeight="SemiBold"
                                            Foreground="{StaticResource TextPrimary}"
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
 
                                 <!-- 每日报错次数：有错误/失败才显示 -->
-                                <TextBlock x:Name="StatusErrorTitle" Text="今日报错"
+                                <TextBlock Grid.Row="2" x:Name="StatusErrorTitle" Text="今日报错"
                                            FontSize="9.5" Foreground="{StaticResource TextMuted}"
                                            Margin="0,10,0,0" Visibility="Collapsed" />
-                                <TextBlock x:Name="StatusError" Text=""
+                                <TextBlock Grid.Row="3" x:Name="StatusError" Text=""
                                            FontSize="10.5" TextWrapping="Wrap"
                                            Margin="0,3,0,0" Visibility="Collapsed" />
-                            </StackPanel>
+                            </Grid>
 
-                            <StackPanel Grid.Row="1" Grid.ColumnSpan="2">
-                                <TextBlock Text="当前路线" FontSize="9.5"
+                            <!-- ★ 用 Grid 代替 StackPanel：StackPanel 在水平方向给子元素的
+                                 可用宽度是"无限大"，TextWrapping 根本不会触发，
+                                 路线名一长就撑出卡片（用户实测"文字太长不会换行"）。
+                                 Grid 会把真实宽度传给子元素，换行才能生效。 -->
+                            <Grid Grid.Row="1" Grid.ColumnSpan="2">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="当前路线" FontSize="9.5"
                                            Foreground="{StaticResource TextMuted}" />
-                                <TextBlock x:Name="StatusRoute" Text="—"
+                                <TextBlock Grid.Row="1" x:Name="StatusRoute" Text="—"
                                            FontSize="11" Foreground="{StaticResource TextPrimary}"
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
-                                <TextBlock x:Name="StatusEta" Text=""
+                                <TextBlock Grid.Row="2" x:Name="StatusEta" Text=""
                                            FontSize="10" Foreground="{StaticResource TextMuted}"
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
-                            </StackPanel>
+                            </Grid>
 
                             <!-- ③ 本次拾取：独占整行。点标题可展开"全天 / 按配置组" -->
                             <Border x:Name="StatusPicksBox" Grid.Row="3" Grid.ColumnSpan="2"
@@ -288,9 +317,42 @@
                     </Grid>
                 </Border>
 
-                <!-- 底部操作区已移除：执行/编辑/删除都放到每个动作卡片上，
-                     避免"先选动作再点下面按钮"的两步操作和位置混淆。 -->
+                <!-- 自动化流程：标题在框外（与其他区域标题一致），内容在框内 -->
+                <Grid Grid.Row="3" Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 标题行：和「快捷动作」同款样式，且不在玻璃框内 -->
+                    <Grid Grid.Row="0" Margin="2,0,2,6">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="自动化" FontSize="12" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimary}" />
+                            <TextBlock x:Name="AutomationMeta" Text=""
+                                       FontSize="10.5" Foreground="{StaticResource TextMuted}"
+                                       VerticalAlignment="Center" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <Button x:Name="BtnNewAutomation" Style="{StaticResource GhostButton}"
+                                HorizontalAlignment="Right" Padding="10,5"
+                                Click="NewAutomation_Click" ToolTip="为当前账号新建一个自动化流程">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Text="新建" Margin="6,0,0,0" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+
+                    <!-- 内容框：不加 MaxHeight / 不内嵌滚动条，
+                         外层 ScrollViewer 统一滚动，避免"双重滚动条" -->
+                    <Border Grid.Row="1" x:Name="AutomationPanel" Style="{StaticResource GlassPanel}"
+                            Padding="10,8">
+                        <StackPanel x:Name="AutomationList" />
+                    </Border>
+                </Grid>
             </Grid>
+            </ScrollViewer>
         </Border>
 
         <!-- ══════════ 右：实时会话 ══════════ -->

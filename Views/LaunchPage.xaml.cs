@@ -7,8 +7,12 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using SoulLink.Models;
+
+// 只引入需要的图形类型，避免 Path 与 System.IO.Path 冲突
+using Ellipse = System.Windows.Shapes.Ellipse;
 using SoulLink.Services;
 
 namespace SoulLink.Views
@@ -82,6 +86,7 @@ namespace SoulLink.Views
             if (_sessionTimer != null && !_sessionTimer.IsEnabled)
                 _sessionTimer.Start();
             RefreshSessions();
+            RefreshAutomationList();
         }
 
         // ══════════ 数据加载 ══════════
@@ -93,7 +98,7 @@ namespace SoulLink.Views
             foreach (var a in App.Config.Actions)
                 _actions.Add(new ActionVm(a, App.Config));
 
-            EmptyHint.Visibility = _actions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            EmptyHintHost.Visibility = _actions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
             var sel = _actions.FirstOrDefault(v => v.Model.Id == keepId) ?? _actions.FirstOrDefault();
             if (sel != null) ActionList.SelectedItem = sel;
@@ -258,6 +263,7 @@ namespace SoulLink.Views
                 //   · 其他会话（挂机账号）    → 隐藏快捷动作，只显示该账号的运行状态
                 //   避免"看着 A1，左边却是主用户的快捷动作"这种误导。
                 ApplyLeftPanelMode(vm.Session);
+                RefreshAutomationList();
 
                 RefreshSelectedLog(force: true);
             }
@@ -400,7 +406,14 @@ namespace SoulLink.Views
                                     inner.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
                                     { Width = System.Windows.GridLength.Auto });
 
-                                    var sp = new System.Windows.Controls.StackPanel();
+                                    // ★ 用 Grid 而不是 StackPanel：StackPanel 水平方向给的可用宽度是
+                                    //   无限大，TextWrapping 不生效，长路线名会撑出卡片。
+                                    //   Grid 会把真实宽度传下去，换行才能正常。
+                                    var sp = new System.Windows.Controls.StackPanel
+                                    {
+                                        // 关键：告诉 StackPanel 它的宽度由父级决定
+                                        HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch
+                                    };
                                     System.Windows.Controls.Grid.SetColumn(sp, 0);
 
                                     var badge = new System.Windows.Controls.TextBlock
@@ -525,18 +538,37 @@ namespace SoulLink.Views
                             continue;
                         }
 
-                        var st = new BgiStatus();
-                        // 总览也要深度回溯：配置组可能埋在几十万行之前
-                        string text = BgiLogWatcher.TailLinesDeep(inst.LogFile, 300);
-                        st.Update(text);
+                        // ★ 性能优化：原来每次刷新都把整份日志完整读两遍
+                        //   （TailLinesDeep 最多 16MB + CountDailyErrors 扫全文件）。
+                        //   A1 的当天日志有 33MB，每秒刷一次 = 每秒处理几十 MB，
+                        //   日志读取明显卡顿（用户实测）。
+                        //
+                        //   现在按 (文件, 最后写入时间, 长度) 缓存：
+                        //   文件没变就直接复用上次结果，只有真正追加了内容才重新解析。
+                        var fi = new FileInfo(inst.LogFile);
+                        var key = inst.LogFile + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length;
 
-                        // ★ 每日报错统计：必须扫全天（增量只能覆盖一小段），
-                        //   所以单独流式读一遍当天日志。约 1 秒，已在后台线程。
-                        var (errs, warns, fails) = BgiLogWatcher.CountDailyErrors(inst.LogFile);
-                        if (errs > st.ErrorCount) st.ErrorCount = errs;
-                        if (warns > st.WarnCount) st.WarnCount = warns;
-                        if (fails > st.FailCount) st.FailCount = fails;
+                        StatusCacheEntry entry;
+                        lock (_statusCache)
+                        {
+                            if (!_statusCache.TryGetValue(inst.LogFile, out entry)
+                                || entry.Key != key)
+                            {
+                                var fresh = new BgiStatus();
+                                string text = BgiLogWatcher.TailLinesDeep(inst.LogFile, 300);
+                                fresh.Update(text);
 
+                                var (errs, warns, fails) = BgiLogWatcher.CountDailyErrors(inst.LogFile);
+                                if (errs > fresh.ErrorCount) fresh.ErrorCount = errs;
+                                if (warns > fresh.WarnCount) fresh.WarnCount = warns;
+                                if (fails > fresh.FailCount) fresh.FailCount = fails;
+
+                                entry = new StatusCacheEntry { Key = key, Status = fresh };
+                                _statusCache[inst.LogFile] = entry;
+                            }
+                        }
+
+                        var st = entry.Status;
                         results.Add((row, st, true, true));
                     }
 
@@ -583,6 +615,9 @@ namespace SoulLink.Views
                                 //   所以每次更新都重新取一次，而不是只在重建时算。
                                 string head = row.User;
                                 string group = st.GroupDisplay;
+                                // ★ 只有"当前动作"没有配置组/路线时，用它当主信息
+                                if (group == "—" && st.CurrentAction.Length > 0)
+                                    group = st.CurrentAction;
                                 if (!string.IsNullOrEmpty(group) && group != "—")
                                     head += "  ·  " + group;
                                 if (row.Line1 != null && row.Line1.Text != head) row.Line1.Text = head;
@@ -619,8 +654,12 @@ namespace SoulLink.Views
                                 {
                                     if (row.Line2 != null)
                                     {
-                                        if (row.Line2.Text != "BGI 已启动，等待任务开始")
-                                            row.Line2.Text = "BGI 已启动，等待任务开始";
+                                        // 有"当前动作"就显示动作，否则才是等待提示
+                                        string waitText = st.CurrentAction.Length > 0
+                                            ? st.CurrentAction
+                                            : "BGI 已启动，等待任务开始";
+                                        if (row.Line2.Text != waitText)
+                                            row.Line2.Text = waitText;
                                         row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
                                             System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B));
                                         row.Line2.Visibility = Visibility.Visible;
@@ -795,6 +834,19 @@ namespace SoulLink.Views
             }
             catch { }
         }
+
+        /// <summary>
+        /// 每个日志文件的状态解析缓存（按"最后写入时间+长度"判断是否需要重算）。
+        /// 避免每秒重复扫描几十 MB 的日志。
+        /// </summary>
+        private sealed class StatusCacheEntry
+        {
+            public string Key = "";
+            public BgiStatus Status = new BgiStatus();
+        }
+
+        private readonly Dictionary<string, StatusCacheEntry> _statusCache
+            = new Dictionary<string, StatusCacheEntry>();
 
         private LogFollower? _follower;
 
@@ -1337,6 +1389,304 @@ namespace SoulLink.Views
         /// <summary>
 
         /// <summary>
+
+        // ══════════ 自动化流程 ══════════
+
+        /// <summary>刷新当前账号的自动化流程列表。</summary>
+        private void RefreshAutomationList()
+        {
+            try
+            {
+                if (AutomationList == null) return;
+                AutomationList.Children.Clear();
+
+                var sess = _logSession;
+                if (sess == null)
+                {
+                    AutomationMeta.Text = "（先选一个账号）";
+                    return;
+                }
+
+                // 找到该账号（按用户名匹配配置里的账号）
+                Account? account = null;
+                foreach (var a in App.Config.Accounts)
+                    if (string.Equals(a.UserName, sess.UserName, StringComparison.OrdinalIgnoreCase))
+                    { account = a; break; }
+
+                if (account == null)
+                {
+                    AutomationMeta.Text = "该账号还没有配置";
+                    return;
+                }
+
+                // 该账号的所有流程
+                var flows = new List<AutomationFlow>();
+                foreach (var f in App.Config.Automations)
+                    if (f.AccountId == account.Id) flows.Add(f);
+
+                AutomationMeta.Text = flows.Count == 0 ? "（还没有流程）" : ("共 " + flows.Count + " 个流程");
+
+                foreach (var f in flows)
+                    AutomationList.Children.Add(BuildAutomationCard(f, account));
+            }
+            catch { }
+        }
+
+        private Border BuildAutomationCard(AutomationFlow f, Account account)
+        {
+            bool paused = f.Paused || !f.Enabled;
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            // 状态点：暂停=灰，等待条件=青，就绪=绿
+            Color dotColor = paused
+                ? Color.FromRgb(0x8B, 0x9C, 0xC8)
+                : (f.Active ? Color.FromRgb(0x4F, 0xE3, 0xFF) : Color.FromRgb(0x41, 0xF0, 0xC0));
+
+            var dot = new Ellipse
+            {
+                Width = 8, Height = 8,
+                VerticalAlignment = VerticalAlignment.Center,
+                Fill = new SolidColorBrush(dotColor)
+            };
+            Grid.SetColumn(dot, 0);
+            grid.Children.Add(dot);
+
+            // 名称 + 说明
+            var sp = new StackPanel { Margin = new Thickness(9, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+            sp.Children.Add(new TextBlock
+            {
+                Text = f.DisplayName,
+                FontSize = 11.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (Brush)FindResource("TextPrimary"),
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text = AutomationSummary(f),
+                FontSize = 9.5,
+                Foreground = (Brush)FindResource("TextMuted"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 2, 0, 0)
+            });
+            Grid.SetColumn(sp, 1);
+            grid.Children.Add(sp);
+
+            // 按钮组
+            var btns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+
+            var btnPause = new Button
+            {
+                Style = (Style)FindResource("IconButton"),
+                Width = 26, Height = 26,
+                Content = new TextBlock
+                {
+                    Text = paused ? "\uE768" : "\uE769",
+                    FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                    FontSize = 10
+                },
+                ToolTip = paused ? "恢复" : "暂停",
+                Tag = f
+            };
+            btnPause.Click += (_, __) =>
+            {
+                f.Paused = !f.Paused;
+                ConfigStore.Save(App.Config);
+                RefreshAutomationList();
+            };
+            btns.Children.Add(btnPause);
+
+            var btnRun = new Button
+            {
+                Style = (Style)FindResource("IconButton"),
+                Width = 26, Height = 26,
+                Content = new TextBlock
+                {
+                    Text = "\uE768", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10
+                },
+                ToolTip = "立即运行一次",
+                Tag = f,
+                Margin = new Thickness(4, 0, 0, 0)
+            };
+            btnRun.Click += async (_, __) => await RunFlowNowAsync(f);
+            btns.Children.Add(btnRun);
+
+            var btnDel = new Button
+            {
+                Style = (Style)FindResource("IconButton"),
+                Width = 26, Height = 26,
+                Content = new TextBlock
+                {
+                    Text = "\uE74D", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10
+                },
+                ToolTip = "删除流程",
+                Tag = f,
+                Margin = new Thickness(4, 0, 0, 0)
+            };
+            btnDel.Click += (_, __) =>
+            {
+                if (MessageBox.Show("确定删除流程「" + f.DisplayName + "」？", "SoulLink",
+                        MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
+                App.Config.Automations.RemoveAll(x => x.Id == f.Id);
+                ConfigStore.Save(App.Config);
+                RefreshAutomationList();
+            };
+            btns.Children.Add(btnDel);
+
+            Grid.SetColumn(btns, 2);
+            grid.Children.Add(btns);
+
+            var card = new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(9, 7, 8, 7),
+                Margin = new Thickness(0, 0, 0, 5),
+                Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
+                Cursor = Cursors.Hand,
+                Child = grid,
+                Tag = f
+            };
+
+            // 点卡片 → 打开编辑器
+            card.MouseLeftButtonUp += (_, ev) =>
+            {
+                if (ev.OriginalSource is DependencyObject d && FindParent<Button>(d) != null) return;
+                OpenFlowEditor(f, account);
+            };
+
+            return card;
+        }
+
+        private static T? FindParent<T>(DependencyObject d) where T : DependencyObject
+        {
+            while (d != null)
+            {
+                if (d is T t) return t;
+                d = VisualTreeHelper.GetParent(d);
+            }
+            return null;
+        }
+
+        /// <summary>流程的一句话摘要。</summary>
+        private static string AutomationSummary(AutomationFlow f)
+        {
+            int trig = 0, cond = 0, act = 0;
+            foreach (var n in f.Nodes)
+            {
+                if (n.Kind == FlowNodeKind.Trigger) trig++;
+                else if (n.Kind == FlowNodeKind.Condition) cond++;
+                else act++;   // Action 与 Terminate 都算"执行"
+            }
+
+            string when = f.Trigger?.Title ?? "无触发器";
+
+            string state;
+            if (f.Active)
+            {
+                // 武装中：显示条件进度
+                int latched = f.Latched?.Count ?? 0;
+                state = "● 等待条件 " + latched + "/" + cond;
+                if (latched < cond && f.Latched != null)
+                {
+                    var names = new List<string>();
+                    foreach (var n in f.Nodes)
+                        if (n.Kind == FlowNodeKind.Condition && !f.Latched.Contains(n.Id))
+                            names.Add(n.Title);
+                    if (names.Count > 0)
+                        state += "（缺 " + string.Join("、", names.ToArray(), 0, Math.Min(2, names.Count)) + "）";
+                }
+            }
+            else
+            {
+                state = when + " · " + cond + " 条件 · " + act + " 执行";
+            }
+
+            return state;
+        }
+
+        private void NewAutomation_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var sess = _logSession;
+                if (sess == null)
+                {
+                    MessageBox.Show("请先在右侧选一个账号。", "SoulLink");
+                    return;
+                }
+
+                Account? account = null;
+                foreach (var a in App.Config.Accounts)
+                    if (string.Equals(a.UserName, sess.UserName, StringComparison.OrdinalIgnoreCase))
+                    { account = a; break; }
+
+                if (account == null)
+                {
+                    // 没有配置过这个账号：自动建一条
+                    account = new Account { UserName = sess.UserName };
+                    App.Config.Accounts.Add(account);
+                    ConfigStore.Save(App.Config);
+                }
+
+                var flow = new AutomationFlow
+                {
+                    AccountId = account.Id,
+                    Name = account.UserName + " 自动化"
+                };
+
+                // ★ 用户要求：只有点了保存才真正入库，
+                //   不要在主页留下空白流程。
+                //   所以这里先**不加**进 App.Config，由编辑器在保存时添加。
+                bool isNew = true;
+
+                OpenFlowEditor(flow, account, isNew);
+                RefreshAutomationList();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("新建流程失败：" + ex.Message, "SoulLink");
+            }
+        }
+
+        private void OpenFlowEditor(AutomationFlow flow, Account account, bool isNew = false)
+        {
+            try
+            {
+                var dlg = new FlowEditorWindow(flow, account, App.Config, isNew)
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                dlg.ShowDialog();
+                RefreshAutomationList();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("打开编辑器失败：" + ex.Message, "SoulLink");
+            }
+        }
+
+        private async Task RunFlowNowAsync(AutomationFlow flow)
+        {
+            try
+            {
+                var sess = _logSession;
+                if (sess == null) return;
+
+                var result = await FlowRunner.RunAsync(flow, sess.Id, App.Config, manual: true);
+                string detail = string.Join(Environment.NewLine, result.Steps);
+                MessageBox.Show(result.Message + (detail.Length > 0 ? ("\n\n" + detail) : ""),
+                    "执行结果");
+                RefreshAutomationList();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("运行失败：" + ex.Message, "SoulLink");
+            }
+        }
 
         private void DeleteAction_Click(object sender, RoutedEventArgs e)
         {

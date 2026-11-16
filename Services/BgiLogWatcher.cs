@@ -204,7 +204,18 @@ namespace SoulLink.Services
                 using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
 
-                while (pos > 0 && consumed < budget && CountLines(acc) < maxLines)
+                // ★ 性能：原来每轮都调用 CountLines(acc) 扫整个累积字符串，
+                //   而 acc 可能到 8MB —— 从尾部往前读 16 次 = 16 次全量扫描，
+                //   再加上 StringBuilder.Insert(0,…) 每次都要搬移整个缓冲区，
+                //   读一个 33MB 的日志要好几秒（用户实测"日志读取很慢"）。
+                //
+                //   改成：分段读进 List，最后一次性拼接；
+                //   用增量方式统计换行符数量，而不是重复扫描全串。
+                var segs = new List<string>();
+                int lineCount = 0;
+                long totalChars = 0;
+
+                while (pos > 0 && consumed < budget && lineCount < maxLines)
                 {
                     long take = Math.Min(seg, pos);
                     long start = pos - take;
@@ -214,14 +225,22 @@ namespace SoulLink.Services
                     if (got <= 0) break;
 
                     string part = Encoding.UTF8.GetString(buf, 0, got);
-                    // 如果不在文件开头，前面可能是半行，先接到已有的前面
-                    acc.Insert(0, part);
+                    segs.Add(part);
+
+                    // 增量统计行数（只扫这一段）
+                    for (int k = 0; k < part.Length; k++)
+                        if (part[k] == '\n') lineCount++;
+
+                    totalChars += part.Length;
                     consumed += take;
                     pos = start;
 
                     // 防内存爆：超过 8MB 文本就停
-                    if (acc.Length > 8 * 1024 * 1024) break;
+                    if (totalChars > 8 * 1024 * 1024) break;
                 }
+
+                // 一次性拼好（逆序，因为是从尾部往前读的）
+                for (int i = segs.Count - 1; i >= 0; i--) acc.Append(segs[i]);
 
                 string all = acc.ToString();
                 // 若没读到文件头，丢掉最前面那半行

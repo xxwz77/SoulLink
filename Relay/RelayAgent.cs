@@ -87,6 +87,122 @@ namespace SoulLink.Relay
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> PressedButtons
             = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
+        // ── 键盘模拟（自动化流程用）──────────────────────────────
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KEYBDINPUT
+        {
+            public ushort wVk;
+            public ushort wScan;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct INPUTUNION
+        {
+            [FieldOffset(0)] public KEYBDINPUT ki;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KEYINPUT
+        {
+            public uint type;
+            public INPUTUNION u;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint SendInput(uint nInputs, KEYINPUT[] pInputs, int cbSize);
+
+        private const uint INPUT_KEYBOARD = 1;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
+
+        /// <summary>发送 "F12" / "Ctrl+A" / "Alt+F4" 这类按键组合。</summary>
+        private static bool SendKeyCombo(string spec)
+        {
+            try
+            {
+                var parts = spec.Split('+', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 0) return false;
+
+                var vks = new List<ushort>();
+                foreach (var raw in parts)
+                {
+                    ushort vk = ParseVk(raw.Trim());
+                    if (vk == 0) return false;
+                    vks.Add(vk);
+                }
+
+                foreach (var vk in vks) SendVk(vk, false);
+                Thread.Sleep(20);
+                for (int i = vks.Count - 1; i >= 0; i--) SendVk(vks[i], true);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private static void SendVk(ushort vk, bool up)
+        {
+            var input = new KEYINPUT
+            {
+                type = INPUT_KEYBOARD,
+                u = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = vk,
+                        dwFlags = up ? KEYEVENTF_KEYUP : 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
+            SendInput(1, new[] { input }, Marshal.SizeOf<KEYINPUT>());
+        }
+
+        /// <summary>按键名 → 虚拟键码。</summary>
+        private static ushort ParseVk(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return 0;
+            string u = name.Trim().ToUpperInvariant();
+
+            switch (u)
+            {
+                case "CTRL": case "CONTROL": return 0x11;
+                case "ALT": return 0x12;
+                case "SHIFT": return 0x10;
+                case "WIN": return 0x5B;
+                case "ENTER": case "RETURN": return 0x0D;
+                case "ESC": case "ESCAPE": return 0x1B;
+                case "SPACE": return 0x20;
+                case "TAB": return 0x09;
+                case "BACKSPACE": return 0x08;
+                case "DELETE": case "DEL": return 0x2E;
+                case "INSERT": case "INS": return 0x2D;
+                case "HOME": return 0x24;
+                case "END": return 0x23;
+                case "PAGEUP": return 0x21;
+                case "PAGEDOWN": return 0x22;
+                case "UP": return 0x26;
+                case "DOWN": return 0x28;
+                case "LEFT": return 0x25;
+                case "RIGHT": return 0x27;
+            }
+
+            if (u.Length >= 2 && u[0] == 'F' && int.TryParse(u.Substring(1), out int fn)
+                && fn >= 1 && fn <= 24)
+                return (ushort)(0x6F + fn);
+
+            if (u.Length == 1 && u[0] >= '0' && u[0] <= '9') return (ushort)u[0];
+            if (u.Length == 1 && u[0] >= 'A' && u[0] <= 'Z') return (ushort)u[0];
+
+            if (u.StartsWith("NUMPAD") && int.TryParse(u.Substring(6), out int np)
+                && np >= 0 && np <= 9)
+                return (ushort)(0x60 + np);
+
+            return 0;
+        }
+
         private static void MouseButton(string button, bool down)
         {
             button = (button ?? "left").ToLowerInvariant();
@@ -437,6 +553,22 @@ namespace SoulLink.Relay
                         int delta = req.Delta == 0 ? 120 : req.Delta;
                         mouse_event(MOUSEEVENTF_WHEEL, 0, 0, unchecked((uint)delta), IntPtr.Zero);
                         return new Response { Ok = true, Message = "滚轮 " + delta };
+                    }
+
+                // ★ 模拟按键（自动化流程用）。
+                //   req.Button 字段复用为"按键名"，支持单键（F12）和组合（Ctrl+A）。
+                case "key":
+                    {
+                        string spec = req.Button ?? "";
+                        if (string.IsNullOrWhiteSpace(spec)) return Fail("缺少按键");
+
+                        int times = Math.Max(1, Math.Min(req.Count <= 0 ? 1 : req.Count, 10));
+                        for (int i = 0; i < times; i++)
+                        {
+                            if (!SendKeyCombo(spec)) return Fail("无法解析按键：" + spec);
+                            if (i + 1 < times) Thread.Sleep(80);
+                        }
+                        return new Response { Ok = true, Message = "按键 " + spec + " x" + times };
                     }
 
                 case "foreground":

@@ -1993,6 +1993,10 @@ namespace SoulLink.Controls
                     relay.Dispose();
                     return;
                 }
+
+                // ★ 登记到全局注册表：自动化流程的鼠键执行器靠它拿到通道
+                RelayClient.Register(sessionId, relay);
+
                 // 投送在后台线程完成，这里切回 UI 线程再继续操作控件
                 await Dispatcher.InvokeAsync(() => { }).Task.ConfigureAwait(true);
                 var input = new SessionInput(relay) { Sensitivity = 1.0 };
@@ -2092,6 +2096,10 @@ namespace SoulLink.Controls
             var old = Input;
             Input = null;
             _inputUsable = false;
+
+            // 从全局注册表注销，避免自动化流程拿到已断开的通道
+            try { if (CurrentSessionId > 0) RelayClient.Unregister(CurrentSessionId); } catch { }
+
             if (old == null) return;
             await Task.Run(() =>
             {

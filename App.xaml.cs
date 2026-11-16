@@ -91,6 +91,14 @@ namespace SoulLink
 
             base.OnStartup(e);
 
+            // ★ 用户要求：关闭应用就必须立刻停止所有自动化。
+            //   原来没有 OnExit，调度器的后台 Task 会继续跑完一个流程
+            //   （用户实测：点了关闭，流程还在执行）。
+            Exit += (_, __) =>
+            {
+                try { Services.ScheduleRunnerHost.Shutdown(); } catch { }
+            };
+
             DispatcherUnhandledException += (_, args) =>
             {
                 AppendErrorLog("UI", args.Exception);

@@ -385,6 +385,11 @@ namespace SoulLink.Models
         public List<Account> Accounts { get; set; } = new List<Account>();
         public List<ActionItem> Actions { get; set; } = new List<ActionItem>();
         public List<AutomationProfile> AutomationProfiles { get; set; } = new List<AutomationProfile>();
+
+        /// <summary>
+        /// 节点式自动化流程。每个流程绑定一个账号，互不干扰。
+        /// </summary>
+        public List<AutomationFlow> Automations { get; set; } = new List<AutomationFlow>();
     }
 
     /// <summary>query user 解析出的会话信息</summary>
