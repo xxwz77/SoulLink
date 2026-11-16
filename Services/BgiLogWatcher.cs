@@ -140,8 +140,12 @@ namespace SoulLink.Services
                 if (!File.Exists(path)) return ("", DateTime.MinValue);
 
                 var fi = new FileInfo(path);
-                // 只读最后 64KB，够 ~40 行
-                long readSize = Math.Min(fi.Length, 64 * 1024);
+                // ★ 按请求行数估算读取量：BGI 中文日志每行约 120~200 字节，
+                //   还有大量空行，所以按 400 字节/行保守估算。
+                //   原来固定 64KB，请求 400 行时实际只覆盖 ~150 行，
+                //   导致"状态行在更早位置"时解析不到（界面显示"等待日志中的状态信息"）。
+                long estimate = Math.Min(fi.Length, (long)Math.Max(64, maxLines) * 400L + 8192L);
+                long readSize = Math.Min(fi.Length, Math.Max(64 * 1024, estimate));
                 long start = fi.Length - readSize;
 
                 using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
@@ -172,6 +176,253 @@ namespace SoulLink.Services
                 return (sb.ToString(), fi.LastWriteTime);
             }
             catch (Exception ex) { return ("读取失败：" + ex.Message, DateTime.MinValue); }
+        }
+
+        /// <summary>
+        /// 从文件尾部**分段向前**扫描，直到取够或有足够数据。
+        ///
+        /// ★ 为什么需要它：实测 20261107 那份日志里，
+        ///   "配置组=xxx" 出现在第 16594 行，而文件有 59 万行 ——
+        ///   只读尾部 800 行根本拿不到配置组，界面就显示"—"。
+        ///   这里按 512KB 一段往前回溯，最多回溯 totalBudget 字节，
+        ///   既能覆盖"状态行很早"的情况，又不会把 60MB 全读进内存。
+        /// </summary>
+        public static string TailLinesDeep(string path, int maxLines = 400,
+            long totalBudget = 16L * 1024 * 1024)
+        {
+            try
+            {
+                if (!File.Exists(path)) return "";
+
+                var fi = new FileInfo(path);
+                long budget = Math.Min(fi.Length, totalBudget);
+                long seg = 512 * 1024;
+                long pos = fi.Length;                 // 从尾部开始
+                long consumed = 0;
+                var acc = new StringBuilder();
+
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+
+                while (pos > 0 && consumed < budget && CountLines(acc) < maxLines)
+                {
+                    long take = Math.Min(seg, pos);
+                    long start = pos - take;
+                    fs.Seek(start, SeekOrigin.Begin);
+                    var buf = new byte[take];
+                    int got = fs.Read(buf, 0, buf.Length);
+                    if (got <= 0) break;
+
+                    string part = Encoding.UTF8.GetString(buf, 0, got);
+                    // 如果不在文件开头，前面可能是半行，先接到已有的前面
+                    acc.Insert(0, part);
+                    consumed += take;
+                    pos = start;
+
+                    // 防内存爆：超过 8MB 文本就停
+                    if (acc.Length > 8 * 1024 * 1024) break;
+                }
+
+                string all = acc.ToString();
+                // 若没读到文件头，丢掉最前面那半行
+                if (pos > 0)
+                {
+                    int nl = all.IndexOf(Convert.ToChar(10));
+                    if (nl >= 0 && nl + 1 < all.Length) all = all.Substring(nl + 1);
+                }
+
+                var lines = all.Replace("\r", "").Split(Convert.ToChar(10));
+                int skip = Math.Max(0, lines.Length - maxLines);
+                var sb = new StringBuilder();
+                for (int i = skip; i < lines.Length; i++)
+                {
+                    string ln = lines[i];
+                    if (ln.Trim().Length == 0) continue;
+                    sb.AppendLine(ln);
+                }
+                return sb.ToString();
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>
+        /// 统计整天日志的错误/警告/失败次数。
+        ///
+        /// ★ 为什么要单独做：状态解析只处理"增量"，无法回溯全天；
+        ///   而"每日报错次数"必须覆盖当天全部内容。
+        ///   这里流式读文件（不全量进内存），60MB 大约 1 秒，放后台线程。
+        /// </summary>
+        public static (int errors, int warns, int fails) CountDailyErrors(string path)
+        {
+            int errors = 0, warns = 0, fails = 0;
+            try
+            {
+                if (!File.Exists(path)) return (0, 0, 0);
+
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using var sr = new StreamReader(fs, Encoding.UTF8);
+
+                string? line;
+                while ((line = sr.ReadLine()) != null)
+                {
+                    if (line.IndexOf("[ERR]", StringComparison.Ordinal) >= 0) errors++;
+                    else if (line.IndexOf("[WRN]", StringComparison.Ordinal) >= 0) warns++;
+
+                    if (line.IndexOf("执行失败", StringComparison.Ordinal) >= 0
+                        || line.IndexOf("未成功完成", StringComparison.Ordinal) >= 0
+                        || line.IndexOf("一条龙前置动作未成功", StringComparison.Ordinal) >= 0)
+                        fails++;
+                }
+            }
+            catch { }
+            return (errors, warns, fails);
+        }
+
+        private static int CountLines(StringBuilder sb)
+        {
+            int n = 0;
+            for (int i = 0; i < sb.Length; i++) if (sb[i] == Convert.ToChar(10)) n++;
+            return n;
+        }
+    }
+
+    /// <summary>
+    /// 单个 BGI 日志文件的实时跟随器。
+    ///
+    /// ★ 为什么需要它：原来靠"每 3 秒轮询读尾部"，BGI 写入到界面显示
+    ///   最坏要等 3 秒多，用户感觉日志有延迟。
+    ///   改用 FileSystemWatcher：文件一有写入就立刻唤醒读取，
+    ///   BGI 那边 flush（实测 0.16 秒）后界面几乎同时更新。
+    ///
+    /// ★ 只读设计（依据 docs/bgi-realtime-log-reader.md）：
+    ///   FileShare.ReadWrite | Delete，不独占、不写回，BGI 与助手可同时读。
+    /// ★ 每个跟随器只服务一个文件，自己维护字节偏移；
+    ///   文件被轮转/删除时重新打开（重新从头部读，避免跳过内容）。
+    /// </summary>
+    public sealed class LogFollower : IDisposable
+    {
+        private readonly FileSystemWatcher _watcher;
+        private readonly object _sync = new object();
+        private readonly System.Windows.Threading.Dispatcher _dispatcher;
+        private readonly Action<string> _onNewLines;
+        private long _offset;
+        private string _path;
+        private bool _busy;
+
+        /// <summary>
+        /// 开始跟随。<paramref name="initialLines"/> 是首次回填的行数（0 = 只跟新增）。
+        /// </summary>
+        public LogFollower(string path, System.Windows.Threading.Dispatcher dispatcher,
+            Action<string> onNewLines, int initialLines = 60, bool deepBackfill = false)
+        {
+            _path = path;
+            _dispatcher = dispatcher;
+            _onNewLines = onNewLines;
+
+            // 首次回填。
+            // ★ deepBackfill：从尾部往前分段回溯最多 16MB，
+            //   用于"状态行埋在几十万行之前"的情况（实测 20261107 日志）。
+            //   普通日志面板不需要回溯这么深，保持浅读即可。
+            string text;
+            if (deepBackfill)
+            {
+                text = BgiLogWatcher.TailLinesDeep(path, initialLines);
+            }
+            else
+            {
+                var r = BgiLogWatcher.TailLines(path, initialLines);
+                text = r.text;
+            }
+            if (!string.IsNullOrEmpty(text)) onNewLines(text);
+
+            try { _offset = new FileInfo(path).Length; } catch { _offset = 0; }
+
+            string dir = Path.GetDirectoryName(path) ?? "";
+            _watcher = new FileSystemWatcher(dir)
+            {
+                Filter = Path.GetFileName(path),
+                NotifyFilter = NotifyFilters.Size | NotifyFilters.LastWrite,
+                // 1 秒合并：BGI 写日志很频繁，逐个事件读会打满 CPU
+                // 但 1 秒远小于原来 3 秒的轮询间隔
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true
+            };
+            _watcher.Changed += (_, __) => Pump();
+            _watcher.Created += (_, __) => Pump();
+
+            // 兜底：某些网络盘/异常情况下 watcher 不触发，1 秒补漏
+            var timer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            timer.Tick += (_, __) => Pump();
+            timer.Start();
+            _fallbackTimer = timer;
+        }
+
+        private readonly System.Windows.Threading.DispatcherTimer? _fallbackTimer;
+
+        /// <summary>读取新增字节并回调。</summary>
+        private void Pump()
+        {
+            if (_busy) return;
+            _busy = true;
+            try
+            {
+                long len;
+                try { len = new FileInfo(_path).Length; } catch { return; }
+
+                // 文件变短 = 被轮转/重建，从头重读
+                if (len < _offset)
+                {
+                    _offset = 0;
+                }
+                if (len == _offset) return;
+
+                long toRead = len - _offset;
+                if (toRead > 256 * 1024) toRead = 256 * 1024;   // 单次上限，避免大爆发卡顿
+
+                string chunk;
+                using (var fs = new FileStream(_path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete))
+                {
+                    fs.Seek(_offset, SeekOrigin.Begin);
+                    var buf = new byte[toRead];
+                    int got = fs.Read(buf, 0, buf.Length);
+                    if (got <= 0) return;
+                    _offset += got;
+                    chunk = Encoding.UTF8.GetString(buf, 0, got);
+                }
+
+                // 丢弃不完整末行（等下次补齐），避免出现半行
+                int lastNl = chunk.LastIndexOf('\n');
+                if (lastNl < 0) return;                       // 全是残行
+                if (lastNl < chunk.Length - 1)
+                {
+                    // 回退偏移，让残行下次重读
+                    _offset -= Encoding.UTF8.GetByteCount(chunk.Substring(lastNl + 1));
+                    chunk = chunk.Substring(0, lastNl + 1);
+                }
+
+                chunk = chunk.Replace("\r\n", "\n").Replace("\r", "");
+                // 去掉空行（BGI 日志每条之间有空行）
+                var sb = new StringBuilder();
+                foreach (var ln in chunk.Split("\n"))
+                    if (ln.Trim().Length > 0) sb.AppendLine(ln);
+
+                string text = sb.ToString();
+                if (text.Length == 0) return;
+                _dispatcher.BeginInvoke(new Action(() => _onNewLines(text)));
+            }
+            catch { }
+            finally { _busy = false; }
+        }
+
+        public void Dispose()
+        {
+            try { _watcher.EnableRaisingEvents = false; _watcher.Dispose(); } catch { }
+            try { _fallbackTimer?.Stop(); } catch { }
         }
     }
 }

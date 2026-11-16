@@ -22,25 +22,40 @@
         <Border Grid.Column="0" Style="{StaticResource GlassCardStrong}" Padding="18,16">
             <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />   <!-- 标题 -->
+                    <RowDefinition Height="Auto" />   <!-- 运行状态（始终在顶部） -->
+                    <RowDefinition Height="*" />      <!-- 快捷动作列表（仅主会话） -->
+                    <RowDefinition Height="Auto" />   <!-- 执行按钮（仅主会话） -->
                 </Grid.RowDefinitions>
 
+                <!-- 页面标题：固定为"运行状态"（左栏主题） -->
                 <Grid Grid.Row="0" Margin="2,0,2,12">
                     <StackPanel>
-                        <TextBlock Text="快捷动作" Style="{StaticResource Title}" />
-                        <TextBlock Text="选一个配置好的动作，一键执行" Style="{StaticResource Caption}" Margin="0,3,0,0" />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <Button Style="{StaticResource GhostButton}" Click="NewAction_Click" ToolTip="新建动作">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" />
-                                <TextBlock Text="新建" Margin="7,0,0,0" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
+                        <TextBlock x:Name="PageTitle" Text="运行状态" Style="{StaticResource Title}" />
+                        <TextBlock x:Name="PageSubtitle" Text="监控各挂机账号的 BGI 运行情况"
+                                   Style="{StaticResource Caption}" Margin="0,3,0,0" />
                     </StackPanel>
                 </Grid>
+
+                <!-- 快捷动作：放在运行状态下方 -->
+                <Grid Grid.Row="2" x:Name="ActionPanel">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="2,0,2,8">
+                        <TextBlock Text="快捷动作" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
+                        <Button x:Name="BtnNewAction" Style="{StaticResource GhostButton}"
+                                HorizontalAlignment="Right" Padding="10,5"
+                                Click="NewAction_Click" ToolTip="新建动作">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" />
+                                <TextBlock Text="新建" Margin="6,0,0,0" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
 
                 <ListBox Grid.Row="1" x:Name="ActionList" Style="{StaticResource ActionListBox}"
                          SelectionChanged="ActionList_SelectionChanged" Padding="0,2,4,2">
@@ -119,9 +134,103 @@
                                    Foreground="{StaticResource TextMuted}" HorizontalAlignment="Center" Margin="0,5,0,0" />
                     </StackPanel>
                 </Border>
+                </Grid>
+
+                <!-- 运行状态（当前所选会话的 BGI 运行情况） -->
+                <Border Grid.Row="1" x:Name="StatusPanel" Style="{StaticResource GlassPanel}"
+                        Padding="14,12" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- 这里不再重复"运行状态"标题：外层 PageTitle 会按会话切换 -->
+                        <TextBlock x:Name="StatusMeta" Grid.Row="0" Text="未检测"
+                                   FontSize="10" Foreground="{StaticResource TextMuted}"
+                                   HorizontalAlignment="Left" VerticalAlignment="Center" />
+
+                        <!-- ① 单个账号的详细状态（选中挂机账号时） -->
+                        <Grid x:Name="SingleStatusGrid" Grid.Row="1" Margin="0,8,0,0" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
+                                <TextBlock Text="配置组 / 脚本" FontSize="9.5"
+                                           Foreground="{StaticResource TextMuted}" />
+                                <TextBlock x:Name="StatusGroup" Text="—"
+                                           FontSize="11.5" FontWeight="SemiBold"
+                                           Foreground="{StaticResource CyanBrush}"
+                                           TextWrapping="Wrap" Margin="0,3,0,0" />
+                            </StackPanel>
+
+                            <!-- 右列：轮次/角色 + 本路线拾取（占满右侧空白） -->
+                            <StackPanel Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Margin="8,0,0,8">
+                                <TextBlock Text="轮次 / 角色" FontSize="9.5"
+                                           Foreground="{StaticResource TextMuted}" />
+                                <TextBlock x:Name="StatusRound" Text="—"
+                                           FontSize="11.5" FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           TextWrapping="Wrap" Margin="0,3,0,0" />
+
+                                <!-- 每日报错次数：有错误/失败才显示 -->
+                                <TextBlock x:Name="StatusErrorTitle" Text="今日报错"
+                                           FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                                           Margin="0,10,0,0" Visibility="Collapsed" />
+                                <TextBlock x:Name="StatusError" Text=""
+                                           FontSize="10.5" TextWrapping="Wrap"
+                                           Margin="0,3,0,0" Visibility="Collapsed" />
+
+                                <TextBlock x:Name="StatusPicksTitle" Text="本路线拾取"
+                                           FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                                           Margin="0,10,0,0" Visibility="Collapsed" />
+                                <TextBlock x:Name="StatusPicks" Text=""
+                                           FontSize="10.5" Foreground="#FFB8E6C8"
+                                           TextWrapping="Wrap" Margin="0,3,0,0" Visibility="Collapsed" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="1" Grid.ColumnSpan="2">
+                                <TextBlock Text="当前路线" FontSize="9.5"
+                                           Foreground="{StaticResource TextMuted}" />
+                                <TextBlock x:Name="StatusRoute" Text="—"
+                                           FontSize="11" Foreground="{StaticResource TextPrimary}"
+                                           TextWrapping="Wrap" Margin="0,3,0,0" />
+                                <TextBlock x:Name="StatusEta" Text=""
+                                           FontSize="10" Foreground="{StaticResource TextMuted}"
+                                           TextWrapping="Wrap" Margin="0,3,0,0" />
+                            </StackPanel>
+
+                            <!-- ③ 异常/失败信息：单独一行，红色，只在出问题时显示 -->
+                            <Border x:Name="StatusProblemBox" Grid.Row="2" Grid.ColumnSpan="2"
+                                    Margin="0,6,0,0" Padding="8,6" CornerRadius="6"
+                                    Background="#2AFF6B6B" Visibility="Collapsed">
+                                <TextBlock x:Name="StatusProblem" Text=""
+                                           FontSize="10" Foreground="#FFFFB4B4"
+                                           TextWrapping="Wrap" />
+                            </Border>
+                        </Grid>
+
+                        <!-- ② 所有账号的运行监控总览（选中主会话时） -->
+                        <StackPanel x:Name="OverviewPanel" Grid.Row="1" Margin="0,8,0,0"
+                                    Visibility="Collapsed">
+                            <TextBlock Text="正在监控以下挂机账号的 BGI 运行情况"
+                                       FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                                       Margin="0,0,0,8" />
+                            <!-- 每个账号一行，运行时生成 -->
+                            <StackPanel x:Name="OverviewList" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
                 <!-- 底部：执行 + 命令 -->
-                <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="14,12" Margin="0,12,0,0">
+                <Border Grid.Row="3" x:Name="RunPanel" Style="{StaticResource GlassPanel}" Padding="14,12" Margin="0,12,0,0">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -221,7 +330,8 @@
                                 <ctl:GlowDot Grid.Column="0" Width="16" Height="16" VerticalAlignment="Center"
                                              Color="{Binding DotColor}" Pulse="{Binding IsActive}" />
                                 <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding UserName}" FontSize="12.5" FontWeight="SemiBold"
+                                    <!-- 优先显示备注名：A2 · 山客 -->
+                                    <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold"
                                                Foreground="{StaticResource TextPrimary}" />
                                     <!-- 单行：状态 ● 通道 ● BGI
                                          分隔圆点颜色固定（灰），不随任何状态变化，
@@ -259,7 +369,7 @@
                         </Grid.RowDefinitions>
 
                         <Grid Grid.Row="0">
-                            <TextBlock x:Name="LogTitle" Text="BGI 实时日志"
+                            <TextBlock x:Name="LogTitle" Text="原始日志"
                                        FontSize="11" FontWeight="SemiBold"
                                        Foreground="{StaticResource CyanBrush}" />
                             <TextBlock x:Name="LogMeta" Text="点击上方会话查看"
@@ -268,7 +378,7 @@
                         </Grid>
 
                         <TextBlock x:Name="TipText" Grid.Row="1"
-                                   Text="自动查找会话中的 BetterGI，读取其最新日志。"
+                                   Text="实时跟随所选会话的 BetterGI 日志。"
                                    FontSize="10.5" Foreground="{StaticResource TextMuted}"
                                    TextWrapping="Wrap" Margin="0,5,0,0" />
 

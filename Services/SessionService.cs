@@ -50,7 +50,16 @@ namespace SoulLink.Services
             // ★ query user 输出的是**小写**用户名（a1/a2），而账号真实名称是大写（A1/A2）。
             //   qwinsta 给的是真实大小写，用它校正显示（匹配逻辑本来就是忽略大小写的，
             //   所以这只是显示问题，不影响自动连接/投送）。
-            try { ApplyRealCasing(list); } catch { }
+            try
+            {
+                ApplyRealCasing(list);
+                SoulLink.Controls.RdpConsole.Debug("大小写校正后异常检查："
+                    + string.Join(", ", list.ConvertAll(s => s.UserName)));
+            }
+            catch (Exception ex)
+            {
+                SoulLink.Controls.RdpConsole.Debug("大小写校正失败异常：" + ex.Message);
+            }
             return list;
         }
 

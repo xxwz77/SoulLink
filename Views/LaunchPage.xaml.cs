@@ -45,16 +45,39 @@ namespace SoulLink.Views
                 // 只在本页可见时刷新，切走就跳过，省开销
                 if (!IsVisible) return;
                 RefreshSessions();
-                // BGI 日志跟着同一个节拍刷新（内部会判断文件是否变化）
-                RefreshSelectedLog();
+                // 右侧原始日志：跟随点击的会话
+                if (_follower == null) RefreshSelectedLog();
+                // 左侧：主会话显示总览，其它账号显示单账号状态
+                if (_logSession != null && _logSession.IsConsoleSession)
+                {
+                    if (_overviewRows.Count == 0) RefreshOverview();
+                    else UpdateOverviewTexts();
+                }
+                else if (_statusFollower == null && _logSession != null)
+                {
+                    StartStatusFollowFor(_logSession);
+                }
             };
+            // ★ 定时器启动不能只靠 Loaded：UserControl 在页面切换时
+            //   会触发 Unloaded 停表，再切回来 Loaded 不一定再触发，
+            //   导致定时器永久停摆（表现：状态/会话列表都不再刷新）。
+            //   改成 Loaded + Activate 双保险，并让 Activate 每次都确保启动。
             Loaded += (_, __) => _sessionTimer?.Start();
-            Unloaded += (_, __) => _sessionTimer?.Stop();
+            Unloaded += (_, __) =>
+            {
+                _sessionTimer?.Stop();
+                // 页面卸载时停止跟随，避免后台一直持有文件句柄
+                StopFollower();
+                StopStatusFollower();
+            };
         }
 
         public void Activate()
         {
             ReloadActions();
+            // 确保定时器在运行（页面切回来时 Loaded 不一定触发）
+            if (_sessionTimer != null && !_sessionTimer.IsEnabled)
+                _sessionTimer.Start();
             RefreshSessions();
         }
 
@@ -147,18 +170,34 @@ namespace SoulLink.Views
                     DateTime? bgiTime = bgiTimes.TryGetValue(u.Id, out var bt) ? bt : (DateTime?)null;
                     bool hasChannel = channelSessions.Contains(u.Id);
 
+                    // 备注名 + 真实大小写：都从账号配置里取
+                    string remark = "";
+                    string realName = "";
+                    foreach (var acc in App.Config.Accounts)
+                        if (string.Equals(acc.UserName, u.UserName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            remark = acc.DisplayName ?? "";
+                            realName = acc.UserName ?? "";   // 配置里的大小写为准
+                            break;
+                        }
+
                     if (exist == null)
                     {
-                        _sessions.Add(new SessionVm(u)
+                        var newVm = new SessionVm(u)
                         {
                             BgiLastWrite = bgiTime,
                             HasChannel = hasChannel
-                        });
+                        };
+                        newVm.SetRealName(realName);
+                        newVm.SetRemark(remark);
+                        _sessions.Add(newVm);
                     }
                     else
                     {
                         exist.BgiLastWrite = bgiTime;
                         exist.HasChannel = hasChannel;
+                        exist.SetRealName(realName);
+                        exist.SetRemark(remark);
                         exist.Session = u;      // 就地替换，触发绑定刷新
                     }
                 }
@@ -166,6 +205,15 @@ namespace SoulLink.Views
                 TipText.Text = users.Count == 0
                     ? "当前没有任何用户登录会话。请先让目标账号登录（RDP 或切换用户）。"
                     : "共 " + users.Count + " 个会话在线 · 点击查看其中运行的程序。";
+
+                // ★ 首次进入时默认选中主会话，让左栏显示"所有账号总览"。
+                if (SessionList.SelectedItem == null && _sessions.Count > 0)
+                {
+                    SessionVm? mainVm = null;
+                    foreach (var vm in _sessions)
+                        if (vm.Session.IsConsoleSession) { mainVm = vm; break; }
+                    if (mainVm != null) SessionList.SelectedItem = mainVm;
+                }
             }
             catch { }
         }
@@ -201,8 +249,417 @@ namespace SoulLink.Views
             {
                 _logSession = vm.Session;
                 _logText = "";
+                LogText.Text = "";
+
+
+                // ★ 左栏内容随所选会话切换：
+                //   · 主会话（用户自己的桌面）→ 显示"快捷动作"（动作列表 + 状态）
+                //   · 其他会话（挂机账号）    → 隐藏快捷动作，只显示该账号的运行状态
+                //   避免"看着 A1，左边却是主用户的快捷动作"这种误导。
+                ApplyLeftPanelMode(vm.Session);
+
                 RefreshSelectedLog(force: true);
             }
+        }
+
+        /// <summary>
+        /// 按所选会话切换左栏内容。
+        ///
+        /// ★ 主会话（console，用户自己的桌面）：
+        ///     显示快捷动作 + **所有挂机账号的运行监控总览**。
+        ///     主会话本身不跑 BGI，看它自己的状态没有意义。
+        ///   其他会话（挂机账号）：
+        ///     隐藏快捷动作，只显示该账号的详细运行状态。
+        /// </summary>
+        private void ApplyLeftPanelMode(SessionInfo sess)
+        {
+            try
+            {
+                bool isMain = sess.IsConsoleSession;
+
+                ActionPanel.Visibility = isMain ? Visibility.Visible : Visibility.Collapsed;
+                RunPanel.Visibility = isMain ? Visibility.Visible : Visibility.Collapsed;
+
+                // 页面标题固定为"运行状态"（左栏主题），只切换副标题
+                if (isMain)
+                {
+                    PageSubtitle.Text = "所有挂机账号的运行情况 · 下方为快捷动作";
+                    BtnNewAction.Visibility = Visibility.Visible;
+
+                    // 总览模式
+                    OverviewPanel.Visibility = Visibility.Visible;
+                    SingleStatusGrid.Visibility = Visibility.Collapsed;
+                    StopStatusFollower();
+                    RefreshOverview();
+                }
+                else
+                {
+                    PageSubtitle.Text = sess.UserName + " · 该账号的 BGI 运行情况";
+                    BtnNewAction.Visibility = Visibility.Collapsed;
+
+                    // 单账号模式
+                    OverviewPanel.Visibility = Visibility.Collapsed;
+                    SingleStatusGrid.Visibility = Visibility.Visible;
+                    StartStatusFollowFor(sess);
+                }
+            }
+            catch { }
+        }
+
+        // ── 总览：所有挂机账号的运行状态 ────────────────────────────────────
+
+        private sealed class OverviewRow
+        {
+            public string User = "";
+            public int SessionId;
+            public string Group = "—";
+            public string Round = "";
+            public string Route = "";
+            public BgiStatus Status = new BgiStatus();
+            public System.Windows.Controls.Border? Card;
+            public System.Windows.Controls.TextBlock? Line1;
+            public System.Windows.Controls.TextBlock? Line2;
+            public System.Windows.Controls.TextBlock? Line3;
+            /// <summary>卡片右上角的"每日报错"角标。</summary>
+            public System.Windows.Controls.TextBlock? ErrorBadge;
+        }
+
+        private readonly List<OverviewRow> _overviewRows = new List<OverviewRow>();
+
+        /// <summary>刷新总览列表（哪些账号在跑 BGI、各自进度）。</summary>
+        private void RefreshOverview()
+        {
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    var bgi = BgiLogWatcher.Discover();
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            // ★ 列出**所有**远程账号（主会话除外），
+                            //   没跑 BGI 的也要显示，否则用户看不出"这个号今天没上工"。
+                            //   inst 为 null 表示该会话没有 BetterGI 进程。
+                            var wanted = new List<(SessionInfo sess, BgiLogWatcher.Instance? inst)>();
+                            foreach (var vm in _sessions)
+                            {
+                                var s = vm.Session;
+                                if (s.IsConsoleSession) continue;
+                                bgi.TryGetValue(s.Id, out var inst);
+                                wanted.Add((s, inst));
+                            }
+
+                            // ★ 判断是否需要重建：行数变化，或账号集合变化。
+                            //   原来只比行数，A4 这种"晚一步被发现"的账号会被漏掉
+                            //   （首次建了 A1，之后两个账号时行数仍判断为变化但集合没同步）。
+                            bool needRebuild = wanted.Count != _overviewRows.Count;
+                            if (!needRebuild)
+                            {
+                                foreach (var (s, _) in wanted)
+                                {
+                                    bool found = false;
+                                    foreach (var row in _overviewRows)
+                                        if (row.SessionId == s.Id) { found = true; break; }
+                                    if (!found) { needRebuild = true; break; }
+                                }
+                            }
+
+                            if (needRebuild)
+                            {
+                                _overviewRows.Clear();
+                                OverviewList.Children.Clear();
+                                foreach (var (s, inst) in wanted)
+                                {
+                                    // 备注名：中控台填的 DisplayName，形如 "A2 · 山客"
+                                    string rm = "";
+                                    foreach (var acc in App.Config.Accounts)
+                                        if (string.Equals(acc.UserName, s.UserName, StringComparison.OrdinalIgnoreCase))
+                                        { rm = acc.DisplayName ?? ""; break; }
+                                    string shown = string.IsNullOrWhiteSpace(rm)
+                                        ? s.UserName : (s.UserName + " · " + rm);
+
+                                    var row = new OverviewRow { User = shown, SessionId = s.Id };
+
+                                    var card = new System.Windows.Controls.Border
+                                    {
+                                        Margin = new Thickness(0, 0, 0, 6),
+                                        Padding = new Thickness(10, 8, 10, 8),
+                                        CornerRadius = new CornerRadius(8),
+                                        Background = new System.Windows.Media.SolidColorBrush(
+                                            System.Windows.Media.Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF))
+                                    };
+                                    // 三行结构（与单账号详情一致）：
+                                    //   ① A1 · 联机锄地-融合      （账号 · 配置组/脚本）
+                                    //   ② 第 2/3 轮 · 思          （轮次 / 角色）
+                                    //   ③ 路线 60/78 · 03-xxx     （当前路线）
+                                    // 卡片内用 Grid：左侧三行信息，右上角放"每日报错"角标
+                                    var inner = new System.Windows.Controls.Grid();
+                                    inner.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
+                                    { Width = new System.Windows.GridLength(1, System.Windows.GridUnitType.Star) });
+                                    inner.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
+                                    { Width = System.Windows.GridLength.Auto });
+
+                                    var sp = new System.Windows.Controls.StackPanel();
+                                    System.Windows.Controls.Grid.SetColumn(sp, 0);
+
+                                    var badge = new System.Windows.Controls.TextBlock
+                                    {
+                                        FontSize = 9.5,
+                                        VerticalAlignment = System.Windows.VerticalAlignment.Top,
+                                        HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                                        Margin = new Thickness(8, 1, 0, 0),
+                                        Visibility = Visibility.Collapsed
+                                    };
+                                    System.Windows.Controls.Grid.SetColumn(badge, 1);
+
+                                    inner.Children.Add(sp);
+                                    inner.Children.Add(badge);
+
+                                    var l1 = new System.Windows.Controls.TextBlock
+                                    {
+                                        FontSize = 11.5,
+                                        FontWeight = System.Windows.FontWeights.SemiBold,
+                                        TextWrapping = TextWrapping.Wrap,
+                                        Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary")
+                                    };
+                                    var l2 = new System.Windows.Controls.TextBlock
+                                    {
+                                        FontSize = 10,
+                                        Margin = new Thickness(0, 3, 0, 0),
+                                        TextWrapping = TextWrapping.Wrap,
+                                        Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush")
+                                    };
+                                    var l3 = new System.Windows.Controls.TextBlock
+                                    {
+                                        FontSize = 9.5,
+                                        Margin = new Thickness(0, 2, 0, 0),
+                                        TextWrapping = TextWrapping.Wrap,
+                                        Foreground = (System.Windows.Media.Brush)FindResource("TextMuted")
+                                    };
+                                    sp.Children.Add(l1);
+                                    sp.Children.Add(l2);
+                                    sp.Children.Add(l3);
+                                    card.Child = inner;
+
+                                    row.Card = card; row.Line1 = l1; row.Line2 = l2; row.Line3 = l3;
+                                    row.ErrorBadge = badge;
+                                    _overviewRows.Add(row);
+                                    OverviewList.Children.Add(card);
+                                }
+                            }
+
+                            StatusMeta.Text = wanted.Count == 0
+                                ? "暂无挂机账号在运行 BGI"
+                                : ("共 " + wanted.Count + " 个挂机账号");
+
+
+                        }
+                        catch { }
+                    });
+                }
+                catch { }
+            });
+        }
+
+        /// <summary>更新总览里每个账号的进度文字（读各自日志尾部）。</summary>
+        private void UpdateOverviewTexts()
+        {
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    var bgi = BgiLogWatcher.Discover();
+
+                    // ★ 每次刷新都重算备注名：中控台里改了备注名后，
+                    //   卡片不会重建（账号集合没变），必须在更新时同步。
+                    foreach (var row in _overviewRows.ToArray())
+                    {
+                        foreach (var vm in _sessions)
+                        {
+                            if (vm.Session.Id != row.SessionId) continue;
+                            string rm = "";
+                            foreach (var acc in App.Config.Accounts)
+                                if (string.Equals(acc.UserName, vm.Session.UserName, StringComparison.OrdinalIgnoreCase))
+                                { rm = acc.DisplayName ?? ""; break; }
+                            row.User = string.IsNullOrWhiteSpace(rm)
+                                ? vm.Session.UserName
+                                : (vm.Session.UserName + " · " + rm);
+                            break;
+                        }
+                    }
+
+                    var results = new List<(OverviewRow row, BgiStatus st, bool running)>();
+                    foreach (var row in _overviewRows.ToArray())
+                    {
+                        // ★ 没有 BGI 进程也要出结果（running=false），
+                        //   界面显示"今日还未运行 BetterGI"，不能像以前那样直接跳过。
+                        if (!bgi.TryGetValue(row.SessionId, out var inst))
+                        {
+                            results.Add((row, new BgiStatus(), false));
+                            continue;
+                        }
+
+                        var st = new BgiStatus();
+                        // 总览也要深度回溯：配置组可能埋在几十万行之前
+                        string text = BgiLogWatcher.TailLinesDeep(inst.LogFile, 300);
+                        st.Update(text);
+
+                        // ★ 每日报错统计：必须扫全天（增量只能覆盖一小段），
+                        //   所以单独流式读一遍当天日志。约 1 秒，已在后台线程。
+                        var (errs, warns, fails) = BgiLogWatcher.CountDailyErrors(inst.LogFile);
+                        if (errs > st.ErrorCount) st.ErrorCount = errs;
+                        if (warns > st.WarnCount) st.WarnCount = warns;
+                        if (fails > st.FailCount) st.FailCount = fails;
+
+                        results.Add((row, st, true));
+                    }
+
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        foreach (var (row, st, running) in results)
+                        {
+                            try
+                            {
+                                // ★ 没跑 BGI：显示"今日还未运行"，其余行留空
+                                if (!running)
+                                {
+                                    if (row.ErrorBadge != null)
+                                    {
+                                        row.ErrorBadge.Text = "";
+                                        row.ErrorBadge.Visibility = Visibility.Collapsed;
+                                    }
+                                    if (row.Line1 != null && row.Line1.Text != row.User)
+                                        row.Line1.Text = row.User;
+                                    if (row.Line2 != null)
+                                    {
+                                        if (row.Line2.Text != "今日还未运行 BetterGI")
+                                            row.Line2.Text = "今日还未运行 BetterGI";
+                                        row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
+                                            System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8));
+                                        row.Line2.Visibility = Visibility.Visible;
+                                    }
+                                    if (row.Line3 != null)
+                                    {
+                                        row.Line3.Text = "";
+                                        row.Line3.Visibility = Visibility.Collapsed;   // ★ 没内容就彻底不占高度
+                                    }
+                                    continue;
+                                }
+
+                                // ① 账号 · 配置组/脚本（账号处已带备注名）
+                                // ★ 备注名可能在建卡之后才填（中控台改配置），
+                                //   所以每次更新都重新取一次，而不是只在重建时算。
+                                string head = row.User;
+                                string group = st.GroupDisplay;
+                                if (!string.IsNullOrEmpty(group) && group != "—")
+                                    head += "  ·  " + group;
+                                if (row.Line1 != null && row.Line1.Text != head) row.Line1.Text = head;
+
+                                // ★ 每日报错角标：必须在任何 continue 之前更新，
+                                //   否则"有异常的账号"（如 A4）会提前 continue 掉、
+                                //   角标永远不显示 —— 之前就只有 A1 有、A4 没有。
+                                if (row.ErrorBadge != null)
+                                {
+                                    if (st.ErrorLevel >= 2)
+                                    {
+                                        string badgeText = "";
+                                        if (st.FailCount > 0) badgeText += "失败 " + st.FailCount;
+                                        if (st.ErrorCount > 0)
+                                            badgeText += (badgeText.Length > 0 ? " · " : "") + "错误 " + st.ErrorCount;
+                                        if (row.ErrorBadge.Text != badgeText) row.ErrorBadge.Text = badgeText;
+                                        row.ErrorBadge.Foreground = st.FailCount > 0
+                                            ? new System.Windows.Media.SolidColorBrush(
+                                                System.Windows.Media.Color.FromRgb(0xFF, 0x7B, 0x7B))
+                                            : new System.Windows.Media.SolidColorBrush(
+                                                System.Windows.Media.Color.FromRgb(0xFF, 0xD5, 0x4A));
+                                        row.ErrorBadge.Visibility = Visibility.Visible;
+                                    }
+                                    else
+                                    {
+                                        row.ErrorBadge.Text = "";
+                                        row.ErrorBadge.Visibility = Visibility.Collapsed;
+                                    }
+                                }
+
+                                // ★ 有 BGI 进程，但今天这份日志里没有任何状态信息
+                                //   （刚启动、或还没开始跑任务）→ 也要给个明确说法。
+                                if (!st.HasData)
+                                {
+                                    if (row.Line2 != null)
+                                    {
+                                        if (row.Line2.Text != "BGI 已启动，等待任务开始")
+                                            row.Line2.Text = "BGI 已启动，等待任务开始";
+                                        row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
+                                            System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B));
+                                        row.Line2.Visibility = Visibility.Visible;
+                                    }
+                                    if (row.Line3 != null)
+                                    {
+                                        row.Line3.Text = "";
+                                        row.Line3.Visibility = Visibility.Collapsed;   // ★ 没内容就彻底不占高度
+                                    }
+                                    continue;
+                                }
+
+                                // 异常状态：轮次照常显示在第二行，
+                                // **失败原因单独放第三行（红色）** —— 与单账号详情一致。
+                                if (st.HasProblem)
+                                {
+                                    string rl = "";
+                                    if (!string.IsNullOrEmpty(st.Round)) rl = "第 " + st.Round + " 轮";
+                                    if (!string.IsNullOrEmpty(st.RoleName))
+                                        rl += (rl.Length > 0 ? "  ·  " : "") + st.RoleName;
+                                    if (row.Line2 != null)
+                                    {
+                                        if (row.Line2.Text != rl) row.Line2.Text = rl;
+                                        row.Line2.Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush");
+                                        row.Line2.Visibility = rl.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+                                    }
+
+                                    string prob = st.ProblemText;
+                                    if (row.Line3 != null)
+                                    {
+                                        if (row.Line3.Text != prob) row.Line3.Text = prob;
+                                        row.Line3.Foreground = st.FailedGroup.Length > 0 || st.LastError.Length > 0
+                                            ? new System.Windows.Media.SolidColorBrush(
+                                                System.Windows.Media.Color.FromRgb(0xFF, 0x7B, 0x7B))
+                                            : new System.Windows.Media.SolidColorBrush(
+                                                System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8));
+                                    }
+                                    continue;
+                                }
+
+                                // ② 轮次/任务（有轮次显示轮次，无轮次显示任务名）
+                                string roundLine = st.RoundDisplay;
+                                if (roundLine == "—") roundLine = "等待日志中的状态…";
+                                if (row.Line2 != null)
+                                {
+                                    if (row.Line2.Text != roundLine) row.Line2.Text = roundLine;
+                                    row.Line2.Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush");
+                                    row.Line2.Visibility = Visibility.Visible;
+                                }
+
+                                // ③ 路线 / 进度（三种格式都由 RouteDisplay 统一处理）
+                                string routeLine = st.RouteDisplay;
+                                if (!string.IsNullOrEmpty(st.EtaDisplay))
+                                    routeLine += (routeLine == "—" ? "" : "  ·  ") + st.EtaDisplay;
+                                if (routeLine == "—") routeLine = "";
+                                if (row.Line3 != null)
+                                {
+                                    if (row.Line3.Text != routeLine) row.Line3.Text = routeLine;
+                                    row.Line3.Foreground = (System.Windows.Media.Brush)FindResource("TextMuted");
+                                    // ★ 没有路线信息就折叠，避免卡片留一块空白
+                                    row.Line3.Visibility = routeLine.Length > 0
+                                        ? Visibility.Visible : Visibility.Collapsed;
+                                }
+                            }
+                            catch { }
+                        }
+                    });
+                }
+                catch { }
+            });
         }
 
         // ── BGI 实时日志 ─────────────────────────────────────────────────
@@ -213,6 +670,13 @@ namespace SoulLink.Views
         private DateTime _logLastWrite = DateTime.MinValue;
 
         /// <summary>刷新当前选中会话的 BGI 日志（内容有变化才更新界面）。</summary>
+        /// <summary>
+        /// 切换/刷新当前选中会话的 BGI 日志。
+        ///
+        /// ★ 用 LogFollower（FileSystemWatcher）跟随文件：
+        ///   BGI 一写入就被唤醒追加，不再靠 3 秒轮询 —— 这才是"实时"。
+        ///   只在切换会话或发现 BGI 进程变化时重建跟随器。
+        /// </summary>
         private void RefreshSelectedLog(bool force = false)
         {
             var sess = _logSession;
@@ -227,6 +691,7 @@ namespace SoulLink.Views
                     {
                         Dispatcher.InvokeAsync(() =>
                         {
+                            StopFollower();
                             LogMeta.Text = sess.UserName + " · 未发现 BetterGI";
                             LogText.Text = "该会话中没有正在运行的 BetterGI 进程。\n\n" +
                                            "启动 BGI 后这里会自动显示它的实时日志。";
@@ -235,36 +700,346 @@ namespace SoulLink.Views
                         return;
                     }
 
-                    // 文件没变化就不重读、不刷界面（避免滚动位置被打断）
-                    if (!force && inst.LogFile == _logFile && inst.LastWrite == _logLastWrite)
+                    // 目标文件没变 + 跟随器还活着 → 什么都不用做（跟随器会自己推）
+                    if (!force && inst.LogFile == _logFile && _follower != null)
+                    {
+                        Dispatcher.InvokeAsync(() =>
+                        {
+                            LogMeta.Text = "PID " + inst.Pid + " · 实时跟随中";
+                        });
                         return;
+                    }
 
-                    var (text, lastWrite) = BgiLogWatcher.TailLines(inst.LogFile, 60);
+                    // 重新建立跟随器（换会话 / 换文件 / 首次）
                     _logFile = inst.LogFile;
-                    _logLastWrite = lastWrite;
-
-                    string ago;
-                    var span = DateTime.Now - lastWrite;
-                    if (span.TotalSeconds < 5) ago = "刚刚";
-                    else if (span.TotalMinutes < 1) ago = (int)span.TotalSeconds + " 秒前";
-                    else if (span.TotalHours < 1) ago = (int)span.TotalMinutes + " 分钟前";
-                    else ago = (int)span.TotalHours + " 小时前";
+                    int pid = inst.Pid;
+                    string user = sess.UserName;
 
                     Dispatcher.InvokeAsync(() =>
                     {
-                        LogTitle.Text = "BGI 实时日志 · " + sess.UserName;
-                        LogMeta.Text = "最后写入 " + ago + " · PID " + inst.Pid;
-                        if (text != _logText)
+                        StopFollower();
+                        LogTitle.Text = "BGI 实时日志 · " + user;
+                        LogMeta.Text = "PID " + pid + " · 实时跟随中";
+                        LogText.Text = "";
+
+                        try
                         {
-                            _logText = text;
-                            LogText.Text = text;
-                            // 自动滚到底部（最新日志）
-                            try { LogScroll.ScrollToEnd(); } catch { }
+                            _follower = new LogFollower(
+                                _logFile, Dispatcher,
+                                chunk =>
+                                {
+                                    // ① 解析运行状态并刷新面板
+                                    _bgiStatus.Update(chunk);
+                                    ApplyStatusToUi();
+
+                                    // ② 原始日志仍然累积（默认折叠，排查时展开）
+                                    LogText.Text += chunk;
+                                    TrimLogText();
+                                    try { LogScroll.ScrollToEnd(); } catch { }
+                                },
+                                initialLines: 200);   // 回填多一些，保证状态能解析到
+                        }
+                        catch (Exception ex)
+                        {
+                            LogText.Text = "无法跟随日志：" + ex.Message;
                         }
                     });
                 }
                 catch { }
             });
+        }
+
+        /// <summary>日志文本最多保留的行数（超出丢弃最早的部分）。</summary>
+        private const int MaxLogLines = 400;
+
+        /// <summary>裁剪日志文本，避免无限增长。</summary>
+        private void TrimLogText()
+        {
+            try
+            {
+                string t = LogText.Text;
+                if (t.Length < 60000) return;          // 字符数上限，约 400 行
+                int cut = t.IndexOf('\n', t.Length / 3);
+                if (cut > 0) LogText.Text = t.Substring(cut + 1);
+            }
+            catch { }
+        }
+
+        private LogFollower? _follower;
+
+        /// <summary>从日志解析出的运行状态（跟随器推送增量时持续更新）。</summary>
+        private BgiStatus _bgiStatus = new BgiStatus();
+
+        // ── 左侧运行状态：只跟随主会话 ──────────────────────────────────────
+
+        private LogFollower? _statusFollower;
+        private string _statusFile = "";
+
+        /// <summary>
+        /// 刷新左侧运行状态。
+        /// ★ 选中哪个账号就跟随哪个账号的日志。
+        ///   主会话不参与单账号跟随（它显示的是总览，见 ApplyLeftPanelMode）。
+        /// </summary>
+        /// <summary>当前正在跟随的会话号（0 = 未跟随）。用于避免重复启动导致状态被反复重置。</summary>
+        private int _statusSessionId;
+
+        private void StartStatusFollowFor(SessionInfo sess)
+        {
+            if (sess == null) return;
+
+            // ★ 已经在跟随同一个会话 → 直接返回。
+            //   原来每 2 秒定时器都会进来一次，走到"文件没变"分支也会重写 StatusMeta，
+            //   而更糟的是：期间若 Discover() 一时读不到 BGI，就会把状态重置成"—"，
+            //   造成界面"一会儿文字一会儿横杠"地闪。
+            //
+            // ★ 但不能一刀切返回：BGI 跨天会把日志切到新文件（23:59:59 → 00:00:00），
+            //   如果死守旧文件，状态就永远停在昨天。所以这里每轮都轻量检查
+            //   当前应该跟的文件名，变了就重连。
+            if (_statusSessionId == sess.Id && _statusFollower != null)
+            {
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        var map = BgiLogWatcher.Discover();
+                        if (!map.TryGetValue(sess.Id, out var cur)) return;
+                        if (cur.LogFile == _statusFile) return;   // 没变
+
+                        // 跨天切换：换文件
+                        SoulLink.Controls.RdpConsole.Debug(
+                            "日志跨天切换：会话 " + sess.Id + " → " + System.IO.Path.GetFileName(cur.LogFile));
+                        _statusFollower?.Dispose();
+                        _statusFollower = null;
+                        _statusSessionId = 0;
+                    }
+                    catch { }
+                });
+                return;
+            }
+
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    int sid = sess.Id;
+                    string user = sess.UserName;
+
+                    var map = BgiLogWatcher.Discover();
+                    if (!map.TryGetValue(sid, out var inst))
+                    {
+                        Dispatcher.InvokeAsync(() =>
+                        {
+                            StopStatusFollower();
+                            StatusMeta.Text = user + " · 未运行 BGI";
+                            StatusGroup.Text = "—";
+                            StatusRound.Text = "—";
+                            StatusRoute.Text = "—";
+                            StatusEta.Text = "该账号没有正在运行的 BetterGI";
+                        });
+                        return;
+                    }
+
+                    // 文件没变 + 跟随器活着 → 不重建
+                    if (inst.LogFile == _statusFile && _statusFollower != null)
+                    {
+                        Dispatcher.InvokeAsync(() => StatusMeta.Text = user + " · 实时跟随中");
+                        return;
+                    }
+
+                    // ★ 用局部变量传文件路径：_statusFile 会被 StopStatusFollower() 清空，
+                    //   原来直接把字段传进 new LogFollower，导致目录为空 →
+                    //   "The directory name is invalid"，跟随器永远建不起来。
+                    string logFile = inst.LogFile;
+                    int pid = inst.Pid;
+
+                    // ★ 竞态修复：会话号必须**立刻**记下来。
+                    //   原来只在 Dispatcher.InvokeAsync 内部赋值，而那是异步的；
+                    //   2 秒定时器如果在这之前进来，会看到 _statusSessionId 还是 0，
+                    //   于是又走一遍"发现 BGI → 新建跟随器 → 清空状态"，
+                    //   表现就是状态闪一下就变回横杠、越刷越乱。
+                    _statusSessionId = sid;
+
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        StopStatusFollower();             // 内部会把 _statusSessionId/_statusFile 清 0
+                        _statusSessionId = sid;           // ★ 清完必须重新写回
+                        _statusFile = logFile;            // ★ 同上，用局部变量恢复
+                        _bgiStatus = new BgiStatus();
+                        _statusEverResolved = false;      // 换账号：允许重新显示占位
+                        StatusPicksTitle.Visibility = Visibility.Collapsed;
+                        StatusPicks.Visibility = Visibility.Collapsed;
+                        ApplyStatusToUi();
+                        StatusMeta.Text = user + " · PID " + pid;
+
+                        try
+                        {
+                            _statusFollower = new LogFollower(
+                                logFile, Dispatcher,
+                                chunk =>
+                                {
+                                    _bgiStatus.Update(chunk);
+                                    ApplyStatusToUi();
+                                },
+                                initialLines: 400,
+                                deepBackfill: true);   // ★ 状态行可能埋在几十万行之前（实测 20261107）
+
+                            // ★ 每日报错统计：挂上跟随器后，后台扫一遍全天日志。
+                            //   增量解析只能覆盖最近内容，无法回溯全天。
+                            string lf = logFile;
+                            _ = Task.Run(() =>
+                            {
+                                try
+                                {
+                                    var (errs, warns, fails) = BgiLogWatcher.CountDailyErrors(lf);
+                                    Dispatcher.InvokeAsync(() =>
+                                    {
+                                        _bgiStatus.ErrorCount = errs;
+                                        _bgiStatus.WarnCount = warns;
+                                        _bgiStatus.FailCount = fails;
+                                        ApplyStatusToUi();
+                                    });
+                                }
+                                catch { }
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            // ★ 原来这里是 catch { }，把创建失败吞掉了，
+                            //   结果 _statusFollower 一直是 null，守卫失效、
+                            //   状态永远显示不出来。现在把原因记下来。
+                            SoulLink.Controls.RdpConsole.Debug("状态跟随器创建异常：" + ex.GetType().Name
+                                + " - " + ex.Message);
+                            StatusEta.Text = "跟随失败：" + ex.Message;
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    SoulLink.Controls.RdpConsole.Debug("[状态] 跟随异常：" + ex.Message);
+                }
+            });
+        }
+
+        private void StopStatusFollower()
+        {
+            try { _statusFollower?.Dispose(); } catch { }
+            _statusFollower = null;
+            _statusFile = "";
+            _statusSessionId = 0;
+        }
+
+        /// <summary>
+        /// 把解析出的状态刷到界面。
+        ///
+        /// ★ 闪烁修复：原实现在没解析到数据时每次把文字重置成固定文案，
+        ///   而日志还在持续到达、状态时有时无，导致界面反复在两种文案间跳。
+        ///   现在改成"只在内容真的变化时才写"（比较后再赋值），
+        ///   WPF 的 TextBlock 也就不会反复重排。
+        /// </summary>
+        private void SetText(System.Windows.Controls.TextBlock tb, string value)
+        {
+            if (tb.Text != value) tb.Text = value;
+        }
+
+        /// <summary>是否已经成功解析出过一次状态。有了就不再回退成占位符。</summary>
+        private bool _statusEverResolved;
+
+        private void ApplyStatusToUi()
+        {
+            try
+            {
+                if (!_bgiStatus.HasData)
+                {
+                    // ★ 关键：一旦解析成功过，就**不要再退回横杠**。
+                    //   日志是持续到达的，某一批增量里没有状态行很正常；
+                    //   之前每次没解析到就把文字重置成 "—"，造成"一会儿文字一会儿横杠"。
+                    if (_statusEverResolved) return;
+
+                    // 只有从来没解析到过，才显示占位
+                    SetText(StatusGroup, "—");
+                    SetText(StatusRound, "—");
+                    SetText(StatusRoute, "—");
+                    SetText(StatusEta, "等待日志中的状态信息…");
+                    StatusProblemBox.Visibility = Visibility.Collapsed;
+                    StatusPicksTitle.Visibility = Visibility.Collapsed;
+                    StatusPicks.Visibility = Visibility.Collapsed;
+                    return;
+                }
+
+                _statusEverResolved = true;
+
+                // 三类任务都能正确显示：
+                //   有轮次 → "配置组 / 第 2/3 轮 · 思 / 路线"
+                //   无轮次 → "每日采集 / 每日采集 / 03-霜仙花… 共1440条"
+                //   一条龙 → "灭绝提瓦特 / 灭绝提瓦特 / 一条龙：灭绝提瓦特"
+                SetText(StatusGroup, _bgiStatus.GroupDisplay);
+                SetText(StatusRound, _bgiStatus.RoundDisplay);
+                SetText(StatusRoute, _bgiStatus.RouteDisplay);
+                SetText(StatusEta, _bgiStatus.EtaDisplay);
+
+                // 今日报错：只显示错误/失败（纯警告太多，不占版面）
+                if (_bgiStatus.ErrorLevel >= 2)
+                {
+                    string et = "错误 " + _bgiStatus.ErrorCount + " 次";
+                    if (_bgiStatus.FailCount > 0) et += " · 失败 " + _bgiStatus.FailCount + " 次";
+                    SetText(StatusError, et);
+                    StatusError.Foreground = _bgiStatus.FailCount > 0
+                        ? new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(0xFF, 0x7B, 0x7B))
+                        : new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(0xFF, 0xD5, 0x4A));
+                    StatusErrorTitle.Visibility = Visibility.Visible;
+                    StatusError.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    StatusErrorTitle.Visibility = Visibility.Collapsed;
+                    StatusError.Visibility = Visibility.Collapsed;
+                }
+
+                // 本路线拾取：有拾取才显示，没有就隐藏（避免空标题占位）
+                string picks = _bgiStatus.PicksDisplay;
+                if (picks.Length > 0)
+                {
+                    SetText(StatusPicksTitle, "本路线拾取（共 " + _bgiStatus.PickTotal + " 件）");
+                    SetText(StatusPicks, picks);
+                    StatusPicksTitle.Visibility = Visibility.Visible;
+                    StatusPicks.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    StatusPicksTitle.Visibility = Visibility.Collapsed;
+                    StatusPicks.Visibility = Visibility.Collapsed;
+                }
+
+                // ★ 异常单独占一行（红色框）：失败原因比进度更需要被看到，
+                //   混在"当前路线"里会被忽略。
+                if (_bgiStatus.HasProblem)
+                {
+                    var lines = new List<string>();
+                    if (!string.IsNullOrEmpty(_bgiStatus.FailedGroup))
+                        lines.Add("配置组「" + _bgiStatus.FailedGroup + "」执行失败");
+                    if (!string.IsNullOrEmpty(_bgiStatus.LastError))
+                        lines.Add(_bgiStatus.LastError);
+                    if (lines.Count == 0 && _bgiStatus.TaskEnded)
+                        lines.Add("任务已结束，当前没有在跑");
+
+                    SetText(StatusProblem, string.Join(Environment.NewLine, lines));
+                    StatusProblemBox.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    StatusProblemBox.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>停止当前日志跟随。</summary>
+        private void StopFollower()
+        {
+            try { _follower?.Dispose(); } catch { }
+            _follower = null;
         }
 
         public MainWindow? MainWindowRef { get; set; }
@@ -547,6 +1322,61 @@ namespace SoulLink.Views
 
         public string UserName => Session.UserName;
         public string SideText => "#" + Session.Id;
+
+        /// <summary>
+        /// 显示名：中控台里给账号填了备注名就用备注名。
+        /// ★ 用户要求左右两侧（会话列表、运行状态）都用这个，
+        ///   只填一个备注名即可全局生效，不用每处单独改。
+        /// </summary>
+        public string DisplayName
+        {
+            get
+            {
+                string name = RealName;
+                if (string.IsNullOrWhiteSpace(_remark)) return name;
+                return name + " · " + _remark;
+            }
+        }
+
+        /// <summary>
+        /// 真实大小写的用户名。
+        /// ★ 兜底：如果会话名是 query user 给的小写（a2），
+        ///   而账号配置里登记的是大写（A2），就用配置里的写法。
+        ///   这样即使 qwinsta 校正失败，界面也不会大小写混杂。
+        /// </summary>
+        public string RealName
+        {
+            get
+            {
+                if (!string.IsNullOrEmpty(_realName)) return _realName;
+                return Session.UserName;
+            }
+        }
+
+        private string _realName = "";
+        private string _remark = "";
+
+        /// <summary>设置真实大小写的用户名。</summary>
+        public void SetRealName(string name)
+        {
+            if (string.Equals(_realName, name, StringComparison.Ordinal)) return;
+            _realName = name ?? "";
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(RealName)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(DisplayName)));
+        }
+
+        /// <summary>设置备注名（来自中控台账号配置的 DisplayName）。</summary>
+        public void SetRemark(string remark)
+        {
+            if (_remark == remark) return;
+            _remark = remark ?? "";
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(DisplayName)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(DisplayNameOnly)));
+        }
+
+        /// <summary>仅备注名（没有则回退用户名）。</summary>
+        public string DisplayNameOnly
+            => string.IsNullOrWhiteSpace(_remark) ? RealName : _remark;
         public bool IsActive => Session.IsActive;
 
         /// <summary>
