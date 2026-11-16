@@ -1,8 +1,8 @@
-# 一键回退到已验证的可靠版本 v1.9.0-reliable
+# 一键回退到已验证的可靠版本 v1.9.1-reliable
 # 用法：右键“使用 PowerShell 运行”，或  powershell -ExecutionPolicy Bypass -File rollback.ps1
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$tag  = 'v1.9.0-reliable'
+$tag  = 'v1.9.1-reliable'
 $src  = Join-Path $repo "releases\$tag"
 $dst  = Join-Path $repo 'dist'
 
@@ -44,6 +44,7 @@ Get-ChildItem $dst -Filter '*.exe' | Select-Object Name, @{N='MB';E={[math]::Rou
 $hash = (Get-FileHash (Join-Path $dst 'SoulLink.exe') -Algorithm SHA256).Hash
 Write-Host "SHA256 = $hash" -ForegroundColor Green
 Write-Host "回退完成：$tag" -ForegroundColor Green
+
 
 
 
