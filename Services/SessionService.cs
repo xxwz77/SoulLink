@@ -15,10 +15,41 @@ namespace SoulLink.Services
     /// </summary>
     public static class SessionService
     {
-        // 中英文系统都能吃：状态列在中文系统里是「运行中 / 断开」，英文是 Active / Disc
+        // ★ 宽松版：不再强求登录时间的具体格式。
+        //   原来要求 yyyy/MM/dd HH:mm，遇到 11/17/2026、2026-11-17、
+        //   或者系统没输出时间列时整行匹配失败 → 一个会话都读不到。
+        //   现在：用户 会话名 ID 状态 后面的内容全部吞掉，再单独解析空闲/登录时间。
         private static readonly Regex SessionRx = new Regex(
-            @"^\s*[>\*]?\s*(?<user>\S+)\s+(?<sess>\S*)\s+(?<id>\d+)\s+(?<state>\S+)\s+(?<idle>\S+)\s+(?<logon>\d{4}[/\-]\d{1,2}[/\-]\d{1,2}\s+\d{1,2}:\d{2})\s*$",
+            @"^\s*[>\*]?\s*(?<user>\S+)\s+(?<sess>\S*)\s+(?<id>\d+)\s+(?<state>\S+)(?<rest>.*)$",
             RegexOptions.Compiled);
+
+        /// <summary>从行尾解析空闲时间和登录时间（宽松，失败也不影响会话本身）。</summary>
+        private static void ParseTail(string rest, out string idle, out string logon)
+        {
+            idle = "";
+            logon = "";
+
+            string t = (rest ?? "").Trim();
+            if (t.Length == 0) return;
+
+            // 登录时间：兼容各种区域格式
+            //   yyyy/MM/dd HH:mm   yyyy-MM-dd HH:mm   MM/dd/yyyy HH:mm
+            //   11.16 4:10         （点号 + 无年份 + 单位小时，实测中文系统会这样输出）
+            var mDate = Regex.Match(t,
+                @"(?<d>\d{4}[/\-\.]\d{1,2}[/\-\.]\d{1,2}" +      // 带年份
+                @"|\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{4}" +          // 年在后
+                @"|\d{1,2}[\-\.]\d{1,2})" +                         // 无年份（11.16）
+                @"\s+(?<t>\d{1,2}:\d{2}(?::\d{2})?)");
+            if (mDate.Success)
+            {
+                logon = mDate.Groups["d"].Value + " " + mDate.Groups["t"].Value;
+                t = t.Substring(0, mDate.Index).Trim();
+            }
+
+            // 空闲时间：none / . / 数字 / H:MM / D:HH:MM
+            if (t.Length > 0)
+                idle = t.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)[0];
+        }
 
         /// <summary>调用 query user，返回当前机器上的全部交互式会话。</summary>
         public static async Task<List<SessionInfo>> QueryAsync()
@@ -36,14 +67,24 @@ namespace SoulLink.Services
                 int id;
                 if (!int.TryParse(m.Groups["id"].Value, out id)) continue;
                 string rawState = m.Groups["state"].Value;
+                string user = m.Groups["user"].Value.TrimStart('>', '*');
+
+                // 跳过表头（英文 USERNAME / 中文 用户名 / 分隔线）
+                if (user.Equals("USERNAME", StringComparison.OrdinalIgnoreCase)
+                    || user.Equals("用户名", StringComparison.Ordinal)
+                    || user.StartsWith("---", StringComparison.Ordinal))
+                    continue;
+
+                ParseTail(m.Groups["rest"].Value, out string idle, out string logon);
+
                 list.Add(new SessionInfo
                 {
-                    UserName = m.Groups["user"].Value.TrimStart('>', '*'),
+                    UserName = user,
                     SessionName = m.Groups["sess"].Value,
                     Id = id,
                     State = NormalizeState(rawState),
-                    IdleTime = m.Groups["idle"].Value.Trim(),
-                    LogonTime = m.Groups["logon"].Value
+                    IdleTime = idle,
+                    LogonTime = logon
                 });
             }
 
