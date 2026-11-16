@@ -29,8 +29,192 @@ namespace SoulLink.Models
         /// <summary>延时秒数，0 表示立即</summary>
         public int DelaySeconds { get; set; } = 0;
 
+        /// <summary>
+        /// 执行前先停止目标账号正在运行的 BetterGI。
+        /// 一条龙/配置组必须从 BGI 空闲状态启动，否则会被"已有任务在跑"挡住。
+        /// </summary>
+        public bool StopBgiFirst { get; set; } = true;
+
+        /// <summary>执行前是否同时关闭目标账号的原神（YuanShen.exe）。</summary>
+        public bool CloseGenshin { get; set; } = false;
+
+        /// <summary>
+        /// 停止 BGI / 游戏后，**等进程完全退出**之外再额外等待的秒数。
+        /// 与 DelaySeconds（执行前延时）相互独立。
+        /// </summary>
+        public int StopWaitSeconds { get; set; } = 2;
+
+        /// <summary>
+        /// 定时执行计划。为空表示不启用（手动执行）。
+        /// 启用后会写入 Windows 计划任务，即使 SoulLink 没开也会按时执行。
+        /// </summary>
+        public ScheduleSpec? Schedule { get; set; }
+
         [JsonIgnore]
         public bool IsClose => Kind == ActionKind.Close;
+
+        [JsonIgnore]
+        public bool HasSchedule => Schedule != null && Schedule.Enabled;
+    }
+
+    /// <summary>定时类型。</summary>
+    public enum ScheduleKind
+    {
+        /// <summary>每天固定时刻</summary>
+        Daily = 0,
+        /// <summary>每周指定星期几</summary>
+        Weekly = 1,
+        /// <summary>每月指定几号</summary>
+        Monthly = 2,
+        /// <summary>每年指定月日</summary>
+        Yearly = 3,
+        /// <summary>固定间隔（分钟级/小时级）</summary>
+        Interval = 4,
+        /// <summary>只执行一次</summary>
+        Once = 5
+    }
+
+    /// <summary>
+    /// 一条动作的定时计划。
+    /// ★ 所有类型都精确到**秒**：时刻型用 Hour/Minute/Second，间隔型用 IntervalSeconds。
+    /// </summary>
+    public class ScheduleSpec
+    {
+        public bool Enabled { get; set; }
+
+        /// <summary>
+        /// 已废弃：Windows 计划任务方案已移除。
+        /// 现在定时统一由 SoulLink 进程内调度器执行
+        /// （计划任务要求 BGI 以目标账号身份运行，实现复杂且易出错）。
+        /// </summary>
+        public bool UseWindowsTask { get; set; } = false;
+
+        public ScheduleKind Kind { get; set; } = ScheduleKind.Daily;
+
+        // ── 时刻型（Daily/Weekly/Monthly/Yearly/Once）───────────────
+        /// <summary>时 0-23</summary>
+        public int Hour { get; set; } = 4;
+        /// <summary>分 0-59</summary>
+        public int Minute { get; set; } = 0;
+        /// <summary>秒 0-59（精确到秒）</summary>
+        public int Second { get; set; } = 0;
+
+        // ── Weekly ────────────────────────────────────────────────
+        /// <summary>星期几，0=周日 … 6=周六</summary>
+        public List<int> WeekDays { get; set; } = new List<int>();
+
+        // ── Monthly ───────────────────────────────────────────────
+        /// <summary>几号 1-31</summary>
+        public int DayOfMonth { get; set; } = 1;
+
+        // ── Yearly ────────────────────────────────────────────────
+        public int Month { get; set; } = 1;
+
+        // ── Interval ──────────────────────────────────────────────
+        /// <summary>间隔秒数（例如 3600 = 每小时）</summary>
+        public int IntervalSeconds { get; set; } = 3600;
+
+        // ── Once ──────────────────────────────────────────────────
+        /// <summary>只一次的执行时刻（本地时间）</summary>
+        public DateTime OnceAt { get; set; } = DateTime.Now.AddHours(1);
+
+        /// <summary>
+        /// 每次执行完成后，延时 N 秒再允许下一次。
+        /// 用于"跑完一轮等一会儿再跑下一轮"的场景（如一条龙耗时较长）。
+        /// ★ 对 Interval 类型是叠加在间隔之上的缓冲；
+        ///   对其他类型是"上一次还在跑就跳过"的保护窗口。
+        /// </summary>
+        public int PostRunDelaySeconds { get; set; } = 0;
+
+        /// <summary>上次实际执行时间（用于间隔计算与界面显示）。</summary>
+        public DateTime? LastRunAt { get; set; }
+
+        /// <summary>
+        /// 已执行次数。用于"每次执行后延后 N 秒"的递增计算。
+        /// ★ 语义：第 n 次执行时刻 = 基准时刻 + (n-1) × PostRunDelaySeconds
+        ///   例：基准 4:00、延后 60 秒
+        ///       第1次 4:00:00、第2次 4:01:00、第3次 4:02:00 …
+        ///   延后 86400 秒（1 天）时：第2次 = 4:00 + 24h = 第3天 4:00
+        /// </summary>
+        public int RunCount { get; set; }
+
+        /// <summary>
+        /// 是否暂停。
+        /// ★ 用户在主界面点了暂停，或者（计划任务模式下）计划任务被手动删除时，
+        ///   这个标记会置为 true，界面显示"已暂停"。
+        /// </summary>
+        public bool Paused { get; set; }
+
+        /// <summary>暂停原因（显示用），例如"计划任务已被删除"。</summary>
+        public string PauseReason { get; set; } = "";
+
+        /// <summary>
+        /// 延后单位，仅用于**界面显示**（秒/分/时/天）。
+        /// 实际计算一律用 PostRunDelaySeconds。
+        /// </summary>
+        public int PostRunDelayUnit { get; set; } = 1;   // 0=秒 1=分 2=时 3=天
+
+        /// <summary>把单位换算成秒。</summary>
+        public static int UnitToSeconds(int unit) => unit switch
+        {
+            3 => 86400,   // 天
+            2 => 3600,    // 时
+            1 => 60,      // 分
+            _ => 1        // 秒
+        };
+
+        /// <summary>界面上的"延后 X 单位"文字。</summary>
+        [JsonIgnore]
+        public string PostRunDelayDisplay
+        {
+            get
+            {
+                if (PostRunDelaySeconds <= 0) return "不延后";
+                int unitSec = UnitToSeconds(PostRunDelayUnit);
+                int v = PostRunDelaySeconds / Math.Max(1, unitSec);
+                string unitName = PostRunDelayUnit switch
+                {
+                    3 => "天", 2 => "小时", 1 => "分钟", _ => "秒"
+                };
+                return "每次延后 " + v + " " + unitName;
+            }
+        }
+
+        /// <summary>人类可读的描述。</summary>
+        [JsonIgnore]
+        public string Display
+        {
+            get
+            {
+                string at = Hour.ToString("00") + ":" + Minute.ToString("00") + ":" + Second.ToString("00");
+                switch (Kind)
+                {
+                    case ScheduleKind.Daily: return "每天 " + at;
+                    case ScheduleKind.Weekly:
+                    {
+                        if (WeekDays.Count == 0) return "每周（未选星期） " + at;
+                        var names = new[] { "日", "一", "二", "三", "四", "五", "六" };
+                        var parts = new List<string>();
+                        foreach (var d in WeekDays)
+                            if (d >= 0 && d < 7) parts.Add("周" + names[d]);
+                        return string.Join("、", parts) + " " + at;
+                    }
+                    case ScheduleKind.Monthly: return "每月 " + DayOfMonth + " 号 " + at;
+                    case ScheduleKind.Yearly: return "每年 " + Month + " 月 " + DayOfMonth + " 号 " + at;
+                    case ScheduleKind.Interval:
+                    {
+                        if (IntervalSeconds >= 3600 && IntervalSeconds % 3600 == 0)
+                            return "每 " + (IntervalSeconds / 3600) + " 小时";
+                        if (IntervalSeconds >= 60 && IntervalSeconds % 60 == 0)
+                            return "每 " + (IntervalSeconds / 60) + " 分钟";
+                        return "每 " + IntervalSeconds + " 秒";
+                    }
+                    case ScheduleKind.Once:
+                        return "只一次 " + OnceAt.ToString("yyyy-MM-dd HH:mm:ss");
+                    default: return at;
+                }
+            }
+        }
     }
 
     /// <summary>账号：user + password + 可选的固定会话 ID</summary>
@@ -39,6 +223,12 @@ namespace SoulLink.Models
         public string Id { get; set; } = Guid.NewGuid().ToString("N");
         public string UserName { get; set; } = "";
         /// <summary>DPAPI 加密后的密码（Base64）</summary>
+        /// <summary>
+        /// 加密保存的登录密码。
+        /// ★ 用途仅限 **RDP 连接时自动登录**（IMsTscNonScriptable.ClearTextPassword），
+        ///   省去每次连接都要手输密码。
+        /// ★ 与"跨会话投送"无关：投送走 SYSTEM 计划任务 + WTSQueryUserToken，不用凭据。
+        /// </summary>
         public string PasswordCipher { get; set; } = "";
         /// <summary>0 = 自动查找会话</summary>
         public int SessionId { get; set; } = 0;
@@ -92,6 +282,21 @@ namespace SoulLink.Models
         [JsonIgnore]
         public string Caption => !string.IsNullOrWhiteSpace(DisplayName) ? DisplayName : UserName;
 
+        /// <summary>
+        /// 动作编辑窗口下拉里的提示后缀。
+        /// 用户可以直接输入任意用户名（执行时再匹配会话），
+        /// 这里只是把"已保存过凭据的账号"标出来，方便复用。
+        /// </summary>
+        [JsonIgnore]
+        public string SessionTag => string.IsNullOrWhiteSpace(DisplayName)
+            ? "（已保存）"
+            : ("（" + DisplayName + "）");
+
+        /// <summary>提示后缀颜色。</summary>
+        [JsonIgnore]
+        public System.Windows.Media.Brush SessionTagBrush
+            => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x88, 0x99, 0xB8));
+
         /// <summary>RDP 登录名：没单独填就用 Windows 用户名</summary>
         [JsonIgnore]
         public string EffectiveRdpUserName => string.IsNullOrWhiteSpace(RdpUserName) ? UserName : RdpUserName;
@@ -131,6 +336,14 @@ namespace SoulLink.Models
         /// </summary>
         public System.Collections.Generic.List<string> AutoConnectAccountIds { get; set; }
             = new System.Collections.Generic.List<string>();
+
+        /// <summary>
+        /// 每个用户记住的 BetterGI 路径（用户名 → BetterGI.exe 完整路径）。
+        /// 动作编辑窗口的「BGI」按钮用它：首次让用户指定，之后同用户直接回填。
+        /// </summary>
+        public System.Collections.Generic.Dictionary<string, string> BgiPaths { get; set; }
+            = new System.Collections.Generic.Dictionary<string, string>(
+                System.StringComparer.OrdinalIgnoreCase);
 
         // ── 内嵌 RDP 控制台 ────────────────────────────────────────────
         /// <summary>控制台默认分辨率</summary>

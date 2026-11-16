@@ -121,11 +121,6 @@ namespace SoulLink.Views
             string names = string.Join("、", targets.Take(3).Select(t => t.Name)) + (targets.Count > 3 ? " 等" : "");
             if (!Dialogs.Confirm("确定结束 " + targets.Count + " 个进程？\n\n" + names, "结束进程", true)) return;
 
-            string password = "";
-            var account = App.Config.Accounts.FirstOrDefault(a =>
-                string.Equals(a.UserName, _current.UserName, StringComparison.OrdinalIgnoreCase));
-            if (account != null) password = ConfigStore.GetPassword(account);
-
             int ok = 0;
             var errors = new List<string>();
             foreach (var t in targets)
@@ -155,21 +150,17 @@ namespace SoulLink.Views
             };
             if (dlg.ShowDialog() != true) return;
 
+            // 不再需要密码：投送走 SYSTEM 计划任务 + WTSQueryUserToken
             var account = App.Config.Accounts.FirstOrDefault(a =>
                 string.Equals(a.UserName, _current.UserName, StringComparison.OrdinalIgnoreCase));
-            string password = account == null ? "" : ConfigStore.GetPassword(account);
-
-            if (string.IsNullOrEmpty(password))
+            if (account == null)
             {
-                var pwd = new PasswordWindow(_current.UserName) { Owner = Window.GetWindow(this) };
-                if (pwd.ShowDialog() != true) return;
-                password = pwd.Password;
-                if (account == null) { account = new Account { UserName = _current.UserName }; App.Config.Accounts.Add(account); }
-                ConfigStore.SetPassword(account, password);
+                account = new Account { UserName = _current.UserName };
+                App.Config.Accounts.Add(account);
                 ConfigStore.Save(App.Config);
             }
 
-            var target = new ActionService.Target { Account = account!, Session = _current, Password = password };
+            var target = new ActionService.Target { Account = account, Session = _current };
             await Task.Run(() => ActionService.EnsureToolAsync(App.Config));
             var r = await Task.Run(() => ActionService.LaunchAsync(target, dlg.FileName, null));
             LogBus.Write(r.Ok ? LogLevel.Ok : LogLevel.Error, r.Message);

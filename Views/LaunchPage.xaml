@@ -47,6 +47,11 @@
                     <Grid Grid.Row="0" Margin="2,0,2,8">
                         <TextBlock Text="快捷动作" FontSize="12" FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
+                        <!-- 执行结果提示：出现在标题行中间，6 秒后自动消失 -->
+                        <TextBlock x:Name="RunHint" Text="" FontSize="10.5"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="260"
+                                   Visibility="Collapsed" Margin="70,0,70,0" />
                         <Button x:Name="BtnNewAction" Style="{StaticResource GhostButton}"
                                 HorizontalAlignment="Right" Padding="10,5"
                                 Click="NewAction_Click" ToolTip="新建动作">
@@ -89,12 +94,30 @@
                                         <TextBlock Text="{Binding ExeName}" FontSize="11" Foreground="{StaticResource TextMuted}"
                                                    TextTrimming="CharacterEllipsis" MaxWidth="190" />
                                     </StackPanel>
+
+                                    <!-- 定时信息：只有配了定时的动作才显示 -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0"
+                                                Visibility="{Binding ScheduleVisibility}">
+                                        <TextBlock Text="&#xE823;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                                   VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock Text="{Binding NextRunText}" FontSize="10.5"
+                                                   Foreground="{Binding NextRunBrush}"
+                                                   VerticalAlignment="Center" Margin="5,0,0,0" />
+
+                                    </StackPanel>
                                 </StackPanel>
 
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                     <Border CornerRadius="7" Padding="8,3" Background="{Binding BadgeBg}" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding KindText}" FontSize="10.5" Foreground="{Binding BadgeFg}" FontWeight="SemiBold" />
                                     </Border>
+                                    <!-- 暂停/恢复：只有配了定时的动作才显示 -->
+                                    <Button Style="{StaticResource IconButton}" Width="30" Height="30" Margin="6,0,0,0"
+                                            Click="PauseSchedule_Click" Tag="{Binding}"
+                                            ToolTip="{Binding PauseTip}"
+                                            Visibility="{Binding ScheduleVisibility}">
+                                        <TextBlock Text="{Binding PauseGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                                    </Button>
                                     <Button Style="{StaticResource IconButton}" Width="30" Height="30" Margin="6,0,0,0"
                                             Click="RunAction_Click" Tag="{Binding}" ToolTip="立即执行">
                                         <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
@@ -102,6 +125,10 @@
                                     <Button Style="{StaticResource IconButton}" Width="30" Height="30"
                                             Click="EditAction_Click" Tag="{Binding}" ToolTip="编辑">
                                         <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                                    </Button>
+                                    <Button Style="{StaticResource IconButton}" Width="30" Height="30"
+                                            Click="DeleteAction_Click" Tag="{Binding}" ToolTip="删除">
+                                        <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
                                     </Button>
                                 </StackPanel>
                             </Grid>
@@ -261,57 +288,8 @@
                     </Grid>
                 </Border>
 
-                <!-- 底部：执行 + 命令 -->
-                <Border Grid.Row="3" x:Name="RunPanel" Style="{StaticResource GlassPanel}" Padding="14,12" Margin="0,12,0,0">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-
-                        <Button Grid.Row="0" Grid.Column="0" x:Name="BtnRun" Style="{StaticResource PrimaryButton}"
-                                Click="RunSelected_Click" Margin="0,0,12,0" MinWidth="132">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" />
-                                <TextBlock Text="执行选中动作" Margin="9,0,0,0" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-
-                        <Border Grid.Row="0" Grid.Column="1" CornerRadius="10" Background="#14000000"
-                                BorderBrush="#22FFFFFF" BorderThickness="1" Padding="10,6">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" x:Name="CmdPreview" Text="—" Style="{StaticResource Mono}"
-                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Style="{StaticResource IconButton}" Width="26" Height="26"
-                                        Click="CopyCmd_Click" ToolTip="复制命令">
-                                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
-                                </Button>
-                            </Grid>
-                        </Border>
-
-                        <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,11,0,0">
-                            <Button Style="{StaticResource GhostButton}" Click="ChangePassword_Click" Padding="11,6">
-                                <TextBlock Text="改密码" FontSize="11.5" />
-                            </Button>
-                            <Button Style="{StaticResource GhostButton}" Click="DeleteAction_Click" Padding="11,6" Margin="8,0,0,0">
-                                <TextBlock Text="删除动作" FontSize="11.5" />
-                            </Button>
-                            <Button Style="{StaticResource GhostButton}" Click="BrowseExe_Click" Padding="11,6" Margin="8,0,0,0">
-                                <TextBlock Text="换程序" FontSize="11.5" />
-                            </Button>
-                            <TextBlock x:Name="LastRunText" Style="{StaticResource Caption}" VerticalAlignment="Center"
-                                       Margin="14,0,0,0" TextTrimming="CharacterEllipsis" MaxWidth="220" />
-                        </StackPanel>
-                    </Grid>
-                </Border>
+                <!-- 底部操作区已移除：执行/编辑/删除都放到每个动作卡片上，
+                     避免"先选动作再点下面按钮"的两步操作和位置混淆。 -->
             </Grid>
         </Border>
 

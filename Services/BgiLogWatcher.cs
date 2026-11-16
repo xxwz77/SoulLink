@@ -324,6 +324,28 @@ namespace SoulLink.Services
             return (byGroup, current);
         }
 
+        /// <summary>
+        /// 在指定 BGI 安装目录里找"今天"的日志文件。
+        /// 用于区分"今天跑过但已退出" 和 "今天还没启动过"。
+        /// </summary>
+        public static string FindTodayLog(string bgiExePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(bgiExePath)) return "";
+                string? dir = Path.GetDirectoryName(bgiExePath);
+                if (string.IsNullOrEmpty(dir)) return "";
+
+                string logDir = Path.Combine(dir, "log");
+                if (!Directory.Exists(logDir)) return "";
+
+                string today = Path.Combine(logDir,
+                    "better-genshin-impact" + DateTime.Now.ToString("yyyyMMdd") + ".log");
+                return File.Exists(today) ? today : "";
+            }
+            catch { return ""; }
+        }
+
         /// <summary>从一行日志里读配置组名（兼容三种写法），没有则返回 null。</summary>
         private static string? TryReadGroup(string line)
         {

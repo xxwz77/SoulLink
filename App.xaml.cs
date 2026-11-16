@@ -338,6 +338,16 @@ namespace SoulLink
                     _window = null;
                     if (!toTray) ExitApp();
                 };
+
+                // 启动进程内定时调度器（只处理"仅运行时"的计划）
+                try
+                {
+                    ScheduleRunnerHost.StartOnce(() => Config);
+                }
+                catch (Exception ex)
+                {
+                    LogBus.Error("启动定时调度失败：" + ex.Message);
+                }
             }
 
             if (!_window.IsVisible) _window.Show();

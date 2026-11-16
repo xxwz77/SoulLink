@@ -15,7 +15,8 @@ namespace SoulLink.Services
         {
             public Account Account { get; set; } = new Account();
             public SessionInfo Session { get; set; } = new SessionInfo();
-            public string Password { get; set; } = "";
+            // 密码字段已移除：投送/启动走 SYSTEM 计划任务 + WTSQueryUserToken，
+            // 目标会话不需要任何凭据。
         }
 
         /// <summary>解析账号对应的会话；失败的友好提示。</summary>
@@ -49,7 +50,7 @@ namespace SoulLink.Services
                 return null;
             }
 
-            return new Target { Account = account, Session = s, Password = ConfigStore.GetPassword(account) };
+            return new Target { Account = account, Session = s };
         }
 
         /// <summary>检查投送通道是否就绪（需要管理员权限）。</summary>
@@ -173,6 +174,36 @@ namespace SoulLink.Services
 
             if (!await EnsureToolAsync(cfg, ct).ConfigureAwait(false))
                 return ExecResult.Fail("需要管理员权限：请右键 SoulLink.exe →「以管理员身份运行」。");
+
+            // ★ 执行前清场：一条龙 / 配置组必须从"BGI 空闲"状态启动，
+            //   否则会被"已有任务在跑"挡住。只在**打开**类动作上做，
+            //   且只影响目标会话。
+            if (action.Kind == ActionKind.Launch && action.StopBgiFirst)
+            {
+                try
+                {
+                    // BGI 路径：优先用动作里配置的 exe
+                    string bgiExe = action.ExePath;
+                    LogBus.Info("准备执行「" + action.Name + "」：先停止目标账号的 BGI");
+
+                    var prep = await BgiTaskPreparer.PrepareAsync(
+                        target.Session.Id, bgiExe,
+                        stopBgi: true,
+                        closeGenshin: action.CloseGenshin,
+                        extraWaitSeconds: action.StopWaitSeconds,
+                        ct).ConfigureAwait(false);
+
+                    LogBus.Write(prep.Ok ? LogLevel.Info : LogLevel.Error,
+                        "清场" + (prep.Ok ? "完成" : "失败"), prep.Message + "（方式：" + prep.StopMethod + "）");
+
+                    if (!prep.Ok)
+                        return ExecResult.Fail("停止 BGI 失败：" + prep.Message);
+                }
+                catch (Exception ex)
+                {
+                    LogBus.Error("清场异常：" + ex.Message);
+                }
+            }
 
             switch (action.Kind)
             {

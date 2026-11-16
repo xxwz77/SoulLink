@@ -308,14 +308,36 @@ namespace SoulLink.Views
                 var ids = App.Config.Settings.AutoConnectAccountIds;
                 if (ids == null || ids.Count == 0) return;
 
-                // 尚未投送、且仍在配置列表里的账号
+                // ★ 先查会话，用最新状态决定"要不要继续盯着"。
+                //   原来在查会话之前就用 _deployHandled 过滤掉了已投送的账号，
+                //   导致"A2 连上过一次、之后掉线"时监控直接跳过它，
+                //   永远不再重连（用户实测：A3 拉起成功、A2 一直 Disc）。
+                var sessionsNow = await SessionService.QueryAsync().ConfigureAwait(true);
+
                 var watching = new List<(UserRow row, string caption)>();
                 foreach (var id in ids)
                 {
-                    if (_deployHandled.Contains(id)) continue;
+                    // 取出该账号当前会话
+                    SessionInfo? cur = null;
+                    UserRow? hit = null;
                     foreach (var r in _rows)
                         if (string.Equals(r.Account.Id, id, StringComparison.Ordinal))
-                        { watching.Add((r, r.Account.Caption)); break; }
+                        { hit = r; cur = SessionService.Find(sessionsNow, r.Account.UserName); break; }
+                    if (hit == null) continue;
+
+                    // 会话掉了（无会话 / Disc）→ 无论是否投送过，都要重新盯着
+                    bool alive = cur != null && cur.Id > 0
+                                 && !string.Equals(cur.State, "Disc", StringComparison.OrdinalIgnoreCase);
+                    if (!alive)
+                    {
+                        _deployHandled.Remove(id);   // 允许重新投送
+                        watching.Add((hit, hit.Account.Caption));
+                        continue;
+                    }
+
+                    // 会话活着：已投送过的就不再盯
+                    if (_deployHandled.Contains(id)) continue;
+                    watching.Add((hit, hit.Account.Caption));
                 }
                 // 清理已从配置移除的账号的计时
                 var stale = new List<string>();

@@ -136,7 +136,7 @@ namespace SoulLink.Services
             return cfg;
         }
 
-        // ── 账号密码便捷方法 ───────────────────────────────────────────────
+        // ── 账号密码（仅用于 RDP 连接自动登录）──────────────────────────────
 
         public static string GetPassword(Account a) => SecretBox.Unprotect(a.PasswordCipher);
 

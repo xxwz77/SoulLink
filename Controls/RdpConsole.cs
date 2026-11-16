@@ -304,7 +304,7 @@ namespace SoulLink.Controls
 
                 CurrentSessionId = s.Id;
                 Debug("投送通道：「" + acc.UserName + "」→ 会话 " + s.Id);
-                BeginInput(s.Id, acc, ConfigStore.GetPassword(acc));
+                BeginInput(s.Id, acc);
                 return true;
             }
             catch (Exception ex)
@@ -325,7 +325,7 @@ namespace SoulLink.Controls
                 var acc = Account;
                 if (acc == null) return;
                 _ = StopInputAsync();
-                BeginInput(CurrentSessionId, acc, ConfigStore.GetPassword(acc));
+                BeginInput(CurrentSessionId, acc);
                 Debug("切回画面：重建输入通道 会话=" + CurrentSessionId);
             }
             catch (Exception ex) { Debug("重建输入通道失败：" + ex.Message); }
@@ -1612,7 +1612,7 @@ namespace SoulLink.Controls
                             //   所以这里只在没配自动连接时才投送。
                             bool autoManaged = App.Config.Settings.AutoConnectAccountIds?.Count > 0;
                             if (!autoManaged && connection == _connectionGeneration)
-                                BeginInput(activeSessionId, account, password);
+                                BeginInput(activeSessionId, account);
                             else if (autoManaged)
                                 Debug("连接成功；通道交由会话监控统一投送（会话 " + activeSessionId + "）");
                             return (true, "已连接（" + sw.ElapsedMilliseconds + " ms）");
@@ -1899,7 +1899,7 @@ namespace SoulLink.Controls
         /// 画面连上后投送注入代理。
         /// 注意：这一步是**可选增强**——失败了画面照样能用（只是不能转视角），不阻塞连接。
         /// </summary>
-        private async void BeginInput(int sessionId, Account account, string password)
+        private async void BeginInput(int sessionId, Account account)
         {
             // ★ 不能要求 InputAllowed（前台 + 可见）。
             //   多账号挂机时后台账号的 Console 不在 ViewportHost 里、也不是前台，
@@ -1933,7 +1933,7 @@ namespace SoulLink.Controls
             }
             try
             {
-                await BeginInputCore(sessionId, account, password);
+                await BeginInputCore(sessionId, account);
             }
             catch (Exception ex)
             {
@@ -1953,7 +1953,7 @@ namespace SoulLink.Controls
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte>
             DeployingSessions = new System.Collections.Concurrent.ConcurrentDictionary<int, byte>();
 
-        private async Task BeginInputCore(int sessionId, Account account, string password)
+        private async Task BeginInputCore(int sessionId, Account account)
         {
             await StopInputAsync().ConfigureAwait(true);
             int generation = System.Threading.Interlocked.Increment(ref _inputGeneration);
@@ -1973,7 +1973,7 @@ namespace SoulLink.Controls
                 // ★ ConfigureAwait(false)：投送包含 schtasks 建任务 + 等代理连回管道，
                 //   最长 20 秒。若回到 UI 线程继续，界面会在这段时间无法响应
                 //   （用户实测：多账号自动投送时卡死）。后续对控件的操作会显式切回 UI。
-                var (ok, msg) = await relay.DeployAsync(account, password).ConfigureAwait(false);
+                var (ok, msg) = await relay.DeployAsync(account).ConfigureAwait(false);
 
                 if (!ok)
                 {

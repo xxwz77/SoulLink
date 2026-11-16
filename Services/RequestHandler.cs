@@ -93,8 +93,8 @@ namespace SoulLink.Services
             }
 
             // 3) 临时目标：--user / --account / 位置参数
+            //   （密码已废弃：投送走 SYSTEM 计划任务 + WTSQueryUserToken，不需要凭据）
             string userName = "";
-            string? password = req.Password;
             Account? account = null;
 
             if (!string.IsNullOrWhiteSpace(req.Account))
@@ -106,7 +106,6 @@ namespace SoulLink.Services
             if (account != null)
             {
                 userName = account.UserName;
-                if (string.IsNullOrEmpty(password)) password = ConfigStore.GetPassword(account);
             }
             else if (!string.IsNullOrWhiteSpace(req.User))
             {
@@ -117,7 +116,6 @@ namespace SoulLink.Services
                 userName = req.Account!;
                 account = cfg.Accounts.FirstOrDefault(a =>
                     string.Equals(a.UserName, SessionService.BareName(userName), StringComparison.OrdinalIgnoreCase));
-                if (account != null && string.IsNullOrEmpty(password)) password = ConfigStore.GetPassword(account);
             }
 
             if (string.IsNullOrWhiteSpace(userName))
@@ -148,8 +146,7 @@ namespace SoulLink.Services
             var target = new ActionService.Target
             {
                 Account = targetAccount,
-                Session = session,
-                Password = password ?? ""
+                Session = session
             };
 
             if (req.Delay > 0)

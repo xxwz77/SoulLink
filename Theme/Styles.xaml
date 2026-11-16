@@ -233,6 +233,54 @@
         </Setter>
     </Style>
 
+    <!-- 紧凑输入框：用于时间/数字等窄框。
+         ★ 不使用 GlassTextBox：它固定 Padding=12,9，在 60~80px 的窄框里
+           会把文字挤出可视区（用户实测"输入框挡住文字"）。 -->
+    <Style x:Key="CompactTextBox" TargetType="TextBox">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="CaretBrush" Value="{StaticResource CyanBrush}" />
+        <Setter Property="SelectionBrush" Value="#804FE3FF" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="TextAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Grid>
+                        <Border x:Name="Shell" CornerRadius="10"
+                                Background="{StaticResource FieldBackground}"
+                                BorderBrush="{StaticResource StrokeSoft}" BorderThickness="1" />
+                        <Border x:Name="FocusRing" CornerRadius="10" BorderThickness="1"
+                                BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
+                        <!-- ★ 关键1：Margin 为 0，文字不会被内边距挤出去。
+                             ★ 关键2：ScrollViewer 必须**撑满整个框**（Stretch），
+                               否则它的可点击区域只有文字那么宽，
+                               点数字右边的空白没反应（用户反馈"不能点右边"）。
+                               文字居中由 TextBox 的 TextAlignment 负责，不需要 ScrollViewer 居中。 -->
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      VerticalAlignment="Center"
+                                      HorizontalAlignment="Stretch" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="Opacity" Value="1" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="#44FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="GlassPasswordBox" TargetType="PasswordBox">
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
         <Setter Property="FontSize" Value="13" />

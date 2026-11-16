@@ -50,8 +50,11 @@ namespace SoulLink.Views
                 // 左侧：主会话显示总览，其它账号显示单账号状态
                 if (_logSession != null && _logSession.IsConsoleSession)
                 {
-                    if (_overviewRows.Count == 0) RefreshOverview();
-                    else UpdateOverviewTexts();
+                    // ★ 每轮都调用 RefreshOverview：它内部会比对"当前会话集合"
+                    //   与已有卡片，账号增删/会话号变化（注销重登会换号）时自动重建，
+                    //   否则出现过一次卡片后就再也不重建，新登录的账号永远不显示。
+                    RefreshOverview();
+                    if (_overviewRows.Count > 0) UpdateOverviewTexts();
                 }
                 else if (_statusFollower == null && _logSession != null)
                 {
@@ -225,16 +228,14 @@ namespace SoulLink.Views
             UpdateCommandPreview(ActionList.SelectedItem as ActionVm);
         }
 
+        /// <summary>
+        /// 选中动作时记忆它（下次启动恢复），并刷新上次执行结果提示。
+        /// ★ 底部"执行/命令预览"区已移除：执行、编辑、删除都在卡片上直接点，
+        ///   不需要先选中再点下面的按钮。
+        /// </summary>
         private void UpdateCommandPreview(ActionVm? vm)
         {
-            if (vm == null)
-            {
-                CmdPreview.Text = "—";
-                BtnRun.IsEnabled = false;
-                return;
-            }
-            BtnRun.IsEnabled = !_busy;
-            CmdPreview.Text = CommandBuilder.ForAction(vm.Model);
+            if (vm == null) return;
 
             var state = ConfigStore.LoadState();
             state.SelectedActionId = vm.Model.Id;
@@ -278,7 +279,6 @@ namespace SoulLink.Views
                 bool isMain = sess.IsConsoleSession;
 
                 ActionPanel.Visibility = isMain ? Visibility.Visible : Visibility.Collapsed;
-                RunPanel.Visibility = isMain ? Visibility.Visible : Visibility.Collapsed;
 
                 // 页面标题固定为"运行状态"（左栏主题），只切换副标题
                 if (isMain)
@@ -462,6 +462,19 @@ namespace SoulLink.Views
             });
         }
 
+        /// <summary>从设置里读"用户名 → BGI 路径"（动作编辑窗口的 BGI 按钮会记住）。</summary>
+        private static string LoadBgiPath(string user)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(user)) return "";
+                var paths = App.Config.Settings.BgiPaths;
+                if (paths == null) return "";
+                return paths.TryGetValue(user, out string? p) ? (p ?? "") : "";
+            }
+            catch { return ""; }
+        }
+
         /// <summary>更新总览里每个账号的进度文字（读各自日志尾部）。</summary>
         private void UpdateOverviewTexts()
         {
@@ -489,14 +502,26 @@ namespace SoulLink.Views
                         }
                     }
 
-                    var results = new List<(OverviewRow row, BgiStatus st, bool running)>();
+                    var results = new List<(OverviewRow row, BgiStatus st, bool running, bool ranToday)>();
                     foreach (var row in _overviewRows.ToArray())
                     {
-                        // ★ 没有 BGI 进程也要出结果（running=false），
-                        //   界面显示"今日还未运行 BetterGI"，不能像以前那样直接跳过。
+                        // ★ 没有 BGI 进程也要出结果（running=false）。
+                        //   再用"今天有没有日志文件"区分两种情况：
+                        //     有日志 → 今天跑过，当前已退出
+                        //     没日志 → 今天还没启动过 / 该账号今天没上工
                         if (!bgi.TryGetValue(row.SessionId, out var inst))
                         {
-                            results.Add((row, new BgiStatus(), false));
+                            bool ranToday = false;
+                            try
+                            {
+                                // 从该账号配置的 BGI 路径推断今天是否有日志
+                                string uname = row.User.Split('·')[0].Trim();
+                                string bgiExe = LoadBgiPath(uname);
+                                if (!string.IsNullOrEmpty(bgiExe))
+                                    ranToday = !string.IsNullOrEmpty(BgiLogWatcher.FindTodayLog(bgiExe));
+                            }
+                            catch { }
+                            results.Add((row, new BgiStatus(), false, ranToday));
                             continue;
                         }
 
@@ -512,16 +537,18 @@ namespace SoulLink.Views
                         if (warns > st.WarnCount) st.WarnCount = warns;
                         if (fails > st.FailCount) st.FailCount = fails;
 
-                        results.Add((row, st, true));
+                        results.Add((row, st, true, true));
                     }
 
                     Dispatcher.InvokeAsync(() =>
                     {
-                        foreach (var (row, st, running) in results)
+                        foreach (var (row, st, running, ranToday) in results)
                         {
                             try
                             {
-                                // ★ 没跑 BGI：显示"今日还未运行"，其余行留空
+                                // ★ 没跑 BGI：分两种说法
+                                //   今天跑过（有当天日志）→ "今天运行过，当前已退出"
+                                //   今天没跑过（无日志）  → "今日还未运行 BetterGI"
                                 if (!running)
                                 {
                                     if (row.ErrorBadge != null)
@@ -533,10 +560,14 @@ namespace SoulLink.Views
                                         row.Line1.Text = row.User;
                                     if (row.Line2 != null)
                                     {
-                                        if (row.Line2.Text != "今日还未运行 BetterGI")
-                                            row.Line2.Text = "今日还未运行 BetterGI";
+                                        string txt = ranToday
+                                            ? "今天运行过，当前已退出"
+                                            : "今日还未运行 BetterGI";
+                                        if (row.Line2.Text != txt) row.Line2.Text = txt;
                                         row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
-                                            System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8));
+                                            ranToday
+                                                ? System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B)   // 橙：跑过但退出了
+                                                : System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8)); // 灰：今天没跑
                                         row.Line2.Visibility = Visibility.Visible;
                                     }
                                     if (row.Line3 != null)
@@ -1164,9 +1195,8 @@ namespace SoulLink.Views
         {
             if (_busy) return;
             _busy = true;
-            BtnRun.IsEnabled = false;
-            LastRunText.Text = "执行中…";
-            LastRunText.Foreground = (Brush)FindResource("TextMuted");
+            // 执行结果统一走日志总线 + 顶部状态提示（底部操作区已移除）
+            SetRunHint("执行中…「" + vm.Model.Name + "」", ok: null);
 
             try
             {
@@ -1175,8 +1205,7 @@ namespace SoulLink.Views
                 LogBus.Write(result.Ok ? LogLevel.Ok : LogLevel.Error, result.Message,
                     result.Command + Environment.NewLine + "耗时 " + result.ElapsedMs + " ms");
 
-                LastRunText.Text = (result.Ok ? "✓ " : "✕ ") + result.Message;
-                LastRunText.Foreground = (Brush)FindResource(result.Ok ? "MintBrush" : "RoseBrush");
+                SetRunHint((result.Ok ? "✓ " : "✕ ") + vm.Model.Name + " · " + result.Message, result.Ok);
                 vm.Refresh();
                 RefreshBadges();
 
@@ -1186,14 +1215,41 @@ namespace SoulLink.Views
             catch (Exception ex)
             {
                 LogBus.Error("执行失败：" + ex.Message);
-                LastRunText.Text = "✕ " + ex.Message;
-                LastRunText.Foreground = (Brush)FindResource("RoseBrush");
+                SetRunHint("✕ " + ex.Message, false);
             }
             finally
             {
                 _busy = false;
-                BtnRun.IsEnabled = true;
             }
+        }
+
+        /// <summary>
+        /// 在执行按钮旁边给一句即时反馈。
+        /// ok = null 表示"进行中"（灰色），true/false 表示成功/失败（绿/红）。
+        /// </summary>
+        private void SetRunHint(string text, bool? ok)
+        {
+            try
+            {
+                RunHint.Text = text;
+                RunHint.Foreground = (Brush)FindResource(
+                    ok == null ? "TextMuted" : (ok.Value ? "MintBrush" : "RoseBrush"));
+                RunHint.Visibility = Visibility.Visible;
+
+                // 成功提示 6 秒后自动淡出，避免一直占位
+                if (ok != null)
+                {
+                    var t = new System.Windows.Threading.DispatcherTimer
+                    { Interval = TimeSpan.FromSeconds(6) };
+                    t.Tick += (_, __) =>
+                    {
+                        t.Stop();
+                        try { RunHint.Visibility = Visibility.Collapsed; } catch { }
+                    };
+                    t.Start();
+                }
+            }
+            catch { }
         }
 
         // ══════════ 编辑动作 ══════════
@@ -1205,35 +1261,82 @@ namespace SoulLink.Views
             if ((sender as Button)?.Tag is ActionVm vm) ShowEditor(vm.Model);
         }
 
+        /// <summary>
+        /// 暂停 / 恢复定时执行。
+        /// ★ 暂停只是把 Paused 置 true，不动原有计划；
+        ///   恢复时如果计划任务已被手动删除，会尝试重建。
+        /// </summary>
+        private void PauseSchedule_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as Button)?.Tag is not ActionVm vm) return;
+            var spec = vm.Model.Schedule;
+            if (spec == null) return;
+
+            try
+            {
+                spec.Paused = !spec.Paused;
+                spec.PauseReason = spec.Paused ? "手动暂停" : "";
+                ConfigStore.Save(App.Config);
+
+                LogBus.Ok(spec.Paused
+                    ? "已暂停「" + vm.Model.Name + "」的定时执行"
+                    : "已恢复「" + vm.Model.Name + "」的定时执行");
+
+                ReloadActions();
+            }
+            catch (Exception ex)
+            {
+                LogBus.Error("切换定时状态失败：" + ex.Message);
+            }
+        }
+
+
+
         private void ShowEditor(ActionItem? existing)
         {
             var dlg = new ActionEditorWindow(existing, App.Config) { Owner = Window.GetWindow(this) };
             if (dlg.ShowDialog() == true)
             {
-                if (existing == null) App.Config.Actions.Add(dlg.Result);
+                if (existing == null)
+                {
+                    App.Config.Actions.Add(dlg.Result);
+                }
+                else
+                {
+                    // ★ 编辑已有动作：把窗口里改好的值**写回原对象**。
+                    //   原来这里什么都不做，只有新建才保存，导致
+                    //   "编辑后保存无效"（定时设置尤其明显，用户实测）。
+                    //   注意保留 Id（dlg.Result 里已带上原 Id）。
+                    var target = App.Config.Actions.FirstOrDefault(a => a.Id == existing.Id);
+                    if (target != null)
+                    {
+                        target.Name = dlg.Result.Name;
+                        target.AccountId = dlg.Result.AccountId;
+                        target.ExePath = dlg.Result.ExePath;
+                        target.Arguments = dlg.Result.Arguments;
+                        target.Kind = dlg.Result.Kind;
+                        target.DelaySeconds = dlg.Result.DelaySeconds;
+                        target.StopBgiFirst = dlg.Result.StopBgiFirst;
+                        target.CloseGenshin = dlg.Result.CloseGenshin;
+                        target.StopWaitSeconds = dlg.Result.StopWaitSeconds;
+                        target.Schedule = dlg.Result.Schedule;
+                    }
+                    else
+                    {
+                        App.Config.Actions.Add(dlg.Result);
+                    }
+                }
+
                 ReloadActions();
                 ConfigStore.Save(App.Config);
                 ActionList.SelectedItem = _actions.FirstOrDefault(v => v.Model.Id == dlg.Result.Id);
+
             }
         }
 
-        private void ChangePassword_Click(object sender, RoutedEventArgs e)
-        {
-            if (ActionList.SelectedItem is not ActionVm vm) return;
-            var account = App.Config.Accounts.FirstOrDefault(a => a.Id == vm.Model.AccountId);
-            if (account == null)
-            {
-                MessageBox.Show("该动作没有绑定账号，请重新编辑动作。", "SoulLink");
-                return;
-            }
-            var dlg = new PasswordWindow(account.UserName) { Owner = Window.GetWindow(this) };
-            if (dlg.ShowDialog() == true)
-            {
-                ConfigStore.SetPassword(account, dlg.Password);
-                ConfigStore.Save(App.Config);
-                LogBus.Ok("已更新账号 " + account.UserName + " 的密码（DPAPI 加密保存）。");
-            }
-        }
+        /// <summary>
+
+        /// <summary>
 
         private void DeleteAction_Click(object sender, RoutedEventArgs e)
         {
@@ -1327,6 +1430,77 @@ namespace SoulLink.Views
         }
 
         public string ExeName => string.IsNullOrWhiteSpace(Model.ExePath) ? "未设置程序" : Path.GetFileName(Model.ExePath);
+
+        // ── 定时执行（只有配了定时的动作才显示相关元素）──────────────
+
+        /// <summary>是否配置了定时（决定界面是否显示定时相关元素）。</summary>
+        public bool HasSchedule => Model.Schedule != null && Model.Schedule.Enabled;
+
+        /// <summary>定时相关控件的可见性：非定时任务不显示。</summary>
+        public System.Windows.Visibility ScheduleVisibility
+            => HasSchedule ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+
+        /// <summary>定时是否暂停。</summary>
+        public bool SchedulePaused => Model.Schedule?.Paused == true;
+
+        /// <summary>显示用：下一次执行时刻。</summary>
+        public string NextRunText
+        {
+            get
+            {
+                if (!HasSchedule) return "";
+                if (SchedulePaused)
+                {
+                    string reason = Model.Schedule?.PauseReason ?? "";
+                    return string.IsNullOrEmpty(reason) ? "已暂停" : ("已暂停（" + reason + "）");
+                }
+                // 计划任务在系统里被禁用：提示但不算暂停
+                if (Model.Schedule?.PauseReason == "系统里已禁用")
+                    return "系统里已禁用";
+                var next = Services.ScheduleCalculator.NextRun(Model.Schedule);
+                if (next == null) return "已暂停（无后续执行）";
+                return "下次 " + FormatNext(next.Value);
+            }
+        }
+
+        /// <summary>下次执行的文字颜色：暂停→灰，临期→青，其余→次要色。</summary>
+        public System.Windows.Media.Brush NextRunBrush
+        {
+            get
+            {
+                if (!HasSchedule) return System.Windows.Media.Brushes.Transparent;
+                if (SchedulePaused)
+                    return new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8));
+                var next = Services.ScheduleCalculator.NextRun(Model.Schedule);
+                if (next == null)
+                    return new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8));
+                var span = next.Value - DateTime.Now;
+                if (span.TotalMinutes <= 10)
+                    return new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0x41, 0xF0, 0xC0));   // 快到了：绿
+                return new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0xB4, 0xC2, 0xE8));       // 常态：淡蓝
+            }
+        }
+
+        /// <summary>暂停按钮图标：未暂停显示暂停⏸，已暂停显示播放▶。</summary>
+        public string PauseGlyph => SchedulePaused ? "\uE768" : "\uE769";
+
+        /// <summary>暂停按钮提示。</summary>
+        public string PauseTip => SchedulePaused ? "恢复定时执行" : "暂停定时执行";
+
+        /// <summary>把时间格式化成"今天 04:00:00 / 明天 04:01:00 / 11-18 04:02:00"。</summary>
+        private static string FormatNext(DateTime t)
+        {
+            string hms = t.ToString("HH:mm:ss");
+            var today = DateTime.Now.Date;
+            if (t.Date == today) return "今天 " + hms;
+            if (t.Date == today.AddDays(1)) return "明天 " + hms;
+            if (t.Date == today.AddDays(2)) return "后天 " + hms;
+            return t.ToString("MM-dd") + " " + hms;
+        }
 
         public string Icon
         {

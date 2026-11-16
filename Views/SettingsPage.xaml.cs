@@ -130,7 +130,6 @@ namespace SoulLink.Views
                 LogBus.Ok("已更新 " + vm.UserName + " 的密码。");
             }
         }
-
         private void ChangeHost_Click(object sender, RoutedEventArgs e)
         {
             if ((sender as Button)?.Tag is not AccountVm vm) return;
@@ -236,14 +235,14 @@ namespace SoulLink.Views
 
                 // ③ 状态回显
                 bool on = AutoStart.IsEnabled();
-                AutoStartButtonText.Text = on ? "关闭自启" : "开启自启";
+                AutoStartButtonText.Text = on ? "关闭开机自启" : "启用开机自启";
                 if (on)
                 {
                     string? bound = AutoStart.GetBoundUser();
-                    AutoStartStatus.Text = "当前状态：已开启"
-                        + (string.IsNullOrWhiteSpace(bound) ? "" : "（启动账户 " + bound + "）");
+                    AutoStartStatus.Text = "计划任务：已开启"
+                        + (string.IsNullOrWhiteSpace(bound) ? "" : "（" + bound + " 登录时启动）");
                 }
-                else AutoStartStatus.Text = "当前状态：未开启";
+                else AutoStartStatus.Text = "计划任务：未开启（登录时不会自动启动）";
 
                 UpdateAutoConnectHint();
                 await Task.CompletedTask;
@@ -251,13 +250,28 @@ namespace SoulLink.Views
             catch (Exception ex) { AutoStartStatus.Text = "读取自启状态失败：" + ex.Message; }
         }
 
+        /// <summary>
+        /// 只更新"启动后自动连接"这一块的提示。
+        /// ★ 原来是写进 AutoStartStatus 的，导致"开机自启"状态栏里
+        ///   混着自动连接的信息，用户容易以为按钮也在管自动连接。
+        ///   现在两块彻底独立：
+        ///     · AutoStartStatus  —— 只描述计划任务（开/关、启动账户）
+        ///     · AutoConnectStatus —— 只描述勾选了几个账号
+        /// </summary>
         private void UpdateAutoConnectHint()
         {
-            int n = 0;
-            foreach (var c in AutoConnectList.Children)
-                if (c is CheckBox cb && cb.IsChecked == true) n++;
-            AutoStartStatus.Text = (AutoStart.IsEnabled() ? "自启已开启 · " : "")
-                + (n > 0 ? "启动后自动连接 " + n + " 个 RDP 用户" : "启动后不自动连接");
+            try
+            {
+                int n = 0;
+                foreach (var c in AutoConnectList.Children)
+                    if (c is CheckBox cb && cb.IsChecked == true) n++;
+
+                if (AutoConnectStatus == null) return;   // 兼容旧 XAML
+                AutoConnectStatus.Text = n > 0
+                    ? ("已选 " + n + " 个账号：程序启动后会自动连接并投送通道。")
+                    : "未选择账号：程序启动后不会自动连接。";
+            }
+            catch { }
         }
 
         private void AutoConnectItem_Changed(object sender, RoutedEventArgs e)
@@ -288,7 +302,7 @@ namespace SoulLink.Views
                     AutoStartStatus.Text = "正在关闭…";
                     var (ok, msg) = await AutoStart.DisableAsync();
                     AutoStartStatus.Text = msg;
-                    if (ok) AutoStartButtonText.Text = "开启自启";
+                    if (ok) AutoStartButtonText.Text = "启用开机自启";
                 }
                 else
                 {
@@ -302,7 +316,7 @@ namespace SoulLink.Views
                     AutoStartStatus.Text = "正在创建计划任务…";
                     var (ok, msg) = await AutoStart.EnableAsync(user, exe);
                     AutoStartStatus.Text = msg;
-                    if (ok) AutoStartButtonText.Text = "关闭自启";
+                    if (ok) AutoStartButtonText.Text = "关闭开机自启";
                 }
             }
             catch (Exception ex) { AutoStartStatus.Text = "操作失败：" + ex.Message; }

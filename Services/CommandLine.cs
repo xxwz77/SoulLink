@@ -26,8 +26,7 @@ namespace SoulLink.Services
         private static readonly string[] ValueOptions =
         {
             "action","name","kind","op","do","exe","path","process","proc","user","account",
-            "password","pwd","pass","session","sid","delay","args","arguments","arg",
-            "passwordfile","pwdfile","page"
+            "session","sid","delay","args","arguments","arg","page"
         };
 
         public static Parsed Parse(string[] args)
@@ -129,7 +128,7 @@ namespace SoulLink.Services
             r.Process = Get(p, "exe", "path", "process", "proc");
             r.Account = Get(p, "account", "target", "as");
             r.User = Get(p, "user");
-            r.Password = Get(p, "password", "pwd", "pass");
+            // 密码已废弃：投送走 SYSTEM 计划任务 + WTSQueryUserToken，不需要任何凭据
             r.Arguments = Get(p, "args", "arguments", "arg");
 
             string? sid = Get(p, "session", "sid");
@@ -191,11 +190,8 @@ namespace SoulLink.Services
   SoulLink.exe open --kind close --user A2 --exe ""...\BetterGI.exe""         临时指定类型
 
 可选参数：
-  --user <用户名>        直接用账号名，不必事先在界面里建账号（会读取保存的密码，
-                         没保存密码时需配合 --password 或 --password-stdin）
-  --password <密码>      临时指定密码（不落盘；建议改用 --password-stdin）
-  --password-stdin       从标准输入读取密码（仅在本进程内部使用，不会落盘）
-  --session <ID>         强制指定目标会话 ID，跳过自动查找
+  --user <用户名>        直接用账号名，不必事先在界面里建账号
+  --session <ID>         强制指定目标会话 ID，跳过自动查找（一般不用，按用户名自动匹配）
   --args ""...""          附加启动参数
   --delay <秒>           延时执行
   --quiet                只返回退出码（默认）

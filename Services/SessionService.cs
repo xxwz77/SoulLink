@@ -93,16 +93,23 @@ namespace SoulLink.Services
             foreach (var line in raw.Replace("\r", "").Split('\n'))
             {
                 var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 3) continue;
-                // 找到数字 ID 的位置
+                if (parts.Length < 2) continue;
+
+                // ★ 找数字 ID 的位置（第一个纯数字）。
+                //   会话名这一列**可能是空的**（会话断开后 qwinsta 会这么输出）：
+                //             A2                        8  Disc
+                //   此时按空格切分结果是 [A2, 8, Disc]，用户名列落到 parts[0]，
+                //   所以 idIdx 可能是 1 —— 原来要求 idIdx >= 2 把所有 Disc 会话都跳过了，
+                //   导致这些会话的大小写校正永远不生效（用户实测 a2/a3 一直是小写）。
                 int idIdx = -1;
-                for (int i = 1; i < parts.Length; i++)
+                for (int i = 0; i < parts.Length; i++)
                     if (int.TryParse(parts[i], out _)) { idIdx = i; break; }
-                if (idIdx < 2) continue;
+                if (idIdx < 1) continue;
                 if (!int.TryParse(parts[idIdx], out int sid)) continue;
 
-                string realUser = parts[idIdx - 1];   // ID 前面那一列是用户名
+                string realUser = parts[idIdx - 1];
                 if (string.IsNullOrWhiteSpace(realUser)) continue;
+                realUser = realUser.TrimStart('>', '*');
 
                 foreach (var s in list)
                 {

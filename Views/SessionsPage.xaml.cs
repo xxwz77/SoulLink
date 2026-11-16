@@ -116,27 +116,17 @@ namespace SoulLink.Views
 
         private async void RunOpen(SessionInfo s, string exe, string? args = null)
         {
+            // 不再需要密码：投送走 SYSTEM 计划任务 + WTSQueryUserToken
             var account = App.Config.Accounts.FirstOrDefault(a =>
                 string.Equals(a.UserName, s.UserName, StringComparison.OrdinalIgnoreCase));
-
-            string password = account == null ? "" : ConfigStore.GetPassword(account);
-
-            if (account == null || string.IsNullOrEmpty(password))
+            if (account == null)
             {
-                var pwd = new PasswordWindow(s.UserName) { Owner = Window.GetWindow(this) };
-                if (pwd.ShowDialog() != true) return;
-                password = pwd.Password;
-
-                if (account == null)
-                {
-                    account = new Account { UserName = s.UserName };
-                    App.Config.Accounts.Add(account);
-                }
-                ConfigStore.SetPassword(account, password);
+                account = new Account { UserName = s.UserName };
+                App.Config.Accounts.Add(account);
                 ConfigStore.Save(App.Config);
             }
 
-            var target = new ActionService.Target { Account = account!, Session = s, Password = password };
+            var target = new ActionService.Target { Account = account, Session = s };
             var tool = await Task.Run(() => ActionService.EnsureToolAsync(App.Config));
             if (!tool) { Toast("需要管理员权限才能投送进程。"); return; }
 

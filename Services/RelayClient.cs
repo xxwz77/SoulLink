@@ -96,7 +96,12 @@ namespace SoulLink.Services
             return 0;
         }
 
-        public async Task<(bool ok, string message)> DeployAsync(Account account, string password, int timeoutMs = 20000)
+        /// <summary>
+        /// 投送注入代理到目标会话。
+        /// ★ 不需要密码：走 SYSTEM 计划任务 → WTSQueryUserToken → CreateProcessAsUser，
+        ///   由系统直接在该会话的桌面上拉起进程，全程不涉及账号凭据。
+        /// </summary>
+        public async Task<(bool ok, string message)> DeployAsync(Account account, int timeoutMs = 20000)
         {
             // 用 SoulLink.exe 自己当代理 —— 自包含单文件，目标会话里不需要任何运行时
             string self = SystemLauncher.ResolveSelfExe();
