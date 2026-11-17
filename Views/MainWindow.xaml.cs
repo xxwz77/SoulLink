@@ -662,6 +662,7 @@ namespace SoulLink.Views
                     EnsureNavOverlayWindow();
                     NavHomeHost.Height = SideNavHost.ActualHeight;
                     _navOverlayWindow?.UpdateOverlaySize(NavRail.ActualWidth, SideNavHost.ActualHeight);
+                    _navOverlayWindow?.BringToFront();
                     if (_navRailExpandStartedAt == DateTime.MinValue) _navRailExpandStartedAt = DateTime.UtcNow;
                     if ((DateTime.UtcNow - _navRailExpandStartedAt).TotalMilliseconds > 450)
                     {
@@ -686,8 +687,16 @@ namespace SoulLink.Views
                 // indefinitely because its content is not in the main visual tree yet.
                 double initialWidth = NavRail.ActualWidth > 0 ? NavRail.ActualWidth : 56;
                 _navOverlayWindow?.ShowOverlay(initialWidth, SideNavHost.ActualHeight);
+                _navOverlayWindow?.BringToFront();
             }
             _navAnimationSync.Start();
+        }
+
+        /// <summary>连接/注销动画显示或重排时调用，保持展开导航位于最上层。</summary>
+        internal void BringNavigationToFront()
+        {
+            if (!_navCollapsed && _navDockedInOverlay)
+                _navOverlayWindow?.BringToFront();
         }
 
         private void SetNavCollapsed(bool collapsed, string reason)

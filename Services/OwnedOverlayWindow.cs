@@ -73,6 +73,17 @@ namespace SoulLink.Services
         public bool IsRequested => _requested;
         public bool NativeVisible { get; private set; }
 
+        /// <summary>在同一 Owner 的浮层中置顶，不使用全局 Topmost。</summary>
+        public void BringToFront()
+        {
+            if (_closed) return;
+            var handle = new WindowInteropHelper(this).Handle;
+            if (handle == IntPtr.Zero) return;
+            SetWindowPos(handle, new IntPtr(-1), 0, 0, 0, 0,
+                0x0001 | 0x0002 | SwpNoactivate); // HWND_TOP, NOSIZE | NOMOVE
+            Topmost = false; // owned, non-topmost window remains below other apps
+        }
+
         /// <summary>Request visibility. It is still suppressed while the owner is inactive.</summary>
         public void ShowOverlay(double? widthDip = null, double? heightDip = null)
         {

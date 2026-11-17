@@ -45,6 +45,7 @@ namespace SoulLink.Views
             Show();
             var handle = new WindowInteropHelper(this).Handle;
             if (handle != IntPtr.Zero) Services.WindowCorners.ApplyRounded(handle, true);
+            BringNavigationToFront();
             _spinner = (Storyboard)Resources["SpinnerStoryboard"];
             _spinner?.Begin(this, true);
             if (Owner != null)
@@ -89,7 +90,14 @@ namespace SoulLink.Views
             Left = a.X * dx; Top = a.Y * dy;
             Width = (b.X - a.X) * dx; Height = (b.Y - a.Y) * dy;
             if (!IsVisible && !_closing && !_completed && _belongsToCurrentViewValue) Show();
+            BringNavigationToFront();
         }
+
+        private void BringNavigationToFront()
+        {
+            if (Owner is MainWindow main) main.BringNavigationToFront();
+        }
+
         private void ViewportVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e) => FollowOwner(sender, EventArgs.Empty);
 
         public void SetCompleted(string caption)

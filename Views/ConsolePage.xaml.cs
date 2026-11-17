@@ -39,6 +39,10 @@ namespace SoulLink.Views
         private bool _initialized;
         private bool _logoffInProgress;
         private bool _busyVisible;
+        private OwnedOverlayWindow? _busyOverlayWindow;
+        private Border? _busyOverlayContent;
+        private TextBlock? _busyText;
+        private Button? _busyReconnectButton;
         private bool _shieldPendingAfterBusy;
         private System.Windows.Threading.DispatcherTimer? _shieldWatch;
         private RdpConsole? _shieldWatchedConsole;
@@ -64,14 +68,14 @@ namespace SoulLink.Views
                     {
                         // 只释放输入，不隐藏保护层。真实 Win32 Owner + 非 Topmost
                         // 已保证它随主窗口沉到其他应用下面；Hide() 会让保护层消失。
-                        BusyPopup.IsOpen = false;
+                        _busyOverlayWindow?.HideForOwnerState();
                         _shieldReleased = false;
                         _viewing?.Console?.ReleasePointerForRearm();
                         UpdateShield();
                     };
                     window.Activated += (_, __) => Dispatcher.InvokeAsync(() =>
                     {
-                        if (_busyVisible) BusyPopup.IsOpen = true;
+                        if (_busyVisible) SetBusyVisible(true);
                         UpdateShield();
                     });
                     // 窗口位置/大小变化时，Popup 需要重新贴到视口上
@@ -85,7 +89,7 @@ namespace SoulLink.Views
             //   （用户反馈：连接动画没有自适应窗口大小）。
             //   改成监听 ViewportHost 自身的 SizeChanged，并补一次首帧对齐。
             ViewportHost.SizeChanged += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
-            Loaded += (_, __) => { EnsureShieldOverlayWindow(); EnsureShieldWatch(); };
+            Loaded += (_, __) => { EnsureBusyOverlayWindow(); EnsureShieldOverlayWindow(); EnsureShieldWatch(); };
             Unloaded += (_, __) => { _shieldWatch?.Stop(); _shieldWatch = null; };
             Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
 
@@ -113,7 +117,7 @@ namespace SoulLink.Views
                     {
                         // 切走：摘掉控件（连接状态保留，不 Dispose）
                         ViewportHost.Children.Clear();
-                        BusyPopup.IsOpen = false;
+                        _busyOverlayWindow?.HideForOwnerState();
                         _shieldReleased = false;
                         _shieldOverlayWindow?.HideOverlay();
                     }
@@ -148,6 +152,42 @@ namespace SoulLink.Views
         /// Popup 的内容不会自动跟随 PlacementTarget 伸缩，必须手动同步宽高，
         /// 否则遮罩会比画面小一圈或大一圈（用户反馈：没有自适应窗口大小）。
         /// </summary>
+        private void EnsureBusyOverlayWindow()
+        {
+            if (_busyOverlayWindow != null) return;
+            var owner = Window.GetWindow(this);
+            if (owner == null) return;
+            _busyText = new TextBlock
+            {
+                Text = "正在连接…", FontSize = 12.5, TextWrapping = TextWrapping.Wrap,
+                LineHeight = 20, TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = (Brush)FindResource("TextSecondary")
+            };
+            _busyReconnectButton = new Button
+            {
+                Content = "重新连接", Visibility = Visibility.Collapsed,
+                Style = (Style)FindResource("PrimaryButton"), Padding = new Thickness(22,8,22,8),
+                HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0,18,0,0)
+            };
+            _busyReconnectButton.Click += BtnBusyReconnect_Click;
+            var panel = new StackPanel
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center, MaxWidth = 460
+            };
+            panel.Children.Add(_busyText);
+            panel.Children.Add(new ProgressBar
+            {
+                IsIndeterminate = true, Width = 180, Height = 3, Margin = new Thickness(0,10,0,0),
+                Foreground = (Brush)FindResource("CyanBrush"), Background = new SolidColorBrush(Color.FromArgb(0x22,0xFF,0xFF,0xFF)),
+                BorderThickness = new Thickness(0)
+            });
+            panel.Children.Add(_busyReconnectButton);
+            _busyOverlayContent = new Border { Background = new SolidColorBrush(Color.FromArgb(0xF2,0x05,0x09,0x13)), Child = panel };
+            _busyOverlayWindow = new OwnedOverlayWindow(owner, ViewportHost, _busyOverlayContent, "连接动画", allowInactiveOwner: true);
+        }
+
         private void SyncBusyOverlaySize()
         {
             try
@@ -156,17 +196,14 @@ namespace SoulLink.Views
                 double h = ViewportHost.ActualHeight;
                 if (w <= 0 || h <= 0) return;
 
-                if (BusyOverlay != null)
+                EnsureBusyOverlayWindow();
+                if (_busyOverlayContent != null)
                 {
-                    BusyOverlay.Width = w;
-                    BusyOverlay.Height = h;
+                    _busyOverlayContent.Width = w;
+                    _busyOverlayContent.Height = h;
                 }
-                // Placement=Relative 时偏移归零，遮罩左上角与视口左上角重合
-                if (BusyPopup != null)
-                {
-                    BusyPopup.HorizontalOffset = 0;
-                    BusyPopup.VerticalOffset = 0;
-                }
+                if (_busyOverlayWindow?.IsRequested == true)
+                    _busyOverlayWindow.UpdateOverlaySize(w, h);
             }
             catch { }
         }
@@ -909,7 +946,7 @@ namespace SoulLink.Views
         {
             if (row.Console == null) return (false, "Console 未初始化");
             SetBusyVisible(true);
-            BusyText.Text = "正在连接 " + row.Account.Caption + " …";
+            _busyText!.Text = "正在连接 " + row.Account.Caption + " …";
 
             try
             {
@@ -929,7 +966,7 @@ namespace SoulLink.Views
                 //   这里轮询最多 15 秒，等会话真正出现。
                 if (s == null)
                 {
-                    BusyText.Text = "等待用户「" + row.Account.Caption + "」的会话就绪…";
+                    _busyText!.Text = "等待用户「" + row.Account.Caption + "」的会话就绪…";
                     Debug("会话暂未出现，开始轮询等待（最多 15 秒）");
                     for (int i = 0; i < 15 && s == null; i++)
                     {
@@ -951,7 +988,7 @@ namespace SoulLink.Views
 
                 if (s == null)
                 {
-                    BusyText.Text = "用户「" + row.Account.Caption + "」当前未登录，正在尝试用保存的凭据登录…";
+                    _busyText!.Text = "用户「" + row.Account.Caption + "」当前未登录，正在尝试用保存的凭据登录…";
                     Debug("等待 15 秒后仍无会话，走 RDP 自动登录流程");
                 }
 
@@ -964,14 +1001,14 @@ namespace SoulLink.Views
                     _shieldReleased = false;
                 }
                 SetBusyVisible(!ok);
-                if (!ok) BusyText.Text = msg;
+                if (!ok) _busyText!.Text = msg;
                 if (ReferenceEquals(row, _viewing)) UpdateShield();
                 RenderTabs();
                 return (ok, ok ? "" : (string.IsNullOrWhiteSpace(msg) ? "未知原因（ConnectAsync 未返回消息）" : msg));
             }
             catch (Exception ex)
             {
-                BusyText.Text = "连接出错：" + ex.Message;
+                _busyText!.Text = "连接出错：" + ex.Message;
                 ShowBusyError();
                 App.AppendErrorLog("ConsolePage.Connect", ex);
                 return (false, "异常：" + ex.Message);
@@ -983,11 +1020,19 @@ namespace SoulLink.Views
             if (visible) SyncBusyOverlaySize();   // 显示前再对一次，避免用了旧尺寸
             _busyVisible = visible;
             var owner = Window.GetWindow(this);
-            BusyPopup.IsOpen = visible && ViewPage.Visibility == Visibility.Visible
-                && owner != null && owner.IsVisible && owner.IsActive && owner.WindowState != WindowState.Minimized;
+            EnsureBusyOverlayWindow();
+            bool show = visible && ViewPage.Visibility == Visibility.Visible
+                && owner != null && owner.IsVisible && owner.WindowState != WindowState.Minimized;
+            if (show && _busyOverlayWindow != null)
+            {
+                _busyOverlayWindow.ShowOverlay(ViewportHost.ActualWidth, ViewportHost.ActualHeight);
+                // 动画随后显示，必须主动恢复导航的兄弟浮层层级。
+                MainWindowRef?.BringNavigationToFront();
+            }
+            else _busyOverlayWindow?.HideOverlay();
             if (!visible)
             {
-                BtnBusyReconnect.Visibility = Visibility.Collapsed;
+                _busyReconnectButton!.Visibility = Visibility.Collapsed;
                 // 启动动画结束就是保护层接管输入的时刻。先同步请求显示，
                 // 再等 Loaded 布局校准，不能等下一次切页或偶发的生命周期事件。
                 if (_shieldPendingAfterBusy && _viewing != null)
@@ -1044,14 +1089,14 @@ namespace SoulLink.Views
         private void ShowBusyError()
         {
             SetBusyVisible(true);
-            BtnBusyReconnect.Visibility = Visibility.Visible;
+            _busyReconnectButton!.Visibility = Visibility.Visible;
             SetBusyVisible(true);
         }
 
         private async void BtnBusyReconnect_Click(object sender, RoutedEventArgs e)
         {
-            BtnBusyReconnect.Visibility = Visibility.Collapsed;
-            BusyText.Text = "正在重试…";
+            _busyReconnectButton!.Visibility = Visibility.Collapsed;
+            _busyText!.Text = "正在重试…";
             var row = _viewing;
             if (row == null) return;
             try { row.Console?.Disconnect(); } catch { }

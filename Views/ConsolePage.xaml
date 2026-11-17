@@ -328,23 +328,8 @@
                     <Grid>
                         <Grid x:Name="ViewportHost" />
 
-                        <Popup x:Name="BusyPopup" IsOpen="False" AllowsTransparency="True" Placement="Relative" PlacementTarget="{Binding ElementName=ViewportHost}">
-                            <Border x:Name="BusyOverlay" Background="#F2050913" Visibility="Visible">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="460">
-                                <TextBlock x:Name="BusyText" Text="正在连接…" FontSize="12.5"
-                                           HorizontalAlignment="Center" TextAlignment="Center"
-                                           TextWrapping="Wrap" LineHeight="20"
-                                           Foreground="{StaticResource TextSecondary}" />
-                                <ProgressBar x:Name="BusyBar" IsIndeterminate="True" Width="180" Height="3"
-                                             Margin="0,10,0,0" Foreground="{StaticResource CyanBrush}"
-                                             Background="#22FFFFFF" BorderThickness="0" />
-                                <Button x:Name="BtnBusyReconnect" Content="重新连接" Visibility="Collapsed"
-                                        Style="{StaticResource PrimaryButton}" Padding="22,8"
-                                        HorizontalAlignment="Center" Margin="0,18,0,0"
-                                        Click="BtnBusyReconnect_Click" />
-                            </StackPanel>
-                        </Border>
-                        </Popup>
+                        <!-- 连接动画在代码中用 OwnedOverlayWindow 承载。
+                             与导航同为 Owner-bound 非 Topmost HWND，导航可明确置顶。 -->
 
                         <!-- RDP 保护层在代码中创建 OwnedOverlayWindow。
                              它是主窗口的非 Topmost 子属 HWND，不是独立置顶的 Popup；
