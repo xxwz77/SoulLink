@@ -12,7 +12,9 @@ namespace SoulLink.Services
         /// <summary>双列：两列纵向流式排布，可滚动浏览，画面保持 16:9。</summary>
         TwoColumn = 1,
         /// <summary>网格：等分铺满，不滚动（适合 2~4 个）。</summary>
-        Grid = 2
+        Grid = 2,
+        /// <summary>单列：一列纵向流式排布，可滚动浏览，画面保持 16:9（画面多时最清晰）。</summary>
+        OneColumn = 3
     }
 
     /// <summary>一个画面格子在视口里的位置（全部是物理像素）。</summary>
@@ -100,6 +102,9 @@ namespace SoulLink.Services
                 case ConsoleLayoutMode.Grid:
                     return ComputeGrid(viewportWidth, viewportHeight, count);
 
+                case ConsoleLayoutMode.OneColumn:
+                    return ComputeOneColumn(viewportWidth, viewportHeight, count);
+
                 case ConsoleLayoutMode.TwoColumn:
                 default:
                     return ComputeTwoColumn(viewportWidth, viewportHeight, count);
@@ -129,6 +134,31 @@ namespace SoulLink.Services
                 tiles.Add(new TileRect(i, x, y, cellW, cellH));
             }
             return new ViewLayoutResult(tiles, vh, vh);
+        }
+
+        /// <summary>
+        /// 单列纵向流：一列铺满宽度，每格保持 16:9，从上往下排；内容超高就滚动。
+        /// 画面数量多、或需要在单屏里看清某一路时用这个模式。
+        /// </summary>
+        private static ViewLayoutResult ComputeOneColumn(int vw, int vh, int count)
+        {
+            int cellW = Math.Max(1, vw - Gap * 2);
+            // 保持 16:9；但一列时高度往往受视口限制，最多占视口的 ~92%，
+            // 保证至少能看到下一格的顶部，让"可以往下滚"这件事可见。
+            int cellH = Math.Max(1, (int)Math.Round(cellW / Aspect));
+            int maxCellH = Math.Max(1, (int)Math.Round(vh * 0.92));
+            if (cellH > maxCellH)
+            {
+                cellH = maxCellH;
+                cellW = Math.Max(1, (int)Math.Round(cellH * Aspect));
+            }
+
+            var tiles = new List<TileRect>(count);
+            for (int i = 0; i < count; i++)
+                tiles.Add(new TileRect(i, Gap, Gap + i * (cellH + Gap), cellW, cellH));
+
+            int contentHeight = Gap + count * (cellH + Gap);
+            return new ViewLayoutResult(tiles, contentHeight, vh);
         }
 
         /// <summary>

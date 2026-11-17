@@ -64,20 +64,25 @@
 
                         <!-- 流程名 + 启用/暂停 -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
-                                    VerticalAlignment="Center" Margin="20,0,12,0">
+                                    VerticalAlignment="Center" Margin="16,0,12,0">
                             <TextBlock Text="流程名" FontSize="11" Foreground="{StaticResource TextMuted}"
                                        VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBox x:Name="NameBox" Width="220" Height="36"
-                                     Style="{StaticResource GlassTextBox}"
+                            <!-- ★ 用 InlineTextBox + MinHeight 而不是 GlassTextBox + 固定 Height：
+                                 GlassTextBox 的 Padding=12,9 在 36px 高的框里会把文字上下裁掉。 -->
+                            <TextBox x:Name="NameBox" Width="240" MinHeight="30"
+                                     Style="{StaticResource InlineTextBox}"
+                                     VerticalContentAlignment="Center"
                                      TextChanged="NameBox_TextChanged" />
                             <CheckBox x:Name="EnabledCheck" Content="启用" IsChecked="True"
                                       Style="{StaticResource GlassCheckBox}"
                                       VerticalAlignment="Center" Margin="14,0,0,0"
                                       Checked="EnabledCheck_Changed" Unchecked="EnabledCheck_Changed" />
-                            <CheckBox x:Name="PersistCheck" Content="记住条件" IsChecked="True"
+                            <!-- ★ 提示必须写清「结束时照样清零」，否则会被理解成"条件一直保持"。
+                                 实际语义：只有在**流程还没执行完**时重启程序，勾选才会保留已满足的条件。 -->
+                            <CheckBox x:Name="PersistCheck" Content="中断后保留进度" IsChecked="True"
                                       Style="{StaticResource GlassCheckBox}"
                                       VerticalAlignment="Center" Margin="12,0,0,0"
-                                      ToolTip="勾选：条件满足后写进配置，程序重启也不会丢&#x0a;取消：条件只在内存里，重启后重新判断"
+                                      ToolTip="流程一旦执行结束（成功或失败），已满足的条件都会清空，下次重新判断。&#x0a;&#x0a;勾选：条件只满足了一部分、还没执行就关掉程序时，已满足的那部分会保存，下次打开接着用。&#x0a;取消：条件全部只存内存，关掉程序就从头重新判断。"
                                       Checked="PersistCheck_Changed" Unchecked="PersistCheck_Changed" />
                         </StackPanel>
 
@@ -233,15 +238,32 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
-                        <!-- 条件聚合方式 -->
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center"
-                                    x:Name="CondModeRow" Visibility="Collapsed">
-                            <TextBlock Text="多个条件：" FontSize="11" Foreground="{StaticResource TextMuted}"
+                        <!-- 条件聚合方式 + 等待超时 -->
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" x:Name="CondModeRow" Visibility="Collapsed">
+                                <TextBlock Text="多个条件：" FontSize="11" Foreground="{StaticResource TextMuted}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox x:Name="CondModeCombo" Width="150" Height="32"
+                                          SelectionChanged="CondMode_Changed">
+                                    <ComboBoxItem Content="全部满足（AND）" Tag="All" IsSelected="True" />
+                                    <ComboBoxItem Content="任一满足（OR）" Tag="Any" />
+                                </ComboBox>
+                                <Border Width="1" Background="#22FFFFFF" Margin="14,6,14,6" />
+                            </StackPanel>
+
+                            <!-- ★ 触发器命中后，条件最多等多久；超时自动退出并清空条件。
+                                 0 = 一直等（不超时）。 -->
+                            <TextBlock Text="等待条件最多：" FontSize="11" Foreground="{StaticResource TextMuted}"
                                        VerticalAlignment="Center" />
-                            <ComboBox x:Name="CondModeCombo" Width="150" Height="34"
-                                      SelectionChanged="CondMode_Changed">
-                                <ComboBoxItem Content="全部满足（AND）" Tag="All" IsSelected="True" />
-                                <ComboBoxItem Content="任一满足（OR）" Tag="Any" />
+                            <ComboBox x:Name="ArmTimeoutCombo" Width="128" Height="32" Margin="6,0,0,0"
+                                      SelectionChanged="ArmTimeout_Changed">
+                                <ComboBoxItem Content="不超时" Tag="0" />
+                                <ComboBoxItem Content="10 分钟" Tag="10" />
+                                <ComboBoxItem Content="30 分钟" Tag="30" />
+                                <ComboBoxItem Content="1 小时" Tag="60" IsSelected="True" />
+                                <ComboBoxItem Content="3 小时" Tag="180" />
+                                <ComboBoxItem Content="6 小时" Tag="360" />
+                                <ComboBoxItem Content="24 小时" Tag="1440" />
                             </ComboBox>
                         </StackPanel>
 

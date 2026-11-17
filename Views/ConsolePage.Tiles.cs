@@ -58,6 +58,7 @@ namespace SoulLink.Views
                 {
                     1 => ConsoleLayoutMode.TwoColumn,
                     2 => ConsoleLayoutMode.Grid,
+                    3 => ConsoleLayoutMode.OneColumn,
                     _ => ConsoleLayoutMode.Single
                 };
             }
@@ -623,15 +624,34 @@ namespace SoulLink.Views
             UpdateTileChrome();
         }
 
-        /// <summary>布局按钮：单个 → 双列 → 网格 → 单个。</summary>
+        /// <summary>布局菜单：点开选择具体排列方式（不再循环点击）。</summary>
         private void BtnLayout_Click(object sender, RoutedEventArgs e)
         {
-            var next = CurrentLayoutMode switch
+            try
             {
-                ConsoleLayoutMode.Single => ConsoleLayoutMode.TwoColumn,
-                ConsoleLayoutMode.TwoColumn => ConsoleLayoutMode.Grid,
+                if (BtnLayout.ContextMenu == null) return;
+                BtnLayout.ContextMenu.PlacementTarget = BtnLayout;
+                BtnLayout.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+                BtnLayout.ContextMenu.IsOpen = true;
+            }
+            catch { }
+        }
+
+        /// <summary>菜单项点击：直接切到目标模式。</summary>
+        private void LayoutMenu_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not System.Windows.Controls.MenuItem mi) return;
+            if (mi.Tag is not string tag || !int.TryParse(tag, out int mode)) return;
+
+            var next = mode switch
+            {
+                1 => ConsoleLayoutMode.TwoColumn,
+                2 => ConsoleLayoutMode.Grid,
+                3 => ConsoleLayoutMode.OneColumn,
                 _ => ConsoleLayoutMode.Single
             };
+            if (next == CurrentLayoutMode) return;
+
             App.Config.Settings.RdpLayoutMode = (int)next;
             try { ConfigStore.Save(App.Config); } catch { }
 
@@ -649,6 +669,10 @@ namespace SoulLink.Views
             if (LayoutLabel == null) return;
             switch (CurrentLayoutMode)
             {
+                case ConsoleLayoutMode.OneColumn:
+                    LayoutLabel.Text = "单列";
+                    LayoutGlyph.Text = "\uE76F";
+                    break;
                 case ConsoleLayoutMode.TwoColumn:
                     LayoutLabel.Text = "双列";
                     LayoutGlyph.Text = "\uE8A9";
@@ -662,6 +686,16 @@ namespace SoulLink.Views
                     LayoutGlyph.Text = "\uE7F4";
                     break;
             }
+
+            // 菜单里给当前模式打勾
+            try
+            {
+                if (MenuLayoutSingle != null) MenuLayoutSingle.IsChecked = CurrentLayoutMode == ConsoleLayoutMode.Single;
+                if (MenuLayoutOne != null) MenuLayoutOne.IsChecked = CurrentLayoutMode == ConsoleLayoutMode.OneColumn;
+                if (MenuLayoutTwo != null) MenuLayoutTwo.IsChecked = CurrentLayoutMode == ConsoleLayoutMode.TwoColumn;
+                if (MenuLayoutGrid != null) MenuLayoutGrid.IsChecked = CurrentLayoutMode == ConsoleLayoutMode.Grid;
+            }
+            catch { }
         }
     }
 }

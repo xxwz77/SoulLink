@@ -35,6 +35,7 @@ namespace SoulLink.Views
             NameBox.Text = flow.Name;
             EnabledCheck.IsChecked = flow.Enabled;
             PersistCheck.IsChecked = flow.PersistLatched;
+            SelectByTagValue(ArmTimeoutCombo, flow.ArmTimeoutMinutes.ToString());
 
             BuildLibrary();
             BuildHelp();
@@ -1311,7 +1312,12 @@ namespace SoulLink.Views
             _dirty = true;
         }
 
-        /// <summary>「记住条件」开关：决定条件锁存是否写进配置文件。</summary>
+        /// <summary>
+        /// 「中断后保留进度」开关：决定条件锁存是否写进配置文件。
+        /// ★ 与"执行结束后是否清零"无关 —— 执行结束（成功/失败/结束流程）
+        ///   一律 Disarm() 清空条件，见 FlowRunner。
+        ///   这个开关只影响：流程还没执行完就关掉程序时，已满足的条件是否保留。
+        /// </summary>
         private void PersistCheck_Changed(object sender, RoutedEventArgs e)
         {
             if (!_ready) return;
@@ -1327,6 +1333,32 @@ namespace SoulLink.Views
             else
                 _flow.ConditionMode = FlowConditionMode.All;
             _dirty = true;
+        }
+
+        /// <summary>
+        /// 「等待条件最多」：触发器命中后，条件最多等多久。
+        /// 超时自动退出流程并清空条件，等下一次触发器重新开始；0 = 不超时。
+        /// </summary>
+        private void ArmTimeout_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (!_ready) return;
+            int minutes = 60;
+            if (ArmTimeoutCombo.SelectedItem is ComboBoxItem it
+                && it.Tag is string tag && int.TryParse(tag, out int v))
+                minutes = v;
+            _flow.ArmTimeoutMinutes = minutes;
+            _dirty = true;
+        }
+
+        /// <summary>把下拉框选中到指定 Tag 值；找不到则选第一项。</summary>
+        private static void SelectByTagValue(System.Windows.Controls.ComboBox box, string tag)
+        {
+            if (box == null) return;
+            foreach (var obj in box.Items)
+            {
+                if (obj is ComboBoxItem it && (it.Tag as string) == tag) { box.SelectedItem = it; return; }
+            }
+            if (box.Items.Count > 0) box.SelectedIndex = 0;
         }
 
         private void Close_Click(object sender, RoutedEventArgs e)
@@ -1347,6 +1379,9 @@ namespace SoulLink.Views
                 _flow.Name = string.IsNullOrWhiteSpace(NameBox.Text) ? "未命名流程" : NameBox.Text.Trim();
                 _flow.Enabled = EnabledCheck.IsChecked == true;
                 _flow.PersistLatched = PersistCheck.IsChecked == true;
+                if (ArmTimeoutCombo.SelectedItem is ComboBoxItem ti
+                    && ti.Tag is string ttag && int.TryParse(ttag, out int tmin))
+                    _flow.ArmTimeoutMinutes = tmin;
 
                 // ★ 保存前校验：链路不完整 / 结构非法 / 数据缺失 → 不让保存
                 var report = FlowValidator.Validate(_flow, _cfg);

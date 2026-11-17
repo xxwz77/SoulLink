@@ -233,6 +233,51 @@
         </Setter>
     </Style>
 
+    <!-- 内联输入框：用于标题栏这类"高度受限、但要正常左对齐输入"的场景。
+         ★ 与 GlassTextBox 的区别只在 Padding：12,9 太大，在 36px 高的框里
+           会把文字上下裁掉（用户实测"流程名被遮挡、显示不全"）。
+         ★ 与 CompactTextBox 的区别：那个是居中 + 无内边距，适合数字；
+           这里是左对齐 + 适中内边距，适合文字。
+         ★ 不设 Height，由使用方给最小高度，内容撑开不会裁字。 -->
+    <Style x:Key="InlineTextBox" TargetType="TextBox">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="CaretBrush" Value="{StaticResource CyanBrush}" />
+        <Setter Property="SelectionBrush" Value="#804FE3FF" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="10,5" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Grid>
+                        <Border x:Name="Shell" CornerRadius="9" Background="{StaticResource FieldBackground}"
+                                BorderBrush="{StaticResource StrokeSoft}" BorderThickness="1" />
+                        <Border x:Name="FocusRing" CornerRadius="9" BorderThickness="1"
+                                BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="Center"
+                                      HorizontalAlignment="Stretch" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="Opacity" Value="1" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="#44FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- 紧凑输入框：用于时间/数字等窄框。
          ★ 不使用 GlassTextBox：它固定 Padding=12,9，在 60~80px 的窄框里
            会把文字挤出可视区（用户实测"输入框挡住文字"）。 -->
@@ -560,7 +605,14 @@
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                   Opacity="0" />
                         </Border>
-                        <ContentPresenter Margin="9,0,0,0" VerticalAlignment="Center" />
+                        <!-- ★ 必须显式把 Foreground 传给内容：
+                             ContentPresenter 默认不继承 CheckBox 的 Foreground，
+                             内容是字符串时会落到系统默认色（浅灰/黑），
+                             深色背景上看不清（用户反馈"菜单名字颜色有问题"）。 -->
+                        <ContentPresenter Margin="9,0,0,0" VerticalAlignment="Center"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"
+                                          TextElement.FontSize="{TemplateBinding FontSize}"
+                                          TextElement.FontFamily="{TemplateBinding FontFamily}" />
                     </StackPanel>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsChecked" Value="True">
@@ -574,9 +626,13 @@
                             </Setter>
                             <Setter TargetName="Box" Property="BorderBrush" Value="#88FFFFFF" />
                             <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Box" Property="BorderBrush" Value="#77FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -912,16 +968,76 @@
             </Setter.Value>
         </Setter>
     </Style>
+    <!-- ════════════ 右键菜单 ════════════ -->
+    <!-- ★ ContextMenu 的默认模板是系统 Aero2，深色主题下会露出白底和系统配色。
+         这里给 Template 显式指定，才能让 Background/圆角和整体一致。 -->
     <Style TargetType="ContextMenu">
-        <Setter Property="Background" Value="{StaticResource WindowBackground}" />
+        <Setter Property="Background" Value="#FF121A2E" />
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
-        <Setter Property="BorderBrush" Value="{StaticResource StrokeMid}" />
+        <Setter Property="BorderBrush" Value="#3AFFFFFF" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="Padding" Value="6" />
+        <Setter Property="Padding" Value="4" />
+        <Setter Property="HasDropShadow" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border CornerRadius="10" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}">
+                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
+
+    <!-- ★ MenuItem 必须自带完整模板：
+         Aero2 默认模板用系统高亮色、带白色勾选块，且测量宽度不含勾选列，
+         实测表现为"文字被裁掉 + 白方块"，与深色主题完全不搭。 -->
     <Style TargetType="MenuItem">
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="12" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource NoFocusVisual}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Bg" CornerRadius="7" Background="Transparent" Padding="8,6"
+                            MinWidth="180">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="18" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <!-- 勾选标记 -->
+                            <TextBlock x:Name="Check" Grid.Column="0" Text="&#xE73E;"
+                                       FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                       VerticalAlignment="Center" Visibility="Collapsed"
+                                       Foreground="{StaticResource CyanBrush}" />
+                            <!-- 图标（可选） -->
+                            <ContentPresenter x:Name="Icon" Grid.Column="0"
+                                              ContentSource="Icon" VerticalAlignment="Center" />
+                            <ContentPresenter Grid.Column="1" ContentSource="Header"
+                                              RecognizesAccessKey="True" VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"
+                                              TextElement.FontSize="{TemplateBinding FontSize}" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Check" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="#26FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
 

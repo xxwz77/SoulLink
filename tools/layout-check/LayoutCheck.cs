@@ -55,6 +55,39 @@ public static class LayoutCheck
                 Check(!overlap, "overlap " + i + "/" + j);
             }
 
+        // 8) 单列：一列铺满宽，16:9，N 个都能放下，超出则滚动
+        r = ViewLayout.Compute(2560, 1440, (ConsoleLayoutMode)3, 4);
+        Check(r.Tiles.Count == 4, "one-col count");
+        Check(r.Tiles[0].X == r.Tiles[1].X, "one-col same X (single column)");
+        Check(r.Tiles[1].Y > r.Tiles[0].Y, "one-col stacked vertically");
+        Check(r.Tiles[0].Width > r.Tiles[0].Height, "one-col landscape cell");
+        double ar1 = (double)r.Tiles[0].Width / r.Tiles[0].Height;
+        Check(Math.Abs(ar1 - 16.0 / 9.0) < 0.02, "one-col aspect " + ar1.ToString("0.00"));
+        for (int i = 1; i < 4; i++)
+            Check(r.Tiles[i].X + r.Tiles[i].Width <= 2560, "one-col fits width #" + i);
+        // 无重叠
+        for (int i = 0; i < r.Tiles.Count; i++)
+            for (int j = i + 1; j < r.Tiles.Count; j++)
+            {
+                var a1r = r.Tiles[i]; var b1r = r.Tiles[j];
+                bool ov = a1r.X < b1r.X + b1r.Width && b1r.X < a1r.X + a1r.Width
+                        && a1r.Y < b1r.Y + b1r.Height && b1r.Y < a1r.Y + a1r.Height;
+                Check(!ov, "one-col overlap " + i + "/" + j);
+            }
+
+        // 9) 单列 9 个必须需要滚动
+        r = ViewLayout.Compute(2560, 1440, (ConsoleLayoutMode)3, 9);
+        Check(r.NeedsScroll, "one-col nine needs scroll");
+
+        // 10) 单列单张不应超出视口高度太多（最多 92%）
+        r = ViewLayout.Compute(2560, 1440, (ConsoleLayoutMode)3, 1);
+        Check(r.Tiles[0].Height <= 1440, "one-col single fits height (" + r.Tiles[0].Height + ")");
+
+        // 11) 单列在窄视口下不越界
+        r = ViewLayout.Compute(420, 900, (ConsoleLayoutMode)3, 3);
+        for (int i = 0; i < r.Tiles.Count; i++)
+            Check(r.Tiles[i].X + r.Tiles[i].Width <= 420, "one-col narrow fits #" + i);
+
         Console.WriteLine(fails == 0 ? "ALL LAYOUT CHECKS PASSED" : fails + " FAILURES");
         return fails;
     }

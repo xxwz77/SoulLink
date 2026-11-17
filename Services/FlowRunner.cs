@@ -101,6 +101,30 @@ namespace SoulLink.Services
                 }
                 else if (flow.Active)
                 {
+                    // ── 武装超时判定 ──
+                    // 触发器命中后若条件长期凑不齐，自动退出，避免永久卡住。
+                    if (flow.ArmTimeoutMinutes > 0 && flow.ArmedAt.HasValue)
+                    {
+                        var elapsed = DateTime.Now - flow.ArmedAt.Value;
+                        // 时钟回拨等异常情况下 elapsed 可能为负，忽略
+                        if (elapsed.TotalMinutes >= flow.ArmTimeoutMinutes)
+                        {
+                            int latchedCount = flow.Latched?.Count ?? 0;
+                            flow.Disarm();
+                            result.Triggered = true;
+                            result.Passed = false;
+                            result.Message = "条件等待超时（已等 " + (int)elapsed.TotalMinutes
+                                           + " 分钟，要求 " + flow.ArmTimeoutMinutes
+                                           + " 分钟内凑齐，已满足 " + latchedCount + " 个）— 已退出流程并清空条件";
+                            result.Steps.Add("超时退出：" + flow.ArmTimeoutMinutes + " 分钟未凑齐条件，条件已清零");
+                            return result;
+                        }
+
+                        // 未超时：把剩余时间写进提示，方便看日志时判断
+                        int remain = flow.ArmTimeoutMinutes - (int)elapsed.TotalMinutes;
+                        result.Steps.Add("距超时还有 " + Math.Max(0, remain) + " 分钟");
+                    }
+
                     // 已武装：继续检查条件（触发器不必再命中）
                     result.Triggered = true;
                 }

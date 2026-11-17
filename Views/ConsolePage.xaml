@@ -25,23 +25,46 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <!-- 画面操作（只在用户页显示）-->
                     <StackPanel x:Name="ViewOps" Orientation="Horizontal" Visibility="Collapsed">
+                        <!-- 画面排列：点开菜单选择，不再循环切换（循环点击容易点错） -->
                         <Button x:Name="BtnLayout" Style="{StaticResource GhostButton}" Padding="12,5"
                                 Click="BtnLayout_Click"
-                                ToolTip="画面排列：单个 / 双列（可上下滚动） / 网格">
+                                ToolTip="画面排列方式">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock x:Name="LayoutGlyph" Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets"
                                            FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <TextBlock x:Name="LayoutLabel" Text="单个" FontSize="11" VerticalAlignment="Center" />
+                                <TextBlock x:Name="LayoutLabel" Text="单个" FontSize="11" VerticalAlignment="Center"
+                                           Margin="0,0,4,0" />
+                                <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="8"
+                                           VerticalAlignment="Center" Foreground="#77FFFFFF" />
                             </StackPanel>
+                            <Button.ContextMenu>
+                                <ContextMenu x:Name="LayoutMenu">
+                                    <MenuItem x:Name="MenuLayoutSingle" Header="单个（只显示当前画面）"
+                                              Tag="0" Click="LayoutMenu_Click" />
+                                    <MenuItem x:Name="MenuLayoutOne" Header="单列（上下滚动，画面最清晰）"
+                                              Tag="3" Click="LayoutMenu_Click" />
+                                    <MenuItem x:Name="MenuLayoutTwo" Header="双列（上下滚动）"
+                                              Tag="1" Click="LayoutMenu_Click" />
+                                    <MenuItem x:Name="MenuLayoutGrid" Header="网格（等分铺满，不滚动）"
+                                              Tag="2" Click="LayoutMenu_Click" />
+                                </ContextMenu>
+                            </Button.ContextMenu>
                         </Button>
-                        <Button x:Name="BtnMode" Style="{StaticResource GhostButton}" Padding="12,5"
-                                Click="BtnMode_Click" ToolTip="自由视角：移动经目标会话内相对注入转为视角；不隐藏、不定位、不裁剪本机光标">
+
+                        <!-- 自由视角：只做状态指示，不可点击。
+                             ★ 原来是个按钮，和"锁定/解锁"混在一起容易误触，
+                               而且它会真的切换输入模式，误点后视角会乱。 -->
+                        <Border x:Name="ModeIndicator" Background="#14FFFFFF"
+                                BorderBrush="#28FFFFFF" BorderThickness="1" CornerRadius="9"
+                                Padding="10,5" Margin="8,0,0,0" VerticalAlignment="Center"
+                                ToolTip="当前输入模式（只作提示，切换请用热键）">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock x:Name="ModeGlyph" Text="&#xE785;" FontFamily="Segoe MDL2 Assets"
-                                           FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <TextBlock x:Name="ModeLabel" Text="自由视角" FontSize="11" VerticalAlignment="Center" />
+                                <Ellipse x:Name="ModeDot" Width="7" Height="7" VerticalAlignment="Center"
+                                         Margin="0,0,6,0" Fill="#FF6B7C9C" />
+                                <TextBlock x:Name="ModeLabel" Text="指针模式" FontSize="11" VerticalAlignment="Center"
+                                           Foreground="{StaticResource TextSecondary}" />
                             </StackPanel>
-                        </Button>
+                        </Border>
                         <Button x:Name="BtnSens" Style="{StaticResource GhostButton}" Padding="8,5"
                                 Margin="6,0,0,0" Click="BtnSens_Click" ToolTip="灵敏度与热键">
                             <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="11.5" />
@@ -58,10 +81,19 @@
                                 <TextBlock Text="断开" FontSize="11" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
-                        <TextBlock x:Name="InputText" Text="" FontSize="10.5"
-                                   VerticalAlignment="Center" Margin="0,0,10,0" MaxWidth="420"
-                                   TextTrimming="CharacterEllipsis"
-                                   Foreground="#88AABBCC" />
+                        <!-- 键鼠状态：固定指示器（只显示当前状态，不承载一次性消息） -->
+                        <Border x:Name="InputIndicator" Background="#14FFFFFF"
+                                BorderBrush="#28FFFFFF" BorderThickness="1" CornerRadius="9"
+                                Padding="10,5" Margin="8,0,10,0" VerticalAlignment="Center"
+                                ToolTip="当前键鼠接管状态">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="InputDot" Width="7" Height="7" VerticalAlignment="Center"
+                                         Margin="0,0,6,0" Fill="#FF6B7C9C" />
+                                <TextBlock x:Name="InputLabel" Text="未接管" FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource TextSecondary}" />
+                            </StackPanel>
+                        </Border>
                         <Button x:Name="BtnLogoff" Style="{StaticResource DangerButton}" Padding="10,5"
                                 Margin="6,0,0,0" Click="BtnLogoff_Click"
                                 ToolTip="注销该用户并关闭他的所有程序（不可恢复）">

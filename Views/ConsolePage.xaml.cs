@@ -69,7 +69,7 @@ namespace SoulLink.Views
                         // 只释放输入，不隐藏保护层。真实 Win32 Owner + 非 Topmost
                         // 已保证它随主窗口沉到其他应用下面；Hide() 会让保护层消失。
                         _busyOverlayWindow?.HideForOwnerState();
-                        _shieldReleased = false;
+                        SetShieldReleased(false);
                         _viewing?.Console?.ReleasePointerForRearm();
                         UpdateShield();
                     };
@@ -172,7 +172,7 @@ namespace SoulLink.Views
                         Debug("页面不可见 → 隐藏 RDP 原生窗口（pageHidden）");
                         SetHiddenForPageSwitch(true);
                         _busyOverlayWindow?.HideForOwnerState();
-                        _shieldReleased = false;
+                        SetShieldReleased(false);
                         _shieldOverlayWindow?.HideOverlay();
                     }
                 }
@@ -325,7 +325,7 @@ namespace SoulLink.Views
                         _shieldWatchedConsole = console;
                         _shieldWatchedGeneration = console.ConnectionGeneration;
                         _shieldWatchedHandle = nativeHandle;
-                        _shieldReleased = false;
+                        SetShieldReleased(false);
                         console.ReleasePointerForRearm();
                         Debug(hadIdentity ? "检测到 RDP 原生画面变化 → 立即重新保护" : "检测到当前 RDP 原生画面 → 自动保护");
                         // 新画面身份在同一个 Tick 内显示，不再等下一轮。
@@ -344,6 +344,7 @@ namespace SoulLink.Views
                         }
                     }
                     else if (_shieldReleased) _shieldOverlayWindow?.HideForOwnerState();
+                    RefreshInputIndicator();
                 }
                 catch (Exception ex) { App.AppendErrorLog("保护层看门狗", ex); }
             };
@@ -360,7 +361,7 @@ namespace SoulLink.Views
             _shieldWatchedHandle = IntPtr.Zero;
             _shieldPendingNewTab = null;
             _shieldPendingAfterBusy = false;
-            _shieldReleased = false;
+            SetShieldReleased(false);
             var old = _shieldOverlayWindow;
             _shieldOverlayWindow = null;
             _shieldOverlayContent = null;
@@ -402,6 +403,70 @@ namespace SoulLink.Views
             UpdateShield();
         }
 
+        /// <summary>
+        /// 键鼠接管指示灯。
+        /// ★ 只反映"当前是否已接管"，不再弹一次性文字：
+        ///   原来用 TextBlock 显示消息，会被后续状态直接覆盖，反而看不出当前状态。
+        /// </summary>
+        private void UpdateInputIndicator(bool taken)
+        {
+            try
+            {
+                if (InputLabel != null) InputLabel.Text = taken ? "已接管" : "未接管";
+                if (InputDot != null)
+                    InputDot.Fill = new SolidColorBrush(taken
+                        ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 亮青 = 已接管（保护状态亮灯）
+                        : Color.FromRgb(0x6B, 0x7C, 0x9C)); // 灰 = 未接管
+                if (InputIndicator != null)
+                {
+                    InputIndicator.Background = new SolidColorBrush(taken
+                        ? Color.FromArgb(0x2E, 0x41, 0xF0, 0xC0)
+                        : Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+                    InputIndicator.BorderBrush = new SolidColorBrush(taken
+                        ? Color.FromArgb(0x77, 0x41, 0xF0, 0xC0)
+                        : Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 刷新键鼠接管指示灯。
+        /// ★ 单独入口，不依赖 UpdateShield 是否被调用：
+        ///   原来只在 UpdateShield 里更新，而它有多条提前 return 的路径，
+        ///   导致指示灯亮起后再也不熄灭（用户实测）。
+        /// </summary>
+        private void RefreshInputIndicator()
+        {
+            try
+            {
+                bool connected = _viewing?.Console?.IsConnected == true;
+                var win = Window.GetWindow(this);
+                bool pageVisible = win != null && win.IsVisible
+                                   && win.WindowState != WindowState.Minimized
+                                   && ViewPage.Visibility == Visibility.Visible
+                                   && ConfigPage.Visibility != Visibility.Visible;
+
+                bool needShield = App.Config.Settings.RdpCaptureOnClick
+                                  && connected
+                                  && !(_viewing?.Console?.IsLooking ?? false)
+                                  && !_shieldReleased
+                                  && pageVisible;
+                UpdateInputIndicator(connected && pageVisible && !needShield);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 修改保护层锁存状态的唯一入口。
+        /// ★ 所有"重新上锁 / 解锁"都必须走这里，否则指示灯会和实际状态脱节。
+        /// </summary>
+        private void SetShieldReleased(bool released)
+        {
+            _shieldReleased = released;
+            RefreshInputIndicator();
+        }
+
         /// <summary>保护层是否已被用户点掉（离开视口或切页后重置）。</summary>
         private bool _shieldReleased;
 
@@ -414,6 +479,21 @@ namespace SoulLink.Views
         {
             try
             {
+                // ★ 指示灯先算，且不依赖保护层窗口是否已创建。
+                //   原来放在后面，保护层窗口尚未创建时会直接 return，
+                //   导致"亮灯后再也不会熄灭"（用户实测）。
+                //   判据与保护层完全一致：需要保护 = 未接管；不需要保护 = 已接管。
+                bool connected = _viewing?.Console?.IsConnected == true;
+                bool wantShield = App.Config.Settings.RdpCaptureOnClick
+                                  && _viewing?.Console != null
+                                  && !_viewing.Console.IsLooking
+                                  && !_shieldReleased
+                                  && ViewPage.Visibility == Visibility.Visible
+                                  && ConfigPage.Visibility != Visibility.Visible
+                                  && Window.GetWindow(this) is Window w0 && w0.IsVisible
+                                  && w0.WindowState != WindowState.Minimized;
+                UpdateInputIndicator(connected && !wantShield);
+
                 EnsureShieldOverlayWindow();
                 if (_shieldOverlayWindow == null) return;
 
@@ -508,10 +588,10 @@ namespace SoulLink.Views
                 if (hit != null) SetFocusFromShield(hit);
             }
 
-            _shieldReleased = true;
+            SetShieldReleased(true);
             _shieldOverlayWindow?.HideOverlay();
             try { _viewing?.Console?.OnShieldReleased(); } catch { }
-            if (InputText != null) InputText.Text = "已接管键鼠 · 光标移出画面后重新保护";
+            UpdateInputIndicator(true);
             Debug("保护层已解除（完整消费首次 Down/Up 后解锁）");
         }
 
@@ -538,7 +618,7 @@ namespace SoulLink.Views
         private void RearmShield(bool force = false)
         {
             if (!force && !_shieldReleased) return;
-            _shieldReleased = false;
+            SetShieldReleased(false);
             UpdateShield();
         }
 
@@ -978,7 +1058,7 @@ namespace SoulLink.Views
             foreach (var row in _rows)
                 row.Console?.SetForegroundActive(false);
             _viewing = null;
-            _shieldReleased = false;
+            SetShieldReleased(false);
             _shieldOverlayWindow?.HideOverlay();
             ConfigPage.Visibility = Visibility.Visible;
             SetBusyVisible(false);
@@ -991,7 +1071,7 @@ namespace SoulLink.Views
         private void ArmShieldForNewTab(UserRow row)
         {
             // 只有 _openedIds 首次加入才调用：这是“新标签创建”，不是重复重绘。
-            _shieldReleased = false;
+            SetShieldReleased(false);
             _shieldPendingAfterBusy = false;
             _shieldPendingNewTab = row;
             _shieldWatchedConsole = null;
@@ -1037,7 +1117,7 @@ namespace SoulLink.Views
             }
 
             row.Console.SetForegroundActive(true);
-            _shieldReleased = false;
+            SetShieldReleased(false);
             if (!newTab) _shieldPendingAfterBusy = !alreadyConnected;
             UpdateShield();
             row.Console.EnsureInputRestored();
@@ -1056,7 +1136,7 @@ namespace SoulLink.Views
                     {
                         // 新标签只登记待保护，必须等真正的 RDP 画面挂载后再消费。
                         _shieldPendingNewTab = null;
-                        _shieldReleased = false;
+                        SetShieldReleased(false);
                         ShieldTrace("native-mounted", row);
                         UpdateShield();
                         _shieldOverlayWindow?.SyncToAnchor();
@@ -1128,7 +1208,7 @@ namespace SoulLink.Views
                 if (ok && ReferenceEquals(row, _viewing))
                 {
                     _shieldPendingAfterBusy = true;
-                    _shieldReleased = false;
+                    SetShieldReleased(false);
                 }
                 SetBusyVisible(!ok);
                 if (!ok) _busyText!.Text = msg;
@@ -1169,7 +1249,7 @@ namespace SoulLink.Views
                 {
                     var row = _viewing;
                     _shieldPendingAfterBusy = false;
-                    _shieldReleased = false;
+                    SetShieldReleased(false);
                     RefreshShieldAfterLayout(row);
                     Debug("启动动画结束 → 立即挂保护层");
                 }
@@ -1898,7 +1978,11 @@ namespace SoulLink.Views
             GlobalSettingsChanged += OnGlobalSettingsChanged;
             var c = new RdpConsole();
             c.InputActivity += (_, t) =>
-                Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) InputText.Text = t; });
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (!ReferenceEquals(row, _viewing)) return;
+                    // 接管状态由保护层直接驱动，这里不再用一次性文字覆盖它
+                });
             c.InputModeChanged += (_, m) =>
                 Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) ApplyModeUi(m); });
             // 光标移出画面 → 重新挂保护层
@@ -1915,7 +1999,7 @@ namespace SoulLink.Views
                         return;
                     }
                     // 退出自由视角：视为"操作完毕"，重新进入需点击状态
-                    _shieldReleased = false;
+                    SetShieldReleased(false);
                     UpdateShield();
                 });
 
@@ -1988,31 +2072,33 @@ namespace SoulLink.Views
 
         // ── 画面工具栏 ───────────────────────────────────────────────────────
 
-        private void BtnMode_Click(object sender, RoutedEventArgs e)
-        {
-            var c = _viewing?.Console;
-            if (c == null) return;
-            var next = c.InputMode == ConsoleInputMode.FreeLook
-                ? ConsoleInputMode.Pointer : ConsoleInputMode.FreeLook;
-            var (ok, msg) = c.SetInputMode(next);
-            if (!ok) { InputText.Text = msg; return; }
-            ApplyModeUi(next);
-        }
+        // ★ 自由视角不再是按钮，只做状态指示（原来误触会让视角乱掉）。
+        //   切换到自由视角仍然通过热键完成，这里只负责把当前状态显示出来。
 
         private void ApplyModeUi(ConsoleInputMode mode)
         {
             string hk = _viewing?.Console?.ToggleHotkey ?? "Ctrl+Alt+Q";
             if (mode == ConsoleInputMode.FreeLook)
             {
-                BtnMode.Style = (Style)FindResource("PrimaryButton");
-                ModeLabel.Text = "自由视角中";
-                InputText.Text = "自由视角 · 相对注入已接管鼠标 · " + hk + " 切回指针";
+                if (ModeLabel != null) ModeLabel.Text = "自由视角中";
+                if (ModeDot != null) ModeDot.Fill = new SolidColorBrush(Color.FromRgb(0x7C, 0x5C, 0xFF));
+                if (ModeIndicator != null)
+                {
+                    ModeIndicator.Background = new SolidColorBrush(Color.FromArgb(0x2E, 0x7C, 0x5C, 0xFF));
+                    ModeIndicator.BorderBrush = new SolidColorBrush(Color.FromArgb(0x77, 0x7C, 0x5C, 0xFF));
+                }
+                UpdateInputIndicator(true);
             }
             else
             {
-                BtnMode.Style = (Style)FindResource("GhostButton");
-                ModeLabel.Text = "自由视角";
-                InputText.Text = "";
+                if (ModeLabel != null) ModeLabel.Text = "指针模式";
+                if (ModeDot != null) ModeDot.Fill = new SolidColorBrush(Color.FromRgb(0x6B, 0x7C, 0x9C));
+                if (ModeIndicator != null)
+                {
+                    ModeIndicator.Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+                    ModeIndicator.BorderBrush = new SolidColorBrush(Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
+                }
+                UpdateInputIndicator(false);
             }
         }
 
@@ -2050,14 +2136,14 @@ namespace SoulLink.Views
         {
             if (spec == null) return;
             var c = _viewing?.Console;
-            if (c == null) { InputText.Text = "先打开一个用户画面"; return; }
+            if (c == null) { LogBus.Warn("自由视角", "先打开一个用户画面"); return; }
             App.Config.Settings.LockHotkey = spec.ToString();
             try { ConfigStore.Save(App.Config); } catch { }
             // 与通用设置相同：所有已打开控制台实时更新，而不是只改当前实例。
             foreach (Window window in Application.Current.Windows)
                 ApplyHotkeyToVisualTree(window, spec.ToString());
             HotkeyBtn.SetSpec(spec);
-            InputText.Text = "自由视角热键已实时生效 → " + spec.ToString();
+            LogBus.Info("自由视角", "热键已实时生效 → " + spec.ToString());
         }
 
         private static void ApplyHotkeyToVisualTree(DependencyObject root, string hotkey)
@@ -2149,7 +2235,7 @@ namespace SoulLink.Views
             catch (Exception ex)
             {
                 LogBus.Error("注销失败", ex.Message);
-                InputText.Text = "注销失败：" + ex.Message;
+                LogBus.Error("注销失败", ex.Message);
             }
             finally
             {

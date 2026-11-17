@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <StartupObject>TimeoutCheck</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="TimeoutCheck.cs" />
+    <Compile Include="..\\..\\Models\\FlowModels.cs" Link="FlowModels.cs" />
+    <Compile Include="..\\..\\Models\\FlowNodeCatalog.cs" Link="FlowNodeCatalog.cs" />
+  </ItemGroup>
+</Project>
