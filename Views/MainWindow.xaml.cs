@@ -58,6 +58,7 @@ namespace SoulLink.Views
             _pages["launch"] = PageLaunch;
             _pages["console"] = PageConsole;
             _pages["update"] = PageUpdate;
+            _pages["remote"] = PageRemote;
             _pages["sessions"] = PageSessions;
             _pages["procs"] = PageProcs;
             _pages["cli"] = PageCli;
@@ -957,6 +958,7 @@ namespace SoulLink.Views
             {
                 case "automation": AutomationView.Activate(); break;
                 case "console": ConsoleView.Activate(); break;
+                case "remote": RemoteView.ReloadAsync(); break;
                 case "update": UpdateView.Reload(); break;
                 case "sessions": LobbyView.Refresh(); break;
                 case "procs": ProcsView.Activate(); break;

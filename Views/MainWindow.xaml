@@ -195,6 +195,18 @@
                                                    Foreground="{StaticResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
+                                    <Grid Height="38" Tag="remote" ToolTip="远程管理">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE968;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextRemote" Grid.Column="1" Text="远程管理"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
                                     <Grid Height="38" Tag="sessions" ToolTip="联机大厅"
                                           Background="Transparent" MouseLeftButtonUp="NavRow_Click">
                                         <Grid.ColumnDefinitions>
@@ -303,6 +315,9 @@
                             </Grid>
                             <Grid x:Name="PageUpdate" Visibility="Collapsed">
                                 <vm:BgiUpdatePage x:Name="UpdateView" />
+                            </Grid>
+                            <Grid x:Name="PageRemote" Visibility="Collapsed">
+                                <vm:RemoteAdminPage x:Name="RemoteView" />
                             </Grid>
                             <Grid x:Name="PageSessions" Visibility="Collapsed">
                                 <vm:LobbyPage x:Name="LobbyView" />

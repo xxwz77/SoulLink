@@ -1,0 +1,96 @@
+<Window x:Class="SoulLink.Views.NewUserWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="新建用户" Width="520" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        FontFamily="{StaticResource UiFont}">
+
+    <Border CornerRadius="16" Background="{StaticResource WindowBackground}"
+            BorderBrush="#28FFFFFF" BorderThickness="1" Padding="0">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- 标题栏 -->
+            <Grid Grid.Row="0" Height="48" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <TextBlock Text="新建用户" FontSize="13.5" FontWeight="SemiBold" Margin="18,0,0,0"
+                           VerticalAlignment="Center" Foreground="{StaticResource TextPrimary}" />
+                <Button Style="{StaticResource WindowButton}" HorizontalAlignment="Right" Width="42"
+                        Click="BtnClose_Click" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" />
+            </Grid>
+
+            <StackPanel Grid.Row="1" Margin="18,0,18,0">
+                <TextBlock Text="创建 Windows 本地账户，并自动生成 SoulLink 连接配置。"
+                           Style="{StaticResource Caption}" Margin="0,0,0,12" TextWrapping="Wrap" />
+
+                <!-- 昵称 -->
+                <TextBlock Text="昵称（显示用，可中文）" Style="{StaticResource Label}" />
+                <TextBox x:Name="NickBox" Style="{StaticResource GlassTextBox}" Margin="0,6,0,0"
+                         TextChanged="Field_TextChanged" />
+                <TextBlock Text="只在 SoulLink 里显示，比如「山客」「小号一」。可以不填，默认与用户名相同。"
+                           Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap" />
+
+                <!-- 用户名 -->
+                <TextBlock Text="Windows 用户名（登录用）" Style="{StaticResource Label}" Margin="0,12,0,0" />
+                <TextBox x:Name="UserBox" Style="{StaticResource GlassTextBox}" Margin="0,6,0,0"
+                         FontFamily="{StaticResource MonoFont}" TextChanged="Field_TextChanged" />
+                <TextBlock Text="这是真实的 Windows 账户名，用于 RDP 登录。1~20 字符，不能含 &quot; \ / [ ] : ; | = , + * ? &lt; &gt; @"
+                           Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap" />
+
+                <!-- 密码 -->
+                <TextBlock Text="密码" Style="{StaticResource Label}" Margin="0,12,0,0" />
+                <PasswordBox x:Name="PwdBox" Style="{StaticResource GlassPasswordBox}" Margin="0,6,0,0"
+                             PasswordChanged="Field_PasswordChanged" />
+                <TextBlock Text="至少 6 位，不能包含用户名。密码会用 DPAPI 加密后保存到连接配置里。"
+                           Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap" />
+
+                <PasswordBox x:Name="Pwd2Box" Style="{StaticResource GlassPasswordBox}" Margin="0,6,0,0"
+                             PasswordChanged="Field_PasswordChanged" />
+                <TextBlock Text="再次输入密码" Style="{StaticResource Caption}" Margin="2,4,0,0" />
+
+                <!-- 校验提示 -->
+                <Border x:Name="ValidBox" Visibility="Collapsed" Margin="0,10,0,0"
+                        CornerRadius="8" Padding="10,7" Background="#18FF6B6B"
+                        BorderBrush="#44FF6B6B" BorderThickness="1">
+                    <TextBlock x:Name="ValidText" FontSize="10.5" TextWrapping="Wrap"
+                               Foreground="#FFFFB4B4" />
+                </Border>
+
+                <!-- 选项 -->
+                <TextBlock Text="选项" Style="{StaticResource Label}" Margin="0,14,0,0" />
+                <CheckBox x:Name="ChkRemote" Style="{StaticResource GlassCheckBox}" Margin="0,8,0,0"
+                          Content="自动加入 Remote Desktop Users 组（可远程登录）" IsChecked="True" />
+                <CheckBox x:Name="ChkAdmin" Style="{StaticResource GlassCheckBox}" Margin="0,6,0,0"
+                          Content="同时加入 administrators 组（管理员权限）" />
+                <CheckBox x:Name="ChkNeverExpire" Style="{StaticResource GlassCheckBox}" Margin="0,6,0,0"
+                          Content="密码永不过期" IsChecked="True" />
+                <CheckBox x:Name="ChkHide" Style="{StaticResource GlassCheckBox}" Margin="0,6,0,0"
+                          Content="在登录界面隐藏该账户" />
+                <CheckBox x:Name="ChkCreateConfig" Style="{StaticResource GlassCheckBox}" Margin="0,6,0,0"
+                          Content="同时创建 SoulLink 连接配置（自动分配 127.0.0.x 地址）" IsChecked="True" />
+
+                <Border Style="{StaticResource Divider}" Margin="0,14,0,12" />
+            </StackPanel>
+
+            <!-- 底部按钮 -->
+            <Grid Grid.Row="2" Margin="18,0,18,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" x:Name="NextHostText" Text="" FontSize="10.5"
+                           VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="取消" Style="{StaticResource GhostButton}" Padding="18,8"
+                            Click="BtnCancel_Click" />
+                    <Button x:Name="BtnCreate" Content="创建" Style="{StaticResource PrimaryButton}"
+                            Padding="22,8" Margin="8,0,0,0" Click="BtnCreate_Click" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
