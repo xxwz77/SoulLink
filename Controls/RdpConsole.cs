@@ -97,6 +97,19 @@ namespace SoulLink.Controls
             catch { }
         }
 
+        /// <summary>连接代次：每次主动重连递增，后台恢复时可据此重新锁定。</summary>
+        public int ConnectionGeneration => _connectionGeneration;
+
+        /// <summary>实际承载 ActiveX 的原生窗口；重连后句柄可能变化。</summary>
+        public IntPtr NativeViewportHandle
+        {
+            get
+            {
+                try { return _ax?.IsHandleCreated == true ? _ax.Handle : IntPtr.Zero; }
+                catch { return IntPtr.Zero; }
+            }
+        }
+
         public bool IsConnected
         {
             get
@@ -897,6 +910,20 @@ namespace SoulLink.Controls
             // 位于 RDP 矩形内，不能只检查 inside，否则切回窗口会残留解锁态。
             if (wasCaptured && !_pointerCaptured && (!inside || ownerInactive))
                 ShieldRearmRequested?.Invoke(this);
+        }
+
+        /// <summary>失焦/原生画面变化时完整撤销输入权限，必须重新点击才能恢复。</summary>
+        public void ReleasePointerForRearm()
+        {
+            _pointerCaptured = false;
+            PointerCaptureEnabled = false;
+            _captured = false;
+            InputMode = ConsoleInputMode.Pointer;
+            try { System.Windows.Input.Keyboard.ClearFocus(); } catch { }
+            try { CursorClip.Release(); } catch { }
+            try { _rawInput?.Stop(); } catch { }
+            ReleaseInjectedButtonsAsync();
+            ResetLookQueue();
         }
 
         private void ReleasePointerCapture()

@@ -22,22 +22,27 @@ namespace SoulLink.Services
         private const int WsExNoactivate = 0x08000000;
         private const uint SwpNozorder = 0x0004;
         private const uint SwpNoactivate = 0x0010;
+        private const uint SwpShowwindow = 0x0040;
+        private const int SwHide = 0;
+        private const int SwShownoactivate = 4;
         private const int WmMouseactivate = 0x0021;
         private static readonly IntPtr MaNoactivate = new IntPtr(3);
 
         private readonly Window _owner;
         private readonly FrameworkElement _anchor;
         private readonly string _diagnosticName;
+        private readonly bool _allowInactiveOwner;
         private bool _requested;
         private bool _closed;
         private double? _widthOverride;
         private double? _heightOverride;
 
-        public OwnedOverlayWindow(Window owner, FrameworkElement anchor, UIElement content, string diagnosticName)
+        public OwnedOverlayWindow(Window owner, FrameworkElement anchor, UIElement content, string diagnosticName, bool allowInactiveOwner = false)
         {
             _owner = owner ?? throw new ArgumentNullException(nameof(owner));
             _anchor = anchor ?? throw new ArgumentNullException(nameof(anchor));
             _diagnosticName = string.IsNullOrWhiteSpace(diagnosticName) ? "OwnedOverlay" : diagnosticName;
+            _allowInactiveOwner = allowInactiveOwner;
 
             WindowStyle = WindowStyle.None;
             // WPF's Owner property can create a native parent relationship for a
@@ -66,6 +71,7 @@ namespace SoulLink.Services
         }
 
         public bool IsRequested => _requested;
+        public bool NativeVisible { get; private set; }
 
         /// <summary>Request visibility. It is still suppressed while the owner is inactive.</summary>
         public void ShowOverlay(double? widthDip = null, double? heightDip = null)
@@ -86,7 +92,13 @@ namespace SoulLink.Services
         /// <summary>Hide without discarding content or the requested state.</summary>
         public void HideForOwnerState()
         {
-            try { if (IsVisible) Hide(); }
+            try
+            {
+                var handle = new WindowInteropHelper(this).Handle;
+                if (handle != IntPtr.Zero && (NativeVisible || IsWindowVisible(handle)))
+                    ShowWindow(handle, SwHide);
+                NativeVisible = false;
+            }
             catch (Exception ex) { Log(ex); }
         }
 
@@ -94,6 +106,7 @@ namespace SoulLink.Services
         public void HideOverlay()
         {
             _requested = false;
+            Trace("HideOverlay", false);
             HideForOwnerState();
         }
 
@@ -154,14 +167,20 @@ namespace SoulLink.Services
 
                 var handle = new WindowInteropHelper(this).Handle;
                 if (handle == IntPtr.Zero) return;
-                SetWindowPos(handle, IntPtr.Zero, x, y, width, height, SwpNozorder | SwpNoactivate);
+                SetWindowPos(handle, IntPtr.Zero, x, y, width, height,
+                    SwpNozorder | SwpNoactivate | (NativeVisible ? 0 : SwpShowwindow));
+                // WPF Window.IsVisible may still be true after SW_HIDE (notably after
+                // logoff disposes/recreates the RDP ActiveX). Restore the existing
+                // HWND explicitly; do not rely on Window.Show() being called again.
+                if (!NativeVisible) ShowWindow(handle, SwShownoactivate);
+                NativeVisible = IsWindowVisible(handle);
             }
             catch (Exception ex) { Log(ex); }
         }
 
         private bool CanDisplay()
         {
-            return _owner.IsVisible && _owner.IsActive
+            return _owner.IsVisible && (_owner.IsActive || _allowInactiveOwner)
                    && _owner.WindowState != WindowState.Minimized
                    && _anchor.IsVisible && _anchor.IsLoaded;
         }
@@ -216,7 +235,7 @@ namespace SoulLink.Services
         {
             ReassertNativeOwner();
             // Owner.Deactivated is synchronous; do not defer hiding to a timer.
-            if (!_owner.IsActive)
+            if (!_owner.IsActive && !_allowInactiveOwner)
             {
                 HideForOwnerState();
                 return;
@@ -225,7 +244,10 @@ namespace SoulLink.Services
             Dispatcher.BeginInvoke(new Action(SyncToAnchor));
         }
 
-        private void OnOwnerDeactivated(object? sender, EventArgs e) => HideForOwnerState();
+        private void OnOwnerDeactivated(object? sender, EventArgs e)
+        {
+            if (!_allowInactiveOwner) HideForOwnerState();
+        }
 
         private void OnOwnerVisibilityChanged(object? sender, DependencyPropertyChangedEventArgs e)
         {
@@ -257,6 +279,23 @@ namespace SoulLink.Services
             base.OnClosed(e);
         }
 
+        private void Trace(string stage, bool stack)
+        {
+            if (!SoulLink.Controls.RdpConsole.VerboseLog) return;
+            try
+            {
+                string text = DateTime.Now.ToString("HH:mm:ss.fff") + " [" + _diagnosticName + "] " + stage
+                    + " requested=" + _requested + " visible=" + IsVisible
+                    + " ownerActive=" + _owner.IsActive + " ownerVisible=" + _owner.IsVisible
+                    + " anchorVisible=" + _anchor.IsVisible + " anchorLoaded=" + _anchor.IsLoaded
+                    + (stack ? "\n" + Environment.StackTrace : "");
+                string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "SoulLink-Overlay-Diagnostics");
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.AppendAllText(System.IO.Path.Combine(dir, "overlay-window.log"), text + Environment.NewLine);
+            }
+            catch { }
+        }
+
         private void Log(Exception ex) => App.AppendErrorLog(_diagnosticName, ex);
 
         private static IntPtr GetWindowLongPtr(IntPtr hwnd, int index)
@@ -276,6 +315,14 @@ namespace SoulLink.Services
 
         [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
         private static extern IntPtr SetWindowLongPtr64(IntPtr hwnd, int index, IntPtr value);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ShowWindow(IntPtr hwnd, int command);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(IntPtr hwnd);
 
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

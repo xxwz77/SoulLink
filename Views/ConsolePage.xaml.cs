@@ -39,6 +39,13 @@ namespace SoulLink.Views
         private bool _initialized;
         private bool _logoffInProgress;
         private bool _busyVisible;
+        private bool _shieldPendingAfterBusy;
+        private System.Windows.Threading.DispatcherTimer? _shieldWatch;
+        private RdpConsole? _shieldWatchedConsole;
+        private int _shieldWatchedGeneration = -1;
+        private IntPtr _shieldWatchedHandle;
+        private DateTime _lastShieldRecoveryLog = DateTime.MinValue;
+        private UserRow? _shieldPendingNewTab;
         private OwnedOverlayWindow? _shieldOverlayWindow;
         private Border? _shieldOverlayContent;
 
@@ -55,11 +62,12 @@ namespace SoulLink.Views
                 {
                     window.Deactivated += (_, __) =>
                     {
-                        // 同步隐藏，不能排队等下一次 UI 调度。OwnedOverlayWindow
-                        // 另外还受真实 Win32 Owner 约束，不会留在其他应用上方。
+                        // 只释放输入，不隐藏保护层。真实 Win32 Owner + 非 Topmost
+                        // 已保证它随主窗口沉到其他应用下面；Hide() 会让保护层消失。
                         BusyPopup.IsOpen = false;
-                        _shieldOverlayWindow?.HideForOwnerState();
-                        RearmShield(true);
+                        _shieldReleased = false;
+                        _viewing?.Console?.ReleasePointerForRearm();
+                        UpdateShield();
                     };
                     window.Activated += (_, __) => Dispatcher.InvokeAsync(() =>
                     {
@@ -77,7 +85,8 @@ namespace SoulLink.Views
             //   （用户反馈：连接动画没有自适应窗口大小）。
             //   改成监听 ViewportHost 自身的 SizeChanged，并补一次首帧对齐。
             ViewportHost.SizeChanged += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
-            Loaded += (_, __) => EnsureShieldOverlayWindow();
+            Loaded += (_, __) => { EnsureShieldOverlayWindow(); EnsureShieldWatch(); };
+            Unloaded += (_, __) => { _shieldWatch?.Stop(); _shieldWatch = null; };
             Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
 
             // ★ WindowsFormsHost 是独立 HWND，**不受 WPF Visibility 控制**：
@@ -164,6 +173,110 @@ namespace SoulLink.Views
 
         // ── 保护层（点击画面才把键鼠交给 RDP）──────────────────────────────
 
+        private void ShieldTrace(string stage, UserRow? row = null)
+        {
+            if (!RdpConsole.VerboseLog) return;
+            try
+            {
+                var console = row?.Console ?? _viewing?.Console;
+                var owner = Window.GetWindow(this);
+                string text = DateTime.Now.ToString("HH:mm:ss.fff")
+                    + " stage=" + stage
+                    + " user=" + (row?.Account.Caption ?? _viewing?.Account.Caption ?? "-")
+                    + " setting=" + App.Config.Settings.RdpCaptureOnClick
+                    + " connected=" + (console?.IsConnected == true)
+                    + " mounted=" + (console != null && ViewportHost.Children.Contains(console))
+                    + " released=" + _shieldReleased
+                    + " pending=" + _shieldPendingAfterBusy
+                    + " busy=" + _busyVisible
+                    + " view=" + ViewPage.Visibility
+                    + " pageVisible=" + IsVisible
+                    + " ownerActive=" + (owner?.IsActive == true)
+                    + " anchor=" + ViewportHost.ActualWidth.ToString("0") + "x" + ViewportHost.ActualHeight.ToString("0")
+                    + " requested=" + (_shieldOverlayWindow?.IsRequested == true)
+                    + " visible=" + (_shieldOverlayWindow?.NativeVisible == true);
+                System.IO.Directory.CreateDirectory(ConfigStore.ConfigDir);
+                System.IO.File.AppendAllText(System.IO.Path.Combine(ConfigStore.ConfigDir, "shield-trace.log"), text + Environment.NewLine);
+            }
+            catch { }
+        }
+
+        private void EnsureShieldWatch()
+        {
+            if (_shieldWatch != null) return;
+            _shieldWatch = new System.Windows.Threading.DispatcherTimer
+            { Interval = TimeSpan.FromMilliseconds(150) };
+            _shieldWatch.Tick += (_, __) =>
+            {
+                try
+                {
+                    var console = _viewing?.Console;
+                    if (console == null || ViewPage.Visibility != Visibility.Visible || !IsVisible)
+                    {
+                        _shieldWatchedConsole = null;
+                        _shieldWatchedGeneration = -1;
+                        _shieldWatchedHandle = IntPtr.Zero;
+                        _shieldOverlayWindow?.HideForOwnerState();
+                        return;
+                    }
+
+                    bool connected = console.IsConnected;
+                    IntPtr nativeHandle = console.NativeViewportHandle;
+                    bool nativeReady = nativeHandle != IntPtr.Zero
+                        && ViewportHost.Children.Contains(console) && console.IsVisible;
+                    bool canReceiveInput = connected || nativeReady;
+                    if (canReceiveInput && (!ReferenceEquals(_shieldWatchedConsole, console)
+                        || _shieldWatchedGeneration != console.ConnectionGeneration
+                        || _shieldWatchedHandle != nativeHandle))
+                    {
+                        bool hadIdentity = ReferenceEquals(_shieldWatchedConsole, console);
+                        _shieldWatchedConsole = console;
+                        _shieldWatchedGeneration = console.ConnectionGeneration;
+                        _shieldWatchedHandle = nativeHandle;
+                        _shieldReleased = false;
+                        console.ReleasePointerForRearm();
+                        Debug(hadIdentity ? "检测到 RDP 原生画面变化 → 立即重新保护" : "检测到当前 RDP 原生画面 → 自动保护");
+                        // 新画面身份在同一个 Tick 内显示，不再等下一轮。
+                        UpdateShield();
+                    }
+
+                    // 持续满足保护条件就保持显示，不依赖连接/动画的某次回调。
+                    // 用户已主动点击解锁时不抢回鼠标。
+                    if (!_shieldReleased && _shieldOverlayWindow?.NativeVisible != true)
+                    {
+                        UpdateShield();
+                        if ((DateTime.UtcNow - _lastShieldRecoveryLog).TotalSeconds > 5)
+                        {
+                            _lastShieldRecoveryLog = DateTime.UtcNow;
+                            Debug("保护层看门狗恢复显示（无需切页）");
+                        }
+                    }
+                    else if (_shieldReleased) _shieldOverlayWindow?.HideForOwnerState();
+                }
+                catch (Exception ex) { App.AppendErrorLog("保护层看门狗", ex); }
+            };
+            _shieldWatch.Start();
+        }
+
+        private void RecreateShieldAfterConsoleDisposal()
+        {
+            // 注销销毁整个 ActiveX 时同步销毁保护层 HWND，下次新建不复用旧状态。
+            _shieldWatch?.Stop();
+            _shieldWatch = null;
+            _shieldWatchedConsole = null;
+            _shieldWatchedGeneration = -1;
+            _shieldWatchedHandle = IntPtr.Zero;
+            _shieldPendingNewTab = null;
+            _shieldPendingAfterBusy = false;
+            _shieldReleased = false;
+            var old = _shieldOverlayWindow;
+            _shieldOverlayWindow = null;
+            _shieldOverlayContent = null;
+            if (old != null) { try { old.HideOverlay(); old.Close(); } catch { } }
+            EnsureShieldOverlayWindow();
+            EnsureShieldWatch();
+        }
+
         private void EnsureShieldOverlayWindow()
         {
             if (_shieldOverlayWindow != null) return;
@@ -189,7 +302,7 @@ namespace SoulLink.Views
             _shieldOverlayContent.MouseLeftButtonDown += ShieldOverlay_MouseDown;
             _shieldOverlayContent.MouseLeftButtonUp += ShieldOverlay_MouseUp;
             _shieldOverlayWindow = new OwnedOverlayWindow(
-                owner, ViewportHost, _shieldOverlayContent, "RDP 保护层");
+                owner, ViewportHost, _shieldOverlayContent, "RDP 保护层", allowInactiveOwner: true);
             UpdateShield();
         }
 
@@ -210,20 +323,25 @@ namespace SoulLink.Views
                 var win = Window.GetWindow(this);
                 bool visible = win != null && win.IsVisible && win.WindowState != WindowState.Minimized;
 
-                // 主窗口不在前台时必须回到锁定态；即使光标仍在 RDP 矩形内，
-                // 切回本窗口也不能自动恢复远端鼠标控制。
+                // 中控台处在任意 RDP 标签（不是“配置”）就保护。
+                // 新建/重连/注销后重开都不依赖 Connected、标签创建回调或 IsActive。
+                // Owner + 非 Topmost 保证层级；用户点击解锁或切回配置页才解除。
                 bool want = App.Config.Settings.RdpCaptureOnClick
                             && _viewing?.Console != null
-                            && _viewing.Console.IsConnected
                             && !_viewing.Console.IsLooking
                             && !_shieldReleased
                             && ViewPage.Visibility == Visibility.Visible
-                            && visible && win!.IsActive;
-                if (want) SyncShieldSize();
-                if (want) _shieldOverlayWindow.ShowOverlay(ViewportHost.ActualWidth, ViewportHost.ActualHeight);
-                else _shieldOverlayWindow.HideOverlay();
+                            && ConfigPage.Visibility != Visibility.Visible
+                            && visible;
+                ShieldTrace(want ? "show" : "suppress", _viewing);
+                if (want)
+                {
+                    SyncShieldSize();
+                    _shieldOverlayWindow.ShowOverlay(ViewportHost.ActualWidth, ViewportHost.ActualHeight);
+                }
+                else _shieldOverlayWindow.HideForOwnerState();
             }
-            catch { }
+            catch (Exception ex) { App.AppendErrorLog("UpdateShield", ex); }
         }
 
         private void SyncShieldSize()
@@ -255,6 +373,25 @@ namespace SoulLink.Views
             try { _viewing?.Console?.OnShieldReleased(); } catch { }
             if (InputText != null) InputText.Text = "已接管键鼠 · 光标移出画面后重新保护";
             Debug("保护层已解除（完整消费首次 Down/Up 后解锁）");
+        }
+
+        /// <summary>
+        /// RDP 加入视觉树后，必须等一次布局再显示保护层。
+        /// ConnectAsync 返回时 Console 尚未挂载，此时 UpdateShield 没有可见锚点；
+        /// 第二个及后续用户又不会重走首次页面 Loaded，必须在这里显式刷新。
+        /// </summary>
+        private void RefreshShieldAfterLayout(UserRow row)
+        {
+            if (!ReferenceEquals(row, _viewing)) return;
+            UpdateShield();
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!ReferenceEquals(row, _viewing)) return;
+                if (!ViewportHost.Children.Contains(row.Console)) return;
+                UpdateShield();
+                SyncShieldSize();
+                _shieldOverlayWindow?.SyncToAnchor();
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
         /// <summary>光标离开视口、失活或切页后统一回到锁定态。</summary>
@@ -692,17 +829,30 @@ namespace SoulLink.Views
             RebuildUserList();
         }
 
+        private void ArmShieldForNewTab(UserRow row)
+        {
+            // 只有 _openedIds 首次加入才调用：这是“新标签创建”，不是重复重绘。
+            _shieldReleased = false;
+            _shieldPendingAfterBusy = false;
+            _shieldPendingNewTab = row;
+            _shieldWatchedConsole = null;
+            _shieldWatchedGeneration = -1;
+            _shieldWatchedHandle = IntPtr.Zero;
+            ShieldTrace("new-tab", row);
+        }
+
         private async Task ShowViewPageAsync(UserRow row)
         {
             foreach (var item in _rows)
                 item.Console?.SetForegroundActive(ReferenceEquals(item, row));
             _viewing = row;
-            _openedIds.Add(row.Account.Id);   // 打开过的才进标签卡
+            bool newTab = _openedIds.Add(row.Account.Id); // 首次打开才创建新标签
             ConfigPage.Visibility = Visibility.Collapsed;
             ViewPage.Visibility = Visibility.Visible;
             ViewOps.Visibility = Visibility.Visible;
             SetBusyVisible(!row.Console?.IsConnected ?? true);
             RenderTabs();
+            if (newTab) ArmShieldForNewTab(row);
 
             ViewportHost.Children.Clear();
             if (row.Console == null) InitializeConsole(row);
@@ -721,6 +871,7 @@ namespace SoulLink.Views
 
             row.Console.SetForegroundActive(true);
             _shieldReleased = false;
+            if (!newTab) _shieldPendingAfterBusy = !alreadyConnected;
             UpdateShield();
             row.Console.EnsureInputRestored();
 
@@ -729,12 +880,22 @@ namespace SoulLink.Views
                 var (ok, _) = await ConnectAsync(row);
                 // 连接完成（无论成功失败）才挂上控件；
                 // 失败时控件保持不显示，用户能看到我们的错误提示而不是黑屏。
-                if (ok)
+                if (ok && ReferenceEquals(row, _viewing))
                 {
                     ViewportHost.Children.Clear();
                     ViewportHost.Children.Add(row.Console);
                     row.Console.OnShown();
+                    if (ReferenceEquals(_shieldPendingNewTab, row))
+                    {
+                        // 新标签只登记待保护，必须等真正的 RDP 画面挂载后再消费。
+                        _shieldPendingNewTab = null;
+                        _shieldReleased = false;
+                        ShieldTrace("native-mounted", row);
+                        UpdateShield();
+                        _shieldOverlayWindow?.SyncToAnchor();
+                    }
                     SetBusyVisible(false);
+                    RefreshShieldAfterLayout(row);
                 }
             }
         }
@@ -795,6 +956,13 @@ namespace SoulLink.Views
                 }
 
                 var (ok, msg) = await row.Console.ConnectAsync(row.Account, App.Config.Settings, sessionId);
+                // 先在动画仍关闭不了 RDP 输入时锁定，再由 SetBusyVisible(false)
+                // 在动画结束边界立即把保护层交接到真实视口。
+                if (ok && ReferenceEquals(row, _viewing))
+                {
+                    _shieldPendingAfterBusy = true;
+                    _shieldReleased = false;
+                }
                 SetBusyVisible(!ok);
                 if (!ok) BusyText.Text = msg;
                 if (ReferenceEquals(row, _viewing)) UpdateShield();
@@ -817,7 +985,21 @@ namespace SoulLink.Views
             var owner = Window.GetWindow(this);
             BusyPopup.IsOpen = visible && ViewPage.Visibility == Visibility.Visible
                 && owner != null && owner.IsVisible && owner.IsActive && owner.WindowState != WindowState.Minimized;
-            if (!visible) BtnBusyReconnect.Visibility = Visibility.Collapsed;
+            if (!visible)
+            {
+                BtnBusyReconnect.Visibility = Visibility.Collapsed;
+                // 启动动画结束就是保护层接管输入的时刻。先同步请求显示，
+                // 再等 Loaded 布局校准，不能等下一次切页或偶发的生命周期事件。
+                if (_shieldPendingAfterBusy && _viewing != null)
+                {
+                    var row = _viewing;
+                    _shieldPendingAfterBusy = false;
+                    _shieldReleased = false;
+                    RefreshShieldAfterLayout(row);
+                    Debug("启动动画结束 → 立即挂保护层");
+                }
+                else if (_viewing != null) UpdateShield();
+            }
         }
 
         /// <summary>
@@ -1519,23 +1701,14 @@ namespace SoulLink.Views
 
             LogBus.Info("批量接入 " + targets.Count + " 个用户画面");
 
+            // 统一走 ShowViewPageAsync：它负责挂载 RDP，并在布局完成后刷新保护层。
+            // 旧路径在后台 ConnectAsync，却不把控件挂到 ViewportHost，第二个及
+            // 后续用户的保护层只能等下一次切页才出现。
             foreach (var row in targets)
             {
-                try
-                {
-                    _openedIds.Add(row.Account.Id);
-                    if (row.Console == null) InitializeConsole(row);
-                    row.Console!.OnShown();
-                    if (!row.Console.IsConnected) await ConnectAsync(row);
-                }
-                catch (Exception ex)
-                {
-                    LogBus.Error("接入 " + row.Account.Caption + " 失败", ex.Message);
-                }
+                try { await ShowViewPageAsync(row); }
+                catch (Exception ex) { LogBus.Error("接入 " + row.Account.Caption + " 失败", ex.Message); }
             }
-
-            // 最后显示第一个勾选的
-            if (targets.Count > 0) await ShowViewPageAsync(targets[0]);
             RenderTabs();
         }
 
@@ -1760,6 +1933,7 @@ namespace SoulLink.Views
                 ViewportHost.Children.Clear();
                 try { row.Console?.Dispose(); } catch { }
                 row.Console = null;
+                RecreateShieldAfterConsoleDisposal();
                 if (ReferenceEquals(_viewing, row))
                 {
                     _viewing = null;
@@ -1795,6 +1969,7 @@ namespace SoulLink.Views
             ViewportHost.Children.Clear();
             try { row.Console?.Dispose(); } catch { }
             row.Console = null;
+            RecreateShieldAfterConsoleDisposal();
             if (ReferenceEquals(_viewing, row))
             {
                 _viewing = null;
