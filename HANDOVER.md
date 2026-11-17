@@ -143,6 +143,15 @@ SoulLink/
 - 注销后重开改为销毁并重建保护层 HWND；此项最后的修复仍待用户实测。
 - 独立验收版只用于测试并禁用了新代理投送；dist 正式版保留正常投送功能。
 
+### 严重事故：分屏实验已撤回（2026-11-17）
+
+- 分屏验证版运行后发生 Windows Bugcheck 0x119（VIDEO_SCHEDULER_INTERNAL_ERROR）并重启。
+- 转储：C:\Windows\Minidump\111726-18203-01.dmp；NVIDIA nvlddmkm Event 153。
+- 未提交的分屏/内部窗口/1:1 实验源码已全部撤回，恢复 0d12968 内容；构建通过。
+- **禁止再次启动 tools/rdp-layout-validation 下的旧验证版。**
+- 未修改 dist/stable/；dist/ v1.13.2 不含分屏实验。
+- 详见 releases/RDP-SPLIT-INCIDENT-20261117.md。
+
 ---
 
 ## 四、关键约束（必须遵守）
