@@ -57,6 +57,7 @@ releases/SoulLink-v*-Update/
 
 # 研究用生成的中间产物（脚本保留，提取出的字符串转储不入库）
 research/**/out/
+__pycache__/
 
 # 样张/验证工具的构建产物
 tools/*/bin/
