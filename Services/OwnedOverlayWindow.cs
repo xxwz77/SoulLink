@@ -163,11 +163,18 @@ namespace SoulLink.Services
                     return;
                 }
 
-                // ★ 永远以锚点实时尺寸为准，不再用外部传入的 override。
-                //   override 是"显示那一刻"的快照；窗口随后变大或切换布局后它就是旧值，
-                //   实测会算出比外框还宽的矩形，把保护层推到窗口外面。
-                double widthDip = _anchor.ActualWidth;
-                double heightDip = _anchor.ActualHeight;
+                // ★ 尺寸来源分两种，按用途区分：
+                //
+                //   ① 显式给了 override（ShowOverlay/UpdateOverlaySize 传了宽高）：
+                //      以 override 为准。展开导航浮层属于这类 —— 它的锚点是一个
+                //      固定尺寸的占位 Grid，真正的宽度只有调用方（NavRail.ActualWidth）知道。
+                //
+                //   ② 没给 override（保护层 / 连接动画）：以锚点实时尺寸为准。
+                //      这两个必须用实时值：override 是"显示那一刻"的快照，
+                //      窗口随后变大或切换布局后它就是旧值，会算出比外框还宽的矩形、
+                //      把浮层推到窗口外面（实测过）。
+                double widthDip = _widthOverride ?? _anchor.ActualWidth;
+                double heightDip = _heightOverride ?? _anchor.ActualHeight;
                 if (widthDip < 1 || heightDip < 1 || _anchor.ActualWidth < 1 || _anchor.ActualHeight < 1)
                 {
                     HideForOwnerState();
