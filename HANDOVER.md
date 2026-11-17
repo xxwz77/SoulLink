@@ -1,6 +1,58 @@
 # SoulLink 项目交接文档
 
-> 最后更新：2026-11-17 · v1.13.2
+> 最后更新：2026-11-17 · v1.13.2 + 多窗口研究/事故总结
+
+---
+
+## 〇、新会话必读（2026-11-17 最新）
+
+> **先读本文和 releases/RDP-WINDOWING-RESEARCH-SUMMARY-20261117.md，再决定做什么。**
+
+### 当前安全基线
+
+- v1.13.2 + 0d12968（连接/注销动画不遮展开导航）。
+- dist/ 是开发版；dist/stable/ 是生产挂机版，未修改且当前正在运行。
+- 分屏、Canvas 内部窗口、独立顶级窗口、1:1 分屏实验源码已全部撤回。
+- 撤回后 Release 构建通过，0 错误；没有因此启动应用或 RDP。
+- f51fb0c 记录事故；0d12968 是分屏开发前功能基线。
+
+### 绝对禁止
+
+1. 不修改/回退 dist/stable/，除非用户重新明确授权。
+2. 不操作 A1/A4；测试只用 A2/A3，且每次真实 RDP 验证需用户授权。
+3. 所有进程操作必须按 PID + SessionId + 完整 exe 路径校验；relay 与主窗口分开。
+4. **禁止运行 tools/rdp-layout-validation、tools/rdp-process-windowing 中的旧验证程序。**
+5. 禁止在当前机器恢复同进程多 ActiveX 分屏、Canvas 内部窗口或独立顶级窗口原型。
+6. 不以“再试一次”复现 0x119；先分析转储和驱动兼容性。
+
+### RDP 功能验证状态
+
+- 侧栏原生浮层、首次 Down/Up 消费、后台重连保护：有用户实测可用记录。
+- 连接/注销动画遮挡导航：已修复并提交 0d12968，但无完整归档验收。
+- 注销后重开保护层：最后修复未完整验收，不得写成已解决。
+- 分屏/内部窗口/1:1：全部撤回，没有可交付实现。
+
+### 研究结论速览
+
+- 1Remote：同进程 Host + 顶级 Dragablz 标签窗口；不是主窗口内多视口分屏。
+- SimpleRemote：同进程单窗口多标签，切换不断连、不重建 ActiveX；无同屏自由分屏。
+- MobaXterm：主控 + MobaRTE 子进程，证据指向 RDP 子窗口嵌入主控原生面板；不是独立顶级窗口。
+- 后续若稳定单窗口标签，可参考 SimpleRemote；若未来继续分屏，先评估 MobaXterm 式子进程内嵌子窗口。
+
+### 事故证据
+
+- 2026-11-17 15:09 左右分屏验证版运行后系统死机重启。
+- Bugcheck 0x119 VIDEO_SCHEDULER_INTERNAL_ERROR；NVIDIA nvlddmkm Event 153。
+- 转储 C:\Windows\Minidump\111726-18203-01.dmp。
+- 只确认时间关联与高风险组合，未完成内核栈分析，不能宣称某行代码为直接根因。
+
+详细文档：
+
+- releases/RDP-WINDOWING-RESEARCH-SUMMARY-20261117.md
+- releases/RDP-SPLIT-INCIDENT-20261117.md
+- releases/1REMOTE-WINDOWING-RESEARCH-20261117.md
+- releases/SIMPLEREMOTE-TABBED-RDP-RESEARCH-20261117.md
+- releases/MOBAXTERM-RDP-ARCHITECTURE-RESEARCH-20261117.md
 
 ---
 
@@ -113,7 +165,8 @@ SoulLink/
 | 标签 | v1.13.2-reliable |
 | 归档 | releases/v1.13.2-reliable/ |
 | 更新包 | releases/SoulLink-v1.13.2-Update.zip (87.2 MB) |
-| dist | 已更新 v1.13.2；dist/stable/ 未修改 |
+| dist | 当前为 v1.13.2 后续小修复（含 0d12968 动画层级修复），SHA256 D29E9531…；不同于标签归档 exe |
+| 归档校验 | v1.13.2-reliable 固定 exe 为 fc19561，SHA256 58005BCD…；dist/stable/ 未修改 |
 | 回退 | releases/rollback.ps1 → v1.13.0-reliable |
 
 ### 服务端
