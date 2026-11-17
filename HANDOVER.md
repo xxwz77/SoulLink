@@ -1,6 +1,6 @@
 # SoulLink 项目交接文档
 
-> 最后更新：2026-11-17 · v1.13.1
+> 最后更新：2026-11-17 · v1.13.2
 
 ---
 
@@ -93,8 +93,8 @@ SoulLink/
 │
 ├── releases/                版本归档
 │   ├── v1.13.0-reliable/       回退版本
-│   ├── v1.13.1-reliable/
-│   ├── SoulLink-v1.13.1-Update.zip
+│   ├── v1.13.2-reliable/
+│   ├── SoulLink-v1.13.2-Update.zip
 │   └── rollback.ps1         回退脚本
 │
 └── dist/stable/             ★★ 挂机版（生产使用，改动需谨慎）
@@ -102,18 +102,18 @@ SoulLink/
 
 ---
 
-## 三、当前状态（v1.13.1）
+## 三、当前状态（v1.13.2）
 
 ### 版本信息
 
 | 项目 | 值 |
 |---|---|
-| 版本 | 1.13.1 |
-| 提交 | b98d2c1（UI 修复）/ 38a3757（归档） |
-| 标签 | v1.13.1-reliable |
-| 归档 | releases/v1.13.1-reliable/ |
-| 更新包 | releases/SoulLink-v1.13.1-Update.zip (87.2 MB) |
-| dist | 已更新 v1.13.1；dist/stable/ 未修改 |
+| 版本 | 1.13.2 |
+| 提交 | fc19561（保护层修复）/ 917d379（归档） |
+| 标签 | v1.13.2-reliable |
+| 归档 | releases/v1.13.2-reliable/ |
+| 更新包 | releases/SoulLink-v1.13.2-Update.zip (87.2 MB) |
+| dist | 已更新 v1.13.2；dist/stable/ 未修改 |
 | 回退 | releases/rollback.ps1 → v1.13.0-reliable |
 
 ### 服务端
@@ -132,12 +132,15 @@ SoulLink/
 
 **已在 A1 单人模式验证跑通 5 条路线。**
 
-### RDP 空域与保护层（v1.13.1）
+### RDP 空域与保护层（v1.13.2）
 
 - 展开侧栏和 RDP 保护层使用 OwnedOverlayWindow：真实 Win32 Owner、非 Topmost、不抢焦点。
 - 首次点击保护层完整消费 Down/Up，MouseUp 后才解锁；移出、失活、切页后重新锁定。
 - 原生浮层按物理像素定位；150% DPI、反复/快速收展及失活隔离测试通过。
-- 用户已用 A2 对独立验收构建做真实 RDP UI 验证，确认可用。
+- 用户已用 A2 对独立验收构建做真实 RDP UI 验证，确认基础浮层可用。
+- v1.13.2 使用原生 Win32 可见性控制，失焦完整撤销鼠标、键盘和自由视角状态。
+- 后台重连保护已由用户实测确认可用。
+- 注销后重开改为销毁并重建保护层 HWND；此项最后的修复仍待用户实测。
 - 独立验收版只用于测试并禁用了新代理投送；dist 正式版保留正常投送功能。
 
 ---
