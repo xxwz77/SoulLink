@@ -1015,8 +1015,8 @@ namespace SoulLink.Services
             if (string.IsNullOrEmpty(user)) return "";
             try
             {
-                var paths = cfg.Settings.BgiPaths;
-                if (paths != null && paths.TryGetValue(user, out var p)) return p ?? "";
+                // ★ 统一走解析器：手动指定 > 正在运行 > 记忆
+                return BgiPathResolver.GetPath(user);
             }
             catch { }
             return "";

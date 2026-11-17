@@ -97,10 +97,9 @@ namespace SoulLink.Views
         {
             try
             {
-                var paths = App.Config.Settings.BgiPaths;
-                if (paths == null) return "";
-                if (paths.TryGetValue(user, out var p) && !string.IsNullOrWhiteSpace(p))
-                    return p;
+                // ★ 统一走解析器：手动指定 > 正在运行 > 记忆
+                if (!string.IsNullOrWhiteSpace(user))
+                    return BgiPathResolver.GetPath(user);
             }
             catch { }
             return "";

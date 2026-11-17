@@ -601,9 +601,10 @@ namespace SoulLink.Views
                 //   避免一新建就显示"没有配置 BGI 路径"（用户实测）。
                 if (UsesBgi(def.Type))
                 {
+                    // ★ 统一走解析器
                     var map = _cfg.Settings.BgiPaths;
-                    bool meHas = map != null && map.TryGetValue(_account.UserName, out var mePath)
-                                 && !string.IsNullOrEmpty(mePath) && File.Exists(mePath);
+                    var meResolved = BgiPathResolver.GetPath(_account.UserName);
+                    bool meHas = !string.IsNullOrEmpty(meResolved) && File.Exists(meResolved);
                     if (!meHas && map != null)
                     {
                         foreach (var kv in map)
@@ -1150,13 +1151,9 @@ namespace SoulLink.Views
             string user = node.Get("user").Trim();
             if (user.Length == 0) user = _account.UserName;
 
-            string path = "";
-            var paths = _cfg.Settings.BgiPaths;
-            if (paths != null)
-            {
-                paths.TryGetValue(user, out path);
-                if (string.IsNullOrEmpty(path)) paths.TryGetValue(_account.UserName, out path);
-            }
+            // ★ 统一走解析器
+            string path = BgiPathResolver.GetPath(user);
+            if (string.IsNullOrEmpty(path)) path = BgiPathResolver.GetPath(_account.UserName);
             if (!string.IsNullOrEmpty(path) && !File.Exists(path)) path = "";
 
             var box = new TextBox
@@ -1202,9 +1199,8 @@ namespace SoulLink.Views
                 };
                 if (dlg.ShowDialog() != true) return;
 
-                var map = _cfg.Settings.BgiPaths
-                          ?? (_cfg.Settings.BgiPaths = new Dictionary<string, string>());
-                map[user] = dlg.FileName;
+                // ★ 用户明确选择 = 手动指定，走 Pin（自动探测之后不再覆盖）
+                BgiPathResolver.Pin(user, dlg.FileName);
 
                 box.Text = dlg.FileName;
                 box.Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8));
@@ -1239,9 +1235,8 @@ namespace SoulLink.Views
             var list = new List<string>();
             try
             {
-                string exe = "";
-                var paths = _cfg.Settings.BgiPaths;
-                if (paths != null) paths.TryGetValue(_account.UserName, out exe);
+                // ★ 统一走解析器
+                string exe = BgiPathResolver.GetPath(_account.UserName);
                 if (string.IsNullOrEmpty(exe))
                 {
                     // 退回：看该账号有没有在跑 BGI

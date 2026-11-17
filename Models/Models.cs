@@ -338,12 +338,36 @@ namespace SoulLink.Models
             = new System.Collections.Generic.List<string>();
 
         /// <summary>
-        /// 每个用户记住的 BetterGI 路径（用户名 → BetterGI.exe 完整路径）。
-        /// 动作编辑窗口的「BGI」按钮用它：首次让用户指定，之后同用户直接回填。
+        /// 每个用户当前选定的 BetterGI 路径（用户名 → BetterGI.exe 完整路径）。
+        ///
+        /// ★ 语义：这是"用户明确指定或系统自动选中的那一个"。
+        ///   由 BgiPathResolver 统一维护，不要再直接读写它判断"有没有装 BGI"。
         /// </summary>
         public System.Collections.Generic.Dictionary<string, string> BgiPaths { get; set; }
             = new System.Collections.Generic.Dictionary<string, string>(
                 System.StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// 每个用户"见过"的全部 BetterGI 路径（用户名 → 路径列表）。
+        ///
+        /// ★ 为什么需要：用户可能同时装了多个 BGI（不同盘、不同版本）。
+        ///   只记一个会导致"换到第二个之后，第一个的信息就丢了"，
+        ///   界面上也看不出到底有几个可用。
+        /// ★ 自动收集：每次探测到正在运行的 BGI 就并入这里，去重并规范化路径。
+        /// </summary>
+        public System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> BgiKnownPaths { get; set; }
+            = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(
+                System.StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// 用户手动「切换」过的用户（用户名集合）。
+        ///
+        /// ★ 语义：这个用户身上，**人指定的优先于自动探测**。
+        ///   没在这个集合里的用户，探测到哪个就用哪个（并在界面上标注"自动"）。
+        ///   用户点一次「切换」就加入，点「恢复自动」就移出。
+        /// </summary>
+        public System.Collections.Generic.List<string> BgiPinnedUsers { get; set; }
+            = new System.Collections.Generic.List<string>();
 
         /// <summary>
         /// 联机大厅服务端地址（例如 http://121.4.78.52:45080）。

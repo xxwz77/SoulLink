@@ -83,13 +83,15 @@ namespace SoulLink.Views
                     url = "http://" + url;
 
                 Services.LobbyApi.SaveToConfig(url);
-                LobbyServerBox.Text = Services.LobbyApi.BaseUrl;
+                // ★ 回填用户填的值，而不是"生效地址"（后者可能是内置默认值）
+                LobbyServerBox.Text = Services.LobbyApi.ConfiguredUrl;
+                UpdateLobbyPlaceholder();
 
                 LobbyServerStatus.Text = "✓ 已保存";
                 LobbyServerStatus.Foreground = new System.Windows.Media.SolidColorBrush(
                     System.Windows.Media.Color.FromRgb(0x6E, 0xF0, 0xC8));
 
-                LogBus.Ok("联机大厅服务器地址已更新：" + Services.LobbyApi.BaseUrl);
+                LogBus.Ok("联机大厅服务器地址已更新");
             }
             catch (Exception ex)
             {
@@ -109,7 +111,10 @@ namespace SoulLink.Views
             try
             {
                 Services.LobbyApi.LoadFromConfig();
-                LobbyServerBox.Text = Services.LobbyApi.BaseUrl;
+                // ★ 只显示用户配置过的地址。内置默认地址属于实现细节，
+                //   不能回填到输入框里（否则用户会以为那是他自己填的）。
+                LobbyServerBox.Text = Services.LobbyApi.ConfiguredUrl;
+                UpdateLobbyPlaceholder();
                 LobbyServerStatus.Text = "";
             }
             catch { }
@@ -118,8 +123,177 @@ namespace SoulLink.Views
             _loading = false;
 
             RefreshAccounts();
+            RebuildBgiPathList();
             _ = DetectAsync();
             _ = RefreshAutoStartAsync();
+        }
+
+        // ── BetterGI 路径（每账号一行） ──────────────────────────────────
+        //
+        // ★ 唯一数据源：Settings.BgiPaths（用户名 → 路径）。
+        //   留空 = 自动（由 BgiPathResolver 从运行中的进程识别）。
+        //   填了 = 固定使用该值（BgiPinnedUsers 里会记录该用户，自动探测不再覆盖）。
+
+        private void RebuildBgiPathList()
+        {
+            if (BgiPathList == null) return;
+            BgiPathList.Children.Clear();
+
+            if (App.Config.Accounts.Count == 0)
+            {
+                BgiPathList.Children.Add(new TextBlock
+                {
+                    Text = "尚未配置任何 RDP 账号",
+                    Style = (Style)FindResource("Caption")
+                });
+                if (BgiPathStatus != null) BgiPathStatus.Text = "";
+                return;
+            }
+
+            int auto = 0, manual = 0;
+            foreach (var a in App.Config.Accounts)
+            {
+                bool pinned = BgiPathResolver.IsPinned(a.UserName);
+                if (pinned) manual++; else auto++;
+                BgiPathList.Children.Add(BuildBgiRow(a, pinned));
+            }
+
+            if (BgiPathStatus != null)
+                BgiPathStatus.Text = "共 " + App.Config.Accounts.Count + " 个账号："
+                    + manual + " 个手动指定 · " + auto + " 个自动识别";
+        }
+
+        private UIElement BuildBgiRow(Account a, bool pinned)
+        {
+            var grid = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            // 用户名 + 昵称
+            var name = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(a.DisplayName) || a.DisplayName == a.UserName
+                    ? a.UserName
+                    : a.DisplayName + "（" + a.UserName + "）",
+                FontSize = 11.5,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = (Brush)FindResource("TextPrimary")
+            };
+            Grid.SetColumn(name, 0);
+            grid.Children.Add(name);
+
+            // 路径框
+            string saved = "";
+            try { App.Config.Settings.BgiPaths.TryGetValue(a.UserName, out saved); } catch { }
+            var box = new TextBox
+            {
+                Text = saved ?? "",
+                Height = 30,
+                Style = (Style)FindResource("InlineTextBox"),
+                VerticalContentAlignment = VerticalAlignment.Center,
+                FontSize = 11,
+                FontFamily = (FontFamily)FindResource("MonoFont"),
+                ToolTip = pinned ? "手动指定：一直使用此路径" : "留空 = 自动从运行中的进程识别",
+                Tag = a.UserName,
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+            Grid.SetColumn(box, 1);
+            grid.Children.Add(box);
+
+            // 状态
+            var state = new TextBlock
+            {
+                Text = pinned ? "手动" : (string.IsNullOrWhiteSpace(saved) ? "自动" : "记忆"),
+                FontSize = 10,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0),
+                Foreground = pinned
+                    ? new SolidColorBrush(Color.FromRgb(0x7C, 0x5C, 0xFF))
+                    : (Brush)FindResource("TextMuted")
+            };
+            Grid.SetColumn(state, 2);
+            grid.Children.Add(state);
+
+            // 按钮：从进程取 / 清除
+            var ops = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0, 0, 0) };
+            var btnProbe = new Button
+            {
+                Content = "从进程取",
+                FontSize = 10,
+                Padding = new Thickness(8, 3, 8, 3),
+                Style = (Style)FindResource("GhostButton"),
+                Tag = a.UserName,
+                ToolTip = "读取该账号当前正在运行的 BetterGI 路径"
+            };
+            btnProbe.Click += BgiProbe_Click;
+            ops.Children.Add(btnProbe);
+
+            var btnClear = new Button
+            {
+                Content = "自动",
+                FontSize = 10,
+                Padding = new Thickness(8, 3, 8, 3),
+                Margin = new Thickness(4, 0, 0, 0),
+                Style = (Style)FindResource("GhostButton"),
+                Tag = a.UserName,
+                ToolTip = "清除手动指定，恢复自动识别"
+            };
+            btnClear.Click += BgiClear_Click;
+            ops.Children.Add(btnClear);
+
+            Grid.SetColumn(ops, 3);
+            grid.Children.Add(ops);
+
+            return grid;
+        }
+
+        /// <summary>从正在运行的进程读取该账号的 BGI 路径并填入。</summary>
+        private async void BgiProbe_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button b || b.Tag is not string user) return;
+            try
+            {
+                b.IsEnabled = false;
+                var info = await Task.Run(() => BgiPathResolver.Resolve(user));
+                if (!info.Running || !info.HasPath)
+                {
+                    if (BgiPathStatus != null)
+                        BgiPathStatus.Text = user + "：没有找到正在运行的 BetterGI";
+                    return;
+                }
+
+                BgiPathResolver.Pin(user, info.Path);
+                ConfigStore.Save(App.Config);
+                RebuildBgiPathList();
+                if (BgiPathStatus != null)
+                    BgiPathStatus.Text = user + "：已设为 " + info.Path;
+            }
+            catch (Exception ex)
+            {
+                if (BgiPathStatus != null) BgiPathStatus.Text = "读取失败：" + ex.Message;
+            }
+            finally { b.IsEnabled = true; }
+        }
+
+        /// <summary>清除手动指定，恢复自动识别。</summary>
+        private void BgiClear_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button b || b.Tag is not string user) return;
+            try
+            {
+                BgiPathResolver.Unpin(user);
+                try { App.Config.Settings.BgiPaths.Remove(user); } catch { }
+                ConfigStore.Save(App.Config);
+                RebuildBgiPathList();
+                if (BgiPathStatus != null) BgiPathStatus.Text = user + "：已恢复自动识别";
+            }
+            catch (Exception ex)
+            {
+                if (BgiPathStatus != null) BgiPathStatus.Text = "操作失败：" + ex.Message;
+            }
         }
 
         private void RefreshAccounts()

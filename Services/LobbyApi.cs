@@ -23,6 +23,10 @@ namespace SoulLink.Services
 
         private static string _baseUrl = DefaultBaseUrl;
 
+        /// <summary>
+        /// 实际请求使用的地址（含内置默认值）。
+        /// ★ 仅供内部 HTTP 调用使用，不要绑定到界面输入框 —— 那会把默认地址暴露给用户。
+        /// </summary>
         public static string BaseUrl
         {
             get => _baseUrl;
@@ -32,6 +36,26 @@ namespace SoulLink.Services
                 _baseUrl = value.TrimEnd('/');
             }
         }
+
+        /// <summary>
+        /// 用户在配置里显式填写的地址（未填则为空串）。
+        /// ★ 界面应当只显示这个：留空代表"使用内置默认地址"，而不是把默认地址印出来。
+        /// </summary>
+        public static string ConfiguredUrl
+        {
+            get
+            {
+                try
+                {
+                    var s = App.Config?.Settings?.LobbyServerUrl;
+                    return string.IsNullOrWhiteSpace(s) ? "" : s.TrimEnd('/');
+                }
+                catch { return ""; }
+            }
+        }
+
+        /// <summary>当前是否在用内置默认地址（用户没填）。</summary>
+        public static bool UsingDefaultUrl => string.IsNullOrWhiteSpace(ConfiguredUrl);
 
         static LobbyApi()
         {

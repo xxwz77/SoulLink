@@ -922,9 +922,9 @@ namespace SoulLink.Views
         {
             try
             {
-                var cfg = App.Config.Settings;
-                if (cfg.BgiPaths == null || user.Length == 0) return "";
-                return cfg.BgiPaths.TryGetValue(user, out string? p) ? (p ?? "") : "";
+                if (string.IsNullOrWhiteSpace(user)) return "";
+                // ★ 统一走解析器：手动指定 > 正在运行 > 记忆，避免各处看到不同结果
+                return BgiPathResolver.GetPath(user);
             }
             catch { return ""; }
         }
@@ -936,8 +936,8 @@ namespace SoulLink.Views
             {
                 if (user.Length == 0 || string.IsNullOrWhiteSpace(path)) return;
                 var cfg = App.Config.Settings;
-                cfg.BgiPaths ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                cfg.BgiPaths[user] = path;
+                // ★ 用户手填 = 明确指定，走 Pin（自动探测之后不再覆盖）
+                BgiPathResolver.Pin(user, path);
                 ConfigStore.Save(App.Config);
             }
             catch { }

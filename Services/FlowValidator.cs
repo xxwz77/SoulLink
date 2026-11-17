@@ -147,17 +147,15 @@ namespace SoulLink.Services
                 if (!UsesBgi(n.Type)) continue;
 
                 string user = n.Get("user").Trim();
-                string path = "";
-                var map = cfg?.Settings?.BgiPaths;
-                if (map != null)
+                // ★ 统一走解析器：手动指定 > 正在运行 > 记忆
+                string path = string.IsNullOrWhiteSpace(user) ? "" : BgiPathResolver.GetPath(user);
+                if (string.IsNullOrWhiteSpace(path))
                 {
-                    if (user.Length > 0) map.TryGetValue(user, out path);
-                    if (string.IsNullOrEmpty(path))
-                    {
-                        // 退回：任取一个已配置的
+                    // 退回：任取一个已配置的（仅用于校验放行，不写回）
+                    var map = cfg?.Settings?.BgiPaths;
+                    if (map != null)
                         foreach (var kv in map)
                             if (!string.IsNullOrWhiteSpace(kv.Value)) { path = kv.Value; break; }
-                    }
                 }
 
                 if (string.IsNullOrWhiteSpace(path))

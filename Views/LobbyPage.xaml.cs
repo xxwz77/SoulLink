@@ -130,8 +130,9 @@ namespace SoulLink.Views
                         Padding = new Thickness(0, 40, 0, 0),
                         Child = new TextBlock
                         {
-                            Text = "连不上服务器。\n\n" + LobbyApi.BaseUrl
-                                 + "\n\n" + msg
+                            // ★ 不打印实际地址：可能是内置默认值，不该让用户看到。
+                            //   用户自己填过地址时，那个值在「服务器」对话框里能看到。
+                            Text = "连不上服务器。\n\n" + msg
                                  + "\n\n点顶部「服务器」可以修改地址。",
                             FontSize = 12,
                             Foreground = (Brush)FindResource("TextMuted"),
@@ -255,8 +256,11 @@ namespace SoulLink.Views
         /// <summary>修改服务器地址。</summary>
         private async void Server_Click(object sender, RoutedEventArgs e)
         {
+            // ★ 不要用 LobbyApi.BaseUrl 预填：那会把内置默认地址暴露出来。
+            //   只回填用户自己配置过的值（没配过就是空）。
             var dlg = new InputDialogWindow("服务器地址",
-                "填服务端地址，例如 http://121.4.78.52:45080", LobbyApi.BaseUrl);
+                "填服务端地址，例如 http://服务器地址:端口",
+                LobbyApi.ConfiguredUrl);
             if (Window.GetWindow(this) is Window owner) dlg.Owner = owner;
             if (dlg.ShowDialog() != true) return;
 
@@ -1242,11 +1246,8 @@ namespace SoulLink.Views
                     case "groups":
                     {
                         // ★ 严格按这个账号查 BGI 路径
-                        string exe = "";
-                        var paths = App.Config.Settings.BgiPaths;
-                        if (paths != null && paths.TryGetValue(user, out var p)
-                            && !string.IsNullOrWhiteSpace(p))
-                            exe = p;
+                        // ★ 统一走解析器：手动指定 > 正在运行 > 记忆
+                        string exe = BgiPathResolver.GetPath(user);
 
                         if (exe.Length == 0 || !System.IO.File.Exists(exe))
                         {

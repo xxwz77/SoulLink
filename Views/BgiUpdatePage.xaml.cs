@@ -64,10 +64,20 @@ namespace SoulLink.Views
                     return;
                 }
 
+                // ★ 统一解析一次：手动指定 > 正在运行 > 记忆。
+                //   原来这里只读配置字典，所以"启动台日志能自动发现 BGI，
+                //   但更新页看不到地址"（用户反馈）。现在两边同源。
+                var resolved = BgiPathResolver.ResolveMany(users);
+
                 foreach (var u in users.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                 {
                     string path = "";
-                    try { map.TryGetValue(u, out path); } catch { }
+                    if (resolved.TryGetValue(u, out var info) && info != null)
+                        path = info.Path;
+                    else
+                    {
+                        try { map.TryGetValue(u, out path); } catch { }
+                    }
 
                     var vm = new UserRowVm { UserName = u, BgiPath = path ?? "" };
                     _rows.Add(vm);
@@ -202,8 +212,8 @@ namespace SoulLink.Views
             try
             {
                 vm.BgiPath = p;
-                App.Config.Settings.BgiPaths ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                App.Config.Settings.BgiPaths[vm.UserName] = p;
+                // ★ 用户手填 = 明确指定，走 Pin（之后自动探测不再覆盖）
+                BgiPathResolver.Pin(vm.UserName, p);
                 ConfigStore.Save(App.Config);
 
                 // 路径改了 → 整页重载，让复选框状态跟着更新

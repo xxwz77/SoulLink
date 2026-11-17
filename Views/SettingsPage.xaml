@@ -108,6 +108,22 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- ══════════ BetterGI 路径 ══════════ -->
+                    <TextBlock Text="BetterGI 路径" Style="{StaticResource Label}" Margin="0,18,0,6" />
+                    <Border Style="{StaticResource GlassPanel}" Padding="14,12">
+                        <StackPanel>
+                            <TextBlock Text="每个账号的 BetterGI.exe 位置。留空则自动从运行中的进程识别；也可以手动指定，指定后一直以指定值为准。"
+                                       Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="18" />
+
+                            <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,10,0,0">
+                                <StackPanel x:Name="BgiPathList" />
+                            </Border>
+
+                            <TextBlock x:Name="BgiPathStatus" Style="{StaticResource Caption}"
+                                       Margin="0,10,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
                     <!-- ══════════ ③ 联机大厅服务器 ══════════ -->
                     <TextBlock Text="联机大厅" Style="{StaticResource Label}" Margin="0,18,0,6" />
                     <Border Style="{StaticResource GlassPanel}" Padding="14,12">

@@ -481,9 +481,8 @@ namespace SoulLink.Views
             try
             {
                 if (string.IsNullOrWhiteSpace(user)) return "";
-                var paths = App.Config.Settings.BgiPaths;
-                if (paths == null) return "";
-                return paths.TryGetValue(user, out string? p) ? (p ?? "") : "";
+                // ★ 统一走解析器：手动指定 > 正在运行 > 记忆
+                return BgiPathResolver.GetPath(user);
             }
             catch { return ""; }
         }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -28,6 +29,8 @@ namespace SoulLink.Services
             public string LogFile { get; init; } = "";
             public long Length { get; init; }
             public DateTime LastWrite { get; init; }
+            /// <summary>进程启动时间。同一会话有多个 BGI 时用它排序，保证行为确定。</summary>
+            public DateTime StartTime { get; init; }
         }
 
         /// <summary>
@@ -112,21 +115,87 @@ namespace SoulLink.Services
                         if (newest == null) continue;
 
                         var fi = new FileInfo(newest);
-                        result[p.SessionId] = new Instance
+                        var one = new Instance
                         {
                             SessionId = p.SessionId,
                             Pid = p.Id,
                             ExePath = exe,
                             LogFile = newest,
                             Length = fi.Length,
-                            LastWrite = fi.LastWriteTime
+                            LastWrite = fi.LastWriteTime,
+                            StartTime = SafeStartTime(p)
                         };
+
+                        // ★ 同一会话可能有多个 BGI（用户同时开了两个）。
+                        //   旧的写法是直接覆盖，谁后写谁生效 —— 行为不确定。
+                        //   这里改成"保留启动最早的那个"，让结果稳定可预期；
+                        //   需要看全部时用 DiscoverAll()。
+                        if (!result.TryGetValue(p.SessionId, out var exist)
+                            || one.StartTime < exist.StartTime)
+                            result[p.SessionId] = one;
                     }
                     catch { }
                 }
             }
             catch { }
             return result;
+        }
+
+        /// <summary>
+        /// 枚举所有正在运行的 BGI，**不按会话去重**。
+        /// 同一会话有多个实例时全部返回，按启动时间升序。
+        ///
+        /// ★ 用在哪里：用户同时装了两个 BGI 时，界面上要能看到全部，
+        ///   而不是像 Discover() 那样只剩一个（会让人以为另一个"消失了"）。
+        /// </summary>
+        public static List<Instance> DiscoverAll()
+        {
+            var list = new List<Instance>();
+            try
+            {
+                foreach (var p in Process.GetProcessesByName("BetterGI"))
+                {
+                    try
+                    {
+                        string exe = p.MainModule?.FileName ?? "";
+                        if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) continue;
+
+                        string logDir = Path.Combine(Path.GetDirectoryName(exe) ?? "", "log");
+                        if (!Directory.Exists(logDir)) continue;
+
+                        string? newest = null;
+                        DateTime newestTime = DateTime.MinValue;
+                        foreach (var f in Directory.GetFiles(logDir, "better-genshin-impact*.log"))
+                        {
+                            var t = File.GetLastWriteTime(f);
+                            if (t > newestTime) { newestTime = t; newest = f; }
+                        }
+                        if (newest == null) continue;
+
+                        var fi = new FileInfo(newest);
+                        list.Add(new Instance
+                        {
+                            SessionId = p.SessionId,
+                            Pid = p.Id,
+                            ExePath = exe,
+                            LogFile = newest,
+                            Length = fi.Length,
+                            LastWrite = fi.LastWriteTime,
+                            StartTime = SafeStartTime(p)
+                        });
+                    }
+                    catch { }
+                    finally { p.Dispose(); }
+                }
+            }
+            catch { }
+            return list.OrderBy(x => x.StartTime).ToList();
+        }
+
+        /// <summary>读进程启动时间；拿不到就返回 MaxValue（排到最后）。</summary>
+        private static DateTime SafeStartTime(Process p)
+        {
+            try { return p.StartTime; } catch { return DateTime.MaxValue; }
         }
 
         /// <summary>
