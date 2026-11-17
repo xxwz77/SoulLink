@@ -233,6 +233,13 @@ namespace SoulLink.Services
         /// ★ 用 PostMessage 定点投递到那个进程的主窗口，
         ///   不依赖前台焦点、不影响其他用户 —— 这是"只针对目标用户"的关键。
         /// </summary>
+        /// <summary>
+        /// 对外暴露的快捷键投递（BgiUpdater 停 BGI 时用）。
+        /// 只发到指定进程，不抢焦点、不影响其他用户。
+        /// </summary>
+        public static void SendHotkeyToSessionPublic(int pid, string keyName)
+            => SendHotkeyToSession(pid, keyName);
+
         private static void SendHotkeyToSession(int pid, string keyName)
         {
             try

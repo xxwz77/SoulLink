@@ -13,7 +13,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- ★ 版本号唯一来源：改这里即可，FileVersion/AssemblyVersion 自动派生。
          历史教训：标签打到 v1.4.3 而这里仍是 1.4.1，标题栏一直显示旧版本。 -->
-    <Version>1.12.2</Version>
+    <Version>1.13.0</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 多用户挂机中控台</AssemblyTitle>
@@ -34,7 +34,28 @@
     <Resource Include="Assets\soullink.ico" />
   </ItemGroup>
 
+  <ItemGroup>
+  </ItemGroup>
+
+
+  <!-- ★ 自带 7za.exe（官方 7-Zip 命令行工具，1.2 MB）
+       用于解压 BGI 更新包：519MB/2244 文件实测 5.3 秒。
+       把它作为独立文件放在 exe 旁边，用户不需要装 7-Zip。 -->
+  <Target Name="Copy7zaToOutput" AfterTargets="AfterBuild">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\7za\7za.exe"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildProjectDirectory)\tools\7za\7za.exe')" />
+  </Target>
+
+  <Target Name="Copy7zaToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\7za\7za.exe"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildProjectDirectory)\tools\7za\7za.exe')" />
+  </Target>
 </Project>
+
 
 
 

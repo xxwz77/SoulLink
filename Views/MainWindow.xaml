@@ -182,6 +182,19 @@
                                                    Foreground="{StaticResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
+                                    <Grid Height="38" Tag="update" ToolTip="更新 BGI"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE896;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextUpdate" Grid.Column="1" Text="更新 BGI"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
                                     <Grid Height="38" Tag="sessions" ToolTip="联机大厅"
                                           Background="Transparent" MouseLeftButtonUp="NavRow_Click">
                                         <Grid.ColumnDefinitions>
@@ -291,6 +304,9 @@
                             </Grid>
                             <Grid x:Name="PageConsole" Visibility="Collapsed">
                                 <vm:ConsolePage x:Name="ConsoleView" />
+                            </Grid>
+                            <Grid x:Name="PageUpdate" Visibility="Collapsed">
+                                <vm:BgiUpdatePage x:Name="UpdateView" />
                             </Grid>
                             <Grid x:Name="PageSessions" Visibility="Collapsed">
                                 <vm:LobbyPage x:Name="LobbyView" />

@@ -49,6 +49,7 @@ namespace SoulLink.Views
             _pages["automation"] = PageAutomation;
             _pages["launch"] = PageLaunch;
             _pages["console"] = PageConsole;
+            _pages["update"] = PageUpdate;
             _pages["sessions"] = PageSessions;
             _pages["procs"] = PageProcs;
             _pages["cli"] = PageCli;
@@ -637,7 +638,7 @@ namespace SoulLink.Views
             foreach (var t in new FrameworkElement?[]
             {
                 NavTitleText, NavTextLaunch, NavTextConsole,
-                NavTextSessions, NavTextProcs, NavTextCli
+                NavTextUpdate, NavTextSessions, NavTextProcs, NavTextCli
             })
             {
                 if (t != null) t.Visibility = vis;
@@ -799,6 +800,7 @@ namespace SoulLink.Views
             {
                 case "automation": AutomationView.Activate(); break;
                 case "console": ConsoleView.Activate(); break;
+                case "update": UpdateView.Reload(); break;
                 case "sessions": LobbyView.Refresh(); break;
                 case "procs": ProcsView.Activate(); break;
                 case "cli": CliView.Activate(); break;

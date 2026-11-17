@@ -5,8 +5,7 @@ dist/
 out/
 publish/
 
-# Test tools, experiments and screenshots
-tools/
+tools/*
 rdptest/
 relaytest/
 sysdiag/
@@ -55,3 +54,8 @@ dist-server-win/
 
 # 更新包目录（只保留源码，bin 通过 Git LFS 或外部分发）
 releases/SoulLink-v*-Update/
+
+# Test tools, experiments and screenshots（7za 是构建依赖，例外保留）
+tools/*
+!tools/7za
+
