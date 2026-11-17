@@ -39,6 +39,8 @@ namespace SoulLink.Views
         private bool _initialized;
         private bool _logoffInProgress;
         private bool _busyVisible;
+        private OwnedOverlayWindow? _shieldOverlayWindow;
+        private Border? _shieldOverlayContent;
 
         public MainWindow? MainWindowRef { get; set; }
         public event Action? AddRequested;
@@ -51,15 +53,14 @@ namespace SoulLink.Views
                 var window = Window.GetWindow(this);
                 if (window != null)
                 {
-                    window.Deactivated += (_, __) => Dispatcher.InvokeAsync(() =>
+                    window.Deactivated += (_, __) =>
                     {
+                        // 同步隐藏，不能排队等下一次 UI 调度。OwnedOverlayWindow
+                        // 另外还受真实 Win32 Owner 约束，不会留在其他应用上方。
                         BusyPopup.IsOpen = false;
-                        // ★ 失焦**不再收起保护层**。
-                        //   收起会导致"点回窗口的那一下穿透到 RDP"，在挂机场景下
-                        //   等于误操作游戏（BGI 拖地图时尤其致命）。
-                        //   保持挂着，同时重新计算尺寸/位置，确保它仍贴合视口。
-                        UpdateShield();
-                    });
+                        _shieldOverlayWindow?.HideForOwnerState();
+                        RearmShield(true);
+                    };
                     window.Activated += (_, __) => Dispatcher.InvokeAsync(() =>
                     {
                         if (_busyVisible) BusyPopup.IsOpen = true;
@@ -76,6 +77,7 @@ namespace SoulLink.Views
             //   （用户反馈：连接动画没有自适应窗口大小）。
             //   改成监听 ViewportHost 自身的 SizeChanged，并补一次首帧对齐。
             ViewportHost.SizeChanged += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
+            Loaded += (_, __) => EnsureShieldOverlayWindow();
             Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
 
             // ★ WindowsFormsHost 是独立 HWND，**不受 WPF Visibility 控制**：
@@ -89,6 +91,7 @@ namespace SoulLink.Views
                     if (IsVisible)
                     {
                         // 切回本页：如果当前正在看某个账号且已连接，重新挂上
+                        _shieldOverlayWindow?.HideOverlay();
                         if (_viewing?.Console != null && _viewing.Console.IsConnected
                             && !ViewportHost.Children.Contains(_viewing.Console))
                         {
@@ -102,6 +105,8 @@ namespace SoulLink.Views
                         // 切走：摘掉控件（连接状态保留，不 Dispose）
                         ViewportHost.Children.Clear();
                         BusyPopup.IsOpen = false;
+                        _shieldReleased = false;
+                        _shieldOverlayWindow?.HideOverlay();
                     }
                 }
                 catch { }
@@ -159,39 +164,64 @@ namespace SoulLink.Views
 
         // ── 保护层（点击画面才把键鼠交给 RDP）──────────────────────────────
 
+        private void EnsureShieldOverlayWindow()
+        {
+            if (_shieldOverlayWindow != null) return;
+            var owner = Window.GetWindow(this);
+            if (owner == null) return;
+            _shieldOverlayContent = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(1, 255, 255, 255)),
+                Cursor = Cursors.Arrow,
+                Focusable = false,
+                Child = new TextBlock
+                {
+                    Text = "点击此处接管键鼠",
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)),
+                    IsHitTestVisible = false
+                }
+            };
+            // 捕获 MouseDown 是为了可靠地吞掉第一次点击。MouseUp 才解锁，
+            // 所以“用于解锁的那一次点击”不会继续进入 RDP 或远端游戏。
+            _shieldOverlayContent.MouseLeftButtonDown += ShieldOverlay_MouseDown;
+            _shieldOverlayContent.MouseLeftButtonUp += ShieldOverlay_MouseUp;
+            _shieldOverlayWindow = new OwnedOverlayWindow(
+                owner, ViewportHost, _shieldOverlayContent, "RDP 保护层");
+            UpdateShield();
+        }
+
         /// <summary>保护层是否已被用户点掉（离开视口或切页后重置）。</summary>
         private bool _shieldReleased;
 
         /// <summary>
         /// 同步保护层显示状态。
         /// 条件：勾选「点击画面才捕获」+ 已连接 + 非自由视角 + 未点掉 + 主窗口在前台。
-        /// ★ 主窗口不在前台时一律关闭，避免 Popup 盖到别的应用上。
+        /// 真实 Win32 Owner 保证浮层不会越过主窗口；失活时同步隐藏并重新锁定。
         /// </summary>
         private void UpdateShield()
         {
             try
             {
-                if (ShieldPopup == null) return;
+                EnsureShieldOverlayWindow();
+                if (_shieldOverlayWindow == null) return;
                 var win = Window.GetWindow(this);
                 bool visible = win != null && win.IsVisible && win.WindowState != WindowState.Minimized;
 
-                // ★ 不再要求主窗口 IsActive。
-                //   原来"失焦就隐藏"是为了避免 Popup 盖住别的软件，
-                //   但代价是：点回窗口的那一下会**穿透到 RDP**（激活点击先于遮罩恢复），
-                //   用户在挂机场景下会误操作游戏（实测）。
-                //
-                //   现在：只要本版窗口可见且未最小化，遮罩就保持挂着的状态。
-                //   盖到别的软件上的问题由「失焦时缩到视口内 + 不可见即收起」解决，
-                //   见下方 SyncShieldSize 与 Window.Deactivated 的处理。
+                // 主窗口不在前台时必须回到锁定态；即使光标仍在 RDP 矩形内，
+                // 切回本窗口也不能自动恢复远端鼠标控制。
                 bool want = App.Config.Settings.RdpCaptureOnClick
                             && _viewing?.Console != null
                             && _viewing.Console.IsConnected
                             && !_viewing.Console.IsLooking
                             && !_shieldReleased
                             && ViewPage.Visibility == Visibility.Visible
-                            && visible;
+                            && visible && win!.IsActive;
                 if (want) SyncShieldSize();
-                ShieldPopup.IsOpen = want;
+                if (want) _shieldOverlayWindow.ShowOverlay(ViewportHost.ActualWidth, ViewportHost.ActualHeight);
+                else _shieldOverlayWindow.HideOverlay();
             }
             catch { }
         }
@@ -203,8 +233,8 @@ namespace SoulLink.Views
                 double w = ViewportHost.ActualWidth;
                 double h = ViewportHost.ActualHeight;
                 if (w <= 0 || h <= 0) return;
-                if (ShieldOverlay != null) { ShieldOverlay.Width = w; ShieldOverlay.Height = h; }
-                if (ShieldPopup != null) { ShieldPopup.HorizontalOffset = 0; ShieldPopup.VerticalOffset = 0; }
+                if (_shieldOverlayContent != null) { _shieldOverlayContent.Width = w; _shieldOverlayContent.Height = h; }
+                if (_shieldOverlayWindow?.IsRequested == true) _shieldOverlayWindow.UpdateOverlaySize(w, h);
             }
             catch { }
         }
@@ -212,40 +242,25 @@ namespace SoulLink.Views
         /// <summary>用户点击保护层：撤掉它，把键鼠交给 RDP。</summary>
         private void ShieldOverlay_MouseDown(object sender, MouseButtonEventArgs e)
         {
+            // 只接收按下，不解锁。保护层继续截获 Up，首次点击不透传到远端。
             e.Handled = true;
-            _shieldReleased = true;
-            ShieldPopup.IsOpen = false;
-            try { _viewing?.Console?.OnShieldReleased(); } catch { }
-            if (InputText != null) InputText.Text = "已接管键鼠 · 光标移出画面后重新保护";
-            Debug("保护层已解除（用户点击保护层）");
         }
 
         private void ShieldOverlay_MouseUp(object sender, MouseButtonEventArgs e)
         {
-            // 兜底：某些情况下 Down 没派发（Popup 抢焦点），Up 也能解锁
-            if (_shieldReleased) return;
+            if (_shieldReleased) { e.Handled = true; return; }
             e.Handled = true;
             _shieldReleased = true;
-            ShieldPopup.IsOpen = false;
+            _shieldOverlayWindow?.HideOverlay();
             try { _viewing?.Console?.OnShieldReleased(); } catch { }
             if (InputText != null) InputText.Text = "已接管键鼠 · 光标移出画面后重新保护";
-            Debug("保护层已解除（MouseUp 兜底）");
+            Debug("保护层已解除（完整消费首次 Down/Up 后解锁）");
         }
 
-        /// <summary>由钩子回报：视口内发生了左键按下（保护层没能收到事件时用）。</summary>
-        public void ReleaseShieldByHook()
+        /// <summary>光标离开视口、失活或切页后统一回到锁定态。</summary>
+        private void RearmShield(bool force = false)
         {
-            if (_shieldReleased) return;
-            _shieldReleased = true;
-            try { if (ShieldPopup != null) ShieldPopup.IsOpen = false; } catch { }
-            if (InputText != null) InputText.Text = "已接管键鼠 · 光标移出画面后重新保护";
-            Debug("保护层已解除（钩子回报点击）");
-        }
-
-        /// <summary>光标离开视口后重新挂上保护层。</summary>
-        private void RearmShield()
-        {
-            if (!_shieldReleased) return;
+            if (!force && !_shieldReleased) return;
             _shieldReleased = false;
             UpdateShield();
         }
@@ -668,7 +683,7 @@ namespace SoulLink.Views
                 row.Console?.SetForegroundActive(false);
             _viewing = null;
             _shieldReleased = false;
-            try { if (ShieldPopup != null) ShieldPopup.IsOpen = false; } catch { }
+            _shieldOverlayWindow?.HideOverlay();
             ConfigPage.Visibility = Visibility.Visible;
             SetBusyVisible(false);
             ViewPage.Visibility = Visibility.Collapsed;
@@ -1540,9 +1555,6 @@ namespace SoulLink.Views
             // 光标移出画面 → 重新挂保护层
             c.ShieldRearmRequested += _ =>
                 Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) RearmShield(); });
-            // 钩子检测到视口内点击 → 收起保护层（Popup 自身事件可能收不到）
-            c.ShieldReleaseRequested += _ =>
-                Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) ReleaseShieldByHook(); });
             // 进入自由视角 → 隐藏保护层；退出 → 复位后重新挂上
             c.ShieldVisibleRequested += (_, visible) =>
                 Dispatcher.InvokeAsync(() =>
@@ -1550,7 +1562,7 @@ namespace SoulLink.Views
                     if (!ReferenceEquals(row, _viewing)) return;
                     if (!visible)
                     {
-                        try { if (ShieldPopup != null) ShieldPopup.IsOpen = false; } catch { }
+                        _shieldOverlayWindow?.HideOverlay();
                         return;
                     }
                     // 退出自由视角：视为"操作完毕"，重新进入需点击状态

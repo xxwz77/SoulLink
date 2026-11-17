@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shell;
+using System.Windows.Threading;
 using SoulLink.Models;
 using SoulLink.Services;
 
@@ -32,6 +33,13 @@ namespace SoulLink.Views
         private bool _initialized;
         private bool _suppressNav;
         private AutomationScheduler? _automationScheduler;
+        private SoulLink.Services.OwnedOverlayWindow? _navOverlayWindow;
+        private bool _navDockedInOverlay;
+        private DispatcherTimer? _navAnimationSync;
+        private DateTime _navRailExpandStartedAt;
+        private bool _navOverlayHidePending;
+        private int _navTransitionVersion;
+        private bool _navStartupLayout = true;
 
         public MainWindow()
         {
@@ -119,13 +127,23 @@ namespace SoulLink.Views
                 _autoHide = st0.NavAutoHide;
                 AutoHideNavCheck.IsChecked = _autoHide;
 
-                if (_autoHide) SetNavCollapsed(true, "启动恢复（自动收起）");
-                else SetNavCollapsed(st0.NavCollapsed, "启动恢复");
+                // 构造阶段主窗口还没有前台 HWND，不能展开独立原生浮层。
+                // 先以 56px 图标栏完成布局，Loaded 后再恢复用户的展开偏好。
+                _navCollapsed = true;
+                _navTextVisible = false;
+                ApplyNavTextVisibility();
+                if (!_autoHide && !st0.NavCollapsed)
+                    Loaded += (_, __) => Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (IsActive) SetNavCollapsed(false, "启动恢复");
+                        else Activated += RestoreExpandedNavOnFirstActivation;
+                    }));
                 // 确保首帧文字状态与宽度一致（否则收起态文字仍可见，会压到右侧内容）
                 ApplyNavTextVisibility();
             }
             catch { }
 
+            _navStartupLayout = false;
             _automationScheduler = new AutomationScheduler();
             _initialized = true;
 
@@ -195,6 +213,8 @@ namespace SoulLink.Views
         protected override void OnDeactivated(EventArgs e)
         {
             base.OnDeactivated(e);
+            _navOverlayWindow?.HideForOwnerState();
+            if (_autoHide) SetNavCollapsed(true, "主窗口失活");
             UpdateBorderColor();
         }
 
@@ -563,14 +583,116 @@ namespace SoulLink.Views
         }
 
         /// <summary>
-        /// 展开 / 收起侧栏。
-        ///
-        /// ★ 用 Popup 而不是内嵌 Border：
-        ///   中控台里的 RDP 是 WindowsFormsHost（WPF 空域），
-        ///   任何 WPF 元素的 ZIndex 都盖不住它，只有独立 HWND 才行。
+        /// 展开 / 收起侧栏。展开时使用归主窗口所有的独立 HWND 浮层，
+        /// 收起时把同一个 NavRail 放回主窗口，不复制导航按钮或业务逻辑。
         /// </summary>
+        private void RestoreExpandedNavOnFirstActivation(object? sender, EventArgs e)
+        {
+            Activated -= RestoreExpandedNavOnFirstActivation;
+            if (!_autoHide && _navCollapsed) SetNavCollapsed(false, "启动恢复");
+        }
+
+        private void EnsureNavOverlayWindow()
+        {
+            if (NavHomeHost == null) return;
+            if (_navOverlayWindow == null)
+            {
+                // 此时 NavRail 仍在主窗口，用隐藏的原位 Grid 保存物理定位锚点。
+                SideNavHost.Children.Remove(NavRail);
+                NavRail.VerticalAlignment = VerticalAlignment.Stretch;
+                NavHomeHost.Height = SideNavHost.ActualHeight;
+                _navOverlayWindow = new SoulLink.Services.OwnedOverlayWindow(
+                    this, NavHomeHost, NavRail, "展开导航浮层");
+                _navDockedInOverlay = true;
+                return;
+            }
+            if (_navDockedInOverlay) return;
+
+            // 快速收展可能让一次 Hide() 的排队在再次展开后才完成。
+            // 原生浮层存活期间只隐藏内容；重新显示前必须显式重新挂载 NavRail。
+            if (SideNavHost.Children.Contains(NavRail)) SideNavHost.Children.Remove(NavRail);
+            NavRail.VerticalAlignment = VerticalAlignment.Stretch;
+            NavHomeHost.Height = SideNavHost.ActualHeight;
+            _navOverlayWindow.Content = NavRail;
+            _navDockedInOverlay = true;
+        }
+
+        private void RestoreNavRail()
+        {
+            if (!_navDockedInOverlay) return;
+            _navOverlayWindow?.HideOverlay();
+            if (_navOverlayWindow != null) _navOverlayWindow.Content = null;
+            NavRail.ClearValue(FrameworkElement.WidthProperty);
+            NavRail.Width = 56;
+            Grid.SetColumn(NavRail, 0);
+            Grid.SetColumnSpan(NavRail, 2);
+            SideNavHost.Children.Add(NavRail);
+            _navDockedInOverlay = false;
+        }
+
+        private void BeginNavOverlaySync(bool expanding)
+        {
+            _navTransitionVersion++;
+            if (_navAnimationSync == null)
+            {
+                _navAnimationSync = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+                _navAnimationSync.Tick += (_, __) =>
+                {
+                    if (_navCollapsed)
+                    {
+                        if (_navOverlayWindow?.IsVisible == true)
+                        {
+                            if (_navOverlayHidePending) return;
+                            _navOverlayHidePending = true;
+                            int transition = _navTransitionVersion;
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                if (transition != _navTransitionVersion || !_navCollapsed) return;
+                                RestoreNavRail();
+                            }), System.Windows.Threading.DispatcherPriority.Render);
+                        }
+                        else if (_navDockedInOverlay) RestoreNavRail();
+                        if (!_navDockedInOverlay)
+                        {
+                            _navAnimationSync?.Stop();
+                            _navOverlayHidePending = false;
+                        }
+                        return;
+                    }
+                    EnsureNavOverlayWindow();
+                    NavHomeHost.Height = SideNavHost.ActualHeight;
+                    _navOverlayWindow?.UpdateOverlaySize(NavRail.ActualWidth, SideNavHost.ActualHeight);
+                    if (_navRailExpandStartedAt == DateTime.MinValue) _navRailExpandStartedAt = DateTime.UtcNow;
+                    if ((DateTime.UtcNow - _navRailExpandStartedAt).TotalMilliseconds > 450)
+                    {
+                        _navAnimationSync?.Stop();
+                        _navRailExpandStartedAt = DateTime.MinValue;
+                        // 清除动画的 hold 值，避免下一轮展开继承上一次中间帧宽度。
+                        double finalWidth = NavRail.ActualWidth;
+                        NavRail.BeginAnimation(FrameworkElement.WidthProperty, null);
+                        NavRail.Width = finalWidth;
+                        _navOverlayWindow?.UpdateOverlaySize(finalWidth, SideNavHost.ActualHeight);
+                    }
+                };
+            }
+            _navOverlayHidePending = false;
+            _navRailExpandStartedAt = expanding ? DateTime.UtcNow : DateTime.MinValue;
+            if (expanding)
+            {
+                EnsureNavOverlayWindow();
+                NavHomeHost.Height = SideNavHost.ActualHeight;
+                // Show the 56px rail immediately, before the first animation frame.
+                // Waiting for ActualWidth > 56 leaves the requested overlay hidden
+                // indefinitely because its content is not in the main visual tree yet.
+                double initialWidth = NavRail.ActualWidth > 0 ? NavRail.ActualWidth : 56;
+                _navOverlayWindow?.ShowOverlay(initialWidth, SideNavHost.ActualHeight);
+            }
+            _navAnimationSync.Start();
+        }
+
         private void SetNavCollapsed(bool collapsed, string reason)
         {
+            if (_navStartupLayout) return;
             CancelHideTimer();
             CancelHoverTimer();
 
@@ -579,21 +701,37 @@ namespace SoulLink.Views
 
             try
             {
-                // ★ 不再开第二个窗口：图标栏自身变宽，展开时显示文字。
+                if (!collapsed) EnsureNavOverlayWindow();
 
                 const double collapsedWidth = 56;
                 const double expandedWidth = 180;
                 double target = collapsed ? collapsedWidth : expandedWidth;
 
                 // 侧栏变宽会挤压右侧内容，用动画让过程平滑
+                // Freeze the current visual width before replacing an animation, so
+                // rapid expand/collapse never jumps back to a stale base value.
+                double currentWidth = NavRail.ActualWidth > 0 ? NavRail.ActualWidth : target;
+                NavRail.BeginAnimation(FrameworkElement.WidthProperty, null);
+                NavRail.Width = currentWidth;
                 var anim = new System.Windows.Media.Animation.DoubleAnimation
                 {
+                    From = currentWidth,
                     To = target,
+                    FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop,
                     Duration = TimeSpan.FromMilliseconds(collapsed ? 140 : 170),
                     EasingFunction = new System.Windows.Media.Animation.CubicEase
                     { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
                 };
+                anim.Completed += (_, __) =>
+                {
+                    if (_navCollapsed != collapsed) return;
+                    NavRail.BeginAnimation(FrameworkElement.WidthProperty, null);
+                    NavRail.Width = target;
+                    if (!collapsed)
+                        _navOverlayWindow?.UpdateOverlaySize(target, SideNavHost.ActualHeight);
+                };
                 NavRail.BeginAnimation(FrameworkElement.WidthProperty, anim);
+                BeginNavOverlaySync(!collapsed);
 
                 // ★ 列宽必须一起变：NavRail 在 Column 0，列宽固定 76 时，
                 //   加宽后的侧栏会被 Column 1 的内容压住（用户实测"被别的界面挡住"）。
@@ -630,11 +768,13 @@ namespace SoulLink.Views
 
         /// <summary>侧栏文字是否应显示（与栏宽同步）。</summary>
         private bool _navTextVisible;
-
         /// <summary>按当前状态刷新侧栏文字显隐。</summary>
         private void ApplyNavTextVisibility()
         {
             var vis = _navTextVisible ? Visibility.Visible : Visibility.Collapsed;
+            if (AutoHideNavCheck != null) AutoHideNavCheck.Visibility = vis;
+            if (NavExpandedDivider != null) NavExpandedDivider.Visibility = vis;
+            if (NavSessionPanel != null) NavSessionPanel.Visibility = vis;
             foreach (var t in new FrameworkElement?[]
             {
                 NavTitleText, NavTextLaunch, NavTextConsole,
@@ -666,13 +806,6 @@ namespace SoulLink.Views
             {
                 App.AppendErrorLog("MainWindow.UpdateNavSurfaceShape", ex);
             }
-        }
-
-        private void NavPopup_Opened(object sender, EventArgs e) { }
-        private void NavPopup_Closed(object sender, EventArgs e)
-        {
-            _navCollapsed = true;
-            UpdateNavSurfaceShape(true);
         }
 
         private void SaveNavPref()
@@ -719,6 +852,8 @@ namespace SoulLink.Views
 
         private void MainWindow_Closing(object? sender, CancelEventArgs e)
         {
+            _navAnimationSync?.Stop();
+            _navOverlayWindow?.HideOverlay();
             if (_closingToTray) return;
 
             var state = ConfigStore.LoadState();

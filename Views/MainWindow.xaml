@@ -250,17 +250,17 @@
 
                                     <!-- ★ 这两块原先在旧 Popup 面板里，重建侧栏时必须搬过来，
                                          否则展开后看不到「鼠标悬停展开」和「当前会话」（用户实测丢失）。 -->
-                                    <Border Grid.Row="0" Height="1" Background="{StaticResource StrokeSoft}"
-                                            Margin="6,6,6,8" Visibility="{Binding ElementName=NavTitleText, Path=Visibility}" />
+                                    <Border x:Name="NavExpandedDivider" Grid.Row="0" Height="1" Background="{StaticResource StrokeSoft}"
+                                            Margin="6,6,6,8" Visibility="Collapsed" />
 
                                     <CheckBox Grid.Row="1" x:Name="AutoHideNavCheck" Style="{StaticResource GlassCheckBox}"
                                               Content="鼠标悬停展开" Margin="6,0,0,8"
-                                              Visibility="{Binding ElementName=NavTitleText, Path=Visibility}"
+                                              Visibility="Collapsed"
                                               Checked="AutoHideNav_Changed" Unchecked="AutoHideNav_Changed" />
 
-                                    <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="10,8"
+                                    <Border x:Name="NavSessionPanel" Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="10,8"
                                             Margin="4,0,4,6"
-                                            Visibility="{Binding ElementName=NavTitleText, Path=Visibility}">
+                                            Visibility="Collapsed">
                                         <StackPanel>
                                             <TextBlock Text="当前会话" Style="{StaticResource Caption}" />
                                             <TextBlock x:Name="SelfSessionText" Text="—" Style="{StaticResource Mono}"
@@ -284,15 +284,11 @@
                             </Grid>
                         </Border>
 
-                        <!-- ② 展开的侧栏：Popup 独立窗口（解决空域遮挡）
-                             ★ 行结构必须与左侧图标栏**逐行等高**，否则会错位 -->
-                        <!-- ★ Placement 必须相对 NavRail 的**内容区**精确对齐：
-                               NavRail 有 Margin，Popup 会按外框算位置，实测顶/底各差 2px、右边差 2px，
-                               中间就会露出一条窗口底色的缝。改成 Placement=Relative + 代码里
-                               用 NavRail 相对本 Grid 的实际偏移来定位（见 UpdateNavSurfaceShape）。 -->
-                        <!-- ★ 已弃用：改成 NavRail 自身加宽（见下方内嵌面板）。
-                             保留此 Popup 仅为兼容旧代码引用（IsOpen 恒为 false，不再显示），
-                             彻底避免了"第二个窗口"带来的翻边、越界、盖任务栏问题。 -->
+                        <!-- 展开时 NavRail 会移入 OwnedOverlayWindow（见 MainWindow.xaml.cs）。
+                             它属于主窗口、非 Topmost、不抢焦点，可覆盖 RDP 的 HWND 空域；
+                             收起时 NavRail 放回 NavHomeHost，页面宽度始终不变。 -->
+                        <Grid x:Name="NavHomeHost" Grid.Column="0" HorizontalAlignment="Left"
+                              Width="56" Height="0" IsHitTestVisible="False" />
 
                         <!-- 右侧页面容器 -->
                         <Grid Grid.Column="1">

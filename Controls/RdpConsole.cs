@@ -81,9 +81,6 @@ namespace SoulLink.Controls
         /// <summary>光标移出画面：请外层重新挂上保护层。</summary>
         public event Action<RdpConsole>? ShieldRearmRequested;
 
-        /// <summary>视口内发生左键按下：请外层撤掉保护层。</summary>
-        public event Action<RdpConsole>? ShieldReleaseRequested;
-
         /// <summary>请求外层显示/隐藏保护层（进入自由视角时隐藏，退出时恢复）。</summary>
         public event Action<RdpConsole, bool>? ShieldVisibleRequested;
 
@@ -543,6 +540,8 @@ namespace SoulLink.Controls
         }
         private void OnOwnerDeactivated(object? sender, EventArgs e)
         {
+            ReleasePointerCapture();
+            try { ShieldRearmRequested?.Invoke(this); } catch { }
             _captured = false;
             InputMode = ConsoleInputMode.Pointer;
             ReleaseCapture("窗口失去焦点");
@@ -891,10 +890,12 @@ namespace SoulLink.Controls
             bool inside = cursor.X >= rect.Value.left && cursor.X < rect.Value.left + rect.Value.width
                        && cursor.Y >= rect.Value.top && cursor.Y < rect.Value.top + rect.Value.height;
             bool wasCaptured = _pointerCaptured;
-            if (!inside || (_ownerWindow != null && !_ownerWindow.IsActive)) ReleasePointerCapture();
+            bool ownerInactive = _ownerWindow != null && !_ownerWindow.IsActive;
+            if (!inside || ownerInactive) ReleasePointerCapture();
 
-            // 光标移出画面：通知外层重新挂保护层（只报一次）
-            if (wasCaptured && !_pointerCaptured && !inside)
+            // 移出视口或主窗口失活，都回到锁定态。Alt+Tab 时光标往往仍
+            // 位于 RDP 矩形内，不能只检查 inside，否则切回窗口会残留解锁态。
+            if (wasCaptured && !_pointerCaptured && (!inside || ownerInactive))
                 ShieldRearmRequested?.Invoke(this);
         }
 
@@ -999,28 +1000,9 @@ namespace SoulLink.Controls
                 }
                 if (!_captured && CaptureOnClick)
                 {
-                    var rect = ViewportScreenRect();
-                    if (rect == null) return false;
-                    bool inside = ev.X >= rect.Value.left && ev.X < rect.Value.left + rect.Value.width
-                               && ev.Y >= rect.Value.top && ev.Y < rect.Value.top + rect.Value.height;
-                    // ★ 这里**绝不能吞移动事件**。
-                    //   实测：WH_MOUSE_LL 里 return true 会让 Windows 连本机光标一起冻住
-                    //   （光标停在原地、外面也进不来）。挡鼠标交给上层的 Popup 保护层去做，
-                    //   Popup 是真实窗口，光标可以自由移动。
-                    //
-                    //   这个分支只负责"点击解锁"：第一次左键按下时把控制权交给 RDP。
-                    if (!_pointerCaptured && inside && ev.Message == 0x0201)
-                    {
-                        _pointerCaptured = true;
-                        PointerCaptureEnabled = true;
-                        Dispatcher.InvokeAsync(GiveKeyboardFocus);
-                        InputActivity?.Invoke(this, "键鼠已捕获 · 移出画面即释放");
-                        Debug("钩子检测到视口内左键按下 → 请求解除保护层");
-                        // 通知外层把 Popup 收起来（保护层可能因 z 序/透明没收到自己的点击事件）
-                        try { ShieldReleaseRequested?.Invoke(this); } catch { }
-                        return false;
-                    }
-                    // 其余事件一律放行（含移动），由 Popup 保护层负责不送到 RDP
+                    // 不在低级钩子里解锁：MouseDown 时提前撤掉保护层，会让同一次
+                    // 点击的后续事件穿透到远端游戏。首次 Down/Up 由保护层完整消费，
+                    // MouseUp 后才调用 OnShieldReleased。这里不吞任何本机鼠标事件。
                     return false;
                 }
                 // 原生相对模式由 RDP 自己捕获窗口内鼠标并发送位移；

@@ -346,23 +346,9 @@
                         </Border>
                         </Popup>
 
-                        <!-- 保护层：勾选「点击画面才捕获」时盖住 RDP 空域。
-                             用 Popup 是因为 WindowsFormsHost 里的 ActiveX 会穿透 WPF 元素。
-                             为防它盖到别的应用上方，主窗口失活时立即关闭（同 BusyPopup 的做法）。 -->
-                        <Popup x:Name="ShieldPopup" IsOpen="False" AllowsTransparency="True"
-                               Placement="Relative" PlacementTarget="{Binding ElementName=ViewportHost}"
-                               StaysOpen="True" Focusable="False">
-                            <!-- 背景必须完全透明（alpha=0 不绘制），否则会变成黑色遮罩把画面挡住。
-                                 Cursor=Arrow：不要用手形，避免误以为在点链接。 -->
-                            <Border x:Name="ShieldOverlay" Background="#01FFFFFF" Cursor="Arrow"
-                                    Focusable="False"
-                                    MouseLeftButtonDown="ShieldOverlay_MouseDown"
-                                    MouseLeftButtonUp="ShieldOverlay_MouseUp">
-                                <TextBlock Text="点击此处接管键鼠" HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" FontSize="12"
-                                           Foreground="#66FFFFFF" IsHitTestVisible="False" />
-                            </Border>
-                        </Popup>
+                        <!-- RDP 保护层在代码中创建 OwnedOverlayWindow。
+                             它是主窗口的非 Topmost 子属 HWND，不是独立置顶的 Popup；
+                             首次 Down/Up 都被保护层消费，MouseUp 后才允许 RDP 输入。 -->
 
                         <TextBlock x:Name="InputText" Text="" FontSize="10.5"
                                    VerticalAlignment="Bottom" HorizontalAlignment="Left"
