@@ -1,6 +1,6 @@
 # SoulLink 项目交接文档
 
-> 最后更新：2026-11-17 · v1.13.0
+> 最后更新：2026-11-17 · v1.13.1
 
 ---
 
@@ -44,6 +44,7 @@ SoulLink/
 │   ├── BgiLogWatcher.cs     BGI 日志监听
 │   ├── BgiTaskPreparer.cs   ★ BGI 停止（快捷键 + 杀进程）
 │   ├── BgiUpdater.cs        ★ BGI 更新（解压覆盖）
+│   ├── OwnedOverlayWindow.cs ★ RDP 空域原生浮层（Owner / 非 Topmost）
 │   ├── DeviceIdentity.cs    设备码
 │   ├── LobbyApi.cs          ★ 联机大厅 HTTP 客户端
 │   ├── LobbyConnection.cs   心跳 / 重连 / 状态
@@ -91,8 +92,9 @@ SoulLink/
 │   └── sl-rescue.exe
 │
 ├── releases/                版本归档
-│   ├── v1.13.0-reliable/
-│   ├── SoulLink-v1.13.0-Update.zip
+│   ├── v1.13.0-reliable/       回退版本
+│   ├── v1.13.1-reliable/
+│   ├── SoulLink-v1.13.1-Update.zip
 │   └── rollback.ps1         回退脚本
 │
 └── dist/stable/             ★★ 挂机版（生产使用，改动需谨慎）
@@ -100,17 +102,19 @@ SoulLink/
 
 ---
 
-## 三、当前状态（v1.13.0）
+## 三、当前状态（v1.13.1）
 
 ### 版本信息
 
 | 项目 | 值 |
 |---|---|
-| 版本 | 1.13.0 |
-| 提交 | 36b3962 |
-| 标签 | v1.13.0-reliable |
-| 归档 | releases/v1.13.0-reliable/ |
-| 更新包 | releases/SoulLink-v1.13.0-Update.zip (87.2 MB) |
+| 版本 | 1.13.1 |
+| 提交 | b98d2c1（UI 修复）/ 38a3757（归档） |
+| 标签 | v1.13.1-reliable |
+| 归档 | releases/v1.13.1-reliable/ |
+| 更新包 | releases/SoulLink-v1.13.1-Update.zip (87.2 MB) |
+| dist | 已更新 v1.13.1；dist/stable/ 未修改 |
+| 回退 | releases/rollback.ps1 → v1.13.0-reliable |
 
 ### 服务端
 
@@ -127,6 +131,14 @@ SoulLink/
 `bgi-scripts/AAA_联机罐子/` —— 部署时整个目录拷到 `<BGI>\User\JsScript\` 下。
 
 **已在 A1 单人模式验证跑通 5 条路线。**
+
+### RDP 空域与保护层（v1.13.1）
+
+- 展开侧栏和 RDP 保护层使用 OwnedOverlayWindow：真实 Win32 Owner、非 Topmost、不抢焦点。
+- 首次点击保护层完整消费 Down/Up，MouseUp 后才解锁；移出、失活、切页后重新锁定。
+- 原生浮层按物理像素定位；150% DPI、反复/快速收展及失活隔离测试通过。
+- 用户已用 A2 对独立验收构建做真实 RDP UI 验证，确认可用。
+- 独立验收版只用于测试并禁用了新代理投送；dist 正式版保留正常投送功能。
 
 ---
 
