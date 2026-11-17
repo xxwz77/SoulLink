@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SoulLink.ViewDemo</AssemblyName>
+    <RootNamespace>SoulLink.ViewDemo</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <!-- ★ 直接引用正式工程里的布局纯函数：演示出来的格子与真机完全一致 -->
+    <Compile Include="..\\..\\Services\\ViewLayout.cs" Link="ViewLayout.cs" />
+  </ItemGroup>
+</Project>

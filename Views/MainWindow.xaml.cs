@@ -362,17 +362,30 @@ namespace SoulLink.Views
                 });
             });
 
-            try
+            // ★ 只有"没被 --page 指定过页面"时才强制回到启动台。
+            //   原来这里无条件 Activate()，而它在 --page 处理之后执行，
+            //   会把命令行指定的页面覆盖掉（实测 --page=console 无效，
+            //   启动后仍停在启动台，中控台从未初始化 → RDP 画面永远不显示）。
+            if (!_startupPageApplied)
             {
-                LaunchView.Activate();
-                App.Breadcrumb("LaunchView activated");
+                try
+                {
+                    LaunchView.Activate();
+                    App.Breadcrumb("LaunchView activated");
+                }
+                catch (Exception ex)
+                {
+                    App.AppendErrorLog("LaunchView.Activate", ex);
+                    App.Breadcrumb("LaunchView.Activate FAILED: " + ex.Message);
+                }
             }
-            catch (Exception ex)
+            else
             {
-                App.AppendErrorLog("LaunchView.Activate", ex);
-                App.Breadcrumb("LaunchView.Activate FAILED: " + ex.Message);
+                App.Breadcrumb("startup page preserved (--page)");
             }
         }
+
+        private bool _startupPageApplied;
 
         /// <summary>标题栏副标题显示版本号（从程序集读取，升版本后自动跟随）。</summary>
         private void ShowVersion()
@@ -1006,7 +1019,13 @@ namespace SoulLink.Views
         /// <summary>启动时直接跳到指定页（供调试/命令行使用）。</summary>
         public void NavigateToStartup(string tag)
         {
-            try { SetActivePage(tag); } catch { }
+            try
+            {
+                _startupPageApplied = true;
+                SetActivePage(tag);
+                App.Breadcrumb("NavigateToStartup -> " + tag);
+            }
+            catch (Exception ex) { App.Breadcrumb("NavigateToStartup FAILED: " + ex.Message); }
         }
 
 

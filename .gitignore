@@ -55,7 +55,24 @@ dist-server-win/
 # 更新包目录（只保留源码，bin 通过 Git LFS 或外部分发）
 releases/SoulLink-v*-Update/
 
+# 研究用生成的中间产物（脚本保留，提取出的字符串转储不入库）
+research/**/out/
+
+# 样张/验证工具的构建产物
+tools/*/bin/
+tools/*/obj/
+
 # Test tools, experiments and screenshots（7za 是构建依赖，例外保留）
 tools/*
 !tools/7za
+# 多画面样张与布局验证工具（源码入库，构建产物忽略）
+!tools/view-demo
+!tools/view-demo/Program.cs
+!tools/view-demo/app.manifest
+!tools/view-demo/SoulLink.ViewDemo.csproj
+!tools/view-demo/shot.ps1
+!tools/view-demo/forcefg.ps1
+!tools/layout-check
+!tools/layout-check/LayoutCheck.cs
+!tools/layout-check/LayoutCheck.csproj
 

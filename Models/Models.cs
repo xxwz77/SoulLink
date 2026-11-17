@@ -379,6 +379,19 @@ namespace SoulLink.Models
         public int ThemeMode { get; set; } = 0;
         /// <summary>true=点击 RDP 画面才接收键鼠，移出画面立即释放</summary>
         public bool RdpCaptureOnClick { get; set; } = false;
+
+        /// <summary>
+        /// 画面区排列：0=单个（只显示焦点画面）1=双列（可滚动浏览）2=网格（等分）。
+        /// ★ 只影响"怎么摆"，不影响远端分辨率——缩放模式在连接时就已确定。
+        /// </summary>
+        public int RdpLayoutMode { get; set; } = 0;
+
+        /// <summary>
+        /// 画面在流式布局里的顺序（账号 Id 列表）。
+        /// 没打开画面的账号跳过；新账号追加到末尾。
+        /// </summary>
+        public System.Collections.Generic.List<string> RdpViewOrder { get; set; }
+            = new System.Collections.Generic.List<string>();
     }
 
     public class AutomationProfile

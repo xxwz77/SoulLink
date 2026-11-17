@@ -100,6 +100,25 @@
 
 官方 Split 文档主要描述 terminals，不能据此证明任意四个 RDP 都可同屏交互。
 
+### 7.1 机制级确认（2026-11-17 第二轮，静态反汇编）
+
+详见 `releases/MOBAXTERM-RDP-EMBEDDING-DEEP-DIVE-20261117.md`。上一轮的"证据指向"已升级为确定机制：
+
+- 主程序 MobaXterm.exe 用唯一一处 `CreateProcessA`（0x3734E6）启动 MobaRTE.exe。
+- 命令行含 `-mobahwnd "<十进制HWND>"`，该 HWND 由主程序自己的 `GetHandle`（0x81774）产生；
+  若已是嵌入模式（全局 0xBE64B0 非 0）则不再传递。
+- 子进程解析 `-mobahwnd` → StrToInt → 存窗体字段 `+0x358`；再经 VCL `ParentWindow` setter
+  调用 `SetParent`（MobaRTE 0x820F4，全文件仅 4 处 SetParent）。
+- 主程序 SetParent 之后立刻 `SetWindowPos`，标志为 `0x4244`(SWP_SHOWWINDOW) / `0x4284`(SWP_HIDEWINDOW)，
+  均带 `SWP_ASYNCWINDOWPOS`（跨进程必须异步）。
+- 子进程用 `-numtab` 给自身加 `WS_EX_TOOLWINDOW`（不进任务栏/Alt+Tab），
+  用 `-disabletopbar` 隐藏自己的顶栏。
+- 子 → 主协调**没有任何 IPC 通道**：`WM_MOUSEACTIVATE` 里 `FindWindowA(nil,"UIMainClass")`
+  → `SetWindowPos(host, TOPMOST)` → `SetForegroundWindow(host)`。
+- 分辨率变化走 `BEGIN DesktopResize` → RDPDisconnecting → 改 DesktopWidth/Height → RDPReconnecting，
+  是**断开重连**，不是在线 `UpdateSessionDisplaySettings` 重协商。
+- RDP 客户端是 MSTSCLib 的 `TMsRdpClientNotSafeForScripting`（不可脚本化变体）。
+
 ## 八、三种架构对比
 
 | 项目 | 进程 | RDP 宿主 | 多标签 | 同屏 | 对 SoulLink 的参考价值 |

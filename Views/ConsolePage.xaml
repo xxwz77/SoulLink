@@ -25,6 +25,15 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <!-- 画面操作（只在用户页显示）-->
                     <StackPanel x:Name="ViewOps" Orientation="Horizontal" Visibility="Collapsed">
+                        <Button x:Name="BtnLayout" Style="{StaticResource GhostButton}" Padding="12,5"
+                                Click="BtnLayout_Click"
+                                ToolTip="画面排列：单个 / 双列（可上下滚动） / 网格">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="LayoutGlyph" Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock x:Name="LayoutLabel" Text="单个" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                         <Button x:Name="BtnMode" Style="{StaticResource GhostButton}" Padding="12,5"
                                 Click="BtnMode_Click" ToolTip="自由视角：移动经目标会话内相对注入转为视角；不隐藏、不定位、不裁剪本机光标">
                             <StackPanel Orientation="Horizontal">
@@ -49,6 +58,10 @@
                                 <TextBlock Text="断开" FontSize="11" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
+                        <TextBlock x:Name="InputText" Text="" FontSize="10.5"
+                                   VerticalAlignment="Center" Margin="0,0,10,0" MaxWidth="420"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="#88AABBCC" />
                         <Button x:Name="BtnLogoff" Style="{StaticResource DangerButton}" Padding="10,5"
                                 Margin="6,0,0,0" Click="BtnLogoff_Click"
                                 ToolTip="注销该用户并关闭他的所有程序（不可恢复）">
@@ -321,23 +334,35 @@
                 </Border>
             </Grid>
 
-            <!-- ② 用户画面页（每个用户一个）-->
+            <!-- ② 用户画面页：固定 Tile 容器，标签/双列/网格只改摆放，不加删控件 -->
             <Grid x:Name="ViewPage" Visibility="Collapsed">
-                <Border CornerRadius="16" ClipToBounds="True" Background="#FF04060D"
+                <!-- ★ 不要黑色背景：画布留空的地方应当露出主题动画底图。
+                     只有画面格子本身（RDP 内容 / 未连接时的暗色底）是深色。 -->
+                <Border CornerRadius="16" ClipToBounds="True"
                         BorderBrush="#26FFFFFF" BorderThickness="1">
                     <Grid>
-                        <Grid x:Name="ViewportHost" />
+                        <!-- ★ 这个 Grid 只给保护层 / 连接动画当锚点：
+                             它的尺寸严格等于外框内边，与 ScrollViewer 叠在一起铺满。
+                             用它替代 ScrollViewer 当锚点，避免「含滚动条宽度」造成的错位。 -->
+                        <Grid x:Name="OverlayAnchorLayer" IsHitTestVisible="False" />
+
+                        <!-- ★ 绝不在这里 Children.Clear()/Add()。
+                             RdpConsole（内含 ActiveX）全程留在 TileHost 里，
+                             切标签/切布局只改 Tile 的尺寸和可见性，
+                             避免"控件在容器之间反复重挂"（0x119 事故的高风险组合）。 -->
+                        <ScrollViewer x:Name="ViewportScroll" HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto" Padding="0">
+                            <Canvas x:Name="TileHost" ClipToBounds="True" />
+                        </ScrollViewer>
 
                         <!-- 连接动画在代码中用 OwnedOverlayWindow 承载。
                              与导航同为 Owner-bound 非 Topmost HWND，导航可明确置顶。 -->
 
                         <!-- RDP 保护层在代码中创建 OwnedOverlayWindow。
                              它是主窗口的非 Topmost 子属 HWND，不是独立置顶的 Popup；
-                             首次 Down/Up 都被保护层消费，MouseUp 后才允许 RDP 输入。 -->
+                             首次 Down/Up 都被保护层消费，MouseUp 后才允许 RDP 输入。
+                             单画面时锚定整个画面区，多画面时锚定焦点格子。 -->
 
-                        <TextBlock x:Name="InputText" Text="" FontSize="10.5"
-                                   VerticalAlignment="Bottom" HorizontalAlignment="Left"
-                                   Margin="12,0,0,10" Foreground="#88AABBCC" />
                     </Grid>
                 </Border>
 

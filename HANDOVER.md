@@ -32,11 +32,42 @@
 - 注销后重开保护层：最后修复未完整验收，不得写成已解决。
 - 分屏/内部窗口/1:1：全部撤回，没有可交付实现。
 
+### 多标签 + 多画面（2026-11-17 实现，待完整验收）
+
+已实现并实测可用（SoulLink-TestRdpView 测试版）：
+
+- 固定 Tile 容器：切标签/切布局只改格子几何与可见性，**绝不 Children.Clear()+Add()**。
+- 三种排列：单个 / 双列（可滚动，保持 16:9）/ 网格（等分）。N 任意，4/6/9 都支持。
+- 布局纯函数 `Services/ViewLayout.cs`，可用 `tools/layout-check` 脱离 RDP 验证。
+- 保护层：**整块画布一个**（不是每格一个），锚定固定画布层，与 RDP 窗口彻底解绑。
+- 重新上锁判据：**光标离开画布范围**，不是离开单个 RDP 矩形。
+- 隐藏 RDP 原生窗口：用**移到屏幕外**（-32000），不用 SW_HIDE（SW_HIDE 会让绘制表面丢失→黑屏）。
+- 分辨率协商：500ms 防抖 + 全局串行，切标签不再反复 UpdateSessionDisplaySettings。
+
+已修的真 bug（都是本轮实测发现的）：
+
+1. `MainWindow_Loaded` 无条件 `LaunchView.Activate()`，覆盖 `--page=` 参数，
+   导致中控台从未初始化 → RDP 画面永不显示。
+2. 隐藏/恢复路径**不对称**：隐藏无条件、恢复带 `_viewing != null` 前置条件，
+   最小化/还原时 `_viewing` 为空 → 永不恢复 → 画面全空。
+3. 恢复坐标读取的是**宿主自己**的 `PointToScreen`，而宿主已被移到屏幕外 → 自我锁死。
+   改用画面格子的屏幕矩形。
+4. `ConsolePage` 里 `InputText` / `OptPanel` 叠在 RDP 上，被原生窗口盖住（airspace），
+   `InputText` 已移到标签条那一行。
+5. `--verbose-log` 命令行参数会让程序启动即退出（boot.log 停在 tray created），未修。
+
+⚠ 调试时注意：`Debug()` 默认**丢弃**非关键日志，排查必须先设环境变量
+`SOULLINK_VERBOSE_LOG=1`，否则会误判"代码没执行"。
+
 ### 研究结论速览
 
 - 1Remote：同进程 Host + 顶级 Dragablz 标签窗口；不是主窗口内多视口分屏。
 - SimpleRemote：同进程单窗口多标签，切换不断连、不重建 ActiveX；无同屏自由分屏。
-- MobaXterm：主控 + MobaRTE 子进程，证据指向 RDP 子窗口嵌入主控原生面板；不是独立顶级窗口。
+- MobaXterm：主控 + MobaRTE 子进程；**已反汇编确认**机制为"主程序把宿主面板 HWND 用
+  `-mobahwnd <HWND>` 交给子进程 → 子进程 `SetParent` 挂成该面板的子窗口"，不是独立顶级窗口。
+  子→主协调无 IPC：`WM_MOUSEACTIVATE` 里 `FindWindowA(nil,"UIMainClass")` + `SetForegroundWindow`。
+  分辨率变化走"断开重连"，不是在线 `UpdateSessionDisplaySettings`。
+  详见 releases/MOBAXTERM-RDP-EMBEDDING-DEEP-DIVE-20261117.md。
 - 后续若稳定单窗口标签，可参考 SimpleRemote；若未来继续分屏，先评估 MobaXterm 式子进程内嵌子窗口。
 
 ### 事故证据
@@ -53,6 +84,7 @@
 - releases/1REMOTE-WINDOWING-RESEARCH-20261117.md
 - releases/SIMPLEREMOTE-TABBED-RDP-RESEARCH-20261117.md
 - releases/MOBAXTERM-RDP-ARCHITECTURE-RESEARCH-20261117.md
+- releases/MOBAXTERM-RDP-EMBEDDING-DEEP-DIVE-20261117.md（反汇编级机制确认，含复现脚本说明）
 
 ---
 

@@ -1,0 +1,48 @@
+
+import struct, json, re
+src = open(r'research/mobaxterm/pe.py','r',encoding='utf-8').read()
+src = src[:src.index("for path in [")]
+ns={}; exec(compile(src,'pe','exec'), ns); PE=ns['PE']
+from capstone import Cs, CS_ARCH_X86, CS_MODE_32
+md=Cs(CS_ARCH_X86, CS_MODE_32)
+IB=0x400000
+IMP=json.load(open(r'research/mobaxterm/imports.json'))
+X=r'D:\AAA挂机专区\远程本地多用户\MobaXterm\MobaXterm.exe'
+pe=PE(X); d=pe.data
+stubs={int(k,16):tuple(v) for k,v in IMP['MobaXterm']['stubs'].items()}
+def s_at(va):
+    if not (IB<=va<IB+0x7e0000): return None
+    o=pe.va2off(va-IB)
+    if o is None or o<4: return None
+    p=struct.unpack_from('<i',d,o-4)[0]
+    if 0<p<260:
+        s=d[o:o+p]
+        if all(32<=c<127 or c in (9,10,13) for c in s): return s.decode('latin1')
+    return None
+def dis(a,b,ind='  '):
+    o=pe.va2off(a); code=d[o:o+(b-a)]
+    for ins in md.disasm(code,a):
+        note=''
+        if ins.mnemonic in ('call','jmp') and ins.op_str.startswith('0x'):
+            t=int(ins.op_str,16)
+            if t in stubs:
+                dll,fn=stubs[t]; note='   ;; %s!%s'%(dll.split('.')[0],fn)
+        for tok in re.split(r'[\[\]\+\*\s,]+', ins.op_str):
+            if tok.startswith('0x'):
+                L=s_at(int(tok,16))
+                if L: note+='   ; "%s"'%L
+        print('%s%08x  %-16s %-7s %-32s%s'%(ind,ins.address,ins.bytes.hex(),ins.mnemonic,ins.op_str,note))
+# find prologue before 0x4d1c44
+def prologue(va,limit=0x300):
+    for s in range(va-1, va-limit,-1):
+        o=pe.va2off(s)
+        if o is None: continue
+        if d[o]==0x55 and d[o+1]==0x8b and d[o+2]==0xec:
+            code=d[o:o+(va-s)+32]
+            for ins in md.disasm(code,s):
+                if ins.address==va: return s
+                if ins.address>va: break
+    return None
+p=prologue(0x4d1f58)
+print('prologue before -mobahwnd site:', hex(p) if p else None)
+dis(0x4d1ef0, 0x4d1fd0)

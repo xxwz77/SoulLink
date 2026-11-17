@@ -81,6 +81,22 @@ namespace SoulLink.Controls
         /// <summary>光标移出画面：请外层重新挂上保护层。</summary>
         public event Action<RdpConsole>? ShieldRearmRequested;
 
+        /// <summary>
+        /// 画布（多用户画面区）的屏幕矩形（物理像素）。由 ConsolePage 注入。
+        ///
+        /// ★ 重新上锁的判据必须是**画布范围**，不是单个 RDP 画面的矩形。
+        ///   多画面时 RDP 只占画布的一格，光标在格子之间移动时会一直"移出 RDP"，
+        ///   于是每跨一格就误判成一次"离开画面"而反复上锁。
+        ///   以画布为界：只要还在画布内，就持续保持解锁状态。
+        /// </summary>
+        public Func<(int left, int top, int width, int height)?>? CanvasScreenRectProvider { get; set; }
+
+        /// <summary>
+        /// 画面格子（RdpConsole 的父容器）的屏幕矩形。
+        /// 这是纯 WPF 元素，宿主窗口被移到屏幕外也不影响它 —— 用它做恢复坐标的唯一来源。
+        /// </summary>
+        public Func<(int left, int top, int width, int height)?>? HostScreenRectProvider { get; set; }
+
         /// <summary>请求外层显示/隐藏保护层（进入自由视角时隐藏，退出时恢复）。</summary>
         public event Action<RdpConsole, bool>? ShieldVisibleRequested;
 
@@ -487,7 +503,15 @@ namespace SoulLink.Controls
             _host.SizeChanged += (s, e) =>
             {
                 RefreshViewport();
-                RequestResize();
+                // ★ 不再直接 RequestResize()。
+                //   原来每次 SizeChanged 都立刻 UpdateSessionDisplaySettings：
+                //   · 拖动主窗口边缘 → 每帧一次远端分辨率重协商；
+                //   · 切标签时控件会被摘出/挂回视觉树，SizeChanged 连续触发，
+                //     于是「切一次标签就改一次远端分辨率」；
+                //   · 事故报告把「拖动/缩放时反复 UpdateSessionDisplaySettings」
+                //     列为高风险组合（0x119）。
+                //   改为：只记目标，停手 ResizeSettleMs 后由串行队列统一协商。
+                NoteViewportSizeChanged();
             };
 
             Loaded += (_, __) =>
@@ -897,7 +921,11 @@ namespace SoulLink.Controls
         private void WatchPointerCapture()
         {
             if (!IsConnected || !IsVisible) { ReleasePointerCapture(); return; }
-            var rect = ViewportScreenRect();
+
+            // ★ 优先用「整块画布」的矩形判断是否离开。
+            //   代价：光标在画布内格子之间移动不会重新上锁（正确行为）。
+            //   兜底：没有注入画布矩形时退回单个 RDP 画面矩形（兼容旧路径）。
+            var rect = CanvasScreenRectProvider?.Invoke() ?? ViewportScreenRect();
             if (rect == null) { ReleasePointerCapture(); return; }
             var cursor = System.Windows.Forms.Cursor.Position;
             bool inside = cursor.X >= rect.Value.left && cursor.X < rect.Value.left + rect.Value.width
@@ -1228,6 +1256,137 @@ namespace SoulLink.Controls
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern IntPtr SetFocus(IntPtr hWnd);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool UpdateWindow(IntPtr hWnd);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
+
+        private const int SwHide = 0;
+        private const int SwShowNoActivate = 4;
+        private const uint RdwInvalidate = 0x0001;
+        private const uint RdwErase = 0x0004;
+        private const uint RdwAllChildren = 0x0080;
+        private const uint RdwUpdateNow = 0x0100;
+
+        private const uint SwpNosize = 0x0001;
+        private const uint SwpNomove = 0x0002;
+        private const uint SwpNozorder = 0x0004;
+        private const uint SwpNoactivate = 0x0010;
+        /// <summary>藏到屏幕外的坐标（远在虚拟屏左边，用户绝对看不到）。</summary>
+        private const int ParkX = -32000;
+        private const int ParkY = -32000;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+            int X, int Y, int cx, int cy, uint uFlags);
+
+        /// <summary>
+        /// 显式显示/隐藏 RDP 的原生窗口。
+        ///
+        /// ★ 为什么必须这么做（实测过的真实故障）：
+        ///   RdpConsole 内部是 WindowsFormsHost → 独立 HWND，
+        ///   WPF 的 Visibility.Collapsed **不会**隐藏它的原生子窗口。
+        ///   主窗口切到启动台/设置时只改页面 Visibility，RDP 会继续浮在最上层，
+        ///   盖住左侧导航和其它页面内容。
+        ///
+        /// ★ 为什么不"把控件摘出视觉树"：
+        ///   那会让 ActiveX 在容器之间反复进出，正是 0x119 事故的高风险形态。
+        ///   这里只动原生窗口的显示状态，控件树结构完全不变。
+        /// </summary>
+        public void SetNativeVisible(bool visible)
+        {
+            if (_disposed) return;
+
+            // ★ 不再用 SW_HIDE 来"藏"RDP 窗口。
+            //
+            //   实测结论：SW_HIDE 会让 RDP 丢弃绘制表面，之后 SW_SHOW 回来是纯黑，
+            //   只有远端产生新画面才恢复（InvalidateRect / RedrawWindow 都救不回来）。
+            //
+            //   改用「移到屏幕外」：窗口始终处于显示状态，绘制表面一直活着，
+            //   移回来立刻就是正确画面。视觉上与隐藏完全一样（用户看不到）。
+            try
+            {
+                var hostHwnd = _host?.Handle ?? IntPtr.Zero;
+                if (hostHwnd == IntPtr.Zero) return;
+
+                if (visible)
+                {
+                    // ★ 恢复：必须让 WPF 重新把宿主窗口放回它自己的布局位置。
+                    //   之前这里写的是 SWP_NOMOVE（"不要移动"），结果窗口停在
+                    //   屏幕外的 -32000 一直不动 —— 表现为"最小化再回来，画面消失"。
+                    RestoreHostToLayout(hostHwnd);
+                }
+                else
+                {
+                    // 藏到屏幕外：尺寸保持（SWP_NOSIZE），避免触发 RDP 重协商。
+                    SetWindowPos(hostHwnd, IntPtr.Zero, ParkX, ParkY, 0, 0,
+                        SwpNosize | SwpNozorder | SwpNoactivate);
+                }
+            }
+            catch { }
+
+            if (visible)
+            {
+                // 移回来之后刷新一次，确保立刻呈现而不是等下一次远端更新。
+                try { RefreshViewport(); } catch { }
+            }
+
+            Debug("RDP 原生窗口 " + (visible ? "移回原位" : "移到屏幕外"));
+        }
+
+        /// <summary>
+        /// 把宿主窗口放回 WPF 为它安排的位置。
+        ///
+        /// 做法：先让 WPF 失效布局（宿主被移到屏幕外后，WPF 并不知道位置变了），
+        /// 再读宿主相对屏幕的真实位置，用 SetWindowPos 显式纠正。
+        /// 这样即使 WPF 之后自己重排，也不会把窗口留在屏幕外。
+        /// </summary>
+        private void RestoreHostToLayout(IntPtr hostHwnd)
+        {
+            try
+            {
+                // ① 让 WPF 重新计算这个宿主的布局槽位。
+                try { _host.InvalidateMeasure(); } catch { }
+                try { _host.InvalidateArrange(); } catch { }
+                try { UpdateLayout(); } catch { }
+
+                // ② 读 WPF 认为它应该在的屏幕位置（物理像素）。
+                int x = 0, y = 0;
+                try
+                {
+                    if (_host.IsVisible && _host.ActualWidth > 0 && _host.ActualHeight > 0)
+                    {
+                        var tl = _host.PointToScreen(new Point(0, 0));
+                        x = (int)Math.Round(tl.X);
+                        y = (int)Math.Round(tl.Y);
+
+                        // PointToScreen 在窗口最小化时会返回垃圾值，丢掉。
+                        if (x < -20000 || y < -20000) { x = 0; y = 0; }
+                    }
+                }
+                catch { }
+
+                // ③ 显式移回（SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE）。
+                SetWindowPos(hostHwnd, IntPtr.Zero, x, y, 0, 0,
+                    SwpNosize | SwpNozorder | SwpNoactivate);
+
+                Debug("RDP 宿主窗口移回 (" + x + "," + y + ")");
+            }
+            catch (Exception ex) { Debug("恢复宿主窗口位置失败：" + ex.Message); }
+        }
 
         private bool SetNativeRelativeMouse(bool enabled)
         {
@@ -1863,6 +2022,111 @@ namespace SoulLink.Controls
         /// 窗口尺寸变化后热更新远端分辨率（照 1Remote 的 ReSizeRdpToControlSize）。
         /// ★ 拖动窗口时鼠标按住会连续触发，必须等松手再改，否则闪屏。
         /// </summary>
+        // ── 跟随窗口模式的尺寸协商（防抖 + 全局串行）────────────────────────
+        //
+        // ★ 为什么必须防抖（实测 + 事故报告）：
+        //   1. 拖动窗口边缘时 SizeChanged 每帧触发，直接回调会把
+        //      UpdateSessionDisplaySettings 打成高频调用；
+        //   2. 切标签/切布局会让控件短暂离开视觉树再挂回，尺寸会经历
+        //      "变小 → 归零 → 恢复"，直接回调等于每次都重新协商一次；
+        //   3. 0x119 事故中「拖动/缩放时反复 UpdateSessionDisplaySettings」
+        //      被列为高风险组合，必须收敛成"停手之后只协商一次"。
+        //
+        // ★ 为什么必须串行：同屏多画面时 4 个画面会同时重协商，
+        //   而 Minitorch 的显示驱动路径经不起并发重协商。全局信号量保证
+        //   同一时刻只有一个画面在改远端分辨率。
+
+        /// <summary>尺寸停止变化后等待多久才协商（毫秒）。</summary>
+        public const int ResizeSettleMs = 500;
+
+        private System.Windows.Threading.DispatcherTimer? _resizeDebounce;
+        private (int width, int height) _pendingViewportPixels;
+
+        /// <summary>全局串行：同一时刻只允许一个画面重协商远端分辨率。</summary>
+        private static readonly System.Threading.SemaphoreSlim ResizeGate = new(1, 1);
+
+        /// <summary>
+        /// 视口尺寸变了：只记录目标，重置防抖计时器。
+        /// 真正的协商在 <see cref="CommitPendingResizeAsync"/> 里做。
+        /// </summary>
+        public void NoteViewportSizeChanged()
+        {
+            if (_disposed || !_hasConnected || _ocx == null) return;
+            if ((Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode) != 0) return;
+
+            var rect = ViewportScreenRect();
+            if (rect == null) return;
+            if (rect.Value.width < 200 || rect.Value.height < 200) return;
+
+            _pendingViewportPixels = (rect.Value.width, rect.Value.height);
+
+            if (_resizeDebounce == null)
+            {
+                _resizeDebounce = new System.Windows.Threading.DispatcherTimer
+                { Interval = TimeSpan.FromMilliseconds(ResizeSettleMs) };
+                _resizeDebounce.Tick += async (_, __) =>
+                {
+                    _resizeDebounce!.Stop();
+                    await CommitPendingResizeAsync().ConfigureAwait(true);
+                };
+            }
+            _resizeDebounce.Stop();
+            _resizeDebounce.Start();
+        }
+
+        /// <summary>防抖到期后真正协商一次远端分辨率。</summary>
+        private async Task CommitPendingResizeAsync()
+        {
+            if (_disposed || !_hasConnected || _ocx == null) return;
+            if ((Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode) != 0) return;
+
+            // 鼠标还按着（多半在拖边框）就先不协商，等用户停手。
+            for (int i = 0; i < 20 && System.Windows.Input.Mouse.LeftButton
+                     == System.Windows.Input.MouseButtonState.Pressed; i++)
+                await Task.Delay(300).ConfigureAwait(true);
+
+            int w = _pendingViewportPixels.width;
+            int h = _pendingViewportPixels.height;
+            if (w < 200 || h < 200) return;
+
+            // 尺寸没变就不协商（切回来、布局微调都可能落在这里）。
+            try
+            {
+                if (Math.Abs((int)_ocx.DesktopWidth - w) <= 1 &&
+                    Math.Abs((int)_ocx.DesktopHeight - h) <= 1) return;
+            }
+            catch { }
+
+            await ResizeGate.WaitAsync().ConfigureAwait(true);
+            try
+            {
+                // 排队期间可能已经断开/销毁，重新确认。
+                if (_disposed || !_hasConnected || _ocx == null) return;
+                try
+                {
+                    if (Math.Abs((int)_ocx.DesktopWidth - w) <= 1 &&
+                        Math.Abs((int)_ocx.DesktopHeight - h) <= 1) return;
+                }
+                catch { }
+
+                _ocx.UpdateSessionDisplaySettings(w, h, w, h, 0, _scaleFactor, 100);
+                Debug("热更新分辨率 -> " + w + "x" + h + " scale=" + _scaleFactor);
+            }
+            catch (Exception ex)
+            {
+                // 0x8000FFFF 在未连接完成时会抛，忽略即可
+                Debug("热更新分辨率失败：" + ex.Message);
+            }
+            finally
+            {
+                ResizeGate.Release();
+            }
+        }
+
+        /// <summary>
+        /// 立即协商（兼容旧调用点）。不做防抖，仅供显式全屏/自适应切换使用。
+        /// 拖动与切标签走 <see cref="NoteViewportSizeChanged"/>。
+        /// </summary>
         public async void RequestResize(Version _ = default)
         {
             try
@@ -2196,6 +2460,8 @@ namespace SoulLink.Controls
         {
             if (_disposed) return;
             _disposed = true;
+            try { _resizeDebounce?.Stop(); } catch { }
+            _resizeDebounce = null;
             ReleaseCapture("释放控制台");
             ReleaseInjectedButtonsAsync();   // 兜底：即使 ReleaseCapture 提前返回也要释放
             UninstallMouseHook();

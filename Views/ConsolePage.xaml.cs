@@ -88,8 +88,56 @@ namespace SoulLink.Views
             //   切页/侧栏展开/窗口缩放时视口变了它不变，遮罩就和画面不重合
             //   （用户反馈：连接动画没有自适应窗口大小）。
             //   改成监听 ViewportHost 自身的 SizeChanged，并补一次首帧对齐。
-            ViewportHost.SizeChanged += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
+            ViewportHost.SizeChanged += (_, __) =>
+            {
+                SyncBusyOverlaySize();
+                SyncShieldSize();
+                // 多画面要跟着重排；单画面只是重新铺满，不会触发远端分辨率协商
+                // （协商由 RdpConsole 自己的防抖队列负责）。
+                OnViewportResized();
+            };
             Loaded += (_, __) => { EnsureBusyOverlayWindow(); EnsureShieldOverlayWindow(); EnsureShieldWatch(); };
+
+            // ★ 主窗口最小化时也要藏原生窗口：
+            //   最小化只改窗口状态，WindowsFormsHost 的独立 HWND 不会跟着消失。
+            Loaded += (_, __) =>
+            {
+                var win = Window.GetWindow(this);
+                if (win == null) return;
+                win.StateChanged += (_, __) =>
+                {
+                    try
+                    {
+                        bool minimized = win.WindowState == WindowState.Minimized;
+                        if (minimized)
+                        {
+                            // 最小化：把原生窗口移到屏幕外（不 SW_HIDE，否则回来是黑屏）。
+                            Debug("窗口最小化 → 隐藏 RDP 原生窗口");
+                            foreach (var t in _tiles)
+                                t.Console?.SetNativeVisible(false);
+                        }
+                        else
+                        {
+                            // ★ 还原/最大化：必须显式恢复，否则窗口永远停在屏幕外
+                            //   —— 这就是"最小化到任务栏再回来，RDP 窗口消失"的原因。
+                            //   走 SyncNativeVisibility 而不是逐格 SetNativeVisible(true)：
+                            //   它只恢复"当前应该显示"的那些画面，不会把隐藏的格子也翻出来。
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                try
+                                {
+                                    SyncNativeVisibility();
+                                    // WPF 布局在还原后可能还没跑完，再补一次。
+                                    Dispatcher.BeginInvoke(new Action(SyncNativeVisibility),
+                                        System.Windows.Threading.DispatcherPriority.Loaded);
+                                }
+                                catch { }
+                            }), System.Windows.Threading.DispatcherPriority.Background);
+                        }
+                    }
+                    catch { }
+                };
+            };
             Unloaded += (_, __) => { _shieldWatch?.Stop(); _shieldWatch = null; };
             Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
 
@@ -103,20 +151,26 @@ namespace SoulLink.Views
                 {
                     if (IsVisible)
                     {
-                        // 切回本页：如果当前正在看某个账号且已连接，重新挂上
                         _shieldOverlayWindow?.HideOverlay();
-                        if (_viewing?.Console != null && _viewing.Console.IsConnected
-                            && !ViewportHost.Children.Contains(_viewing.Console))
-                        {
-                            ViewportHost.Children.Clear();
-                            ViewportHost.Children.Add(_viewing.Console);
-                            _viewing.Console.OnShown();
-                        }
+
+                        // ★ 恢复必须与隐藏**完全对称**。
+                        //   原来这里加了 "if (_viewing?.Console != null && IsConnected)" 的前置条件，
+                        //   而隐藏那侧是无条件的 —— 只要还原时 _viewing 恰好为空
+                        //   （最小化/还原、注销后重开都会出现），就永远不恢复，
+                        //   表现为"画面全空，必须切页再回来才好"。
+                        //   现在无条件走恢复路径，具体谁能显示由 ApplyLayout 按 IsConnected 决定。
+                        SetHiddenForPageSwitch(false);
+                        ApplyLayout();
+                        _viewing?.Console?.OnShown();
                     }
                     else
                     {
-                        // 切走：摘掉控件（连接状态保留，不 Dispose）
-                        ViewportHost.Children.Clear();
+                        // ★ 切走时必须显式隐藏 RDP 的原生 HWND（见 SetHiddenForPageSwitch）。
+                        //   只改 WPF Visibility 不够：WindowsFormsHost 是独立窗口，
+                        //   会继续浮在最上层盖住导航和其它页面（用户实测过）。
+                        //   注意这里**不**摘控件、不 Dispose —— ActiveX 与连接全程保留。
+                        Debug("页面不可见 → 隐藏 RDP 原生窗口（pageHidden）");
+                        SetHiddenForPageSwitch(true);
                         _busyOverlayWindow?.HideForOwnerState();
                         _shieldReleased = false;
                         _shieldOverlayWindow?.HideOverlay();
@@ -185,7 +239,7 @@ namespace SoulLink.Views
             });
             panel.Children.Add(_busyReconnectButton);
             _busyOverlayContent = new Border { Background = new SolidColorBrush(Color.FromArgb(0xF2,0x05,0x09,0x13)), Child = panel };
-            _busyOverlayWindow = new OwnedOverlayWindow(owner, ViewportHost, _busyOverlayContent, "连接动画", allowInactiveOwner: true);
+            _busyOverlayWindow = new OwnedOverlayWindow(owner, OverlayAnchor, _busyOverlayContent, "连接动画", allowInactiveOwner: true);
         }
 
         private void SyncBusyOverlaySize()
@@ -222,7 +276,7 @@ namespace SoulLink.Views
                     + " user=" + (row?.Account.Caption ?? _viewing?.Account.Caption ?? "-")
                     + " setting=" + App.Config.Settings.RdpCaptureOnClick
                     + " connected=" + (console?.IsConnected == true)
-                    + " mounted=" + (console != null && ViewportHost.Children.Contains(console))
+                    + " mounted=" + (console != null && _tiles.Any(t => ReferenceEquals(t.Console, console)))
                     + " released=" + _shieldReleased
                     + " pending=" + _shieldPendingAfterBusy
                     + " busy=" + _busyVisible
@@ -260,7 +314,8 @@ namespace SoulLink.Views
                     bool connected = console.IsConnected;
                     IntPtr nativeHandle = console.NativeViewportHandle;
                     bool nativeReady = nativeHandle != IntPtr.Zero
-                        && ViewportHost.Children.Contains(console) && console.IsVisible;
+                        && _tiles.Any(t => ReferenceEquals(t.Console, console) && t.Chrome.Visibility == Visibility.Visible)
+                        && console.IsVisible;
                     bool canReceiveInput = connected || nativeReady;
                     if (canReceiveInput && (!ReferenceEquals(_shieldWatchedConsole, console)
                         || _shieldWatchedGeneration != console.ConnectionGeneration
@@ -338,8 +393,12 @@ namespace SoulLink.Views
             // 所以“用于解锁的那一次点击”不会继续进入 RDP 或远端游戏。
             _shieldOverlayContent.MouseLeftButtonDown += ShieldOverlay_MouseDown;
             _shieldOverlayContent.MouseLeftButtonUp += ShieldOverlay_MouseUp;
+            // ★ 保护层锚定的是**固定的画布层**，与 RDP 窗口、与焦点格子彻底解绑。
+            //   原因（实测）：锚点一旦跟着焦点格子走，切到第二个标签时
+            //   浮层的坐标基准就换成了另一块区域，表现为"第一个正常、第二个跑偏"。
+            //   画布层是布局过程中位置/尺寸都不变的元素，永远不会漂。
             _shieldOverlayWindow = new OwnedOverlayWindow(
-                owner, ViewportHost, _shieldOverlayContent, "RDP 保护层", allowInactiveOwner: true);
+                owner, OverlayAnchor, _shieldOverlayContent, "RDP 保护层", allowInactiveOwner: true);
             UpdateShield();
         }
 
@@ -357,6 +416,8 @@ namespace SoulLink.Views
             {
                 EnsureShieldOverlayWindow();
                 if (_shieldOverlayWindow == null) return;
+
+                // ★ 锚点固定为画布层，这里不再做任何按焦点重锚的处理。
                 var win = Window.GetWindow(this);
                 bool visible = win != null && win.IsVisible && win.WindowState != WindowState.Minimized;
 
@@ -374,7 +435,7 @@ namespace SoulLink.Views
                 if (want)
                 {
                     SyncShieldSize();
-                    _shieldOverlayWindow.ShowOverlay(ViewportHost.ActualWidth, ViewportHost.ActualHeight);
+                    _shieldOverlayWindow.ShowOverlay(OverlayAnchorWidth(), OverlayAnchorHeight());
                 }
                 else _shieldOverlayWindow.HideForOwnerState();
             }
@@ -394,6 +455,38 @@ namespace SoulLink.Views
             catch { }
         }
 
+        /// <summary>当前鼠标位置落在哪个格子（多画面用）。</summary>
+        private Tile? HitTestTileUnderMouse()
+        {
+            try
+            {
+                var p = System.Windows.Forms.Control.MousePosition;
+                foreach (var t in _tiles)
+                {
+                    if (t.Chrome.Visibility != Visibility.Visible) continue;
+                    if (t.Chrome.ActualWidth < 1 || t.Chrome.ActualHeight < 1) continue;
+                    var tl = t.Chrome.PointToScreen(new Point(0, 0));
+                    var br = t.Chrome.PointToScreen(new Point(t.Chrome.ActualWidth, t.Chrome.ActualHeight));
+                    if (p.X >= tl.X && p.X <= br.X && p.Y >= tl.Y && p.Y <= br.Y) return t;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>保护层里选中焦点：只切焦点、不改布局、不重新上锁。</summary>
+        private void SetFocusFromShield(Tile tile)
+        {
+            if (ReferenceEquals(_focusTile, tile)) return;
+            _focusTile = tile;
+            _viewing = tile.Row;
+            foreach (var t in _tiles)
+                t.Console.SetForegroundActive(ReferenceEquals(t, tile));
+            UpdateTileChrome();
+            RenderTabs();
+            Debug("保护层点击 → 焦点切到 " + tile.Row.Account.Caption);
+        }
+
         /// <summary>用户点击保护层：撤掉它，把键鼠交给 RDP。</summary>
         private void ShieldOverlay_MouseDown(object sender, MouseButtonEventArgs e)
         {
@@ -405,6 +498,16 @@ namespace SoulLink.Views
         {
             if (_shieldReleased) { e.Handled = true; return; }
             e.Handled = true;
+
+            // ★ 多画面时，这一下点击既要"解锁"，也要"选中点到的那个画面"。
+            //   否则用户点第二格，焦点还停在第一格，键鼠会投错账号。
+            //   这次点击已被保护层完整消费，不会透传到远端 RDP。
+            if (CurrentLayoutMode != ConsoleLayoutMode.Single)
+            {
+                var hit = HitTestTileUnderMouse();
+                if (hit != null) SetFocusFromShield(hit);
+            }
+
             _shieldReleased = true;
             _shieldOverlayWindow?.HideOverlay();
             try { _viewing?.Console?.OnShieldReleased(); } catch { }
@@ -424,7 +527,7 @@ namespace SoulLink.Views
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (!ReferenceEquals(row, _viewing)) return;
-                if (!ViewportHost.Children.Contains(row.Console)) return;
+                if (!_tiles.Any(t => ReferenceEquals(t.Row, row))) return;
                 UpdateShield();
                 SyncShieldSize();
                 _shieldOverlayWindow?.SyncToAnchor();
@@ -444,6 +547,8 @@ namespace SoulLink.Views
             RebuildUserList();
             RenderTabs();
             _initialized = true;
+            UpdateLayoutUi();
+            ApplyLayout();
             SyncBusyOverlaySize();
 
             if (!_autoConnectTried)
@@ -785,12 +890,20 @@ namespace SoulLink.Views
             // 「配置」页签始终在第一位
             TabBar.Children.Add(MakeChip("配置", null));
 
-            // 只为「打开过」的用户显示页签，没打开的不占位
-            foreach (var row in _rows)
+            // 只为「打开过」的用户显示页签，没打开的不占位。
+            // 顺序跟随画面流式布局的顺序，保证"标签顺序 == 双列里的顺序"。
+            var order = App.Config.Settings.RdpViewOrder;
+            var opened = _rows.Where(r => _openedIds.Contains(r.Account.Id)).ToList();
+            opened.Sort((a, b) =>
             {
-                if (!_openedIds.Contains(row.Account.Id)) continue;
+                int ia = order.IndexOf(a.Account.Id);
+                int ib = order.IndexOf(b.Account.Id);
+                if (ia < 0) ia = int.MaxValue;
+                if (ib < 0) ib = int.MaxValue;
+                return ia.CompareTo(ib);
+            });
+            foreach (var row in opened)
                 TabBar.Children.Add(MakeChip(row.Account.Caption, row));
-            }
         }
 
         private UIElement MakeChip(string text, UserRow? row)
@@ -842,6 +955,15 @@ namespace SoulLink.Views
             border.MouseLeftButtonUp += (_, __) =>
             {
                 if (row == null) ShowConfigPage();
+                else if (CurrentLayoutMode != ConsoleLayoutMode.Single && _openedIds.Contains(row.Account.Id))
+                {
+                    // 多画面下点标签 = 把焦点移到那一格，布局不变
+                    _showGeneralSettings = false;
+                    ConfigPage.Visibility = Visibility.Collapsed;
+                    ViewPage.Visibility = Visibility.Visible;
+                    ViewOps.Visibility = Visibility.Visible;
+                    SetFocus(row, reason: "tab-click");
+                }
                 else { _showGeneralSettings = false; _ = ShowViewPageAsync(row); }
             };
 
@@ -891,18 +1013,26 @@ namespace SoulLink.Views
             RenderTabs();
             if (newTab) ArmShieldForNewTab(row);
 
-            ViewportHost.Children.Clear();
             if (row.Console == null) InitializeConsole(row);
 
+            // 焦点格子立刻固定下来：即使还没连上，布局也知道该把谁放第一位。
+            _focusTile = EnsureTile(row);
+            UpdateTileChrome();
+            ApplyLayout();
+
             // ★ 关键：RDP 控件是 WindowsFormsHost（独立 HWND），
-            //   一旦加入视觉树就会立刻显示它的"启动画面"（黑底 + 转圈动画），
+            //   一旦可见就会立刻显示它的"启动画面"（黑底 + 转圈动画），
             //   而且这个原生子窗口会**盖住所有 WPF 元素**（含左侧导航、顶栏）。
-            //   所以：未连接时先不加入，等连接成功后再挂上去，
+            //   所以：未连接时先不显示 Tile，等连接成功后再显示，
             //   期间显示我们自己的加载提示（纯 WPF，不会盖住任何东西）。
+            //
+            // ★ 控件本身已经在 Tile 里且**从不移除**，这里只切 Tile 可见性。
             bool alreadyConnected = row.Console.IsConnected;
             if (alreadyConnected)
             {
-                ViewportHost.Children.Add(row.Console);
+                var tile = EnsureTile(row);
+                _focusTile = tile;
+                ApplyLayout();
                 row.Console.OnShown();
             }
 
@@ -919,8 +1049,8 @@ namespace SoulLink.Views
                 // 失败时控件保持不显示，用户能看到我们的错误提示而不是黑屏。
                 if (ok && ReferenceEquals(row, _viewing))
                 {
-                    ViewportHost.Children.Clear();
-                    ViewportHost.Children.Add(row.Console);
+                    EnsureTile(row);
+                    ApplyLayout();
                     row.Console.OnShown();
                     if (ReferenceEquals(_shieldPendingNewTab, row))
                     {
@@ -1025,7 +1155,7 @@ namespace SoulLink.Views
                 && owner != null && owner.IsVisible && owner.WindowState != WindowState.Minimized;
             if (show && _busyOverlayWindow != null)
             {
-                _busyOverlayWindow.ShowOverlay(ViewportHost.ActualWidth, ViewportHost.ActualHeight);
+                _busyOverlayWindow.ShowOverlay(OverlayAnchorWidth(), OverlayAnchorHeight());
                 // 动画随后显示，必须主动恢复导航的兄弟浮层层级。
                 MainWindowRef?.BringNavigationToFront();
             }
@@ -1703,10 +1833,10 @@ namespace SoulLink.Views
             App.Config.Accounts.RemoveAll(x => x.Id == row.Account.Id);
             ConfigStore.Save(App.Config);
 
+            RemoveTile(row);
             if (ReferenceEquals(_viewing, row))
             {
                 _viewing = null;
-                ViewportHost.Children.Clear();
                 ShowConfigPage();
             }
             if (ReferenceEquals(_editing, row)) _editing = null;
@@ -1728,7 +1858,8 @@ namespace SoulLink.Views
             App.Config.Accounts.RemoveAll(x => x.Id == row.Account.Id);
             ConfigStore.Save(App.Config);
             _editing = null;
-            if (ReferenceEquals(_viewing, row)) { _viewing = null; ViewportHost.Children.Clear(); ShowConfigPage(); }
+            RemoveTile(row);
+            if (ReferenceEquals(_viewing, row)) { _viewing = null; ShowConfigPage(); }
             RebuildUserList();
             RenderTabs();
         }
@@ -1787,6 +1918,33 @@ namespace SoulLink.Views
                     _shieldReleased = false;
                     UpdateShield();
                 });
+
+            // ★ 重新上锁以「画布范围」为准，不是单个 RDP 画面的矩形。
+            c.CanvasScreenRectProvider = CanvasScreenRect;
+
+            // ★ 恢复原生窗口位置时，用该 Console 所在格子的屏幕矩形当唯一来源。
+            //   绝不能读宿主自己的 PointToScreen —— 它被移到屏幕外后会算出屏幕外坐标。
+            var ownerRow = row;
+            c.HostScreenRectProvider = () => TileScreenRect(ownerRow);
+
+            // ★ 连接状态变化必须触发重排。
+            //   Tile 的可见性由 IsConnected 决定，而连接是异步完成的。
+            //   只在 ShowViewPageAsync 里排一次布局，会出现"连接完成时那次布局还看不到它，
+            //   之后再没人排"→ 格子永远 Collapsed → RDP 原生窗口停在 (0,0) 不可见。
+            c.ConnectionChanged += (_, connected) =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    try
+                    {
+                        if (!_initialized) return;
+                        Debug("连接状态变化 → 重排：" + ownerRow.Account.Caption
+                              + " connected=" + connected);
+                        ApplyLayout();
+                        if (connected) SyncNativeVisibility();
+                    }
+                    catch { }
+                });
+
             row.Console = c;
         }
 
@@ -1975,7 +2133,7 @@ namespace SoulLink.Views
 
                 // 过场仍盖住画面时销毁 RDP，避免露出 WindowsFormsHost 白底。
                 _openedIds.Remove(row.Account.Id);
-                ViewportHost.Children.Clear();
+                RemoveTile(row);
                 try { row.Console?.Dispose(); } catch { }
                 row.Console = null;
                 RecreateShieldAfterConsoleDisposal();
@@ -2011,7 +2169,7 @@ namespace SoulLink.Views
             try { row.Console?.Disconnect(); } catch { }
             SetBusyVisible(false);
             _openedIds.Remove(row.Account.Id);
-            ViewportHost.Children.Clear();
+            RemoveTile(row);
             try { row.Console?.Dispose(); } catch { }
             row.Console = null;
             RecreateShieldAfterConsoleDisposal();
@@ -2052,13 +2210,18 @@ namespace SoulLink.Views
             if (row != null) { _editing = row; RebuildUserList(); }
         }
 
-        public void RefreshBadges() { RenderTabs(); }
+        public void RefreshBadges() { RenderTabs(); UpdateLayoutUi(); }
 
         public void DisposeConsoles()
         {
             foreach (var r in _rows) { try { r.Console?.Dispose(); } catch { } }
             _rows.Clear();
-            ViewportHost.Children.Clear();
+            foreach (var t in _tiles.ToList())
+            {
+                try { TileHost.Children.Remove(t.Shell); } catch { }
+            }
+            _tiles.Clear();
+            _focusTile = null;
         }
     }
 }

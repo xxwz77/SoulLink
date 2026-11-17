@@ -1,0 +1,11218 @@
+{
+ "MobaXterm": {
+  "stubs": {
+   "0x1314": [
+    "kernel32.dll",
+    "CloseHandle"
+   ],
+   "0x131c": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0x1324": [
+    "kernel32.dll",
+    "DeleteFileA"
+   ],
+   "0x132c": [
+    "kernel32.dll",
+    "GetFileType"
+   ],
+   "0x1334": [
+    "kernel32.dll",
+    "GetFileSize"
+   ],
+   "0x133c": [
+    "kernel32.dll",
+    "GetStdHandle"
+   ],
+   "0x1344": [
+    "kernel32.dll",
+    "RaiseException"
+   ],
+   "0x134c": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0x1354": [
+    "kernel32.dll",
+    "RtlUnwind"
+   ],
+   "0x135c": [
+    "kernel32.dll",
+    "SetEndOfFile"
+   ],
+   "0x1364": [
+    "kernel32.dll",
+    "SetFilePointer"
+   ],
+   "0x136c": [
+    "kernel32.dll",
+    "UnhandledExceptionFilter"
+   ],
+   "0x1374": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0x137c": [
+    "user32.dll",
+    "CharNextA"
+   ],
+   "0x1384": [
+    "kernel32.dll",
+    "CreateThread"
+   ],
+   "0x138c": [
+    "kernel32.dll",
+    "ExitThread"
+   ],
+   "0x1394": [
+    "kernel32.dll",
+    "ExitProcess"
+   ],
+   "0x139c": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0x13a4": [
+    "kernel32.dll",
+    "FreeLibrary"
+   ],
+   "0x13ac": [
+    "kernel32.dll",
+    "GetCommandLineA"
+   ],
+   "0x13b4": [
+    "kernel32.dll",
+    "GetCurrentDirectoryA"
+   ],
+   "0x13bc": [
+    "kernel32.dll",
+    "GetLastError"
+   ],
+   "0x13c4": [
+    "kernel32.dll",
+    "GetLocaleInfoA"
+   ],
+   "0x13cc": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0x13d4": [
+    "kernel32.dll",
+    "GetStartupInfoA"
+   ],
+   "0x13dc": [
+    "kernel32.dll",
+    "GetThreadLocale"
+   ],
+   "0x13e4": [
+    "user32.dll",
+    "LoadStringA"
+   ],
+   "0x13ec": [
+    "kernel32.dll",
+    "MultiByteToWideChar"
+   ],
+   "0x13f4": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0x13fc": [
+    "kernel32.dll",
+    "WideCharToMultiByte"
+   ],
+   "0x1404": [
+    "kernel32.dll",
+    "VirtualQuery"
+   ],
+   "0x140c": [
+    "oleaut32.dll",
+    "SysAllocStringLen"
+   ],
+   "0x1414": [
+    "oleaut32.dll",
+    "SysReAllocStringLen"
+   ],
+   "0x141c": [
+    "oleaut32.dll",
+    "SysFreeString"
+   ],
+   "0x1424": [
+    "kernel32.dll",
+    "InterlockedIncrement"
+   ],
+   "0x142c": [
+    "kernel32.dll",
+    "InterlockedDecrement"
+   ],
+   "0x1434": [
+    "kernel32.dll",
+    "GetCurrentThreadId"
+   ],
+   "0x143c": [
+    "kernel32.dll",
+    "GetVersion"
+   ],
+   "0x1444": [
+    "kernel32.dll",
+    "QueryPerformanceCounter"
+   ],
+   "0x144c": [
+    "kernel32.dll",
+    "GetTickCount"
+   ],
+   "0x1478": [
+    "kernel32.dll",
+    "LocalAlloc"
+   ],
+   "0x1480": [
+    "kernel32.dll",
+    "LocalFree"
+   ],
+   "0x1488": [
+    "kernel32.dll",
+    "VirtualAlloc"
+   ],
+   "0x1490": [
+    "kernel32.dll",
+    "VirtualFree"
+   ],
+   "0x1498": [
+    "kernel32.dll",
+    "InitializeCriticalSection"
+   ],
+   "0x14a0": [
+    "kernel32.dll",
+    "EnterCriticalSection"
+   ],
+   "0x14a8": [
+    "kernel32.dll",
+    "LeaveCriticalSection"
+   ],
+   "0x14b0": [
+    "kernel32.dll",
+    "DeleteCriticalSection"
+   ],
+   "0x3844": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0x384c": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0x7454": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0x745c": [
+    "kernel32.dll",
+    "LocalAlloc"
+   ],
+   "0x7464": [
+    "kernel32.dll",
+    "TlsGetValue"
+   ],
+   "0x746c": [
+    "kernel32.dll",
+    "TlsSetValue"
+   ],
+   "0x77e4": [
+    "advapi32.dll",
+    "AllocateAndInitializeSid"
+   ],
+   "0x77ec": [
+    "advapi32.dll",
+    "CloseEventLog"
+   ],
+   "0x77f4": [
+    "advapi32.dll",
+    "FreeSid"
+   ],
+   "0x77fc": [
+    "advapi32.dll",
+    "GetCurrentHwProfileA"
+   ],
+   "0x7804": [
+    "advapi32.dll",
+    "GetUserNameA"
+   ],
+   "0x780c": [
+    "advapi32.dll",
+    "InitializeAcl"
+   ],
+   "0x7814": [
+    "advapi32.dll",
+    "LogonUserA"
+   ],
+   "0x781c": [
+    "advapi32.dll",
+    "OpenEventLogA"
+   ],
+   "0x7824": [
+    "advapi32.dll",
+    "ReadEventLogA"
+   ],
+   "0x782c": [
+    "advapi32.dll",
+    "RegCloseKey"
+   ],
+   "0x7834": [
+    "advapi32.dll",
+    "RegCreateKeyExA"
+   ],
+   "0x783c": [
+    "advapi32.dll",
+    "RegDeleteKeyA"
+   ],
+   "0x7844": [
+    "advapi32.dll",
+    "RegDeleteValueA"
+   ],
+   "0x784c": [
+    "advapi32.dll",
+    "RegEnumKeyExA"
+   ],
+   "0x7854": [
+    "advapi32.dll",
+    "RegEnumValueA"
+   ],
+   "0x785c": [
+    "advapi32.dll",
+    "RegFlushKey"
+   ],
+   "0x7864": [
+    "advapi32.dll",
+    "RegOpenKeyExA"
+   ],
+   "0x786c": [
+    "advapi32.dll",
+    "RegQueryInfoKeyA"
+   ],
+   "0x7874": [
+    "advapi32.dll",
+    "RegQueryValueExA"
+   ],
+   "0x787c": [
+    "advapi32.dll",
+    "RegSetValueExA"
+   ],
+   "0x7884": [
+    "kernel32.dll",
+    "CloseHandle"
+   ],
+   "0x788c": [
+    "kernel32.dll",
+    "CompareStringA"
+   ],
+   "0x7894": [
+    "kernel32.dll",
+    "CompareStringA"
+   ],
+   "0x789c": [
+    "kernel32.dll",
+    "CompareStringW"
+   ],
+   "0x78a4": [
+    "kernel32.dll",
+    "CopyFileA"
+   ],
+   "0x78ac": [
+    "kernel32.dll",
+    "CreateDirectoryA"
+   ],
+   "0x78b4": [
+    "kernel32.dll",
+    "CreateEventA"
+   ],
+   "0x78bc": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0x78c4": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0x78cc": [
+    "kernel32.dll",
+    "CreateFileW"
+   ],
+   "0x78d4": [
+    "kernel32.dll",
+    "CreateFileMappingA"
+   ],
+   "0x78dc": [
+    "kernel32.dll",
+    "CreateMutexA"
+   ],
+   "0x7904": [
+    "kernel32.dll",
+    "CreatePipe"
+   ],
+   "0x790c": [
+    "kernel32.dll",
+    "CreateProcessA"
+   ],
+   "0x7914": [
+    "kernel32.dll",
+    "CreateSemaphoreA"
+   ],
+   "0x791c": [
+    "kernel32.dll",
+    "CreateThread"
+   ],
+   "0x7924": [
+    "kernel32.dll",
+    "DeleteCriticalSection"
+   ],
+   "0x792c": [
+    "kernel32.dll",
+    "DeleteFileA"
+   ],
+   "0x7934": [
+    "kernel32.dll",
+    "EnterCriticalSection"
+   ],
+   "0x793c": [
+    "kernel32.dll",
+    "EnumCalendarInfoA"
+   ],
+   "0x7944": [
+    "kernel32.dll",
+    "ExpandEnvironmentStringsA"
+   ],
+   "0x794c": [
+    "kernel32.dll",
+    "FileTimeToDosDateTime"
+   ],
+   "0x7954": [
+    "kernel32.dll",
+    "FileTimeToLocalFileTime"
+   ],
+   "0x795c": [
+    "kernel32.dll",
+    "FileTimeToSystemTime"
+   ],
+   "0x7964": [
+    "kernel32.dll",
+    "FindClose"
+   ],
+   "0x796c": [
+    "kernel32.dll",
+    "FindCloseChangeNotification"
+   ],
+   "0x7974": [
+    "kernel32.dll",
+    "FindFirstChangeNotificationA"
+   ],
+   "0x797c": [
+    "kernel32.dll",
+    "FindFirstFileA"
+   ],
+   "0x7984": [
+    "kernel32.dll",
+    "FindFirstFileA"
+   ],
+   "0x798c": [
+    "kernel32.dll",
+    "FindNextChangeNotification"
+   ],
+   "0x7994": [
+    "kernel32.dll",
+    "FindNextFileA"
+   ],
+   "0x799c": [
+    "kernel32.dll",
+    "FindResourceA"
+   ],
+   "0x79a4": [
+    "kernel32.dll",
+    "FlushFileBuffers"
+   ],
+   "0x79ac": [
+    "kernel32.dll",
+    "FlushInstructionCache"
+   ],
+   "0x79b4": [
+    "kernel32.dll",
+    "FormatMessageA"
+   ],
+   "0x79bc": [
+    "kernel32.dll",
+    "FreeLibrary"
+   ],
+   "0x79c4": [
+    "kernel32.dll",
+    "InterlockedDecrement"
+   ],
+   "0x79cc": [
+    "kernel32.dll",
+    "InterlockedExchange"
+   ],
+   "0x79d4": [
+    "kernel32.dll",
+    "InterlockedIncrement"
+   ],
+   "0x79dc": [
+    "kernel32.dll",
+    "FreeResource"
+   ],
+   "0x79e4": [
+    "kernel32.dll",
+    "GetACP"
+   ],
+   "0x79ec": [
+    "kernel32.dll",
+    "GetCPInfo"
+   ],
+   "0x79f4": [
+    "kernel32.dll",
+    "GetComputerNameA"
+   ],
+   "0x79fc": [
+    "kernel32.dll",
+    "GetComputerNameW"
+   ],
+   "0x7a04": [
+    "kernel32.dll",
+    "GetCurrentDirectoryA"
+   ],
+   "0x7a0c": [
+    "kernel32.dll",
+    "GetCurrentProcess"
+   ],
+   "0x7a14": [
+    "kernel32.dll",
+    "GetCurrentProcessId"
+   ],
+   "0x7a1c": [
+    "kernel32.dll",
+    "GetCurrentThreadId"
+   ],
+   "0x7a24": [
+    "kernel32.dll",
+    "GetDateFormatA"
+   ],
+   "0x7a2c": [
+    "kernel32.dll",
+    "GetDiskFreeSpaceA"
+   ],
+   "0x7a34": [
+    "kernel32.dll",
+    "GetDriveTypeA"
+   ],
+   "0x7a3c": [
+    "kernel32.dll",
+    "GetEnvironmentVariableA"
+   ],
+   "0x7a44": [
+    "kernel32.dll",
+    "GetExitCodeProcess"
+   ],
+   "0x7a4c": [
+    "kernel32.dll",
+    "GetExitCodeThread"
+   ],
+   "0x7a54": [
+    "kernel32.dll",
+    "GetFileAttributesA"
+   ],
+   "0x7a5c": [
+    "kernel32.dll",
+    "GetFileSize"
+   ],
+   "0x7a64": [
+    "kernel32.dll",
+    "GetFullPathNameA"
+   ],
+   "0x7a6c": [
+    "kernel32.dll",
+    "GetLastError"
+   ],
+   "0x7a74": [
+    "kernel32.dll",
+    "GetLocalTime"
+   ],
+   "0x7a7c": [
+    "kernel32.dll",
+    "GetLocaleInfoA"
+   ],
+   "0x7a84": [
+    "kernel32.dll",
+    "GetLogicalDriveStringsA"
+   ],
+   "0x7a8c": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0x7a94": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0x7a9c": [
+    "kernel32.dll",
+    "GetModuleFileNameW"
+   ],
+   "0x7aa4": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0x7aac": [
+    "kernel32.dll",
+    "GetProcAddress"
+   ],
+   "0x7ab4": [
+    "kernel32.dll",
+    "GetProfileIntA"
+   ],
+   "0x7abc": [
+    "kernel32.dll",
+    "GetProfileStringA"
+   ],
+   "0x7ac4": [
+    "kernel32.dll",
+    "GetShortPathNameA"
+   ],
+   "0x7acc": [
+    "kernel32.dll",
+    "GetShortPathNameW"
+   ],
+   "0x7ad4": [
+    "kernel32.dll",
+    "GetStdHandle"
+   ],
+   "0x7adc": [
+    "kernel32.dll",
+    "GetStringTypeExA"
+   ],
+   "0x7ae4": [
+    "kernel32.dll",
+    "GetSystemDefaultLCID"
+   ],
+   "0x7aec": [
+    "kernel32.dll",
+    "GetSystemDirectoryA"
+   ],
+   "0x7af4": [
+    "kernel32.dll",
+    "GetSystemInfo"
+   ],
+   "0x7afc": [
+    "kernel32.dll",
+    "GetSystemTime"
+   ],
+   "0x7b04": [
+    "kernel32.dll",
+    "GetTempFileNameA"
+   ],
+   "0x7b0c": [
+    "kernel32.dll",
+    "GetTempPathA"
+   ],
+   "0x7b14": [
+    "kernel32.dll",
+    "GetThreadLocale"
+   ],
+   "0x7b1c": [
+    "kernel32.dll",
+    "GetTickCount"
+   ],
+   "0x7b24": [
+    "kernel32.dll",
+    "GetTimeZoneInformation"
+   ],
+   "0x7b2c": [
+    "kernel32.dll",
+    "GetUserDefaultLCID"
+   ],
+   "0x7b34": [
+    "kernel32.dll",
+    "GetVersion"
+   ],
+   "0x7b3c": [
+    "kernel32.dll",
+    "GetVersionExA"
+   ],
+   "0x7b44": [
+    "kernel32.dll",
+    "GetVolumeInformationA"
+   ],
+   "0x7b4c": [
+    "kernel32.dll",
+    "GetWindowsDirectoryA"
+   ],
+   "0x7b54": [
+    "kernel32.dll",
+    "GlobalAddAtomA"
+   ],
+   "0x7b5c": [
+    "kernel32.dll",
+    "GlobalAlloc"
+   ],
+   "0x7b64": [
+    "kernel32.dll",
+    "GlobalDeleteAtom"
+   ],
+   "0x7b6c": [
+    "kernel32.dll",
+    "GlobalFindAtomA"
+   ],
+   "0x7b74": [
+    "kernel32.dll",
+    "GlobalFree"
+   ],
+   "0x7b7c": [
+    "kernel32.dll",
+    "GlobalLock"
+   ],
+   "0x7b84": [
+    "kernel32.dll",
+    "GlobalHandle"
+   ],
+   "0x7b8c": [
+    "kernel32.dll",
+    "GlobalReAlloc"
+   ],
+   "0x7b94": [
+    "kernel32.dll",
+    "GlobalSize"
+   ],
+   "0x7b9c": [
+    "kernel32.dll",
+    "GlobalUnlock"
+   ],
+   "0x7ba4": [
+    "kernel32.dll",
+    "InitializeCriticalSection"
+   ],
+   "0x7bac": [
+    "kernel32.dll",
+    "IsBadReadPtr"
+   ],
+   "0x7bb4": [
+    "kernel32.dll",
+    "IsValidLocale"
+   ],
+   "0x7bbc": [
+    "kernel32.dll",
+    "LeaveCriticalSection"
+   ],
+   "0x7bc4": [
+    "kernel32.dll",
+    "LoadLibraryA"
+   ],
+   "0x7bcc": [
+    "kernel32.dll",
+    "LoadLibraryExA"
+   ],
+   "0x7bd4": [
+    "kernel32.dll",
+    "LoadResource"
+   ],
+   "0x7bdc": [
+    "kernel32.dll",
+    "LocalFree"
+   ],
+   "0x7be4": [
+    "kernel32.dll",
+    "LockResource"
+   ],
+   "0x7bec": [
+    "kernel32.dll",
+    "MapViewOfFile"
+   ],
+   "0x7bf4": [
+    "kernel32.dll",
+    "MoveFileA"
+   ],
+   "0x7bfc": [
+    "kernel32.dll",
+    "MoveFileExA"
+   ],
+   "0x7c04": [
+    "kernel32.dll",
+    "MulDiv"
+   ],
+   "0x7c0c": [
+    "kernel32.dll",
+    "MultiByteToWideChar"
+   ],
+   "0x7c14": [
+    "kernel32.dll",
+    "OpenProcess"
+   ],
+   "0x7c1c": [
+    "kernel32.dll",
+    "OutputDebugStringA"
+   ],
+   "0x7c24": [
+    "kernel32.dll",
+    "QueryPerformanceCounter"
+   ],
+   "0x7c2c": [
+    "kernel32.dll",
+    "QueryPerformanceFrequency"
+   ],
+   "0x7c34": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0x7c3c": [
+    "kernel32.dll",
+    "ReadProcessMemory"
+   ],
+   "0x7c44": [
+    "kernel32.dll",
+    "ReleaseMutex"
+   ],
+   "0x7c4c": [
+    "kernel32.dll",
+    "ReleaseSemaphore"
+   ],
+   "0x7c54": [
+    "kernel32.dll",
+    "RemoveDirectoryA"
+   ],
+   "0x7c5c": [
+    "kernel32.dll",
+    "ResetEvent"
+   ],
+   "0x7c64": [
+    "kernel32.dll",
+    "ResumeThread"
+   ],
+   "0x7c6c": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0x7c74": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0x7c7c": [
+    "kernel32.dll",
+    "SetEndOfFile"
+   ],
+   "0x7c84": [
+    "kernel32.dll",
+    "SetEnvironmentVariableA"
+   ],
+   "0x7c8c": [
+    "kernel32.dll",
+    "SetEnvironmentVariableW"
+   ],
+   "0x7c94": [
+    "kernel32.dll",
+    "SetErrorMode"
+   ],
+   "0x7c9c": [
+    "kernel32.dll",
+    "SetEvent"
+   ],
+   "0x7ca4": [
+    "kernel32.dll",
+    "SetFileAttributesA"
+   ],
+   "0x7cac": [
+    "kernel32.dll",
+    "SetFilePointer"
+   ],
+   "0x7cb4": [
+    "kernel32.dll",
+    "SetFileTime"
+   ],
+   "0x7cbc": [
+    "kernel32.dll",
+    "SetLastError"
+   ],
+   "0x7cc4": [
+    "kernel32.dll",
+    "SetThreadLocale"
+   ],
+   "0x7ccc": [
+    "kernel32.dll",
+    "SetThreadPriority"
+   ],
+   "0x7cd4": [
+    "kernel32.dll",
+    "SizeofResource"
+   ],
+   "0x7cdc": [
+    "kernel32.dll",
+    "Sleep"
+   ],
+   "0x7ce4": [
+    "kernel32.dll",
+    "SuspendThread"
+   ],
+   "0x7cec": [
+    "kernel32.dll",
+    "SystemTimeToFileTime"
+   ],
+   "0x7cf4": [
+    "kernel32.dll",
+    "TerminateProcess"
+   ],
+   "0x7cfc": [
+    "kernel32.dll",
+    "UnmapViewOfFile"
+   ],
+   "0x7d04": [
+    "kernel32.dll",
+    "VerLanguageNameA"
+   ],
+   "0x7d0c": [
+    "kernel32.dll",
+    "VirtualAlloc"
+   ],
+   "0x7d14": [
+    "kernel32.dll",
+    "VirtualAllocEx"
+   ],
+   "0x7d1c": [
+    "kernel32.dll",
+    "VirtualFree"
+   ],
+   "0x7d24": [
+    "kernel32.dll",
+    "VirtualFreeEx"
+   ],
+   "0x7d2c": [
+    "kernel32.dll",
+    "VirtualQuery"
+   ],
+   "0x7d34": [
+    "kernel32.dll",
+    "WaitForMultipleObjects"
+   ],
+   "0x7d3c": [
+    "kernel32.dll",
+    "WaitForSingleObject"
+   ],
+   "0x7d44": [
+    "kernel32.dll",
+    "WideCharToMultiByte"
+   ],
+   "0x7d4c": [
+    "kernel32.dll",
+    "WinExec"
+   ],
+   "0x7d54": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0x7d5c": [
+    "kernel32.dll",
+    "WriteProcessMemory"
+   ],
+   "0x7d64": [
+    "kernel32.dll",
+    "lstrcmpA"
+   ],
+   "0x7d6c": [
+    "kernel32.dll",
+    "lstrcpyA"
+   ],
+   "0x7d74": [
+    "kernel32.dll",
+    "lstrlenA"
+   ],
+   "0x7d7c": [
+    "gdi32.dll",
+    "AddFontMemResourceEx"
+   ],
+   "0x7d84": [
+    "gdi32.dll",
+    "BitBlt"
+   ],
+   "0x7d8c": [
+    "gdi32.dll",
+    "CloseEnhMetaFile"
+   ],
+   "0x7d94": [
+    "gdi32.dll",
+    "CombineRgn"
+   ],
+   "0x7d9c": [
+    "gdi32.dll",
+    "CopyEnhMetaFileA"
+   ],
+   "0x7da4": [
+    "gdi32.dll",
+    "CreateBitmap"
+   ],
+   "0x7dac": [
+    "gdi32.dll",
+    "CreateBrushIndirect"
+   ],
+   "0x7db4": [
+    "gdi32.dll",
+    "CreateCompatibleBitmap"
+   ],
+   "0x7dbc": [
+    "gdi32.dll",
+    "CreateCompatibleDC"
+   ],
+   "0x7dc4": [
+    "gdi32.dll",
+    "CreateDCA"
+   ],
+   "0x7dcc": [
+    "gdi32.dll",
+    "CreateDIBSection"
+   ],
+   "0x7dd4": [
+    "gdi32.dll",
+    "CreateDIBitmap"
+   ],
+   "0x7ddc": [
+    "gdi32.dll",
+    "CreateEnhMetaFileA"
+   ],
+   "0x7de4": [
+    "gdi32.dll",
+    "CreateFontIndirectA"
+   ],
+   "0x7dec": [
+    "gdi32.dll",
+    "CreateFontIndirectW"
+   ],
+   "0x7df4": [
+    "gdi32.dll",
+    "CreateHalftonePalette"
+   ],
+   "0x7dfc": [
+    "gdi32.dll",
+    "CreateICA"
+   ],
+   "0x7e04": [
+    "gdi32.dll",
+    "CreatePalette"
+   ],
+   "0x7e0c": [
+    "gdi32.dll",
+    "CreatePatternBrush"
+   ],
+   "0x7e14": [
+    "gdi32.dll",
+    "CreatePen"
+   ],
+   "0x7e1c": [
+    "gdi32.dll",
+    "CreatePenIndirect"
+   ],
+   "0x7e24": [
+    "gdi32.dll",
+    "CreateRectRgn"
+   ],
+   "0x7e2c": [
+    "gdi32.dll",
+    "CreateSolidBrush"
+   ],
+   "0x7e34": [
+    "gdi32.dll",
+    "DeleteDC"
+   ],
+   "0x7e3c": [
+    "gdi32.dll",
+    "DeleteEnhMetaFile"
+   ],
+   "0x7e44": [
+    "gdi32.dll",
+    "DeleteObject"
+   ],
+   "0x7e4c": [
+    "gdi32.dll",
+    "Ellipse"
+   ],
+   "0x7e54": [
+    "gdi32.dll",
+    "EndDoc"
+   ],
+   "0x7e5c": [
+    "gdi32.dll",
+    "EndPage"
+   ],
+   "0x7e64": [
+    "gdi32.dll",
+    "EnumFontFamiliesA"
+   ],
+   "0x7e6c": [
+    "gdi32.dll",
+    "EnumFontFamiliesExA"
+   ],
+   "0x7e74": [
+    "gdi32.dll",
+    "ExcludeClipRect"
+   ],
+   "0x7e7c": [
+    "gdi32.dll",
+    "ExtCreatePen"
+   ],
+   "0x7e84": [
+    "gdi32.dll",
+    "ExtTextOutA"
+   ],
+   "0x7e8c": [
+    "gdi32.dll",
+    "ExtTextOutW"
+   ],
+   "0x7e94": [
+    "gdi32.dll",
+    "GdiFlush"
+   ],
+   "0x7e9c": [
+    "gdi32.dll",
+    "GetBitmapBits"
+   ],
+   "0x7ea4": [
+    "gdi32.dll",
+    "GetBitmapDimensionEx"
+   ],
+   "0x7eac": [
+    "gdi32.dll",
+    "GetBrushOrgEx"
+   ],
+   "0x7eb4": [
+    "gdi32.dll",
+    "GetCharABCWidthsA"
+   ],
+   "0x7ebc": [
+    "gdi32.dll",
+    "GetCharABCWidthsA"
+   ],
+   "0x7ec4": [
+    "gdi32.dll",
+    "GetCharABCWidthsW"
+   ],
+   "0x7ecc": [
+    "gdi32.dll",
+    "GetClipBox"
+   ],
+   "0x7ed4": [
+    "gdi32.dll",
+    "GetClipRgn"
+   ],
+   "0x7edc": [
+    "gdi32.dll",
+    "GetCurrentPositionEx"
+   ],
+   "0x7ee4": [
+    "gdi32.dll",
+    "GetDCOrgEx"
+   ],
+   "0x7eec": [
+    "gdi32.dll",
+    "GetDIBColorTable"
+   ],
+   "0x7ef4": [
+    "gdi32.dll",
+    "GetDIBits"
+   ],
+   "0x7efc": [
+    "gdi32.dll",
+    "GetDeviceCaps"
+   ],
+   "0x7f04": [
+    "gdi32.dll",
+    "GetEnhMetaFileBits"
+   ],
+   "0x7f0c": [
+    "gdi32.dll",
+    "GetEnhMetaFileDescriptionA"
+   ],
+   "0x7f14": [
+    "gdi32.dll",
+    "GetEnhMetaFileHeader"
+   ],
+   "0x7f1c": [
+    "gdi32.dll",
+    "GetEnhMetaFilePaletteEntries"
+   ],
+   "0x7f24": [
+    "gdi32.dll",
+    "GetNearestPaletteIndex"
+   ],
+   "0x7f2c": [
+    "gdi32.dll",
+    "GetObjectA"
+   ],
+   "0x7f34": [
+    "gdi32.dll",
+    "GetObjectA"
+   ],
+   "0x7f3c": [
+    "gdi32.dll",
+    "GetObjectW"
+   ],
+   "0x7f44": [
+    "gdi32.dll",
+    "GetPaletteEntries"
+   ],
+   "0x7f4c": [
+    "gdi32.dll",
+    "GetPixel"
+   ],
+   "0x7f54": [
+    "gdi32.dll",
+    "GetStockObject"
+   ],
+   "0x7f5c": [
+    "gdi32.dll",
+    "GetSystemPaletteEntries"
+   ],
+   "0x7f64": [
+    "gdi32.dll",
+    "GetTextExtentPoint32A"
+   ],
+   "0x7f6c": [
+    "gdi32.dll",
+    "GetTextExtentPoint32W"
+   ],
+   "0x7f74": [
+    "gdi32.dll",
+    "GetTextExtentPointA"
+   ],
+   "0x7f7c": [
+    "gdi32.dll",
+    "GetTextMetricsA"
+   ],
+   "0x7f84": [
+    "gdi32.dll",
+    "GetTextMetricsA"
+   ],
+   "0x7f8c": [
+    "gdi32.dll",
+    "GetViewportOrgEx"
+   ],
+   "0x7f94": [
+    "gdi32.dll",
+    "GetWinMetaFileBits"
+   ],
+   "0x7f9c": [
+    "gdi32.dll",
+    "GetWindowOrgEx"
+   ],
+   "0x7fa4": [
+    "gdi32.dll",
+    "IntersectClipRect"
+   ],
+   "0x7fac": [
+    "gdi32.dll",
+    "LineTo"
+   ],
+   "0x7fb4": [
+    "gdi32.dll",
+    "MaskBlt"
+   ],
+   "0x7fbc": [
+    "gdi32.dll",
+    "MoveToEx"
+   ],
+   "0x7fc4": [
+    "gdi32.dll",
+    "PatBlt"
+   ],
+   "0x7fcc": [
+    "gdi32.dll",
+    "Pie"
+   ],
+   "0x7fd4": [
+    "gdi32.dll",
+    "PlayEnhMetaFile"
+   ],
+   "0x7fdc": [
+    "gdi32.dll",
+    "PolyPolyline"
+   ],
+   "0x7fe4": [
+    "gdi32.dll",
+    "Polygon"
+   ],
+   "0x7fec": [
+    "gdi32.dll",
+    "Polyline"
+   ],
+   "0x7ff4": [
+    "gdi32.dll",
+    "RealizePalette"
+   ],
+   "0x7ffc": [
+    "gdi32.dll",
+    "RectVisible"
+   ],
+   "0x8004": [
+    "gdi32.dll",
+    "Rectangle"
+   ],
+   "0x800c": [
+    "gdi32.dll",
+    "RemoveFontMemResourceEx"
+   ],
+   "0x8014": [
+    "gdi32.dll",
+    "ResizePalette"
+   ],
+   "0x801c": [
+    "gdi32.dll",
+    "RestoreDC"
+   ],
+   "0x8024": [
+    "gdi32.dll",
+    "RoundRect"
+   ],
+   "0x802c": [
+    "gdi32.dll",
+    "SaveDC"
+   ],
+   "0x8034": [
+    "gdi32.dll",
+    "SelectClipRgn"
+   ],
+   "0x803c": [
+    "gdi32.dll",
+    "SelectObject"
+   ],
+   "0x8044": [
+    "gdi32.dll",
+    "SelectPalette"
+   ],
+   "0x804c": [
+    "gdi32.dll",
+    "SetAbortProc"
+   ],
+   "0x8054": [
+    "gdi32.dll",
+    "SetBitmapBits"
+   ],
+   "0x805c": [
+    "gdi32.dll",
+    "SetBkColor"
+   ],
+   "0x8064": [
+    "gdi32.dll",
+    "SetBkMode"
+   ],
+   "0x806c": [
+    "gdi32.dll",
+    "SetBrushOrgEx"
+   ],
+   "0x8074": [
+    "gdi32.dll",
+    "SetDIBColorTable"
+   ],
+   "0x807c": [
+    "gdi32.dll",
+    "SetEnhMetaFileBits"
+   ],
+   "0x8084": [
+    "gdi32.dll",
+    "SetMapMode"
+   ],
+   "0x808c": [
+    "gdi32.dll",
+    "SetPaletteEntries"
+   ],
+   "0x8094": [
+    "gdi32.dll",
+    "SetPixel"
+   ],
+   "0x809c": [
+    "gdi32.dll",
+    "SetPixelV"
+   ],
+   "0x80a4": [
+    "gdi32.dll",
+    "SetROP2"
+   ],
+   "0x80ac": [
+    "gdi32.dll",
+    "SetStretchBltMode"
+   ],
+   "0x80b4": [
+    "gdi32.dll",
+    "SetTextColor"
+   ],
+   "0x80bc": [
+    "gdi32.dll",
+    "SetTextCharacterExtra"
+   ],
+   "0x80c4": [
+    "gdi32.dll",
+    "SetViewportExtEx"
+   ],
+   "0x80cc": [
+    "gdi32.dll",
+    "SetViewportOrgEx"
+   ],
+   "0x80d4": [
+    "gdi32.dll",
+    "SetWinMetaFileBits"
+   ],
+   "0x80dc": [
+    "gdi32.dll",
+    "SetWindowExtEx"
+   ],
+   "0x80e4": [
+    "gdi32.dll",
+    "SetWindowOrgEx"
+   ],
+   "0x80ec": [
+    "gdi32.dll",
+    "StartDocA"
+   ],
+   "0x80f4": [
+    "gdi32.dll",
+    "StartPage"
+   ],
+   "0x80fc": [
+    "gdi32.dll",
+    "StretchBlt"
+   ],
+   "0x8104": [
+    "gdi32.dll",
+    "StretchDIBits"
+   ],
+   "0x810c": [
+    "gdi32.dll",
+    "TextOutW"
+   ],
+   "0x8114": [
+    "gdi32.dll",
+    "UnrealizeObject"
+   ],
+   "0x811c": [
+    "user32.dll",
+    "ActivateKeyboardLayout"
+   ],
+   "0x8124": [
+    "user32.dll",
+    "AdjustWindowRectEx"
+   ],
+   "0x812c": [
+    "user32.dll",
+    "CharLowerA"
+   ],
+   "0x8134": [
+    "user32.dll",
+    "AttachThreadInput"
+   ],
+   "0x813c": [
+    "user32.dll",
+    "BeginDeferWindowPos"
+   ],
+   "0x8144": [
+    "user32.dll",
+    "BeginPaint"
+   ],
+   "0x814c": [
+    "user32.dll",
+    "BringWindowToTop"
+   ],
+   "0x8154": [
+    "user32.dll",
+    "CallNextHookEx"
+   ],
+   "0x815c": [
+    "user32.dll",
+    "CallWindowProcA"
+   ],
+   "0x8164": [
+    "user32.dll",
+    "ChangeClipboardChain"
+   ],
+   "0x816c": [
+    "user32.dll",
+    "CharLowerA"
+   ],
+   "0x8174": [
+    "user32.dll",
+    "CharLowerW"
+   ],
+   "0x817c": [
+    "user32.dll",
+    "CharLowerBuffA"
+   ],
+   "0x8184": [
+    "user32.dll",
+    "CharLowerBuffW"
+   ],
+   "0x818c": [
+    "user32.dll",
+    "CharNextA"
+   ],
+   "0x8194": [
+    "user32.dll",
+    "CharToOemA"
+   ],
+   "0x819c": [
+    "user32.dll",
+    "CharToOemBuffA"
+   ],
+   "0x81a4": [
+    "user32.dll",
+    "CharUpperA"
+   ],
+   "0x81ac": [
+    "user32.dll",
+    "CharUpperW"
+   ],
+   "0x81b4": [
+    "user32.dll",
+    "CharUpperBuffA"
+   ],
+   "0x81bc": [
+    "user32.dll",
+    "CharUpperBuffW"
+   ],
+   "0x81c4": [
+    "user32.dll",
+    "CheckMenuItem"
+   ],
+   "0x81cc": [
+    "user32.dll",
+    "ChildWindowFromPoint"
+   ],
+   "0x81d4": [
+    "user32.dll",
+    "ClientToScreen"
+   ],
+   "0x81dc": [
+    "user32.dll",
+    "ClipCursor"
+   ],
+   "0x81e4": [
+    "user32.dll",
+    "CloseClipboard"
+   ],
+   "0x81ec": [
+    "user32.dll",
+    "CopyIcon"
+   ],
+   "0x81f4": [
+    "user32.dll",
+    "CopyImage"
+   ],
+   "0x81fc": [
+    "user32.dll",
+    "CopyRect"
+   ],
+   "0x8204": [
+    "user32.dll",
+    "CreateCaret"
+   ],
+   "0x820c": [
+    "user32.dll",
+    "CreateIcon"
+   ],
+   "0x8214": [
+    "user32.dll",
+    "CreateIconIndirect"
+   ],
+   "0x821c": [
+    "user32.dll",
+    "CreateMenu"
+   ],
+   "0x8224": [
+    "user32.dll",
+    "CreatePopupMenu"
+   ],
+   "0x822c": [
+    "user32.dll",
+    "DefFrameProcA"
+   ],
+   "0x8234": [
+    "user32.dll",
+    "DefMDIChildProcA"
+   ],
+   "0x823c": [
+    "user32.dll",
+    "DefWindowProcA"
+   ],
+   "0x8244": [
+    "user32.dll",
+    "DefWindowProcW"
+   ],
+   "0x824c": [
+    "user32.dll",
+    "DeferWindowPos"
+   ],
+   "0x8254": [
+    "user32.dll",
+    "DeleteMenu"
+   ],
+   "0x825c": [
+    "user32.dll",
+    "DestroyCaret"
+   ],
+   "0x8264": [
+    "user32.dll",
+    "DestroyCursor"
+   ],
+   "0x826c": [
+    "user32.dll",
+    "DestroyIcon"
+   ],
+   "0x8274": [
+    "user32.dll",
+    "DestroyMenu"
+   ],
+   "0x827c": [
+    "user32.dll",
+    "DestroyWindow"
+   ],
+   "0x8284": [
+    "user32.dll",
+    "DispatchMessageA"
+   ],
+   "0x828c": [
+    "user32.dll",
+    "DrawEdge"
+   ],
+   "0x8294": [
+    "user32.dll",
+    "DrawFocusRect"
+   ],
+   "0x829c": [
+    "user32.dll",
+    "DrawFrameControl"
+   ],
+   "0x82a4": [
+    "user32.dll",
+    "DrawIcon"
+   ],
+   "0x82ac": [
+    "user32.dll",
+    "DrawIconEx"
+   ],
+   "0x82b4": [
+    "user32.dll",
+    "DrawMenuBar"
+   ],
+   "0x82bc": [
+    "user32.dll",
+    "DrawTextA"
+   ],
+   "0x82c4": [
+    "user32.dll",
+    "DrawTextW"
+   ],
+   "0x82cc": [
+    "user32.dll",
+    "DrawTextExA"
+   ],
+   "0x82d4": [
+    "user32.dll",
+    "EmptyClipboard"
+   ],
+   "0x82dc": [
+    "user32.dll",
+    "EnableMenuItem"
+   ],
+   "0x82e4": [
+    "user32.dll",
+    "EnableScrollBar"
+   ],
+   "0x82ec": [
+    "user32.dll",
+    "EnableWindow"
+   ],
+   "0x82f4": [
+    "user32.dll",
+    "EndDeferWindowPos"
+   ],
+   "0x82fc": [
+    "user32.dll",
+    "EndPaint"
+   ],
+   "0x8304": [
+    "user32.dll",
+    "EnumChildWindows"
+   ],
+   "0x830c": [
+    "user32.dll",
+    "EnumClipboardFormats"
+   ],
+   "0x8314": [
+    "user32.dll",
+    "EnumThreadWindows"
+   ],
+   "0x831c": [
+    "user32.dll",
+    "EnumWindows"
+   ],
+   "0x8324": [
+    "user32.dll",
+    "EqualRect"
+   ],
+   "0x832c": [
+    "user32.dll",
+    "FillRect"
+   ],
+   "0x8334": [
+    "user32.dll",
+    "FindWindowA"
+   ],
+   "0x833c": [
+    "user32.dll",
+    "FindWindowExA"
+   ],
+   "0x8344": [
+    "user32.dll",
+    "FrameRect"
+   ],
+   "0x834c": [
+    "user32.dll",
+    "GetActiveWindow"
+   ],
+   "0x8354": [
+    "user32.dll",
+    "GetAsyncKeyState"
+   ],
+   "0x835c": [
+    "user32.dll",
+    "GetCapture"
+   ],
+   "0x8364": [
+    "user32.dll",
+    "GetCaretPos"
+   ],
+   "0x836c": [
+    "user32.dll",
+    "GetClassInfoA"
+   ],
+   "0x8374": [
+    "user32.dll",
+    "GetClassLongA"
+   ],
+   "0x837c": [
+    "user32.dll",
+    "GetClassNameA"
+   ],
+   "0x8384": [
+    "user32.dll",
+    "GetClientRect"
+   ],
+   "0x838c": [
+    "user32.dll",
+    "GetClipboardData"
+   ],
+   "0x8394": [
+    "user32.dll",
+    "GetClipboardFormatNameA"
+   ],
+   "0x839c": [
+    "user32.dll",
+    "GetClipboardSequenceNumber"
+   ],
+   "0x83a4": [
+    "user32.dll",
+    "GetComboBoxInfo"
+   ],
+   "0x83ac": [
+    "user32.dll",
+    "GetCursor"
+   ],
+   "0x83b4": [
+    "user32.dll",
+    "GetCursorPos"
+   ],
+   "0x83bc": [
+    "user32.dll",
+    "GetDC"
+   ],
+   "0x83c4": [
+    "user32.dll",
+    "GetDCEx"
+   ],
+   "0x83cc": [
+    "user32.dll",
+    "GetDesktopWindow"
+   ],
+   "0x83d4": [
+    "user32.dll",
+    "GetDlgCtrlID"
+   ],
+   "0x83dc": [
+    "user32.dll",
+    "GetDlgItem"
+   ],
+   "0x83e4": [
+    "user32.dll",
+    "GetDoubleClickTime"
+   ],
+   "0x83ec": [
+    "user32.dll",
+    "GetFocus"
+   ],
+   "0x83f4": [
+    "user32.dll",
+    "GetForegroundWindow"
+   ],
+   "0x83fc": [
+    "user32.dll",
+    "GetIconInfo"
+   ],
+   "0x8404": [
+    "user32.dll",
+    "GetKeyNameTextA"
+   ],
+   "0x840c": [
+    "user32.dll",
+    "GetKeyState"
+   ],
+   "0x8414": [
+    "user32.dll",
+    "GetKeyboardLayout"
+   ],
+   "0x841c": [
+    "user32.dll",
+    "GetKeyboardLayoutList"
+   ],
+   "0x8424": [
+    "user32.dll",
+    "GetKeyboardState"
+   ],
+   "0x842c": [
+    "user32.dll",
+    "GetLastActivePopup"
+   ],
+   "0x8434": [
+    "user32.dll",
+    "GetMenu"
+   ],
+   "0x843c": [
+    "user32.dll",
+    "GetMenuItemCount"
+   ],
+   "0x8444": [
+    "user32.dll",
+    "GetMenuItemID"
+   ],
+   "0x844c": [
+    "user32.dll",
+    "GetMenuItemInfoA"
+   ],
+   "0x8454": [
+    "user32.dll",
+    "GetMenuItemRect"
+   ],
+   "0x845c": [
+    "user32.dll",
+    "GetMenuState"
+   ],
+   "0x8464": [
+    "user32.dll",
+    "GetMenuStringA"
+   ],
+   "0x846c": [
+    "user32.dll",
+    "GetMessageA"
+   ],
+   "0x8474": [
+    "user32.dll",
+    "GetMessagePos"
+   ],
+   "0x847c": [
+    "user32.dll",
+    "GetMessageTime"
+   ],
+   "0x8484": [
+    "user32.dll",
+    "GetWindow"
+   ],
+   "0x848c": [
+    "user32.dll",
+    "GetParent"
+   ],
+   "0x8494": [
+    "user32.dll",
+    "GetPropA"
+   ],
+   "0x849c": [
+    "user32.dll",
+    "GetScrollInfo"
+   ],
+   "0x84a4": [
+    "user32.dll",
+    "GetScrollPos"
+   ],
+   "0x84ac": [
+    "user32.dll",
+    "GetScrollRange"
+   ],
+   "0x84b4": [
+    "user32.dll",
+    "GetSubMenu"
+   ],
+   "0x84bc": [
+    "user32.dll",
+    "GetSysColor"
+   ],
+   "0x84c4": [
+    "user32.dll",
+    "GetSysColorBrush"
+   ],
+   "0x84cc": [
+    "user32.dll",
+    "GetSystemMenu"
+   ],
+   "0x84d4": [
+    "user32.dll",
+    "GetSystemMetrics"
+   ],
+   "0x84dc": [
+    "user32.dll",
+    "GetTopWindow"
+   ],
+   "0x84e4": [
+    "user32.dll",
+    "GetUpdateRect"
+   ],
+   "0x84ec": [
+    "user32.dll",
+    "GetWindow"
+   ],
+   "0x84f4": [
+    "user32.dll",
+    "GetWindowDC"
+   ],
+   "0x84fc": [
+    "user32.dll",
+    "GetWindowLongA"
+   ],
+   "0x8504": [
+    "user32.dll",
+    "GetWindowLongA"
+   ],
+   "0x850c": [
+    "user32.dll",
+    "GetWindowLongW"
+   ],
+   "0x8514": [
+    "user32.dll",
+    "GetWindowPlacement"
+   ],
+   "0x851c": [
+    "user32.dll",
+    "GetWindowRect"
+   ],
+   "0x8524": [
+    "user32.dll",
+    "GetWindowTextA"
+   ],
+   "0x852c": [
+    "user32.dll",
+    "GetWindowTextW"
+   ],
+   "0x8534": [
+    "user32.dll",
+    "GetWindowTextLengthW"
+   ],
+   "0x853c": [
+    "user32.dll",
+    "GetWindowThreadProcessId"
+   ],
+   "0x8544": [
+    "user32.dll",
+    "GetWindowThreadProcessId"
+   ],
+   "0x854c": [
+    "user32.dll",
+    "HideCaret"
+   ],
+   "0x8554": [
+    "user32.dll",
+    "InflateRect"
+   ],
+   "0x855c": [
+    "user32.dll",
+    "InsertMenuA"
+   ],
+   "0x8564": [
+    "user32.dll",
+    "InsertMenuItemA"
+   ],
+   "0x856c": [
+    "user32.dll",
+    "IntersectRect"
+   ],
+   "0x8574": [
+    "user32.dll",
+    "InvalidateRect"
+   ],
+   "0x857c": [
+    "user32.dll",
+    "IsCharAlphaA"
+   ],
+   "0x8584": [
+    "user32.dll",
+    "IsCharAlphaNumericA"
+   ],
+   "0x858c": [
+    "user32.dll",
+    "IsChild"
+   ],
+   "0x8594": [
+    "user32.dll",
+    "IsClipboardFormatAvailable"
+   ],
+   "0x859c": [
+    "user32.dll",
+    "IsDialogMessageA"
+   ],
+   "0x85a4": [
+    "user32.dll",
+    "IsIconic"
+   ],
+   "0x85ac": [
+    "user32.dll",
+    "IsRectEmpty"
+   ],
+   "0x85b4": [
+    "user32.dll",
+    "IsWindow"
+   ],
+   "0x85bc": [
+    "user32.dll",
+    "IsWindowEnabled"
+   ],
+   "0x85c4": [
+    "user32.dll",
+    "IsWindowUnicode"
+   ],
+   "0x85cc": [
+    "user32.dll",
+    "IsWindowVisible"
+   ],
+   "0x85d4": [
+    "user32.dll",
+    "IsZoomed"
+   ],
+   "0x85dc": [
+    "user32.dll",
+    "KillTimer"
+   ],
+   "0x85e4": [
+    "user32.dll",
+    "LoadBitmapA"
+   ],
+   "0x85ec": [
+    "user32.dll",
+    "LoadCursorA"
+   ],
+   "0x85f4": [
+    "user32.dll",
+    "LoadIconA"
+   ],
+   "0x85fc": [
+    "user32.dll",
+    "LoadImageA"
+   ],
+   "0x8604": [
+    "user32.dll",
+    "LoadKeyboardLayoutA"
+   ],
+   "0x860c": [
+    "user32.dll",
+    "LoadStringA"
+   ],
+   "0x8614": [
+    "user32.dll",
+    "MapVirtualKeyA"
+   ],
+   "0x861c": [
+    "user32.dll",
+    "MapWindowPoints"
+   ],
+   "0x8624": [
+    "user32.dll",
+    "MessageBeep"
+   ],
+   "0x862c": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0x8634": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0x863c": [
+    "user32.dll",
+    "MessageBoxIndirectA"
+   ],
+   "0x8644": [
+    "user32.dll",
+    "MoveWindow"
+   ],
+   "0x864c": [
+    "user32.dll",
+    "MsgWaitForMultipleObjects"
+   ],
+   "0x8654": [
+    "user32.dll",
+    "OemToCharA"
+   ],
+   "0x865c": [
+    "user32.dll",
+    "OffsetRect"
+   ],
+   "0x8664": [
+    "user32.dll",
+    "OpenClipboard"
+   ],
+   "0x866c": [
+    "user32.dll",
+    "PeekMessageA"
+   ],
+   "0x8674": [
+    "user32.dll",
+    "PostMessageA"
+   ],
+   "0x867c": [
+    "user32.dll",
+    "PostMessageW"
+   ],
+   "0x8684": [
+    "user32.dll",
+    "PostQuitMessage"
+   ],
+   "0x868c": [
+    "user32.dll",
+    "PostThreadMessageA"
+   ],
+   "0x8694": [
+    "user32.dll",
+    "PtInRect"
+   ],
+   "0x869c": [
+    "user32.dll",
+    "RedrawWindow"
+   ],
+   "0x86a4": [
+    "user32.dll",
+    "RegisterClassA"
+   ],
+   "0x86ac": [
+    "user32.dll",
+    "RegisterClipboardFormatA"
+   ],
+   "0x86b4": [
+    "user32.dll",
+    "RegisterHotKey"
+   ],
+   "0x86bc": [
+    "user32.dll",
+    "RegisterWindowMessageA"
+   ],
+   "0x86c4": [
+    "user32.dll",
+    "ReleaseCapture"
+   ],
+   "0x86cc": [
+    "user32.dll",
+    "ReleaseDC"
+   ],
+   "0x86d4": [
+    "user32.dll",
+    "RemoveMenu"
+   ],
+   "0x86dc": [
+    "user32.dll",
+    "RemovePropA"
+   ],
+   "0x86e4": [
+    "user32.dll",
+    "ReplyMessage"
+   ],
+   "0x86ec": [
+    "user32.dll",
+    "ScreenToClient"
+   ],
+   "0x86f4": [
+    "user32.dll",
+    "ScrollWindow"
+   ],
+   "0x86fc": [
+    "user32.dll",
+    "ScrollWindowEx"
+   ],
+   "0x8704": [
+    "user32.dll",
+    "SendInput"
+   ],
+   "0x870c": [
+    "user32.dll",
+    "SendMessageA"
+   ],
+   "0x8714": [
+    "user32.dll",
+    "SendMessageA"
+   ],
+   "0x871c": [
+    "user32.dll",
+    "SendMessageTimeoutA"
+   ],
+   "0x8724": [
+    "user32.dll",
+    "SendMessageTimeoutW"
+   ],
+   "0x872c": [
+    "user32.dll",
+    "SetActiveWindow"
+   ],
+   "0x8734": [
+    "user32.dll",
+    "SetCapture"
+   ],
+   "0x873c": [
+    "user32.dll",
+    "SetCaretPos"
+   ],
+   "0x8744": [
+    "user32.dll",
+    "SetClassLongA"
+   ],
+   "0x874c": [
+    "user32.dll",
+    "SetClipboardData"
+   ],
+   "0x8754": [
+    "user32.dll",
+    "SetClipboardViewer"
+   ],
+   "0x875c": [
+    "user32.dll",
+    "SetCursor"
+   ],
+   "0x8764": [
+    "user32.dll",
+    "SetCursorPos"
+   ],
+   "0x876c": [
+    "user32.dll",
+    "SetFocus"
+   ],
+   "0x8774": [
+    "user32.dll",
+    "SetForegroundWindow"
+   ],
+   "0x877c": [
+    "user32.dll",
+    "SetKeyboardState"
+   ],
+   "0x8784": [
+    "user32.dll",
+    "SetMenu"
+   ],
+   "0x878c": [
+    "user32.dll",
+    "SetMenuInfo"
+   ],
+   "0x8794": [
+    "user32.dll",
+    "SetMenuItemInfoA"
+   ],
+   "0x879c": [
+    "user32.dll",
+    "SetParent"
+   ],
+   "0x87a4": [
+    "user32.dll",
+    "SetPropA"
+   ],
+   "0x87ac": [
+    "user32.dll",
+    "SetRect"
+   ],
+   "0x87b4": [
+    "user32.dll",
+    "SetScrollInfo"
+   ],
+   "0x87bc": [
+    "user32.dll",
+    "SetScrollPos"
+   ],
+   "0x87c4": [
+    "user32.dll",
+    "SetScrollRange"
+   ],
+   "0x87cc": [
+    "user32.dll",
+    "SetTimer"
+   ],
+   "0x87d4": [
+    "user32.dll",
+    "SetWindowLongA"
+   ],
+   "0x87dc": [
+    "user32.dll",
+    "SetWindowLongA"
+   ],
+   "0x87e4": [
+    "user32.dll",
+    "SetWindowLongW"
+   ],
+   "0x87ec": [
+    "user32.dll",
+    "SetWindowPlacement"
+   ],
+   "0x87f4": [
+    "user32.dll",
+    "SetWindowPos"
+   ],
+   "0x87fc": [
+    "user32.dll",
+    "SetWindowTextA"
+   ],
+   "0x8804": [
+    "user32.dll",
+    "SetWindowsHookExA"
+   ],
+   "0x880c": [
+    "user32.dll",
+    "SetWindowRgn"
+   ],
+   "0x8814": [
+    "user32.dll",
+    "ShowCaret"
+   ],
+   "0x881c": [
+    "user32.dll",
+    "ShowCursor"
+   ],
+   "0x8824": [
+    "user32.dll",
+    "ShowOwnedPopups"
+   ],
+   "0x882c": [
+    "user32.dll",
+    "ShowScrollBar"
+   ],
+   "0x8834": [
+    "user32.dll",
+    "ShowWindow"
+   ],
+   "0x883c": [
+    "user32.dll",
+    "SystemParametersInfoA"
+   ],
+   "0x8844": [
+    "user32.dll",
+    "SystemParametersInfoW"
+   ],
+   "0x884c": [
+    "user32.dll",
+    "TrackPopupMenu"
+   ],
+   "0x8854": [
+    "user32.dll",
+    "TranslateMDISysAccel"
+   ],
+   "0x885c": [
+    "user32.dll",
+    "TranslateMessage"
+   ],
+   "0x8864": [
+    "user32.dll",
+    "UnhookWindowsHookEx"
+   ],
+   "0x886c": [
+    "user32.dll",
+    "UnionRect"
+   ],
+   "0x8874": [
+    "user32.dll",
+    "UnregisterClassA"
+   ],
+   "0x887c": [
+    "user32.dll",
+    "UnregisterHotKey"
+   ],
+   "0x8884": [
+    "user32.dll",
+    "UpdateWindow"
+   ],
+   "0x888c": [
+    "user32.dll",
+    "UpdateLayeredWindow"
+   ],
+   "0x8894": [
+    "user32.dll",
+    "ValidateRect"
+   ],
+   "0x889c": [
+    "user32.dll",
+    "WaitForInputIdle"
+   ],
+   "0x88a4": [
+    "user32.dll",
+    "WaitMessage"
+   ],
+   "0x88ac": [
+    "user32.dll",
+    "WinHelpA"
+   ],
+   "0x88b4": [
+    "user32.dll",
+    "WindowFromDC"
+   ],
+   "0x88bc": [
+    "user32.dll",
+    "WindowFromPoint"
+   ],
+   "0x88c4": [
+    "user32.dll",
+    "keybd_event"
+   ],
+   "0x89d8": [
+    "user32.dll",
+    "CreateWindowExA"
+   ],
+   "0xb540": [
+    "ole32.dll",
+    "CLSIDFromString"
+   ],
+   "0x137b4": [
+    "kernel32.dll",
+    "Sleep"
+   ],
+   "0x1499c": [
+    "oleaut32.dll",
+    "VariantInit"
+   ],
+   "0x149a4": [
+    "oleaut32.dll",
+    "VariantClear"
+   ],
+   "0x149ac": [
+    "oleaut32.dll",
+    "VariantCopy"
+   ],
+   "0x149b4": [
+    "oleaut32.dll",
+    "VariantChangeType"
+   ],
+   "0x14e00": [
+    "oleaut32.dll",
+    "SafeArrayCreate"
+   ],
+   "0x14e08": [
+    "oleaut32.dll",
+    "SafeArrayGetLBound"
+   ],
+   "0x14e10": [
+    "oleaut32.dll",
+    "SafeArrayGetUBound"
+   ],
+   "0x14e18": [
+    "oleaut32.dll",
+    "SafeArrayAccessData"
+   ],
+   "0x14e20": [
+    "oleaut32.dll",
+    "SafeArrayUnaccessData"
+   ],
+   "0x14e28": [
+    "oleaut32.dll",
+    "SafeArrayGetElement"
+   ],
+   "0x14e30": [
+    "oleaut32.dll",
+    "SafeArrayPutElement"
+   ],
+   "0x14e38": [
+    "oleaut32.dll",
+    "SafeArrayPtrOfIndex"
+   ],
+   "0x1ea9c": [
+    "ole32.dll",
+    "IsEqualGUID"
+   ],
+   "0x1eaa4": [
+    "ole32.dll",
+    "IsEqualGUID"
+   ],
+   "0x1eaac": [
+    "ole32.dll",
+    "CoInitialize"
+   ],
+   "0x1eab4": [
+    "ole32.dll",
+    "CoUninitialize"
+   ],
+   "0x1eabc": [
+    "ole32.dll",
+    "CoGetClassObject"
+   ],
+   "0x1eac4": [
+    "ole32.dll",
+    "CoMarshalInterThreadInterfaceInStream"
+   ],
+   "0x1eacc": [
+    "ole32.dll",
+    "CoGetInterfaceAndReleaseStream"
+   ],
+   "0x1ead4": [
+    "ole32.dll",
+    "CoCreateInstance"
+   ],
+   "0x1eadc": [
+    "ole32.dll",
+    "StringFromCLSID"
+   ],
+   "0x1eae4": [
+    "ole32.dll",
+    "ProgIDFromCLSID"
+   ],
+   "0x1eaec": [
+    "ole32.dll",
+    "CLSIDFromProgID"
+   ],
+   "0x1eaf4": [
+    "ole32.dll",
+    "CoTaskMemAlloc"
+   ],
+   "0x1eafc": [
+    "ole32.dll",
+    "CoTaskMemFree"
+   ],
+   "0x1eb04": [
+    "ole32.dll",
+    "StgCreateDocfileOnILockBytes"
+   ],
+   "0x1eb0c": [
+    "ole32.dll",
+    "MkParseDisplayName"
+   ],
+   "0x1eb14": [
+    "ole32.dll",
+    "CreateBindCtx"
+   ],
+   "0x1eb1c": [
+    "ole32.dll",
+    "OleInitialize"
+   ],
+   "0x1eb24": [
+    "ole32.dll",
+    "OleUninitialize"
+   ],
+   "0x1eb2c": [
+    "ole32.dll",
+    "RegisterDragDrop"
+   ],
+   "0x1eb34": [
+    "ole32.dll",
+    "RevokeDragDrop"
+   ],
+   "0x1eb3c": [
+    "ole32.dll",
+    "DoDragDrop"
+   ],
+   "0x1eb44": [
+    "ole32.dll",
+    "OleSetClipboard"
+   ],
+   "0x1eb4c": [
+    "ole32.dll",
+    "OleGetClipboard"
+   ],
+   "0x1eb54": [
+    "ole32.dll",
+    "OleFlushClipboard"
+   ],
+   "0x1eb5c": [
+    "ole32.dll",
+    "OleIsCurrentClipboard"
+   ],
+   "0x1eb64": [
+    "ole32.dll",
+    "OleSetMenuDescriptor"
+   ],
+   "0x1eb6c": [
+    "ole32.dll",
+    "OleDraw"
+   ],
+   "0x1eb74": [
+    "ole32.dll",
+    "ReleaseStgMedium"
+   ],
+   "0x1eb7c": [
+    "ole32.dll",
+    "IsAccelerator"
+   ],
+   "0x1eb84": [
+    "ole32.dll",
+    "CreateILockBytesOnHGlobal"
+   ],
+   "0x1eb8c": [
+    "ole32.dll",
+    "CreateStreamOnHGlobal"
+   ],
+   "0x1eb94": [
+    "oleaut32.dll",
+    "SysFreeString"
+   ],
+   "0x1eb9c": [
+    "oleaut32.dll",
+    "GetActiveObject"
+   ],
+   "0x1eba4": [
+    "oleaut32.dll",
+    "GetErrorInfo"
+   ],
+   "0x3a040": [
+    "comctl32.dll",
+    "InitCommonControls"
+   ],
+   "0x3a0dc": [
+    "comctl32.dll",
+    "ImageList_Create"
+   ],
+   "0x3a0e4": [
+    "comctl32.dll",
+    "ImageList_Destroy"
+   ],
+   "0x3a0ec": [
+    "comctl32.dll",
+    "ImageList_GetImageCount"
+   ],
+   "0x3a0f4": [
+    "comctl32.dll",
+    "ImageList_Add"
+   ],
+   "0x3a0fc": [
+    "comctl32.dll",
+    "ImageList_ReplaceIcon"
+   ],
+   "0x3a104": [
+    "comctl32.dll",
+    "ImageList_SetBkColor"
+   ],
+   "0x3a10c": [
+    "comctl32.dll",
+    "ImageList_GetBkColor"
+   ],
+   "0x3a124": [
+    "comctl32.dll",
+    "ImageList_Draw"
+   ],
+   "0x3a12c": [
+    "comctl32.dll",
+    "ImageList_Replace"
+   ],
+   "0x3a134": [
+    "comctl32.dll",
+    "ImageList_DrawEx"
+   ],
+   "0x3a13c": [
+    "comctl32.dll",
+    "ImageList_Remove"
+   ],
+   "0x3a144": [
+    "comctl32.dll",
+    "ImageList_GetIcon"
+   ],
+   "0x3a14c": [
+    "comctl32.dll",
+    "ImageList_BeginDrag"
+   ],
+   "0x3a154": [
+    "comctl32.dll",
+    "ImageList_EndDrag"
+   ],
+   "0x3a15c": [
+    "comctl32.dll",
+    "ImageList_DragEnter"
+   ],
+   "0x3a164": [
+    "comctl32.dll",
+    "ImageList_DragLeave"
+   ],
+   "0x3a16c": [
+    "comctl32.dll",
+    "ImageList_DragMove"
+   ],
+   "0x3a174": [
+    "comctl32.dll",
+    "ImageList_SetDragCursorImage"
+   ],
+   "0x3a17c": [
+    "comctl32.dll",
+    "ImageList_DragShowNolock"
+   ],
+   "0x3a184": [
+    "comctl32.dll",
+    "ImageList_GetDragImage"
+   ],
+   "0x3a18c": [
+    "comctl32.dll",
+    "ImageList_Read"
+   ],
+   "0x3a194": [
+    "comctl32.dll",
+    "ImageList_Write"
+   ],
+   "0x3a19c": [
+    "comctl32.dll",
+    "ImageList_GetIconSize"
+   ],
+   "0x3a1a4": [
+    "comctl32.dll",
+    "ImageList_SetIconSize"
+   ],
+   "0x3b170": [
+    "imm32.dll",
+    "ImmGetContext"
+   ],
+   "0x3b178": [
+    "imm32.dll",
+    "ImmReleaseContext"
+   ],
+   "0x3b180": [
+    "imm32.dll",
+    "ImmGetCompositionStringA"
+   ],
+   "0x3b188": [
+    "imm32.dll",
+    "ImmGetCompositionStringW"
+   ],
+   "0x3b190": [
+    "imm32.dll",
+    "ImmSetCompositionStringA"
+   ],
+   "0x3b198": [
+    "imm32.dll",
+    "ImmSetCompositionFontA"
+   ],
+   "0x3b1a0": [
+    "imm32.dll",
+    "ImmSetCompositionFontW"
+   ],
+   "0x3b1a8": [
+    "imm32.dll",
+    "ImmSetCompositionWindow"
+   ],
+   "0x3e684": [
+    "shell32.dll",
+    "DragAcceptFiles"
+   ],
+   "0x3e68c": [
+    "shell32.dll",
+    "DragFinish"
+   ],
+   "0x3e694": [
+    "shell32.dll",
+    "DragQueryFileA"
+   ],
+   "0x3e69c": [
+    "shell32.dll",
+    "DragQueryFileA"
+   ],
+   "0x3e6a4": [
+    "shell32.dll",
+    "DragQueryFileW"
+   ],
+   "0x3e6ac": [
+    "shell32.dll",
+    "DragQueryPoint"
+   ],
+   "0x3e6b4": [
+    "shell32.dll",
+    "ExtractIconA"
+   ],
+   "0x3e6bc": [
+    "shell32.dll",
+    "SHFileOperationA"
+   ],
+   "0x3e6c4": [
+    "shell32.dll",
+    "SHGetFileInfoA"
+   ],
+   "0x3e6cc": [
+    "shell32.dll",
+    "ShellExecuteA"
+   ],
+   "0x3e6d4": [
+    "shell32.dll",
+    "ShellExecuteExA"
+   ],
+   "0x3e6dc": [
+    "shell32.dll",
+    "Shell_NotifyIconA"
+   ],
+   "0x3e894": [
+    "shell32.dll",
+    "SHGetDesktopFolder"
+   ],
+   "0x3e89c": [
+    "shell32.dll",
+    "SHGetMalloc"
+   ],
+   "0x3e8a4": [
+    "shell32.dll",
+    "SHGetPathFromIDListW"
+   ],
+   "0x3e8ac": [
+    "shell32.dll",
+    "SHGetSpecialFolderLocation"
+   ],
+   "0x3e8b4": [
+    "shell32.dll",
+    "SHGetSpecialFolderPathA"
+   ],
+   "0x3e8bc": [
+    "shell32.dll",
+    "SHGetSpecialFolderPathW"
+   ],
+   "0x3e8fc": [
+    "comdlg32.dll",
+    "GetOpenFileNameA"
+   ],
+   "0x3e904": [
+    "comdlg32.dll",
+    "GetSaveFileNameA"
+   ],
+   "0x3e90c": [
+    "comdlg32.dll",
+    "ChooseColorA"
+   ],
+   "0x3e914": [
+    "comdlg32.dll",
+    "PrintDlgA"
+   ],
+   "0xb56e0": [
+    "kernel32.dll",
+    "MulDiv"
+   ],
+   "0x1d0898": [
+    "ws2_32.dll",
+    "accept"
+   ],
+   "0x1d08a0": [
+    "ws2_32.dll",
+    "bind"
+   ],
+   "0x1d08a8": [
+    "ws2_32.dll",
+    "closesocket"
+   ],
+   "0x1d08b0": [
+    "ws2_32.dll",
+    "connect"
+   ],
+   "0x1d08b8": [
+    "ws2_32.dll",
+    "getpeername"
+   ],
+   "0x1d08c0": [
+    "ws2_32.dll",
+    "getsockname"
+   ],
+   "0x1d08c8": [
+    "ws2_32.dll",
+    "getsockopt"
+   ],
+   "0x1d08d0": [
+    "ws2_32.dll",
+    "htonl"
+   ],
+   "0x1d08d8": [
+    "ws2_32.dll",
+    "htons"
+   ],
+   "0x1d08e0": [
+    "ws2_32.dll",
+    "inet_addr"
+   ],
+   "0x1d08e8": [
+    "ws2_32.dll",
+    "inet_ntoa"
+   ],
+   "0x1d08f0": [
+    "ws2_32.dll",
+    "ioctlsocket"
+   ],
+   "0x1d08f8": [
+    "ws2_32.dll",
+    "listen"
+   ],
+   "0x1d0900": [
+    "ws2_32.dll",
+    "ntohl"
+   ],
+   "0x1d0908": [
+    "ws2_32.dll",
+    "ntohs"
+   ],
+   "0x1d0910": [
+    "ws2_32.dll",
+    "recv"
+   ],
+   "0x1d0918": [
+    "ws2_32.dll",
+    "select"
+   ],
+   "0x1d0920": [
+    "ws2_32.dll",
+    "send"
+   ],
+   "0x1d0928": [
+    "ws2_32.dll",
+    "sendto"
+   ],
+   "0x1d0930": [
+    "ws2_32.dll",
+    "setsockopt"
+   ],
+   "0x1d0938": [
+    "ws2_32.dll",
+    "shutdown"
+   ],
+   "0x1d0940": [
+    "ws2_32.dll",
+    "socket"
+   ],
+   "0x1d0948": [
+    "ws2_32.dll",
+    "gethostbyaddr"
+   ],
+   "0x1d0950": [
+    "ws2_32.dll",
+    "gethostbyname"
+   ],
+   "0x1d0958": [
+    "ws2_32.dll",
+    "WSAGetLastError"
+   ],
+   "0x1d0960": [
+    "ws2_32.dll",
+    "WSASetLastError"
+   ],
+   "0x1d0968": [
+    "ws2_32.dll",
+    "WSAStartup"
+   ],
+   "0x1d0970": [
+    "ws2_32.dll",
+    "WSACleanup"
+   ],
+   "0x1d0978": [
+    "ws2_32.dll",
+    "__WSAFDIsSet"
+   ],
+   "0x3f996c": [
+    "gdiplus.dll",
+    "GdipAlloc"
+   ],
+   "0x3f9974": [
+    "gdiplus.dll",
+    "GdipFree"
+   ],
+   "0x3f997c": [
+    "gdiplus.dll",
+    "GdiplusStartup"
+   ],
+   "0x3f9984": [
+    "gdiplus.dll",
+    "GdiplusShutdown"
+   ],
+   "0x3f998c": [
+    "gdiplus.dll",
+    "GdipCreatePath"
+   ],
+   "0x3f9994": [
+    "gdiplus.dll",
+    "GdipDeletePath"
+   ],
+   "0x3f999c": [
+    "gdiplus.dll",
+    "GdipAddPathEllipse"
+   ],
+   "0x3f99a4": [
+    "gdiplus.dll",
+    "GdipAddPathPolygonI"
+   ],
+   "0x3f99ac": [
+    "gdiplus.dll",
+    "GdipCreateRegion"
+   ],
+   "0x3f99b4": [
+    "gdiplus.dll",
+    "GdipDeleteRegion"
+   ],
+   "0x3f99bc": [
+    "gdiplus.dll",
+    "GdipCloneBrush"
+   ],
+   "0x3f99c4": [
+    "gdiplus.dll",
+    "GdipDeleteBrush"
+   ],
+   "0x3f99cc": [
+    "gdiplus.dll",
+    "GdipCreateLineBrushI"
+   ],
+   "0x3f99d4": [
+    "gdiplus.dll",
+    "GdipCreateLineBrushFromRectI"
+   ],
+   "0x3f99dc": [
+    "gdiplus.dll",
+    "GdipSetLineBlend"
+   ],
+   "0x3f99e4": [
+    "gdiplus.dll",
+    "GdipCreatePathGradientFromPath"
+   ],
+   "0x3f99ec": [
+    "gdiplus.dll",
+    "GdipSetPathGradientCenterColor"
+   ],
+   "0x3f99f4": [
+    "gdiplus.dll",
+    "GdipSetPathGradientSurroundColorsWithCount"
+   ],
+   "0x3f99fc": [
+    "gdiplus.dll",
+    "GdipSetPathGradientCenterPointI"
+   ],
+   "0x3f9a04": [
+    "gdiplus.dll",
+    "GdipGetPathGradientPointCount"
+   ],
+   "0x3f9a0c": [
+    "gdiplus.dll",
+    "GdipCreatePen1"
+   ],
+   "0x3f9a14": [
+    "gdiplus.dll",
+    "GdipDeletePen"
+   ],
+   "0x3f9a1c": [
+    "gdiplus.dll",
+    "GdipLoadImageFromStream"
+   ],
+   "0x3f9a24": [
+    "gdiplus.dll",
+    "GdipLoadImageFromStreamICM"
+   ],
+   "0x3f9a2c": [
+    "gdiplus.dll",
+    "GdipDisposeImage"
+   ],
+   "0x3f9a34": [
+    "gdiplus.dll",
+    "GdipCreateBitmapFromStream"
+   ],
+   "0x3f9a3c": [
+    "gdiplus.dll",
+    "GdipCreateBitmapFromStreamICM"
+   ],
+   "0x3f9a44": [
+    "gdiplus.dll",
+    "GdipCreateHBITMAPFromBitmap"
+   ],
+   "0x3f9a4c": [
+    "gdiplus.dll",
+    "GdipCreateFromHDC"
+   ],
+   "0x3f9a54": [
+    "gdiplus.dll",
+    "GdipDeleteGraphics"
+   ],
+   "0x3f9a5c": [
+    "gdiplus.dll",
+    "GdipSetSmoothingMode"
+   ],
+   "0x3f9a64": [
+    "gdiplus.dll",
+    "GdipSetTextRenderingHint"
+   ],
+   "0x3f9a6c": [
+    "gdiplus.dll",
+    "GdipSetInterpolationMode"
+   ],
+   "0x3f9a74": [
+    "gdiplus.dll",
+    "GdipGetDpiY"
+   ],
+   "0x3f9a7c": [
+    "gdiplus.dll",
+    "GdipDrawLineI"
+   ],
+   "0x3f9a84": [
+    "gdiplus.dll",
+    "GdipDrawEllipse"
+   ],
+   "0x3f9a8c": [
+    "gdiplus.dll",
+    "GdipDrawEllipseI"
+   ],
+   "0x3f9a94": [
+    "gdiplus.dll",
+    "GdipDrawPolygonI"
+   ],
+   "0x3f9a9c": [
+    "gdiplus.dll",
+    "GdipFillPolygonI"
+   ],
+   "0x3f9aa4": [
+    "gdiplus.dll",
+    "GdipFillEllipseI"
+   ],
+   "0x3f9aac": [
+    "gdiplus.dll",
+    "GdipFillPath"
+   ],
+   "0x3f9ab4": [
+    "gdiplus.dll",
+    "GdipDrawImageI"
+   ],
+   "0x3f9abc": [
+    "gdiplus.dll",
+    "GdipDrawImageRectI"
+   ],
+   "0x3f9ac4": [
+    "gdiplus.dll",
+    "GdipSetClipRect"
+   ],
+   "0x3f9acc": [
+    "gdiplus.dll",
+    "GdipSetClipPath"
+   ],
+   "0x3f9ad4": [
+    "gdiplus.dll",
+    "GdipSetClipRegion"
+   ],
+   "0x3f9adc": [
+    "gdiplus.dll",
+    "GdipResetClip"
+   ],
+   "0x3f9ae4": [
+    "gdiplus.dll",
+    "GdipGetClip"
+   ],
+   "0x3f9aec": [
+    "gdiplus.dll",
+    "GdipCreateFontFamilyFromName"
+   ],
+   "0x3f9af4": [
+    "gdiplus.dll",
+    "GdipDeleteFontFamily"
+   ],
+   "0x3f9afc": [
+    "gdiplus.dll",
+    "GdipGetGenericFontFamilySansSerif"
+   ],
+   "0x3f9b04": [
+    "gdiplus.dll",
+    "GdipCreateFont"
+   ],
+   "0x3f9b0c": [
+    "gdiplus.dll",
+    "GdipDeleteFont"
+   ],
+   "0x3f9b14": [
+    "gdiplus.dll",
+    "GdipDrawString"
+   ],
+   "0x3f9b1c": [
+    "gdiplus.dll",
+    "GdipMeasureString"
+   ],
+   "0x3f9b24": [
+    "gdiplus.dll",
+    "GdipCreateStringFormat"
+   ],
+   "0x3f9b2c": [
+    "gdiplus.dll",
+    "GdipDeleteStringFormat"
+   ],
+   "0x3f9b34": [
+    "gdiplus.dll",
+    "GdipSetStringFormatFlags"
+   ],
+   "0x3f9b3c": [
+    "gdiplus.dll",
+    "GdipSetStringFormatAlign"
+   ],
+   "0x3f9b44": [
+    "gdiplus.dll",
+    "GdipSetStringFormatLineAlign"
+   ],
+   "0x3f9b4c": [
+    "gdiplus.dll",
+    "GdipSetStringFormatTrimming"
+   ],
+   "0x63848c": [
+    "Crypt32.dll",
+    "CryptProtectData"
+   ],
+   "0x638494": [
+    "Crypt32.dll",
+    "CryptUnprotectData"
+   ],
+   "0x69bd98": [
+    "user32.dll",
+    "GetMenuBarInfo"
+   ],
+   "0x69bda0": [
+    "user32.dll",
+    "AllowSetForegroundWindow"
+   ],
+   "0x69bda8": [
+    "kernel32.dll",
+    "GetProcessId"
+   ],
+   "0x69bdb0": [
+    "kernel32.dll",
+    "GetLongPathNameA"
+   ],
+   "0x6ae1e8": [
+    "shell32.dll",
+    "ExtractIconExA"
+   ],
+   "0x6b9b34": [
+    "kernel32",
+    "GetUserDefaultUILanguage"
+   ]
+  },
+  "slots": {
+   "0xc12230": [
+    "kernel32.dll",
+    "DeleteCriticalSection"
+   ],
+   "0xc12234": [
+    "kernel32.dll",
+    "LeaveCriticalSection"
+   ],
+   "0xc12238": [
+    "kernel32.dll",
+    "EnterCriticalSection"
+   ],
+   "0xc1223c": [
+    "kernel32.dll",
+    "InitializeCriticalSection"
+   ],
+   "0xc12240": [
+    "kernel32.dll",
+    "VirtualFree"
+   ],
+   "0xc12244": [
+    "kernel32.dll",
+    "VirtualAlloc"
+   ],
+   "0xc12248": [
+    "kernel32.dll",
+    "LocalFree"
+   ],
+   "0xc1224c": [
+    "kernel32.dll",
+    "LocalAlloc"
+   ],
+   "0xc12250": [
+    "kernel32.dll",
+    "GetTickCount"
+   ],
+   "0xc12254": [
+    "kernel32.dll",
+    "QueryPerformanceCounter"
+   ],
+   "0xc12258": [
+    "kernel32.dll",
+    "GetVersion"
+   ],
+   "0xc1225c": [
+    "kernel32.dll",
+    "GetCurrentThreadId"
+   ],
+   "0xc12260": [
+    "kernel32.dll",
+    "InterlockedDecrement"
+   ],
+   "0xc12264": [
+    "kernel32.dll",
+    "InterlockedIncrement"
+   ],
+   "0xc12268": [
+    "kernel32.dll",
+    "VirtualQuery"
+   ],
+   "0xc1226c": [
+    "kernel32.dll",
+    "WideCharToMultiByte"
+   ],
+   "0xc12270": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0xc12274": [
+    "kernel32.dll",
+    "MultiByteToWideChar"
+   ],
+   "0xc12278": [
+    "kernel32.dll",
+    "GetThreadLocale"
+   ],
+   "0xc1227c": [
+    "kernel32.dll",
+    "GetStartupInfoA"
+   ],
+   "0xc12280": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0xc12284": [
+    "kernel32.dll",
+    "GetLocaleInfoA"
+   ],
+   "0xc12288": [
+    "kernel32.dll",
+    "GetLastError"
+   ],
+   "0xc1228c": [
+    "kernel32.dll",
+    "GetCurrentDirectoryA"
+   ],
+   "0xc12290": [
+    "kernel32.dll",
+    "GetCommandLineA"
+   ],
+   "0xc12294": [
+    "kernel32.dll",
+    "FreeLibrary"
+   ],
+   "0xc12298": [
+    "kernel32.dll",
+    "ExitProcess"
+   ],
+   "0xc1229c": [
+    "kernel32.dll",
+    "ExitThread"
+   ],
+   "0xc122a0": [
+    "kernel32.dll",
+    "CreateThread"
+   ],
+   "0xc122a4": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0xc122a8": [
+    "kernel32.dll",
+    "UnhandledExceptionFilter"
+   ],
+   "0xc122ac": [
+    "kernel32.dll",
+    "SetFilePointer"
+   ],
+   "0xc122b0": [
+    "kernel32.dll",
+    "SetEndOfFile"
+   ],
+   "0xc122b4": [
+    "kernel32.dll",
+    "RtlUnwind"
+   ],
+   "0xc122b8": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0xc122bc": [
+    "kernel32.dll",
+    "RaiseException"
+   ],
+   "0xc122c0": [
+    "kernel32.dll",
+    "GetStdHandle"
+   ],
+   "0xc122c4": [
+    "kernel32.dll",
+    "GetFileSize"
+   ],
+   "0xc122c8": [
+    "kernel32.dll",
+    "GetFileType"
+   ],
+   "0xc122cc": [
+    "kernel32.dll",
+    "DeleteFileA"
+   ],
+   "0xc122d0": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0xc122d4": [
+    "kernel32.dll",
+    "CloseHandle"
+   ],
+   "0xc122dc": [
+    "user32.dll",
+    "LoadStringA"
+   ],
+   "0xc122e0": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0xc122e4": [
+    "user32.dll",
+    "CharNextA"
+   ],
+   "0xc122ec": [
+    "oleaut32.dll",
+    "SysFreeString"
+   ],
+   "0xc122f0": [
+    "oleaut32.dll",
+    "SysReAllocStringLen"
+   ],
+   "0xc122f4": [
+    "oleaut32.dll",
+    "SysAllocStringLen"
+   ],
+   "0xc122fc": [
+    "kernel32.dll",
+    "TlsSetValue"
+   ],
+   "0xc12300": [
+    "kernel32.dll",
+    "TlsGetValue"
+   ],
+   "0xc12304": [
+    "kernel32.dll",
+    "LocalAlloc"
+   ],
+   "0xc12308": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0xc12310": [
+    "advapi32.dll",
+    "RegSetValueExA"
+   ],
+   "0xc12314": [
+    "advapi32.dll",
+    "RegQueryValueExA"
+   ],
+   "0xc12318": [
+    "advapi32.dll",
+    "RegQueryInfoKeyA"
+   ],
+   "0xc1231c": [
+    "advapi32.dll",
+    "RegOpenKeyExA"
+   ],
+   "0xc12320": [
+    "advapi32.dll",
+    "RegFlushKey"
+   ],
+   "0xc12324": [
+    "advapi32.dll",
+    "RegEnumValueA"
+   ],
+   "0xc12328": [
+    "advapi32.dll",
+    "RegEnumKeyExA"
+   ],
+   "0xc1232c": [
+    "advapi32.dll",
+    "RegDeleteValueA"
+   ],
+   "0xc12330": [
+    "advapi32.dll",
+    "RegDeleteKeyA"
+   ],
+   "0xc12334": [
+    "advapi32.dll",
+    "RegCreateKeyExA"
+   ],
+   "0xc12338": [
+    "advapi32.dll",
+    "RegCloseKey"
+   ],
+   "0xc1233c": [
+    "advapi32.dll",
+    "ReadEventLogA"
+   ],
+   "0xc12340": [
+    "advapi32.dll",
+    "OpenEventLogA"
+   ],
+   "0xc12344": [
+    "advapi32.dll",
+    "LogonUserA"
+   ],
+   "0xc12348": [
+    "advapi32.dll",
+    "InitializeAcl"
+   ],
+   "0xc1234c": [
+    "advapi32.dll",
+    "GetUserNameA"
+   ],
+   "0xc12350": [
+    "advapi32.dll",
+    "GetCurrentHwProfileA"
+   ],
+   "0xc12354": [
+    "advapi32.dll",
+    "FreeSid"
+   ],
+   "0xc12358": [
+    "advapi32.dll",
+    "CloseEventLog"
+   ],
+   "0xc1235c": [
+    "advapi32.dll",
+    "AllocateAndInitializeSid"
+   ],
+   "0xc12364": [
+    "kernel32.dll",
+    "lstrlenA"
+   ],
+   "0xc12368": [
+    "kernel32.dll",
+    "lstrcpyA"
+   ],
+   "0xc1236c": [
+    "kernel32.dll",
+    "lstrcmpA"
+   ],
+   "0xc12370": [
+    "kernel32.dll",
+    "WriteProcessMemory"
+   ],
+   "0xc12374": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0xc12378": [
+    "kernel32.dll",
+    "WinExec"
+   ],
+   "0xc1237c": [
+    "kernel32.dll",
+    "WideCharToMultiByte"
+   ],
+   "0xc12380": [
+    "kernel32.dll",
+    "WaitForSingleObject"
+   ],
+   "0xc12384": [
+    "kernel32.dll",
+    "WaitForMultipleObjects"
+   ],
+   "0xc12388": [
+    "kernel32.dll",
+    "VirtualQuery"
+   ],
+   "0xc1238c": [
+    "kernel32.dll",
+    "VirtualFreeEx"
+   ],
+   "0xc12390": [
+    "kernel32.dll",
+    "VirtualFree"
+   ],
+   "0xc12394": [
+    "kernel32.dll",
+    "VirtualAllocEx"
+   ],
+   "0xc12398": [
+    "kernel32.dll",
+    "VirtualAlloc"
+   ],
+   "0xc1239c": [
+    "kernel32.dll",
+    "VerLanguageNameA"
+   ],
+   "0xc123a0": [
+    "kernel32.dll",
+    "UnmapViewOfFile"
+   ],
+   "0xc123a4": [
+    "kernel32.dll",
+    "TerminateProcess"
+   ],
+   "0xc123a8": [
+    "kernel32.dll",
+    "SystemTimeToFileTime"
+   ],
+   "0xc123ac": [
+    "kernel32.dll",
+    "SuspendThread"
+   ],
+   "0xc123b0": [
+    "kernel32.dll",
+    "Sleep"
+   ],
+   "0xc123b4": [
+    "kernel32.dll",
+    "SizeofResource"
+   ],
+   "0xc123b8": [
+    "kernel32.dll",
+    "SetThreadPriority"
+   ],
+   "0xc123bc": [
+    "kernel32.dll",
+    "SetThreadLocale"
+   ],
+   "0xc123c0": [
+    "kernel32.dll",
+    "SetLastError"
+   ],
+   "0xc123c4": [
+    "kernel32.dll",
+    "SetFileTime"
+   ],
+   "0xc123c8": [
+    "kernel32.dll",
+    "SetFilePointer"
+   ],
+   "0xc123cc": [
+    "kernel32.dll",
+    "SetFileAttributesA"
+   ],
+   "0xc123d0": [
+    "kernel32.dll",
+    "SetEvent"
+   ],
+   "0xc123d4": [
+    "kernel32.dll",
+    "SetErrorMode"
+   ],
+   "0xc123d8": [
+    "kernel32.dll",
+    "SetEnvironmentVariableW"
+   ],
+   "0xc123dc": [
+    "kernel32.dll",
+    "SetEnvironmentVariableA"
+   ],
+   "0xc123e0": [
+    "kernel32.dll",
+    "SetEndOfFile"
+   ],
+   "0xc123e4": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0xc123e8": [
+    "kernel32.dll",
+    "ResumeThread"
+   ],
+   "0xc123ec": [
+    "kernel32.dll",
+    "ResetEvent"
+   ],
+   "0xc123f0": [
+    "kernel32.dll",
+    "RemoveDirectoryA"
+   ],
+   "0xc123f4": [
+    "kernel32.dll",
+    "ReleaseSemaphore"
+   ],
+   "0xc123f8": [
+    "kernel32.dll",
+    "ReleaseMutex"
+   ],
+   "0xc123fc": [
+    "kernel32.dll",
+    "ReadProcessMemory"
+   ],
+   "0xc12400": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0xc12404": [
+    "kernel32.dll",
+    "QueryPerformanceFrequency"
+   ],
+   "0xc12408": [
+    "kernel32.dll",
+    "QueryPerformanceCounter"
+   ],
+   "0xc1240c": [
+    "kernel32.dll",
+    "OutputDebugStringA"
+   ],
+   "0xc12410": [
+    "kernel32.dll",
+    "OpenProcess"
+   ],
+   "0xc12414": [
+    "kernel32.dll",
+    "MultiByteToWideChar"
+   ],
+   "0xc12418": [
+    "kernel32.dll",
+    "MulDiv"
+   ],
+   "0xc1241c": [
+    "kernel32.dll",
+    "MoveFileExA"
+   ],
+   "0xc12420": [
+    "kernel32.dll",
+    "MoveFileA"
+   ],
+   "0xc12424": [
+    "kernel32.dll",
+    "MapViewOfFile"
+   ],
+   "0xc12428": [
+    "kernel32.dll",
+    "LockResource"
+   ],
+   "0xc1242c": [
+    "kernel32.dll",
+    "LocalFree"
+   ],
+   "0xc12430": [
+    "kernel32.dll",
+    "LoadResource"
+   ],
+   "0xc12434": [
+    "kernel32.dll",
+    "LoadLibraryExA"
+   ],
+   "0xc12438": [
+    "kernel32.dll",
+    "LoadLibraryA"
+   ],
+   "0xc1243c": [
+    "kernel32.dll",
+    "LeaveCriticalSection"
+   ],
+   "0xc12440": [
+    "kernel32.dll",
+    "IsValidLocale"
+   ],
+   "0xc12444": [
+    "kernel32.dll",
+    "IsBadReadPtr"
+   ],
+   "0xc12448": [
+    "kernel32.dll",
+    "InitializeCriticalSection"
+   ],
+   "0xc1244c": [
+    "kernel32.dll",
+    "GlobalUnlock"
+   ],
+   "0xc12450": [
+    "kernel32.dll",
+    "GlobalSize"
+   ],
+   "0xc12454": [
+    "kernel32.dll",
+    "GlobalReAlloc"
+   ],
+   "0xc12458": [
+    "kernel32.dll",
+    "GlobalHandle"
+   ],
+   "0xc1245c": [
+    "kernel32.dll",
+    "GlobalLock"
+   ],
+   "0xc12460": [
+    "kernel32.dll",
+    "GlobalFree"
+   ],
+   "0xc12464": [
+    "kernel32.dll",
+    "GlobalFindAtomA"
+   ],
+   "0xc12468": [
+    "kernel32.dll",
+    "GlobalDeleteAtom"
+   ],
+   "0xc1246c": [
+    "kernel32.dll",
+    "GlobalAlloc"
+   ],
+   "0xc12470": [
+    "kernel32.dll",
+    "GlobalAddAtomA"
+   ],
+   "0xc12474": [
+    "kernel32.dll",
+    "GetWindowsDirectoryA"
+   ],
+   "0xc12478": [
+    "kernel32.dll",
+    "GetVolumeInformationA"
+   ],
+   "0xc1247c": [
+    "kernel32.dll",
+    "GetVersionExA"
+   ],
+   "0xc12480": [
+    "kernel32.dll",
+    "GetVersion"
+   ],
+   "0xc12484": [
+    "kernel32.dll",
+    "GetUserDefaultLCID"
+   ],
+   "0xc12488": [
+    "kernel32.dll",
+    "GetTimeZoneInformation"
+   ],
+   "0xc1248c": [
+    "kernel32.dll",
+    "GetTickCount"
+   ],
+   "0xc12490": [
+    "kernel32.dll",
+    "GetThreadLocale"
+   ],
+   "0xc12494": [
+    "kernel32.dll",
+    "GetTempPathA"
+   ],
+   "0xc12498": [
+    "kernel32.dll",
+    "GetTempFileNameA"
+   ],
+   "0xc1249c": [
+    "kernel32.dll",
+    "GetSystemTime"
+   ],
+   "0xc124a0": [
+    "kernel32.dll",
+    "GetSystemInfo"
+   ],
+   "0xc124a4": [
+    "kernel32.dll",
+    "GetSystemDirectoryA"
+   ],
+   "0xc124a8": [
+    "kernel32.dll",
+    "GetSystemDefaultLCID"
+   ],
+   "0xc124ac": [
+    "kernel32.dll",
+    "GetStringTypeExA"
+   ],
+   "0xc124b0": [
+    "kernel32.dll",
+    "GetStdHandle"
+   ],
+   "0xc124b4": [
+    "kernel32.dll",
+    "GetShortPathNameW"
+   ],
+   "0xc124b8": [
+    "kernel32.dll",
+    "GetShortPathNameA"
+   ],
+   "0xc124bc": [
+    "kernel32.dll",
+    "GetProfileStringA"
+   ],
+   "0xc124c0": [
+    "kernel32.dll",
+    "GetProfileIntA"
+   ],
+   "0xc124c4": [
+    "kernel32.dll",
+    "GetProcAddress"
+   ],
+   "0xc124c8": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0xc124cc": [
+    "kernel32.dll",
+    "GetModuleFileNameW"
+   ],
+   "0xc124d0": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0xc124d4": [
+    "kernel32.dll",
+    "GetLogicalDriveStringsA"
+   ],
+   "0xc124d8": [
+    "kernel32.dll",
+    "GetLocaleInfoA"
+   ],
+   "0xc124dc": [
+    "kernel32.dll",
+    "GetLocalTime"
+   ],
+   "0xc124e0": [
+    "kernel32.dll",
+    "GetLastError"
+   ],
+   "0xc124e4": [
+    "kernel32.dll",
+    "GetFullPathNameA"
+   ],
+   "0xc124e8": [
+    "kernel32.dll",
+    "GetFileSize"
+   ],
+   "0xc124ec": [
+    "kernel32.dll",
+    "GetFileAttributesA"
+   ],
+   "0xc124f0": [
+    "kernel32.dll",
+    "GetExitCodeThread"
+   ],
+   "0xc124f4": [
+    "kernel32.dll",
+    "GetExitCodeProcess"
+   ],
+   "0xc124f8": [
+    "kernel32.dll",
+    "GetEnvironmentVariableA"
+   ],
+   "0xc124fc": [
+    "kernel32.dll",
+    "GetDriveTypeA"
+   ],
+   "0xc12500": [
+    "kernel32.dll",
+    "GetDiskFreeSpaceA"
+   ],
+   "0xc12504": [
+    "kernel32.dll",
+    "GetDateFormatA"
+   ],
+   "0xc12508": [
+    "kernel32.dll",
+    "GetCurrentThreadId"
+   ],
+   "0xc1250c": [
+    "kernel32.dll",
+    "GetCurrentProcessId"
+   ],
+   "0xc12510": [
+    "kernel32.dll",
+    "GetCurrentProcess"
+   ],
+   "0xc12514": [
+    "kernel32.dll",
+    "GetCurrentDirectoryA"
+   ],
+   "0xc12518": [
+    "kernel32.dll",
+    "GetComputerNameW"
+   ],
+   "0xc1251c": [
+    "kernel32.dll",
+    "GetComputerNameA"
+   ],
+   "0xc12520": [
+    "kernel32.dll",
+    "GetCPInfo"
+   ],
+   "0xc12524": [
+    "kernel32.dll",
+    "GetACP"
+   ],
+   "0xc12528": [
+    "kernel32.dll",
+    "FreeResource"
+   ],
+   "0xc1252c": [
+    "kernel32.dll",
+    "InterlockedIncrement"
+   ],
+   "0xc12530": [
+    "kernel32.dll",
+    "InterlockedExchange"
+   ],
+   "0xc12534": [
+    "kernel32.dll",
+    "InterlockedDecrement"
+   ],
+   "0xc12538": [
+    "kernel32.dll",
+    "FreeLibrary"
+   ],
+   "0xc1253c": [
+    "kernel32.dll",
+    "FormatMessageA"
+   ],
+   "0xc12540": [
+    "kernel32.dll",
+    "FlushInstructionCache"
+   ],
+   "0xc12544": [
+    "kernel32.dll",
+    "FlushFileBuffers"
+   ],
+   "0xc12548": [
+    "kernel32.dll",
+    "FindResourceA"
+   ],
+   "0xc1254c": [
+    "kernel32.dll",
+    "FindNextFileA"
+   ],
+   "0xc12550": [
+    "kernel32.dll",
+    "FindNextChangeNotification"
+   ],
+   "0xc12554": [
+    "kernel32.dll",
+    "FindFirstFileA"
+   ],
+   "0xc12558": [
+    "kernel32.dll",
+    "FindFirstChangeNotificationA"
+   ],
+   "0xc1255c": [
+    "kernel32.dll",
+    "FindCloseChangeNotification"
+   ],
+   "0xc12560": [
+    "kernel32.dll",
+    "FindClose"
+   ],
+   "0xc12564": [
+    "kernel32.dll",
+    "FileTimeToSystemTime"
+   ],
+   "0xc12568": [
+    "kernel32.dll",
+    "FileTimeToLocalFileTime"
+   ],
+   "0xc1256c": [
+    "kernel32.dll",
+    "FileTimeToDosDateTime"
+   ],
+   "0xc12570": [
+    "kernel32.dll",
+    "ExpandEnvironmentStringsA"
+   ],
+   "0xc12574": [
+    "kernel32.dll",
+    "EnumCalendarInfoA"
+   ],
+   "0xc12578": [
+    "kernel32.dll",
+    "EnterCriticalSection"
+   ],
+   "0xc1257c": [
+    "kernel32.dll",
+    "DeleteFileA"
+   ],
+   "0xc12580": [
+    "kernel32.dll",
+    "DeleteCriticalSection"
+   ],
+   "0xc12584": [
+    "kernel32.dll",
+    "CreateThread"
+   ],
+   "0xc12588": [
+    "kernel32.dll",
+    "CreateSemaphoreA"
+   ],
+   "0xc1258c": [
+    "kernel32.dll",
+    "CreateProcessA"
+   ],
+   "0xc12590": [
+    "kernel32.dll",
+    "CreatePipe"
+   ],
+   "0xc12594": [
+    "kernel32.dll",
+    "CreateMutexA"
+   ],
+   "0xc12598": [
+    "kernel32.dll",
+    "CreateFileMappingA"
+   ],
+   "0xc1259c": [
+    "kernel32.dll",
+    "CreateFileW"
+   ],
+   "0xc125a0": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0xc125a4": [
+    "kernel32.dll",
+    "CreateEventA"
+   ],
+   "0xc125a8": [
+    "kernel32.dll",
+    "CreateDirectoryA"
+   ],
+   "0xc125ac": [
+    "kernel32.dll",
+    "CopyFileA"
+   ],
+   "0xc125b0": [
+    "kernel32.dll",
+    "CompareStringW"
+   ],
+   "0xc125b4": [
+    "kernel32.dll",
+    "CompareStringA"
+   ],
+   "0xc125b8": [
+    "kernel32.dll",
+    "CloseHandle"
+   ],
+   "0xc125c0": [
+    "gdi32.dll",
+    "UnrealizeObject"
+   ],
+   "0xc125c4": [
+    "gdi32.dll",
+    "TextOutW"
+   ],
+   "0xc125c8": [
+    "gdi32.dll",
+    "StretchDIBits"
+   ],
+   "0xc125cc": [
+    "gdi32.dll",
+    "StretchBlt"
+   ],
+   "0xc125d0": [
+    "gdi32.dll",
+    "StartPage"
+   ],
+   "0xc125d4": [
+    "gdi32.dll",
+    "StartDocA"
+   ],
+   "0xc125d8": [
+    "gdi32.dll",
+    "SetWindowOrgEx"
+   ],
+   "0xc125dc": [
+    "gdi32.dll",
+    "SetWindowExtEx"
+   ],
+   "0xc125e0": [
+    "gdi32.dll",
+    "SetWinMetaFileBits"
+   ],
+   "0xc125e4": [
+    "gdi32.dll",
+    "SetViewportOrgEx"
+   ],
+   "0xc125e8": [
+    "gdi32.dll",
+    "SetViewportExtEx"
+   ],
+   "0xc125ec": [
+    "gdi32.dll",
+    "SetTextCharacterExtra"
+   ],
+   "0xc125f0": [
+    "gdi32.dll",
+    "SetTextColor"
+   ],
+   "0xc125f4": [
+    "gdi32.dll",
+    "SetStretchBltMode"
+   ],
+   "0xc125f8": [
+    "gdi32.dll",
+    "SetROP2"
+   ],
+   "0xc125fc": [
+    "gdi32.dll",
+    "SetPixelV"
+   ],
+   "0xc12600": [
+    "gdi32.dll",
+    "SetPixel"
+   ],
+   "0xc12604": [
+    "gdi32.dll",
+    "SetPaletteEntries"
+   ],
+   "0xc12608": [
+    "gdi32.dll",
+    "SetMapMode"
+   ],
+   "0xc1260c": [
+    "gdi32.dll",
+    "SetEnhMetaFileBits"
+   ],
+   "0xc12610": [
+    "gdi32.dll",
+    "SetDIBColorTable"
+   ],
+   "0xc12614": [
+    "gdi32.dll",
+    "SetBrushOrgEx"
+   ],
+   "0xc12618": [
+    "gdi32.dll",
+    "SetBkMode"
+   ],
+   "0xc1261c": [
+    "gdi32.dll",
+    "SetBkColor"
+   ],
+   "0xc12620": [
+    "gdi32.dll",
+    "SetBitmapBits"
+   ],
+   "0xc12624": [
+    "gdi32.dll",
+    "SetAbortProc"
+   ],
+   "0xc12628": [
+    "gdi32.dll",
+    "SelectPalette"
+   ],
+   "0xc1262c": [
+    "gdi32.dll",
+    "SelectObject"
+   ],
+   "0xc12630": [
+    "gdi32.dll",
+    "SelectClipRgn"
+   ],
+   "0xc12634": [
+    "gdi32.dll",
+    "SaveDC"
+   ],
+   "0xc12638": [
+    "gdi32.dll",
+    "RoundRect"
+   ],
+   "0xc1263c": [
+    "gdi32.dll",
+    "RestoreDC"
+   ],
+   "0xc12640": [
+    "gdi32.dll",
+    "ResizePalette"
+   ],
+   "0xc12644": [
+    "gdi32.dll",
+    "RemoveFontMemResourceEx"
+   ],
+   "0xc12648": [
+    "gdi32.dll",
+    "Rectangle"
+   ],
+   "0xc1264c": [
+    "gdi32.dll",
+    "RectVisible"
+   ],
+   "0xc12650": [
+    "gdi32.dll",
+    "RealizePalette"
+   ],
+   "0xc12654": [
+    "gdi32.dll",
+    "Polyline"
+   ],
+   "0xc12658": [
+    "gdi32.dll",
+    "Polygon"
+   ],
+   "0xc1265c": [
+    "gdi32.dll",
+    "PolyPolyline"
+   ],
+   "0xc12660": [
+    "gdi32.dll",
+    "PlayEnhMetaFile"
+   ],
+   "0xc12664": [
+    "gdi32.dll",
+    "Pie"
+   ],
+   "0xc12668": [
+    "gdi32.dll",
+    "PatBlt"
+   ],
+   "0xc1266c": [
+    "gdi32.dll",
+    "MoveToEx"
+   ],
+   "0xc12670": [
+    "gdi32.dll",
+    "MaskBlt"
+   ],
+   "0xc12674": [
+    "gdi32.dll",
+    "LineTo"
+   ],
+   "0xc12678": [
+    "gdi32.dll",
+    "IntersectClipRect"
+   ],
+   "0xc1267c": [
+    "gdi32.dll",
+    "GetWindowOrgEx"
+   ],
+   "0xc12680": [
+    "gdi32.dll",
+    "GetWinMetaFileBits"
+   ],
+   "0xc12684": [
+    "gdi32.dll",
+    "GetViewportOrgEx"
+   ],
+   "0xc12688": [
+    "gdi32.dll",
+    "GetTextMetricsA"
+   ],
+   "0xc1268c": [
+    "gdi32.dll",
+    "GetTextExtentPointA"
+   ],
+   "0xc12690": [
+    "gdi32.dll",
+    "GetTextExtentPoint32W"
+   ],
+   "0xc12694": [
+    "gdi32.dll",
+    "GetTextExtentPoint32A"
+   ],
+   "0xc12698": [
+    "gdi32.dll",
+    "GetSystemPaletteEntries"
+   ],
+   "0xc1269c": [
+    "gdi32.dll",
+    "GetStockObject"
+   ],
+   "0xc126a0": [
+    "gdi32.dll",
+    "GetPixel"
+   ],
+   "0xc126a4": [
+    "gdi32.dll",
+    "GetPaletteEntries"
+   ],
+   "0xc126a8": [
+    "gdi32.dll",
+    "GetObjectW"
+   ],
+   "0xc126ac": [
+    "gdi32.dll",
+    "GetObjectA"
+   ],
+   "0xc126b0": [
+    "gdi32.dll",
+    "GetNearestPaletteIndex"
+   ],
+   "0xc126b4": [
+    "gdi32.dll",
+    "GetEnhMetaFilePaletteEntries"
+   ],
+   "0xc126b8": [
+    "gdi32.dll",
+    "GetEnhMetaFileHeader"
+   ],
+   "0xc126bc": [
+    "gdi32.dll",
+    "GetEnhMetaFileDescriptionA"
+   ],
+   "0xc126c0": [
+    "gdi32.dll",
+    "GetEnhMetaFileBits"
+   ],
+   "0xc126c4": [
+    "gdi32.dll",
+    "GetDeviceCaps"
+   ],
+   "0xc126c8": [
+    "gdi32.dll",
+    "GetDIBits"
+   ],
+   "0xc126cc": [
+    "gdi32.dll",
+    "GetDIBColorTable"
+   ],
+   "0xc126d0": [
+    "gdi32.dll",
+    "GetDCOrgEx"
+   ],
+   "0xc126d4": [
+    "gdi32.dll",
+    "GetCurrentPositionEx"
+   ],
+   "0xc126d8": [
+    "gdi32.dll",
+    "GetClipRgn"
+   ],
+   "0xc126dc": [
+    "gdi32.dll",
+    "GetClipBox"
+   ],
+   "0xc126e0": [
+    "gdi32.dll",
+    "GetCharABCWidthsW"
+   ],
+   "0xc126e4": [
+    "gdi32.dll",
+    "GetCharABCWidthsA"
+   ],
+   "0xc126e8": [
+    "gdi32.dll",
+    "GetBrushOrgEx"
+   ],
+   "0xc126ec": [
+    "gdi32.dll",
+    "GetBitmapDimensionEx"
+   ],
+   "0xc126f0": [
+    "gdi32.dll",
+    "GetBitmapBits"
+   ],
+   "0xc126f4": [
+    "gdi32.dll",
+    "GdiFlush"
+   ],
+   "0xc126f8": [
+    "gdi32.dll",
+    "ExtTextOutW"
+   ],
+   "0xc126fc": [
+    "gdi32.dll",
+    "ExtTextOutA"
+   ],
+   "0xc12700": [
+    "gdi32.dll",
+    "ExtCreatePen"
+   ],
+   "0xc12704": [
+    "gdi32.dll",
+    "ExcludeClipRect"
+   ],
+   "0xc12708": [
+    "gdi32.dll",
+    "EnumFontFamiliesExA"
+   ],
+   "0xc1270c": [
+    "gdi32.dll",
+    "EnumFontFamiliesA"
+   ],
+   "0xc12710": [
+    "gdi32.dll",
+    "EndPage"
+   ],
+   "0xc12714": [
+    "gdi32.dll",
+    "EndDoc"
+   ],
+   "0xc12718": [
+    "gdi32.dll",
+    "Ellipse"
+   ],
+   "0xc1271c": [
+    "gdi32.dll",
+    "DeleteObject"
+   ],
+   "0xc12720": [
+    "gdi32.dll",
+    "DeleteEnhMetaFile"
+   ],
+   "0xc12724": [
+    "gdi32.dll",
+    "DeleteDC"
+   ],
+   "0xc12728": [
+    "gdi32.dll",
+    "CreateSolidBrush"
+   ],
+   "0xc1272c": [
+    "gdi32.dll",
+    "CreateRectRgn"
+   ],
+   "0xc12730": [
+    "gdi32.dll",
+    "CreatePenIndirect"
+   ],
+   "0xc12734": [
+    "gdi32.dll",
+    "CreatePen"
+   ],
+   "0xc12738": [
+    "gdi32.dll",
+    "CreatePatternBrush"
+   ],
+   "0xc1273c": [
+    "gdi32.dll",
+    "CreatePalette"
+   ],
+   "0xc12740": [
+    "gdi32.dll",
+    "CreateICA"
+   ],
+   "0xc12744": [
+    "gdi32.dll",
+    "CreateHalftonePalette"
+   ],
+   "0xc12748": [
+    "gdi32.dll",
+    "CreateFontIndirectW"
+   ],
+   "0xc1274c": [
+    "gdi32.dll",
+    "CreateFontIndirectA"
+   ],
+   "0xc12750": [
+    "gdi32.dll",
+    "CreateEnhMetaFileA"
+   ],
+   "0xc12754": [
+    "gdi32.dll",
+    "CreateDIBitmap"
+   ],
+   "0xc12758": [
+    "gdi32.dll",
+    "CreateDIBSection"
+   ],
+   "0xc1275c": [
+    "gdi32.dll",
+    "CreateDCA"
+   ],
+   "0xc12760": [
+    "gdi32.dll",
+    "CreateCompatibleDC"
+   ],
+   "0xc12764": [
+    "gdi32.dll",
+    "CreateCompatibleBitmap"
+   ],
+   "0xc12768": [
+    "gdi32.dll",
+    "CreateBrushIndirect"
+   ],
+   "0xc1276c": [
+    "gdi32.dll",
+    "CreateBitmap"
+   ],
+   "0xc12770": [
+    "gdi32.dll",
+    "CopyEnhMetaFileA"
+   ],
+   "0xc12774": [
+    "gdi32.dll",
+    "CombineRgn"
+   ],
+   "0xc12778": [
+    "gdi32.dll",
+    "CloseEnhMetaFile"
+   ],
+   "0xc1277c": [
+    "gdi32.dll",
+    "BitBlt"
+   ],
+   "0xc12780": [
+    "gdi32.dll",
+    "AddFontMemResourceEx"
+   ],
+   "0xc12788": [
+    "user32.dll",
+    "CreateWindowExA"
+   ],
+   "0xc1278c": [
+    "user32.dll",
+    "keybd_event"
+   ],
+   "0xc12790": [
+    "user32.dll",
+    "WindowFromPoint"
+   ],
+   "0xc12794": [
+    "user32.dll",
+    "WindowFromDC"
+   ],
+   "0xc12798": [
+    "user32.dll",
+    "WinHelpA"
+   ],
+   "0xc1279c": [
+    "user32.dll",
+    "WaitMessage"
+   ],
+   "0xc127a0": [
+    "user32.dll",
+    "WaitForInputIdle"
+   ],
+   "0xc127a4": [
+    "user32.dll",
+    "ValidateRect"
+   ],
+   "0xc127a8": [
+    "user32.dll",
+    "UpdateLayeredWindow"
+   ],
+   "0xc127ac": [
+    "user32.dll",
+    "UpdateWindow"
+   ],
+   "0xc127b0": [
+    "user32.dll",
+    "UnregisterHotKey"
+   ],
+   "0xc127b4": [
+    "user32.dll",
+    "UnregisterClassA"
+   ],
+   "0xc127b8": [
+    "user32.dll",
+    "UnionRect"
+   ],
+   "0xc127bc": [
+    "user32.dll",
+    "UnhookWindowsHookEx"
+   ],
+   "0xc127c0": [
+    "user32.dll",
+    "TranslateMessage"
+   ],
+   "0xc127c4": [
+    "user32.dll",
+    "TranslateMDISysAccel"
+   ],
+   "0xc127c8": [
+    "user32.dll",
+    "TrackPopupMenu"
+   ],
+   "0xc127cc": [
+    "user32.dll",
+    "SystemParametersInfoW"
+   ],
+   "0xc127d0": [
+    "user32.dll",
+    "SystemParametersInfoA"
+   ],
+   "0xc127d4": [
+    "user32.dll",
+    "ShowWindow"
+   ],
+   "0xc127d8": [
+    "user32.dll",
+    "ShowScrollBar"
+   ],
+   "0xc127dc": [
+    "user32.dll",
+    "ShowOwnedPopups"
+   ],
+   "0xc127e0": [
+    "user32.dll",
+    "ShowCursor"
+   ],
+   "0xc127e4": [
+    "user32.dll",
+    "ShowCaret"
+   ],
+   "0xc127e8": [
+    "user32.dll",
+    "SetWindowRgn"
+   ],
+   "0xc127ec": [
+    "user32.dll",
+    "SetWindowsHookExA"
+   ],
+   "0xc127f0": [
+    "user32.dll",
+    "SetWindowTextA"
+   ],
+   "0xc127f4": [
+    "user32.dll",
+    "SetWindowPos"
+   ],
+   "0xc127f8": [
+    "user32.dll",
+    "SetWindowPlacement"
+   ],
+   "0xc127fc": [
+    "user32.dll",
+    "SetWindowLongW"
+   ],
+   "0xc12800": [
+    "user32.dll",
+    "SetWindowLongA"
+   ],
+   "0xc12804": [
+    "user32.dll",
+    "SetTimer"
+   ],
+   "0xc12808": [
+    "user32.dll",
+    "SetScrollRange"
+   ],
+   "0xc1280c": [
+    "user32.dll",
+    "SetScrollPos"
+   ],
+   "0xc12810": [
+    "user32.dll",
+    "SetScrollInfo"
+   ],
+   "0xc12814": [
+    "user32.dll",
+    "SetRect"
+   ],
+   "0xc12818": [
+    "user32.dll",
+    "SetPropA"
+   ],
+   "0xc1281c": [
+    "user32.dll",
+    "SetParent"
+   ],
+   "0xc12820": [
+    "user32.dll",
+    "SetMenuItemInfoA"
+   ],
+   "0xc12824": [
+    "user32.dll",
+    "SetMenuInfo"
+   ],
+   "0xc12828": [
+    "user32.dll",
+    "SetMenu"
+   ],
+   "0xc1282c": [
+    "user32.dll",
+    "SetKeyboardState"
+   ],
+   "0xc12830": [
+    "user32.dll",
+    "SetForegroundWindow"
+   ],
+   "0xc12834": [
+    "user32.dll",
+    "SetFocus"
+   ],
+   "0xc12838": [
+    "user32.dll",
+    "SetCursorPos"
+   ],
+   "0xc1283c": [
+    "user32.dll",
+    "SetCursor"
+   ],
+   "0xc12840": [
+    "user32.dll",
+    "SetClipboardViewer"
+   ],
+   "0xc12844": [
+    "user32.dll",
+    "SetClipboardData"
+   ],
+   "0xc12848": [
+    "user32.dll",
+    "SetClassLongA"
+   ],
+   "0xc1284c": [
+    "user32.dll",
+    "SetCaretPos"
+   ],
+   "0xc12850": [
+    "user32.dll",
+    "SetCapture"
+   ],
+   "0xc12854": [
+    "user32.dll",
+    "SetActiveWindow"
+   ],
+   "0xc12858": [
+    "user32.dll",
+    "SendMessageTimeoutW"
+   ],
+   "0xc1285c": [
+    "user32.dll",
+    "SendMessageTimeoutA"
+   ],
+   "0xc12860": [
+    "user32.dll",
+    "SendMessageA"
+   ],
+   "0xc12864": [
+    "user32.dll",
+    "SendInput"
+   ],
+   "0xc12868": [
+    "user32.dll",
+    "ScrollWindowEx"
+   ],
+   "0xc1286c": [
+    "user32.dll",
+    "ScrollWindow"
+   ],
+   "0xc12870": [
+    "user32.dll",
+    "ScreenToClient"
+   ],
+   "0xc12874": [
+    "user32.dll",
+    "ReplyMessage"
+   ],
+   "0xc12878": [
+    "user32.dll",
+    "RemovePropA"
+   ],
+   "0xc1287c": [
+    "user32.dll",
+    "RemoveMenu"
+   ],
+   "0xc12880": [
+    "user32.dll",
+    "ReleaseDC"
+   ],
+   "0xc12884": [
+    "user32.dll",
+    "ReleaseCapture"
+   ],
+   "0xc12888": [
+    "user32.dll",
+    "RegisterWindowMessageA"
+   ],
+   "0xc1288c": [
+    "user32.dll",
+    "RegisterHotKey"
+   ],
+   "0xc12890": [
+    "user32.dll",
+    "RegisterClipboardFormatA"
+   ],
+   "0xc12894": [
+    "user32.dll",
+    "RegisterClassA"
+   ],
+   "0xc12898": [
+    "user32.dll",
+    "RedrawWindow"
+   ],
+   "0xc1289c": [
+    "user32.dll",
+    "PtInRect"
+   ],
+   "0xc128a0": [
+    "user32.dll",
+    "PostThreadMessageA"
+   ],
+   "0xc128a4": [
+    "user32.dll",
+    "PostQuitMessage"
+   ],
+   "0xc128a8": [
+    "user32.dll",
+    "PostMessageW"
+   ],
+   "0xc128ac": [
+    "user32.dll",
+    "PostMessageA"
+   ],
+   "0xc128b0": [
+    "user32.dll",
+    "PeekMessageA"
+   ],
+   "0xc128b4": [
+    "user32.dll",
+    "OpenClipboard"
+   ],
+   "0xc128b8": [
+    "user32.dll",
+    "OffsetRect"
+   ],
+   "0xc128bc": [
+    "user32.dll",
+    "OemToCharA"
+   ],
+   "0xc128c0": [
+    "user32.dll",
+    "MsgWaitForMultipleObjects"
+   ],
+   "0xc128c4": [
+    "user32.dll",
+    "MoveWindow"
+   ],
+   "0xc128c8": [
+    "user32.dll",
+    "MessageBoxIndirectA"
+   ],
+   "0xc128cc": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0xc128d0": [
+    "user32.dll",
+    "MessageBeep"
+   ],
+   "0xc128d4": [
+    "user32.dll",
+    "MapWindowPoints"
+   ],
+   "0xc128d8": [
+    "user32.dll",
+    "MapVirtualKeyA"
+   ],
+   "0xc128dc": [
+    "user32.dll",
+    "LoadStringA"
+   ],
+   "0xc128e0": [
+    "user32.dll",
+    "LoadKeyboardLayoutA"
+   ],
+   "0xc128e4": [
+    "user32.dll",
+    "LoadImageA"
+   ],
+   "0xc128e8": [
+    "user32.dll",
+    "LoadIconA"
+   ],
+   "0xc128ec": [
+    "user32.dll",
+    "LoadCursorA"
+   ],
+   "0xc128f0": [
+    "user32.dll",
+    "LoadBitmapA"
+   ],
+   "0xc128f4": [
+    "user32.dll",
+    "KillTimer"
+   ],
+   "0xc128f8": [
+    "user32.dll",
+    "IsZoomed"
+   ],
+   "0xc128fc": [
+    "user32.dll",
+    "IsWindowVisible"
+   ],
+   "0xc12900": [
+    "user32.dll",
+    "IsWindowUnicode"
+   ],
+   "0xc12904": [
+    "user32.dll",
+    "IsWindowEnabled"
+   ],
+   "0xc12908": [
+    "user32.dll",
+    "IsWindow"
+   ],
+   "0xc1290c": [
+    "user32.dll",
+    "IsRectEmpty"
+   ],
+   "0xc12910": [
+    "user32.dll",
+    "IsIconic"
+   ],
+   "0xc12914": [
+    "user32.dll",
+    "IsDialogMessageA"
+   ],
+   "0xc12918": [
+    "user32.dll",
+    "IsClipboardFormatAvailable"
+   ],
+   "0xc1291c": [
+    "user32.dll",
+    "IsChild"
+   ],
+   "0xc12920": [
+    "user32.dll",
+    "IsCharAlphaNumericA"
+   ],
+   "0xc12924": [
+    "user32.dll",
+    "IsCharAlphaA"
+   ],
+   "0xc12928": [
+    "user32.dll",
+    "InvalidateRect"
+   ],
+   "0xc1292c": [
+    "user32.dll",
+    "IntersectRect"
+   ],
+   "0xc12930": [
+    "user32.dll",
+    "InsertMenuItemA"
+   ],
+   "0xc12934": [
+    "user32.dll",
+    "InsertMenuA"
+   ],
+   "0xc12938": [
+    "user32.dll",
+    "InflateRect"
+   ],
+   "0xc1293c": [
+    "user32.dll",
+    "HideCaret"
+   ],
+   "0xc12940": [
+    "user32.dll",
+    "GetWindowThreadProcessId"
+   ],
+   "0xc12944": [
+    "user32.dll",
+    "GetWindowTextLengthW"
+   ],
+   "0xc12948": [
+    "user32.dll",
+    "GetWindowTextW"
+   ],
+   "0xc1294c": [
+    "user32.dll",
+    "GetWindowTextA"
+   ],
+   "0xc12950": [
+    "user32.dll",
+    "GetWindowRect"
+   ],
+   "0xc12954": [
+    "user32.dll",
+    "GetWindowPlacement"
+   ],
+   "0xc12958": [
+    "user32.dll",
+    "GetWindowLongW"
+   ],
+   "0xc1295c": [
+    "user32.dll",
+    "GetWindowLongA"
+   ],
+   "0xc12960": [
+    "user32.dll",
+    "GetWindowDC"
+   ],
+   "0xc12964": [
+    "user32.dll",
+    "GetUpdateRect"
+   ],
+   "0xc12968": [
+    "user32.dll",
+    "GetTopWindow"
+   ],
+   "0xc1296c": [
+    "user32.dll",
+    "GetSystemMetrics"
+   ],
+   "0xc12970": [
+    "user32.dll",
+    "GetSystemMenu"
+   ],
+   "0xc12974": [
+    "user32.dll",
+    "GetSysColorBrush"
+   ],
+   "0xc12978": [
+    "user32.dll",
+    "GetSysColor"
+   ],
+   "0xc1297c": [
+    "user32.dll",
+    "GetSubMenu"
+   ],
+   "0xc12980": [
+    "user32.dll",
+    "GetScrollRange"
+   ],
+   "0xc12984": [
+    "user32.dll",
+    "GetScrollPos"
+   ],
+   "0xc12988": [
+    "user32.dll",
+    "GetScrollInfo"
+   ],
+   "0xc1298c": [
+    "user32.dll",
+    "GetPropA"
+   ],
+   "0xc12990": [
+    "user32.dll",
+    "GetParent"
+   ],
+   "0xc12994": [
+    "user32.dll",
+    "GetWindow"
+   ],
+   "0xc12998": [
+    "user32.dll",
+    "GetMessageTime"
+   ],
+   "0xc1299c": [
+    "user32.dll",
+    "GetMessagePos"
+   ],
+   "0xc129a0": [
+    "user32.dll",
+    "GetMessageA"
+   ],
+   "0xc129a4": [
+    "user32.dll",
+    "GetMenuStringA"
+   ],
+   "0xc129a8": [
+    "user32.dll",
+    "GetMenuState"
+   ],
+   "0xc129ac": [
+    "user32.dll",
+    "GetMenuItemRect"
+   ],
+   "0xc129b0": [
+    "user32.dll",
+    "GetMenuItemInfoA"
+   ],
+   "0xc129b4": [
+    "user32.dll",
+    "GetMenuItemID"
+   ],
+   "0xc129b8": [
+    "user32.dll",
+    "GetMenuItemCount"
+   ],
+   "0xc129bc": [
+    "user32.dll",
+    "GetMenu"
+   ],
+   "0xc129c0": [
+    "user32.dll",
+    "GetLastActivePopup"
+   ],
+   "0xc129c4": [
+    "user32.dll",
+    "GetKeyboardState"
+   ],
+   "0xc129c8": [
+    "user32.dll",
+    "GetKeyboardLayoutList"
+   ],
+   "0xc129cc": [
+    "user32.dll",
+    "GetKeyboardLayout"
+   ],
+   "0xc129d0": [
+    "user32.dll",
+    "GetKeyState"
+   ],
+   "0xc129d4": [
+    "user32.dll",
+    "GetKeyNameTextA"
+   ],
+   "0xc129d8": [
+    "user32.dll",
+    "GetIconInfo"
+   ],
+   "0xc129dc": [
+    "user32.dll",
+    "GetForegroundWindow"
+   ],
+   "0xc129e0": [
+    "user32.dll",
+    "GetFocus"
+   ],
+   "0xc129e4": [
+    "user32.dll",
+    "GetDoubleClickTime"
+   ],
+   "0xc129e8": [
+    "user32.dll",
+    "GetDlgItem"
+   ],
+   "0xc129ec": [
+    "user32.dll",
+    "GetDlgCtrlID"
+   ],
+   "0xc129f0": [
+    "user32.dll",
+    "GetDesktopWindow"
+   ],
+   "0xc129f4": [
+    "user32.dll",
+    "GetDCEx"
+   ],
+   "0xc129f8": [
+    "user32.dll",
+    "GetDC"
+   ],
+   "0xc129fc": [
+    "user32.dll",
+    "GetCursorPos"
+   ],
+   "0xc12a00": [
+    "user32.dll",
+    "GetCursor"
+   ],
+   "0xc12a04": [
+    "user32.dll",
+    "GetComboBoxInfo"
+   ],
+   "0xc12a08": [
+    "user32.dll",
+    "GetClipboardSequenceNumber"
+   ],
+   "0xc12a0c": [
+    "user32.dll",
+    "GetClipboardFormatNameA"
+   ],
+   "0xc12a10": [
+    "user32.dll",
+    "GetClipboardData"
+   ],
+   "0xc12a14": [
+    "user32.dll",
+    "GetClientRect"
+   ],
+   "0xc12a18": [
+    "user32.dll",
+    "GetClassNameA"
+   ],
+   "0xc12a1c": [
+    "user32.dll",
+    "GetClassLongA"
+   ],
+   "0xc12a20": [
+    "user32.dll",
+    "GetClassInfoA"
+   ],
+   "0xc12a24": [
+    "user32.dll",
+    "GetCaretPos"
+   ],
+   "0xc12a28": [
+    "user32.dll",
+    "GetCapture"
+   ],
+   "0xc12a2c": [
+    "user32.dll",
+    "GetAsyncKeyState"
+   ],
+   "0xc12a30": [
+    "user32.dll",
+    "GetActiveWindow"
+   ],
+   "0xc12a34": [
+    "user32.dll",
+    "FrameRect"
+   ],
+   "0xc12a38": [
+    "user32.dll",
+    "FindWindowExA"
+   ],
+   "0xc12a3c": [
+    "user32.dll",
+    "FindWindowA"
+   ],
+   "0xc12a40": [
+    "user32.dll",
+    "FillRect"
+   ],
+   "0xc12a44": [
+    "user32.dll",
+    "EqualRect"
+   ],
+   "0xc12a48": [
+    "user32.dll",
+    "EnumWindows"
+   ],
+   "0xc12a4c": [
+    "user32.dll",
+    "EnumThreadWindows"
+   ],
+   "0xc12a50": [
+    "user32.dll",
+    "EnumClipboardFormats"
+   ],
+   "0xc12a54": [
+    "user32.dll",
+    "EnumChildWindows"
+   ],
+   "0xc12a58": [
+    "user32.dll",
+    "EndPaint"
+   ],
+   "0xc12a5c": [
+    "user32.dll",
+    "EndDeferWindowPos"
+   ],
+   "0xc12a60": [
+    "user32.dll",
+    "EnableWindow"
+   ],
+   "0xc12a64": [
+    "user32.dll",
+    "EnableScrollBar"
+   ],
+   "0xc12a68": [
+    "user32.dll",
+    "EnableMenuItem"
+   ],
+   "0xc12a6c": [
+    "user32.dll",
+    "EmptyClipboard"
+   ],
+   "0xc12a70": [
+    "user32.dll",
+    "DrawTextExA"
+   ],
+   "0xc12a74": [
+    "user32.dll",
+    "DrawTextW"
+   ],
+   "0xc12a78": [
+    "user32.dll",
+    "DrawTextA"
+   ],
+   "0xc12a7c": [
+    "user32.dll",
+    "DrawMenuBar"
+   ],
+   "0xc12a80": [
+    "user32.dll",
+    "DrawIconEx"
+   ],
+   "0xc12a84": [
+    "user32.dll",
+    "DrawIcon"
+   ],
+   "0xc12a88": [
+    "user32.dll",
+    "DrawFrameControl"
+   ],
+   "0xc12a8c": [
+    "user32.dll",
+    "DrawFocusRect"
+   ],
+   "0xc12a90": [
+    "user32.dll",
+    "DrawEdge"
+   ],
+   "0xc12a94": [
+    "user32.dll",
+    "DispatchMessageA"
+   ],
+   "0xc12a98": [
+    "user32.dll",
+    "DestroyWindow"
+   ],
+   "0xc12a9c": [
+    "user32.dll",
+    "DestroyMenu"
+   ],
+   "0xc12aa0": [
+    "user32.dll",
+    "DestroyIcon"
+   ],
+   "0xc12aa4": [
+    "user32.dll",
+    "DestroyCursor"
+   ],
+   "0xc12aa8": [
+    "user32.dll",
+    "DestroyCaret"
+   ],
+   "0xc12aac": [
+    "user32.dll",
+    "DeleteMenu"
+   ],
+   "0xc12ab0": [
+    "user32.dll",
+    "DeferWindowPos"
+   ],
+   "0xc12ab4": [
+    "user32.dll",
+    "DefWindowProcW"
+   ],
+   "0xc12ab8": [
+    "user32.dll",
+    "DefWindowProcA"
+   ],
+   "0xc12abc": [
+    "user32.dll",
+    "DefMDIChildProcA"
+   ],
+   "0xc12ac0": [
+    "user32.dll",
+    "DefFrameProcA"
+   ],
+   "0xc12ac4": [
+    "user32.dll",
+    "CreatePopupMenu"
+   ],
+   "0xc12ac8": [
+    "user32.dll",
+    "CreateMenu"
+   ],
+   "0xc12acc": [
+    "user32.dll",
+    "CreateIconIndirect"
+   ],
+   "0xc12ad0": [
+    "user32.dll",
+    "CreateIcon"
+   ],
+   "0xc12ad4": [
+    "user32.dll",
+    "CreateCaret"
+   ],
+   "0xc12ad8": [
+    "user32.dll",
+    "CopyRect"
+   ],
+   "0xc12adc": [
+    "user32.dll",
+    "CopyImage"
+   ],
+   "0xc12ae0": [
+    "user32.dll",
+    "CopyIcon"
+   ],
+   "0xc12ae4": [
+    "user32.dll",
+    "CloseClipboard"
+   ],
+   "0xc12ae8": [
+    "user32.dll",
+    "ClipCursor"
+   ],
+   "0xc12aec": [
+    "user32.dll",
+    "ClientToScreen"
+   ],
+   "0xc12af0": [
+    "user32.dll",
+    "ChildWindowFromPoint"
+   ],
+   "0xc12af4": [
+    "user32.dll",
+    "CheckMenuItem"
+   ],
+   "0xc12af8": [
+    "user32.dll",
+    "CharUpperBuffW"
+   ],
+   "0xc12afc": [
+    "user32.dll",
+    "CharUpperW"
+   ],
+   "0xc12b00": [
+    "user32.dll",
+    "CharLowerBuffW"
+   ],
+   "0xc12b04": [
+    "user32.dll",
+    "CharLowerW"
+   ],
+   "0xc12b08": [
+    "user32.dll",
+    "ChangeClipboardChain"
+   ],
+   "0xc12b0c": [
+    "user32.dll",
+    "CallWindowProcA"
+   ],
+   "0xc12b10": [
+    "user32.dll",
+    "CallNextHookEx"
+   ],
+   "0xc12b14": [
+    "user32.dll",
+    "BringWindowToTop"
+   ],
+   "0xc12b18": [
+    "user32.dll",
+    "BeginPaint"
+   ],
+   "0xc12b1c": [
+    "user32.dll",
+    "BeginDeferWindowPos"
+   ],
+   "0xc12b20": [
+    "user32.dll",
+    "AttachThreadInput"
+   ],
+   "0xc12b24": [
+    "user32.dll",
+    "CharNextA"
+   ],
+   "0xc12b28": [
+    "user32.dll",
+    "CharLowerBuffA"
+   ],
+   "0xc12b2c": [
+    "user32.dll",
+    "CharLowerA"
+   ],
+   "0xc12b30": [
+    "user32.dll",
+    "CharUpperBuffA"
+   ],
+   "0xc12b34": [
+    "user32.dll",
+    "CharUpperA"
+   ],
+   "0xc12b38": [
+    "user32.dll",
+    "CharToOemBuffA"
+   ],
+   "0xc12b3c": [
+    "user32.dll",
+    "CharToOemA"
+   ],
+   "0xc12b40": [
+    "user32.dll",
+    "AdjustWindowRectEx"
+   ],
+   "0xc12b44": [
+    "user32.dll",
+    "ActivateKeyboardLayout"
+   ],
+   "0xc12b4c": [
+    "ole32.dll",
+    "CLSIDFromString"
+   ],
+   "0xc12b54": [
+    "kernel32.dll",
+    "Sleep"
+   ],
+   "0xc12b5c": [
+    "oleaut32.dll",
+    "SafeArrayPtrOfIndex"
+   ],
+   "0xc12b60": [
+    "oleaut32.dll",
+    "SafeArrayPutElement"
+   ],
+   "0xc12b64": [
+    "oleaut32.dll",
+    "SafeArrayGetElement"
+   ],
+   "0xc12b68": [
+    "oleaut32.dll",
+    "SafeArrayUnaccessData"
+   ],
+   "0xc12b6c": [
+    "oleaut32.dll",
+    "SafeArrayAccessData"
+   ],
+   "0xc12b70": [
+    "oleaut32.dll",
+    "SafeArrayGetUBound"
+   ],
+   "0xc12b74": [
+    "oleaut32.dll",
+    "SafeArrayGetLBound"
+   ],
+   "0xc12b78": [
+    "oleaut32.dll",
+    "SafeArrayCreate"
+   ],
+   "0xc12b7c": [
+    "oleaut32.dll",
+    "VariantChangeType"
+   ],
+   "0xc12b80": [
+    "oleaut32.dll",
+    "VariantCopy"
+   ],
+   "0xc12b84": [
+    "oleaut32.dll",
+    "VariantClear"
+   ],
+   "0xc12b88": [
+    "oleaut32.dll",
+    "VariantInit"
+   ],
+   "0xc12b90": [
+    "ole32.dll",
+    "CreateStreamOnHGlobal"
+   ],
+   "0xc12b94": [
+    "ole32.dll",
+    "CreateILockBytesOnHGlobal"
+   ],
+   "0xc12b98": [
+    "ole32.dll",
+    "IsAccelerator"
+   ],
+   "0xc12b9c": [
+    "ole32.dll",
+    "ReleaseStgMedium"
+   ],
+   "0xc12ba0": [
+    "ole32.dll",
+    "OleDraw"
+   ],
+   "0xc12ba4": [
+    "ole32.dll",
+    "OleSetMenuDescriptor"
+   ],
+   "0xc12ba8": [
+    "ole32.dll",
+    "OleIsCurrentClipboard"
+   ],
+   "0xc12bac": [
+    "ole32.dll",
+    "OleFlushClipboard"
+   ],
+   "0xc12bb0": [
+    "ole32.dll",
+    "OleGetClipboard"
+   ],
+   "0xc12bb4": [
+    "ole32.dll",
+    "OleSetClipboard"
+   ],
+   "0xc12bb8": [
+    "ole32.dll",
+    "DoDragDrop"
+   ],
+   "0xc12bbc": [
+    "ole32.dll",
+    "RevokeDragDrop"
+   ],
+   "0xc12bc0": [
+    "ole32.dll",
+    "RegisterDragDrop"
+   ],
+   "0xc12bc4": [
+    "ole32.dll",
+    "OleUninitialize"
+   ],
+   "0xc12bc8": [
+    "ole32.dll",
+    "OleInitialize"
+   ],
+   "0xc12bcc": [
+    "ole32.dll",
+    "CreateBindCtx"
+   ],
+   "0xc12bd0": [
+    "ole32.dll",
+    "MkParseDisplayName"
+   ],
+   "0xc12bd4": [
+    "ole32.dll",
+    "StgCreateDocfileOnILockBytes"
+   ],
+   "0xc12bd8": [
+    "ole32.dll",
+    "CoTaskMemFree"
+   ],
+   "0xc12bdc": [
+    "ole32.dll",
+    "CoTaskMemAlloc"
+   ],
+   "0xc12be0": [
+    "ole32.dll",
+    "CLSIDFromProgID"
+   ],
+   "0xc12be4": [
+    "ole32.dll",
+    "ProgIDFromCLSID"
+   ],
+   "0xc12be8": [
+    "ole32.dll",
+    "StringFromCLSID"
+   ],
+   "0xc12bec": [
+    "ole32.dll",
+    "CoCreateInstance"
+   ],
+   "0xc12bf0": [
+    "ole32.dll",
+    "CoGetInterfaceAndReleaseStream"
+   ],
+   "0xc12bf4": [
+    "ole32.dll",
+    "CoMarshalInterThreadInterfaceInStream"
+   ],
+   "0xc12bf8": [
+    "ole32.dll",
+    "CoGetClassObject"
+   ],
+   "0xc12bfc": [
+    "ole32.dll",
+    "CoUninitialize"
+   ],
+   "0xc12c00": [
+    "ole32.dll",
+    "CoInitialize"
+   ],
+   "0xc12c04": [
+    "ole32.dll",
+    "IsEqualGUID"
+   ],
+   "0xc12c0c": [
+    "oleaut32.dll",
+    "GetErrorInfo"
+   ],
+   "0xc12c10": [
+    "oleaut32.dll",
+    "GetActiveObject"
+   ],
+   "0xc12c14": [
+    "oleaut32.dll",
+    "SysFreeString"
+   ],
+   "0xc12c1c": [
+    "comctl32.dll",
+    "ImageList_SetIconSize"
+   ],
+   "0xc12c20": [
+    "comctl32.dll",
+    "ImageList_GetIconSize"
+   ],
+   "0xc12c24": [
+    "comctl32.dll",
+    "ImageList_Write"
+   ],
+   "0xc12c28": [
+    "comctl32.dll",
+    "ImageList_Read"
+   ],
+   "0xc12c2c": [
+    "comctl32.dll",
+    "ImageList_GetDragImage"
+   ],
+   "0xc12c30": [
+    "comctl32.dll",
+    "ImageList_DragShowNolock"
+   ],
+   "0xc12c34": [
+    "comctl32.dll",
+    "ImageList_SetDragCursorImage"
+   ],
+   "0xc12c38": [
+    "comctl32.dll",
+    "ImageList_DragMove"
+   ],
+   "0xc12c3c": [
+    "comctl32.dll",
+    "ImageList_DragLeave"
+   ],
+   "0xc12c40": [
+    "comctl32.dll",
+    "ImageList_DragEnter"
+   ],
+   "0xc12c44": [
+    "comctl32.dll",
+    "ImageList_EndDrag"
+   ],
+   "0xc12c48": [
+    "comctl32.dll",
+    "ImageList_BeginDrag"
+   ],
+   "0xc12c4c": [
+    "comctl32.dll",
+    "ImageList_GetIcon"
+   ],
+   "0xc12c50": [
+    "comctl32.dll",
+    "ImageList_Remove"
+   ],
+   "0xc12c54": [
+    "comctl32.dll",
+    "ImageList_DrawEx"
+   ],
+   "0xc12c58": [
+    "comctl32.dll",
+    "ImageList_Replace"
+   ],
+   "0xc12c5c": [
+    "comctl32.dll",
+    "ImageList_Draw"
+   ],
+   "0xc12c60": [
+    "comctl32.dll",
+    "ImageList_GetBkColor"
+   ],
+   "0xc12c64": [
+    "comctl32.dll",
+    "ImageList_SetBkColor"
+   ],
+   "0xc12c68": [
+    "comctl32.dll",
+    "ImageList_ReplaceIcon"
+   ],
+   "0xc12c6c": [
+    "comctl32.dll",
+    "ImageList_Add"
+   ],
+   "0xc12c70": [
+    "comctl32.dll",
+    "ImageList_GetImageCount"
+   ],
+   "0xc12c74": [
+    "comctl32.dll",
+    "ImageList_Destroy"
+   ],
+   "0xc12c78": [
+    "comctl32.dll",
+    "ImageList_Create"
+   ],
+   "0xc12c7c": [
+    "comctl32.dll",
+    "InitCommonControls"
+   ],
+   "0xc12c84": [
+    "imm32.dll",
+    "ImmSetCompositionWindow"
+   ],
+   "0xc12c88": [
+    "imm32.dll",
+    "ImmSetCompositionFontW"
+   ],
+   "0xc12c8c": [
+    "imm32.dll",
+    "ImmSetCompositionFontA"
+   ],
+   "0xc12c90": [
+    "imm32.dll",
+    "ImmSetCompositionStringA"
+   ],
+   "0xc12c94": [
+    "imm32.dll",
+    "ImmGetCompositionStringW"
+   ],
+   "0xc12c98": [
+    "imm32.dll",
+    "ImmGetCompositionStringA"
+   ],
+   "0xc12c9c": [
+    "imm32.dll",
+    "ImmReleaseContext"
+   ],
+   "0xc12ca0": [
+    "imm32.dll",
+    "ImmGetContext"
+   ],
+   "0xc12ca8": [
+    "shell32.dll",
+    "Shell_NotifyIconA"
+   ],
+   "0xc12cac": [
+    "shell32.dll",
+    "ShellExecuteExA"
+   ],
+   "0xc12cb0": [
+    "shell32.dll",
+    "ShellExecuteA"
+   ],
+   "0xc12cb4": [
+    "shell32.dll",
+    "SHGetFileInfoA"
+   ],
+   "0xc12cb8": [
+    "shell32.dll",
+    "SHFileOperationA"
+   ],
+   "0xc12cbc": [
+    "shell32.dll",
+    "ExtractIconA"
+   ],
+   "0xc12cc0": [
+    "shell32.dll",
+    "DragQueryPoint"
+   ],
+   "0xc12cc4": [
+    "shell32.dll",
+    "DragQueryFileW"
+   ],
+   "0xc12cc8": [
+    "shell32.dll",
+    "DragQueryFileA"
+   ],
+   "0xc12ccc": [
+    "shell32.dll",
+    "DragFinish"
+   ],
+   "0xc12cd0": [
+    "shell32.dll",
+    "DragAcceptFiles"
+   ],
+   "0xc12cd8": [
+    "shell32.dll",
+    "SHGetSpecialFolderPathW"
+   ],
+   "0xc12cdc": [
+    "shell32.dll",
+    "SHGetSpecialFolderPathA"
+   ],
+   "0xc12ce0": [
+    "shell32.dll",
+    "SHGetSpecialFolderLocation"
+   ],
+   "0xc12ce4": [
+    "shell32.dll",
+    "SHGetPathFromIDListW"
+   ],
+   "0xc12ce8": [
+    "shell32.dll",
+    "SHGetMalloc"
+   ],
+   "0xc12cec": [
+    "shell32.dll",
+    "SHGetDesktopFolder"
+   ],
+   "0xc12cf4": [
+    "comdlg32.dll",
+    "PrintDlgA"
+   ],
+   "0xc12cf8": [
+    "comdlg32.dll",
+    "ChooseColorA"
+   ],
+   "0xc12cfc": [
+    "comdlg32.dll",
+    "GetSaveFileNameA"
+   ],
+   "0xc12d00": [
+    "comdlg32.dll",
+    "GetOpenFileNameA"
+   ],
+   "0xc12d08": [
+    "kernel32.dll",
+    "MulDiv"
+   ],
+   "0xc12d10": [
+    "ws2_32.dll",
+    "__WSAFDIsSet"
+   ],
+   "0xc12d14": [
+    "ws2_32.dll",
+    "WSACleanup"
+   ],
+   "0xc12d18": [
+    "ws2_32.dll",
+    "WSAStartup"
+   ],
+   "0xc12d1c": [
+    "ws2_32.dll",
+    "WSASetLastError"
+   ],
+   "0xc12d20": [
+    "ws2_32.dll",
+    "WSAGetLastError"
+   ],
+   "0xc12d24": [
+    "ws2_32.dll",
+    "gethostbyname"
+   ],
+   "0xc12d28": [
+    "ws2_32.dll",
+    "gethostbyaddr"
+   ],
+   "0xc12d2c": [
+    "ws2_32.dll",
+    "socket"
+   ],
+   "0xc12d30": [
+    "ws2_32.dll",
+    "shutdown"
+   ],
+   "0xc12d34": [
+    "ws2_32.dll",
+    "setsockopt"
+   ],
+   "0xc12d38": [
+    "ws2_32.dll",
+    "sendto"
+   ],
+   "0xc12d3c": [
+    "ws2_32.dll",
+    "send"
+   ],
+   "0xc12d40": [
+    "ws2_32.dll",
+    "select"
+   ],
+   "0xc12d44": [
+    "ws2_32.dll",
+    "recv"
+   ],
+   "0xc12d48": [
+    "ws2_32.dll",
+    "ntohs"
+   ],
+   "0xc12d4c": [
+    "ws2_32.dll",
+    "ntohl"
+   ],
+   "0xc12d50": [
+    "ws2_32.dll",
+    "listen"
+   ],
+   "0xc12d54": [
+    "ws2_32.dll",
+    "ioctlsocket"
+   ],
+   "0xc12d58": [
+    "ws2_32.dll",
+    "inet_ntoa"
+   ],
+   "0xc12d5c": [
+    "ws2_32.dll",
+    "inet_addr"
+   ],
+   "0xc12d60": [
+    "ws2_32.dll",
+    "htons"
+   ],
+   "0xc12d64": [
+    "ws2_32.dll",
+    "htonl"
+   ],
+   "0xc12d68": [
+    "ws2_32.dll",
+    "getsockopt"
+   ],
+   "0xc12d6c": [
+    "ws2_32.dll",
+    "getsockname"
+   ],
+   "0xc12d70": [
+    "ws2_32.dll",
+    "getpeername"
+   ],
+   "0xc12d74": [
+    "ws2_32.dll",
+    "connect"
+   ],
+   "0xc12d78": [
+    "ws2_32.dll",
+    "closesocket"
+   ],
+   "0xc12d7c": [
+    "ws2_32.dll",
+    "bind"
+   ],
+   "0xc12d80": [
+    "ws2_32.dll",
+    "accept"
+   ],
+   "0xc12d90": [
+    "gdiplus.dll",
+    "GdipSetStringFormatTrimming"
+   ],
+   "0xc12d94": [
+    "gdiplus.dll",
+    "GdipSetStringFormatLineAlign"
+   ],
+   "0xc12d98": [
+    "gdiplus.dll",
+    "GdipSetStringFormatAlign"
+   ],
+   "0xc12d9c": [
+    "gdiplus.dll",
+    "GdipSetStringFormatFlags"
+   ],
+   "0xc12da0": [
+    "gdiplus.dll",
+    "GdipDeleteStringFormat"
+   ],
+   "0xc12da4": [
+    "gdiplus.dll",
+    "GdipCreateStringFormat"
+   ],
+   "0xc12da8": [
+    "gdiplus.dll",
+    "GdipMeasureString"
+   ],
+   "0xc12dac": [
+    "gdiplus.dll",
+    "GdipDrawString"
+   ],
+   "0xc12db0": [
+    "gdiplus.dll",
+    "GdipDeleteFont"
+   ],
+   "0xc12db4": [
+    "gdiplus.dll",
+    "GdipCreateFont"
+   ],
+   "0xc12db8": [
+    "gdiplus.dll",
+    "GdipGetGenericFontFamilySansSerif"
+   ],
+   "0xc12dbc": [
+    "gdiplus.dll",
+    "GdipDeleteFontFamily"
+   ],
+   "0xc12dc0": [
+    "gdiplus.dll",
+    "GdipCreateFontFamilyFromName"
+   ],
+   "0xc12dc4": [
+    "gdiplus.dll",
+    "GdipGetClip"
+   ],
+   "0xc12dc8": [
+    "gdiplus.dll",
+    "GdipResetClip"
+   ],
+   "0xc12dcc": [
+    "gdiplus.dll",
+    "GdipSetClipRegion"
+   ],
+   "0xc12dd0": [
+    "gdiplus.dll",
+    "GdipSetClipPath"
+   ],
+   "0xc12dd4": [
+    "gdiplus.dll",
+    "GdipSetClipRect"
+   ],
+   "0xc12dd8": [
+    "gdiplus.dll",
+    "GdipDrawImageRectI"
+   ],
+   "0xc12ddc": [
+    "gdiplus.dll",
+    "GdipDrawImageI"
+   ],
+   "0xc12de0": [
+    "gdiplus.dll",
+    "GdipFillPath"
+   ],
+   "0xc12de4": [
+    "gdiplus.dll",
+    "GdipFillEllipseI"
+   ],
+   "0xc12de8": [
+    "gdiplus.dll",
+    "GdipFillPolygonI"
+   ],
+   "0xc12dec": [
+    "gdiplus.dll",
+    "GdipDrawPolygonI"
+   ],
+   "0xc12df0": [
+    "gdiplus.dll",
+    "GdipDrawEllipseI"
+   ],
+   "0xc12df4": [
+    "gdiplus.dll",
+    "GdipDrawEllipse"
+   ],
+   "0xc12df8": [
+    "gdiplus.dll",
+    "GdipDrawLineI"
+   ],
+   "0xc12dfc": [
+    "gdiplus.dll",
+    "GdipGetDpiY"
+   ],
+   "0xc12e00": [
+    "gdiplus.dll",
+    "GdipSetInterpolationMode"
+   ],
+   "0xc12e04": [
+    "gdiplus.dll",
+    "GdipSetTextRenderingHint"
+   ],
+   "0xc12e08": [
+    "gdiplus.dll",
+    "GdipSetSmoothingMode"
+   ],
+   "0xc12e0c": [
+    "gdiplus.dll",
+    "GdipDeleteGraphics"
+   ],
+   "0xc12e10": [
+    "gdiplus.dll",
+    "GdipCreateFromHDC"
+   ],
+   "0xc12e14": [
+    "gdiplus.dll",
+    "GdipCreateHBITMAPFromBitmap"
+   ],
+   "0xc12e18": [
+    "gdiplus.dll",
+    "GdipCreateBitmapFromStreamICM"
+   ],
+   "0xc12e1c": [
+    "gdiplus.dll",
+    "GdipCreateBitmapFromStream"
+   ],
+   "0xc12e20": [
+    "gdiplus.dll",
+    "GdipDisposeImage"
+   ],
+   "0xc12e24": [
+    "gdiplus.dll",
+    "GdipLoadImageFromStreamICM"
+   ],
+   "0xc12e28": [
+    "gdiplus.dll",
+    "GdipLoadImageFromStream"
+   ],
+   "0xc12e2c": [
+    "gdiplus.dll",
+    "GdipDeletePen"
+   ],
+   "0xc12e30": [
+    "gdiplus.dll",
+    "GdipCreatePen1"
+   ],
+   "0xc12e34": [
+    "gdiplus.dll",
+    "GdipGetPathGradientPointCount"
+   ],
+   "0xc12e38": [
+    "gdiplus.dll",
+    "GdipSetPathGradientCenterPointI"
+   ],
+   "0xc12e3c": [
+    "gdiplus.dll",
+    "GdipSetPathGradientSurroundColorsWithCount"
+   ],
+   "0xc12e40": [
+    "gdiplus.dll",
+    "GdipSetPathGradientCenterColor"
+   ],
+   "0xc12e44": [
+    "gdiplus.dll",
+    "GdipCreatePathGradientFromPath"
+   ],
+   "0xc12e48": [
+    "gdiplus.dll",
+    "GdipSetLineBlend"
+   ],
+   "0xc12e4c": [
+    "gdiplus.dll",
+    "GdipCreateLineBrushFromRectI"
+   ],
+   "0xc12e50": [
+    "gdiplus.dll",
+    "GdipCreateLineBrushI"
+   ],
+   "0xc12e54": [
+    "gdiplus.dll",
+    "GdipDeleteBrush"
+   ],
+   "0xc12e58": [
+    "gdiplus.dll",
+    "GdipCloneBrush"
+   ],
+   "0xc12e5c": [
+    "gdiplus.dll",
+    "GdipDeleteRegion"
+   ],
+   "0xc12e60": [
+    "gdiplus.dll",
+    "GdipCreateRegion"
+   ],
+   "0xc12e64": [
+    "gdiplus.dll",
+    "GdipAddPathPolygonI"
+   ],
+   "0xc12e68": [
+    "gdiplus.dll",
+    "GdipAddPathEllipse"
+   ],
+   "0xc12e6c": [
+    "gdiplus.dll",
+    "GdipDeletePath"
+   ],
+   "0xc12e70": [
+    "gdiplus.dll",
+    "GdipCreatePath"
+   ],
+   "0xc12e74": [
+    "gdiplus.dll",
+    "GdiplusShutdown"
+   ],
+   "0xc12e78": [
+    "gdiplus.dll",
+    "GdiplusStartup"
+   ],
+   "0xc12e7c": [
+    "gdiplus.dll",
+    "GdipFree"
+   ],
+   "0xc12e80": [
+    "gdiplus.dll",
+    "GdipAlloc"
+   ],
+   "0xc12e88": [
+    "Crypt32.dll",
+    "CryptUnprotectData"
+   ],
+   "0xc12e8c": [
+    "Crypt32.dll",
+    "CryptProtectData"
+   ],
+   "0xc12e94": [
+    "user32.dll",
+    "AllowSetForegroundWindow"
+   ],
+   "0xc12e98": [
+    "user32.dll",
+    "GetMenuBarInfo"
+   ],
+   "0xc12ea0": [
+    "kernel32.dll",
+    "GetLongPathNameA"
+   ],
+   "0xc12ea4": [
+    "kernel32.dll",
+    "GetProcessId"
+   ],
+   "0xc12eac": [
+    "shell32.dll",
+    "ExtractIconExA"
+   ],
+   "0xc12eb4": [
+    "kernel32",
+    "GetUserDefaultUILanguage"
+   ]
+  }
+ },
+ "MobaRTE": {
+  "stubs": {
+   "0x1328": [
+    "kernel32.dll",
+    "CloseHandle"
+   ],
+   "0x1330": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0x1338": [
+    "kernel32.dll",
+    "GetFileType"
+   ],
+   "0x1340": [
+    "kernel32.dll",
+    "GetFileSize"
+   ],
+   "0x1348": [
+    "kernel32.dll",
+    "GetStdHandle"
+   ],
+   "0x1350": [
+    "kernel32.dll",
+    "RaiseException"
+   ],
+   "0x1358": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0x1360": [
+    "kernel32.dll",
+    "RtlUnwind"
+   ],
+   "0x1368": [
+    "kernel32.dll",
+    "SetEndOfFile"
+   ],
+   "0x1370": [
+    "kernel32.dll",
+    "SetFilePointer"
+   ],
+   "0x1378": [
+    "kernel32.dll",
+    "UnhandledExceptionFilter"
+   ],
+   "0x1380": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0x1388": [
+    "user32.dll",
+    "CharNextA"
+   ],
+   "0x1390": [
+    "kernel32.dll",
+    "CreateThread"
+   ],
+   "0x1398": [
+    "kernel32.dll",
+    "ExitThread"
+   ],
+   "0x13a0": [
+    "kernel32.dll",
+    "ExitProcess"
+   ],
+   "0x13a8": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0x13b0": [
+    "kernel32.dll",
+    "FindClose"
+   ],
+   "0x13b8": [
+    "kernel32.dll",
+    "FindFirstFileA"
+   ],
+   "0x13c0": [
+    "kernel32.dll",
+    "FreeLibrary"
+   ],
+   "0x13c8": [
+    "kernel32.dll",
+    "GetCommandLineA"
+   ],
+   "0x13d0": [
+    "kernel32.dll",
+    "GetCurrentDirectoryA"
+   ],
+   "0x13d8": [
+    "kernel32.dll",
+    "GetLastError"
+   ],
+   "0x13e0": [
+    "kernel32.dll",
+    "GetLocaleInfoA"
+   ],
+   "0x13e8": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0x13f0": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0x13f8": [
+    "kernel32.dll",
+    "GetProcAddress"
+   ],
+   "0x1400": [
+    "kernel32.dll",
+    "GetStartupInfoA"
+   ],
+   "0x1408": [
+    "kernel32.dll",
+    "GetThreadLocale"
+   ],
+   "0x1410": [
+    "kernel32.dll",
+    "LoadLibraryExA"
+   ],
+   "0x1418": [
+    "user32.dll",
+    "LoadStringA"
+   ],
+   "0x1420": [
+    "kernel32.dll",
+    "lstrcpynA"
+   ],
+   "0x1428": [
+    "kernel32.dll",
+    "lstrlenA"
+   ],
+   "0x1430": [
+    "kernel32.dll",
+    "MultiByteToWideChar"
+   ],
+   "0x1438": [
+    "advapi32.dll",
+    "RegCloseKey"
+   ],
+   "0x1440": [
+    "advapi32.dll",
+    "RegOpenKeyExA"
+   ],
+   "0x1448": [
+    "advapi32.dll",
+    "RegQueryValueExA"
+   ],
+   "0x1450": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0x1458": [
+    "kernel32.dll",
+    "WideCharToMultiByte"
+   ],
+   "0x1460": [
+    "kernel32.dll",
+    "VirtualQuery"
+   ],
+   "0x1468": [
+    "oleaut32.dll",
+    "SysAllocStringLen"
+   ],
+   "0x1470": [
+    "oleaut32.dll",
+    "SysReAllocStringLen"
+   ],
+   "0x1478": [
+    "oleaut32.dll",
+    "SysFreeString"
+   ],
+   "0x1480": [
+    "kernel32.dll",
+    "InterlockedIncrement"
+   ],
+   "0x1488": [
+    "kernel32.dll",
+    "InterlockedDecrement"
+   ],
+   "0x1490": [
+    "kernel32.dll",
+    "GetCurrentThreadId"
+   ],
+   "0x1498": [
+    "kernel32.dll",
+    "GetVersion"
+   ],
+   "0x14c4": [
+    "kernel32.dll",
+    "LocalAlloc"
+   ],
+   "0x14cc": [
+    "kernel32.dll",
+    "LocalFree"
+   ],
+   "0x14d4": [
+    "kernel32.dll",
+    "VirtualAlloc"
+   ],
+   "0x14dc": [
+    "kernel32.dll",
+    "VirtualFree"
+   ],
+   "0x14e4": [
+    "kernel32.dll",
+    "InitializeCriticalSection"
+   ],
+   "0x14ec": [
+    "kernel32.dll",
+    "EnterCriticalSection"
+   ],
+   "0x14f4": [
+    "kernel32.dll",
+    "LeaveCriticalSection"
+   ],
+   "0x14fc": [
+    "kernel32.dll",
+    "DeleteCriticalSection"
+   ],
+   "0x3864": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0x4034": [
+    "user32.dll",
+    "GetKeyboardType"
+   ],
+   "0x77f8": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0x7800": [
+    "kernel32.dll",
+    "LocalAlloc"
+   ],
+   "0x7808": [
+    "kernel32.dll",
+    "TlsGetValue"
+   ],
+   "0x7810": [
+    "kernel32.dll",
+    "TlsSetValue"
+   ],
+   "0x7afc": [
+    "advapi32.dll",
+    "GetCurrentHwProfileA"
+   ],
+   "0x7b04": [
+    "advapi32.dll",
+    "GetUserNameA"
+   ],
+   "0x7b0c": [
+    "advapi32.dll",
+    "RegCloseKey"
+   ],
+   "0x7b14": [
+    "advapi32.dll",
+    "RegCreateKeyExA"
+   ],
+   "0x7b1c": [
+    "advapi32.dll",
+    "RegDeleteValueA"
+   ],
+   "0x7b24": [
+    "advapi32.dll",
+    "RegEnumKeyExA"
+   ],
+   "0x7b2c": [
+    "advapi32.dll",
+    "RegFlushKey"
+   ],
+   "0x7b34": [
+    "advapi32.dll",
+    "RegOpenKeyExA"
+   ],
+   "0x7b3c": [
+    "advapi32.dll",
+    "RegQueryInfoKeyA"
+   ],
+   "0x7b44": [
+    "advapi32.dll",
+    "RegQueryValueExA"
+   ],
+   "0x7b4c": [
+    "advapi32.dll",
+    "RegSetValueExA"
+   ],
+   "0x7b54": [
+    "kernel32.dll",
+    "CloseHandle"
+   ],
+   "0x7b5c": [
+    "kernel32.dll",
+    "CompareFileTime"
+   ],
+   "0x7b64": [
+    "kernel32.dll",
+    "CompareStringA"
+   ],
+   "0x7b6c": [
+    "kernel32.dll",
+    "CompareStringA"
+   ],
+   "0x7b74": [
+    "kernel32.dll",
+    "CompareStringW"
+   ],
+   "0x7b7c": [
+    "kernel32.dll",
+    "CopyFileA"
+   ],
+   "0x7b84": [
+    "kernel32.dll",
+    "CreateDirectoryA"
+   ],
+   "0x7b8c": [
+    "kernel32.dll",
+    "CreateEventA"
+   ],
+   "0x7b94": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0x7b9c": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0x7ba4": [
+    "kernel32.dll",
+    "CreateFileW"
+   ],
+   "0x7bac": [
+    "kernel32.dll",
+    "CreateMutexA"
+   ],
+   "0x7bd4": [
+    "kernel32.dll",
+    "CreateSemaphoreA"
+   ],
+   "0x7bdc": [
+    "kernel32.dll",
+    "CreateThread"
+   ],
+   "0x7be4": [
+    "kernel32.dll",
+    "DeleteCriticalSection"
+   ],
+   "0x7bec": [
+    "kernel32.dll",
+    "DeleteFileA"
+   ],
+   "0x7bf4": [
+    "kernel32.dll",
+    "DosDateTimeToFileTime"
+   ],
+   "0x7bfc": [
+    "kernel32.dll",
+    "EnterCriticalSection"
+   ],
+   "0x7c04": [
+    "kernel32.dll",
+    "EnumCalendarInfoA"
+   ],
+   "0x7c0c": [
+    "kernel32.dll",
+    "ExpandEnvironmentStringsA"
+   ],
+   "0x7c14": [
+    "kernel32.dll",
+    "FileTimeToDosDateTime"
+   ],
+   "0x7c1c": [
+    "kernel32.dll",
+    "FileTimeToLocalFileTime"
+   ],
+   "0x7c24": [
+    "kernel32.dll",
+    "FindClose"
+   ],
+   "0x7c2c": [
+    "kernel32.dll",
+    "FindCloseChangeNotification"
+   ],
+   "0x7c34": [
+    "kernel32.dll",
+    "FindFirstChangeNotificationA"
+   ],
+   "0x7c3c": [
+    "kernel32.dll",
+    "FindFirstFileA"
+   ],
+   "0x7c44": [
+    "kernel32.dll",
+    "FindFirstFileA"
+   ],
+   "0x7c4c": [
+    "kernel32.dll",
+    "FindNextChangeNotification"
+   ],
+   "0x7c54": [
+    "kernel32.dll",
+    "FindNextFileA"
+   ],
+   "0x7c5c": [
+    "kernel32.dll",
+    "FindResourceA"
+   ],
+   "0x7c64": [
+    "kernel32.dll",
+    "FlushFileBuffers"
+   ],
+   "0x7c6c": [
+    "kernel32.dll",
+    "FormatMessageA"
+   ],
+   "0x7c74": [
+    "kernel32.dll",
+    "FreeLibrary"
+   ],
+   "0x7c7c": [
+    "kernel32.dll",
+    "InterlockedDecrement"
+   ],
+   "0x7c84": [
+    "kernel32.dll",
+    "InterlockedExchange"
+   ],
+   "0x7c8c": [
+    "kernel32.dll",
+    "InterlockedIncrement"
+   ],
+   "0x7c94": [
+    "kernel32.dll",
+    "FreeResource"
+   ],
+   "0x7c9c": [
+    "kernel32.dll",
+    "GetACP"
+   ],
+   "0x7ca4": [
+    "kernel32.dll",
+    "GetCPInfo"
+   ],
+   "0x7cac": [
+    "kernel32.dll",
+    "GetComputerNameA"
+   ],
+   "0x7cb4": [
+    "kernel32.dll",
+    "GetCurrentDirectoryA"
+   ],
+   "0x7cbc": [
+    "kernel32.dll",
+    "GetCurrentProcessId"
+   ],
+   "0x7cc4": [
+    "kernel32.dll",
+    "GetCurrentThreadId"
+   ],
+   "0x7ccc": [
+    "kernel32.dll",
+    "GetDateFormatA"
+   ],
+   "0x7cd4": [
+    "kernel32.dll",
+    "GetDiskFreeSpaceA"
+   ],
+   "0x7cdc": [
+    "kernel32.dll",
+    "GetEnvironmentVariableA"
+   ],
+   "0x7ce4": [
+    "kernel32.dll",
+    "GetExitCodeThread"
+   ],
+   "0x7cec": [
+    "kernel32.dll",
+    "GetFileAttributesA"
+   ],
+   "0x7cf4": [
+    "kernel32.dll",
+    "GetFileAttributesExA"
+   ],
+   "0x7cfc": [
+    "kernel32.dll",
+    "GetFileTime"
+   ],
+   "0x7d04": [
+    "kernel32.dll",
+    "GetFullPathNameA"
+   ],
+   "0x7d0c": [
+    "kernel32.dll",
+    "GetLastError"
+   ],
+   "0x7d14": [
+    "kernel32.dll",
+    "GetLocalTime"
+   ],
+   "0x7d1c": [
+    "kernel32.dll",
+    "GetLocaleInfoA"
+   ],
+   "0x7d24": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0x7d2c": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0x7d34": [
+    "kernel32.dll",
+    "GetModuleFileNameW"
+   ],
+   "0x7d3c": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0x7d44": [
+    "kernel32.dll",
+    "GetModuleHandleW"
+   ],
+   "0x7d4c": [
+    "kernel32.dll",
+    "GetProcAddress"
+   ],
+   "0x7d54": [
+    "kernel32.dll",
+    "GetProfileStringA"
+   ],
+   "0x7d5c": [
+    "kernel32.dll",
+    "GetShortPathNameA"
+   ],
+   "0x7d64": [
+    "kernel32.dll",
+    "GetShortPathNameW"
+   ],
+   "0x7d6c": [
+    "kernel32.dll",
+    "GetStdHandle"
+   ],
+   "0x7d74": [
+    "kernel32.dll",
+    "GetStringTypeExA"
+   ],
+   "0x7d7c": [
+    "kernel32.dll",
+    "GetSystemDirectoryA"
+   ],
+   "0x7d84": [
+    "kernel32.dll",
+    "GetSystemInfo"
+   ],
+   "0x7d8c": [
+    "kernel32.dll",
+    "GetTempPathA"
+   ],
+   "0x7d94": [
+    "kernel32.dll",
+    "GetThreadLocale"
+   ],
+   "0x7d9c": [
+    "kernel32.dll",
+    "GetTickCount"
+   ],
+   "0x7da4": [
+    "kernel32.dll",
+    "GetUserDefaultLCID"
+   ],
+   "0x7dac": [
+    "kernel32.dll",
+    "GetVersion"
+   ],
+   "0x7db4": [
+    "kernel32.dll",
+    "GetVersionExA"
+   ],
+   "0x7dbc": [
+    "kernel32.dll",
+    "GlobalAddAtomA"
+   ],
+   "0x7dc4": [
+    "kernel32.dll",
+    "GlobalAlloc"
+   ],
+   "0x7dcc": [
+    "kernel32.dll",
+    "GlobalDeleteAtom"
+   ],
+   "0x7dd4": [
+    "kernel32.dll",
+    "GlobalFindAtomA"
+   ],
+   "0x7ddc": [
+    "kernel32.dll",
+    "GlobalFree"
+   ],
+   "0x7de4": [
+    "kernel32.dll",
+    "GlobalLock"
+   ],
+   "0x7dec": [
+    "kernel32.dll",
+    "GlobalHandle"
+   ],
+   "0x7df4": [
+    "kernel32.dll",
+    "GlobalReAlloc"
+   ],
+   "0x7dfc": [
+    "kernel32.dll",
+    "GlobalSize"
+   ],
+   "0x7e04": [
+    "kernel32.dll",
+    "GlobalUnlock"
+   ],
+   "0x7e0c": [
+    "kernel32.dll",
+    "InitializeCriticalSection"
+   ],
+   "0x7e14": [
+    "kernel32.dll",
+    "LeaveCriticalSection"
+   ],
+   "0x7e1c": [
+    "kernel32.dll",
+    "LoadLibraryA"
+   ],
+   "0x7e24": [
+    "kernel32.dll",
+    "LoadLibraryW"
+   ],
+   "0x7e2c": [
+    "kernel32.dll",
+    "LoadResource"
+   ],
+   "0x7e34": [
+    "kernel32.dll",
+    "LocalFileTimeToFileTime"
+   ],
+   "0x7e3c": [
+    "kernel32.dll",
+    "LockResource"
+   ],
+   "0x7e44": [
+    "kernel32.dll",
+    "MulDiv"
+   ],
+   "0x7e4c": [
+    "kernel32.dll",
+    "MultiByteToWideChar"
+   ],
+   "0x7e54": [
+    "kernel32.dll",
+    "OpenProcess"
+   ],
+   "0x7e5c": [
+    "kernel32.dll",
+    "QueryPerformanceCounter"
+   ],
+   "0x7e64": [
+    "kernel32.dll",
+    "QueryPerformanceFrequency"
+   ],
+   "0x7e6c": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0x7e74": [
+    "kernel32.dll",
+    "ReadProcessMemory"
+   ],
+   "0x7e7c": [
+    "kernel32.dll",
+    "ReleaseMutex"
+   ],
+   "0x7e84": [
+    "kernel32.dll",
+    "RemoveDirectoryA"
+   ],
+   "0x7e8c": [
+    "kernel32.dll",
+    "ResetEvent"
+   ],
+   "0x7e94": [
+    "kernel32.dll",
+    "ResumeThread"
+   ],
+   "0x7e9c": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0x7ea4": [
+    "kernel32.dll",
+    "SetEndOfFile"
+   ],
+   "0x7eac": [
+    "kernel32.dll",
+    "SetEnvironmentVariableA"
+   ],
+   "0x7eb4": [
+    "kernel32.dll",
+    "SetErrorMode"
+   ],
+   "0x7ebc": [
+    "kernel32.dll",
+    "SetEvent"
+   ],
+   "0x7ec4": [
+    "kernel32.dll",
+    "SetFileAttributesA"
+   ],
+   "0x7ecc": [
+    "kernel32.dll",
+    "SetFilePointer"
+   ],
+   "0x7ed4": [
+    "kernel32.dll",
+    "SetFileTime"
+   ],
+   "0x7edc": [
+    "kernel32.dll",
+    "SetLastError"
+   ],
+   "0x7ee4": [
+    "kernel32.dll",
+    "SetThreadLocale"
+   ],
+   "0x7eec": [
+    "kernel32.dll",
+    "SizeofResource"
+   ],
+   "0x7ef4": [
+    "kernel32.dll",
+    "Sleep"
+   ],
+   "0x7efc": [
+    "kernel32.dll",
+    "TerminateProcess"
+   ],
+   "0x7f04": [
+    "kernel32.dll",
+    "VirtualAlloc"
+   ],
+   "0x7f0c": [
+    "kernel32.dll",
+    "VirtualAllocEx"
+   ],
+   "0x7f14": [
+    "kernel32.dll",
+    "VirtualFree"
+   ],
+   "0x7f1c": [
+    "kernel32.dll",
+    "VirtualFreeEx"
+   ],
+   "0x7f24": [
+    "kernel32.dll",
+    "VirtualQuery"
+   ],
+   "0x7f2c": [
+    "kernel32.dll",
+    "WaitForMultipleObjects"
+   ],
+   "0x7f34": [
+    "kernel32.dll",
+    "WaitForSingleObject"
+   ],
+   "0x7f3c": [
+    "kernel32.dll",
+    "WideCharToMultiByte"
+   ],
+   "0x7f44": [
+    "kernel32.dll",
+    "WinExec"
+   ],
+   "0x7f4c": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0x7f54": [
+    "kernel32.dll",
+    "lstrcmpA"
+   ],
+   "0x7f5c": [
+    "kernel32.dll",
+    "lstrcpyA"
+   ],
+   "0x7f64": [
+    "kernel32.dll",
+    "lstrlenA"
+   ],
+   "0x7f6c": [
+    "gdi32.dll",
+    "AbortDoc"
+   ],
+   "0x7f74": [
+    "gdi32.dll",
+    "AddFontMemResourceEx"
+   ],
+   "0x7f7c": [
+    "gdi32.dll",
+    "BitBlt"
+   ],
+   "0x7f84": [
+    "gdi32.dll",
+    "CloseEnhMetaFile"
+   ],
+   "0x7f8c": [
+    "gdi32.dll",
+    "CombineRgn"
+   ],
+   "0x7f94": [
+    "gdi32.dll",
+    "CopyEnhMetaFileA"
+   ],
+   "0x7f9c": [
+    "gdi32.dll",
+    "CreateBitmap"
+   ],
+   "0x7fa4": [
+    "gdi32.dll",
+    "CreateBrushIndirect"
+   ],
+   "0x7fac": [
+    "gdi32.dll",
+    "CreateCompatibleBitmap"
+   ],
+   "0x7fb4": [
+    "gdi32.dll",
+    "CreateCompatibleDC"
+   ],
+   "0x7fbc": [
+    "gdi32.dll",
+    "CreateDCA"
+   ],
+   "0x7fc4": [
+    "gdi32.dll",
+    "CreateDIBSection"
+   ],
+   "0x7fcc": [
+    "gdi32.dll",
+    "CreateDIBitmap"
+   ],
+   "0x7fd4": [
+    "gdi32.dll",
+    "CreateEnhMetaFileA"
+   ],
+   "0x7fdc": [
+    "gdi32.dll",
+    "CreateFontIndirectA"
+   ],
+   "0x7fe4": [
+    "gdi32.dll",
+    "CreateFontIndirectW"
+   ],
+   "0x7fec": [
+    "gdi32.dll",
+    "CreateHalftonePalette"
+   ],
+   "0x7ff4": [
+    "gdi32.dll",
+    "CreateICA"
+   ],
+   "0x7ffc": [
+    "gdi32.dll",
+    "CreatePalette"
+   ],
+   "0x8004": [
+    "gdi32.dll",
+    "CreatePatternBrush"
+   ],
+   "0x800c": [
+    "gdi32.dll",
+    "CreatePen"
+   ],
+   "0x8014": [
+    "gdi32.dll",
+    "CreatePenIndirect"
+   ],
+   "0x801c": [
+    "gdi32.dll",
+    "CreateRectRgn"
+   ],
+   "0x8024": [
+    "gdi32.dll",
+    "CreateSolidBrush"
+   ],
+   "0x802c": [
+    "gdi32.dll",
+    "DeleteDC"
+   ],
+   "0x8034": [
+    "gdi32.dll",
+    "DeleteEnhMetaFile"
+   ],
+   "0x803c": [
+    "gdi32.dll",
+    "DeleteObject"
+   ],
+   "0x8044": [
+    "gdi32.dll",
+    "Ellipse"
+   ],
+   "0x804c": [
+    "gdi32.dll",
+    "EndDoc"
+   ],
+   "0x8054": [
+    "gdi32.dll",
+    "EndPage"
+   ],
+   "0x805c": [
+    "gdi32.dll",
+    "EnumFontFamiliesA"
+   ],
+   "0x8064": [
+    "gdi32.dll",
+    "ExcludeClipRect"
+   ],
+   "0x806c": [
+    "gdi32.dll",
+    "ExtCreatePen"
+   ],
+   "0x8074": [
+    "gdi32.dll",
+    "ExtTextOutA"
+   ],
+   "0x807c": [
+    "gdi32.dll",
+    "ExtTextOutW"
+   ],
+   "0x8084": [
+    "gdi32.dll",
+    "GdiFlush"
+   ],
+   "0x808c": [
+    "gdi32.dll",
+    "GetBitmapBits"
+   ],
+   "0x8094": [
+    "gdi32.dll",
+    "GetBitmapDimensionEx"
+   ],
+   "0x809c": [
+    "gdi32.dll",
+    "GetBkColor"
+   ],
+   "0x80a4": [
+    "gdi32.dll",
+    "GetBrushOrgEx"
+   ],
+   "0x80ac": [
+    "gdi32.dll",
+    "GetCharABCWidthsA"
+   ],
+   "0x80b4": [
+    "gdi32.dll",
+    "GetCharABCWidthsA"
+   ],
+   "0x80bc": [
+    "gdi32.dll",
+    "GetCharABCWidthsW"
+   ],
+   "0x80c4": [
+    "gdi32.dll",
+    "GetClipBox"
+   ],
+   "0x80cc": [
+    "gdi32.dll",
+    "GetCurrentPositionEx"
+   ],
+   "0x80d4": [
+    "gdi32.dll",
+    "GetDCOrgEx"
+   ],
+   "0x80dc": [
+    "gdi32.dll",
+    "GetDIBColorTable"
+   ],
+   "0x80e4": [
+    "gdi32.dll",
+    "GetDIBits"
+   ],
+   "0x80ec": [
+    "gdi32.dll",
+    "GetDeviceCaps"
+   ],
+   "0x80f4": [
+    "gdi32.dll",
+    "GetEnhMetaFileBits"
+   ],
+   "0x80fc": [
+    "gdi32.dll",
+    "GetEnhMetaFileDescriptionA"
+   ],
+   "0x8104": [
+    "gdi32.dll",
+    "GetEnhMetaFileHeader"
+   ],
+   "0x810c": [
+    "gdi32.dll",
+    "GetEnhMetaFilePaletteEntries"
+   ],
+   "0x8114": [
+    "gdi32.dll",
+    "GetObjectA"
+   ],
+   "0x811c": [
+    "gdi32.dll",
+    "GetObjectA"
+   ],
+   "0x8124": [
+    "gdi32.dll",
+    "GetObjectW"
+   ],
+   "0x812c": [
+    "gdi32.dll",
+    "GetPaletteEntries"
+   ],
+   "0x8134": [
+    "gdi32.dll",
+    "GetPixel"
+   ],
+   "0x813c": [
+    "gdi32.dll",
+    "GetStockObject"
+   ],
+   "0x8144": [
+    "gdi32.dll",
+    "GetSystemPaletteEntries"
+   ],
+   "0x814c": [
+    "gdi32.dll",
+    "GetTextAlign"
+   ],
+   "0x8154": [
+    "gdi32.dll",
+    "GetTextColor"
+   ],
+   "0x815c": [
+    "gdi32.dll",
+    "GetTextExtentPoint32A"
+   ],
+   "0x8164": [
+    "gdi32.dll",
+    "GetTextExtentPoint32W"
+   ],
+   "0x816c": [
+    "gdi32.dll",
+    "GetTextExtentPointA"
+   ],
+   "0x8174": [
+    "gdi32.dll",
+    "GetTextMetricsA"
+   ],
+   "0x817c": [
+    "gdi32.dll",
+    "GetTextMetricsA"
+   ],
+   "0x8184": [
+    "gdi32.dll",
+    "GetViewportOrgEx"
+   ],
+   "0x818c": [
+    "gdi32.dll",
+    "GetWinMetaFileBits"
+   ],
+   "0x8194": [
+    "gdi32.dll",
+    "GetWindowOrgEx"
+   ],
+   "0x819c": [
+    "gdi32.dll",
+    "IntersectClipRect"
+   ],
+   "0x81a4": [
+    "gdi32.dll",
+    "LineTo"
+   ],
+   "0x81ac": [
+    "gdi32.dll",
+    "MaskBlt"
+   ],
+   "0x81b4": [
+    "gdi32.dll",
+    "MoveToEx"
+   ],
+   "0x81bc": [
+    "gdi32.dll",
+    "PatBlt"
+   ],
+   "0x81c4": [
+    "gdi32.dll",
+    "Pie"
+   ],
+   "0x81cc": [
+    "gdi32.dll",
+    "PlayEnhMetaFile"
+   ],
+   "0x81d4": [
+    "gdi32.dll",
+    "Polygon"
+   ],
+   "0x81dc": [
+    "gdi32.dll",
+    "Polyline"
+   ],
+   "0x81e4": [
+    "gdi32.dll",
+    "RealizePalette"
+   ],
+   "0x81ec": [
+    "gdi32.dll",
+    "RectVisible"
+   ],
+   "0x81f4": [
+    "gdi32.dll",
+    "Rectangle"
+   ],
+   "0x81fc": [
+    "gdi32.dll",
+    "RemoveFontMemResourceEx"
+   ],
+   "0x8204": [
+    "gdi32.dll",
+    "RestoreDC"
+   ],
+   "0x820c": [
+    "gdi32.dll",
+    "RoundRect"
+   ],
+   "0x8214": [
+    "gdi32.dll",
+    "SaveDC"
+   ],
+   "0x821c": [
+    "gdi32.dll",
+    "SelectClipRgn"
+   ],
+   "0x8224": [
+    "gdi32.dll",
+    "SelectObject"
+   ],
+   "0x822c": [
+    "gdi32.dll",
+    "SelectPalette"
+   ],
+   "0x8234": [
+    "gdi32.dll",
+    "SetAbortProc"
+   ],
+   "0x823c": [
+    "gdi32.dll",
+    "SetBkColor"
+   ],
+   "0x8244": [
+    "gdi32.dll",
+    "SetBkMode"
+   ],
+   "0x824c": [
+    "gdi32.dll",
+    "SetBrushOrgEx"
+   ],
+   "0x8254": [
+    "gdi32.dll",
+    "SetDIBColorTable"
+   ],
+   "0x825c": [
+    "gdi32.dll",
+    "SetEnhMetaFileBits"
+   ],
+   "0x8264": [
+    "gdi32.dll",
+    "SetPixel"
+   ],
+   "0x826c": [
+    "gdi32.dll",
+    "SetPixelV"
+   ],
+   "0x8274": [
+    "gdi32.dll",
+    "SetROP2"
+   ],
+   "0x827c": [
+    "gdi32.dll",
+    "SetStretchBltMode"
+   ],
+   "0x8284": [
+    "gdi32.dll",
+    "SetTextAlign"
+   ],
+   "0x828c": [
+    "gdi32.dll",
+    "SetTextColor"
+   ],
+   "0x8294": [
+    "gdi32.dll",
+    "SetTextCharacterExtra"
+   ],
+   "0x829c": [
+    "gdi32.dll",
+    "SetViewportOrgEx"
+   ],
+   "0x82a4": [
+    "gdi32.dll",
+    "SetWinMetaFileBits"
+   ],
+   "0x82ac": [
+    "gdi32.dll",
+    "SetWindowOrgEx"
+   ],
+   "0x82b4": [
+    "gdi32.dll",
+    "StartDocA"
+   ],
+   "0x82bc": [
+    "gdi32.dll",
+    "StartPage"
+   ],
+   "0x82c4": [
+    "gdi32.dll",
+    "StretchBlt"
+   ],
+   "0x82cc": [
+    "gdi32.dll",
+    "StretchDIBits"
+   ],
+   "0x82d4": [
+    "gdi32.dll",
+    "TextOutW"
+   ],
+   "0x82dc": [
+    "gdi32.dll",
+    "UnrealizeObject"
+   ],
+   "0x82e4": [
+    "user32.dll",
+    "ActivateKeyboardLayout"
+   ],
+   "0x82ec": [
+    "user32.dll",
+    "AdjustWindowRectEx"
+   ],
+   "0x82f4": [
+    "user32.dll",
+    "CharLowerA"
+   ],
+   "0x82fc": [
+    "user32.dll",
+    "BeginPaint"
+   ],
+   "0x8304": [
+    "user32.dll",
+    "CallNextHookEx"
+   ],
+   "0x830c": [
+    "user32.dll",
+    "CallWindowProcA"
+   ],
+   "0x8314": [
+    "user32.dll",
+    "CallWindowProcW"
+   ],
+   "0x831c": [
+    "user32.dll",
+    "CharLowerA"
+   ],
+   "0x8324": [
+    "user32.dll",
+    "CharLowerA"
+   ],
+   "0x832c": [
+    "user32.dll",
+    "CharLowerW"
+   ],
+   "0x8334": [
+    "user32.dll",
+    "CharLowerBuffA"
+   ],
+   "0x833c": [
+    "user32.dll",
+    "CharLowerBuffW"
+   ],
+   "0x8344": [
+    "user32.dll",
+    "CharNextA"
+   ],
+   "0x834c": [
+    "user32.dll",
+    "CharToOemA"
+   ],
+   "0x8354": [
+    "user32.dll",
+    "CharUpperA"
+   ],
+   "0x835c": [
+    "user32.dll",
+    "CharUpperA"
+   ],
+   "0x8364": [
+    "user32.dll",
+    "CharUpperW"
+   ],
+   "0x836c": [
+    "user32.dll",
+    "CharUpperBuffA"
+   ],
+   "0x8374": [
+    "user32.dll",
+    "CharUpperBuffW"
+   ],
+   "0x837c": [
+    "user32.dll",
+    "CheckMenuItem"
+   ],
+   "0x8384": [
+    "user32.dll",
+    "ChildWindowFromPoint"
+   ],
+   "0x838c": [
+    "user32.dll",
+    "ClientToScreen"
+   ],
+   "0x8394": [
+    "user32.dll",
+    "ClipCursor"
+   ],
+   "0x839c": [
+    "user32.dll",
+    "CloseClipboard"
+   ],
+   "0x83a4": [
+    "user32.dll",
+    "CopyIcon"
+   ],
+   "0x83ac": [
+    "user32.dll",
+    "CopyImage"
+   ],
+   "0x83b4": [
+    "user32.dll",
+    "CopyRect"
+   ],
+   "0x83bc": [
+    "user32.dll",
+    "CreateCaret"
+   ],
+   "0x83c4": [
+    "user32.dll",
+    "CreateIcon"
+   ],
+   "0x83cc": [
+    "user32.dll",
+    "CreateIconIndirect"
+   ],
+   "0x83d4": [
+    "user32.dll",
+    "CreateMenu"
+   ],
+   "0x83dc": [
+    "user32.dll",
+    "CreatePopupMenu"
+   ],
+   "0x83e4": [
+    "user32.dll",
+    "DefFrameProcA"
+   ],
+   "0x83ec": [
+    "user32.dll",
+    "DefMDIChildProcA"
+   ],
+   "0x83f4": [
+    "user32.dll",
+    "DefWindowProcA"
+   ],
+   "0x83fc": [
+    "user32.dll",
+    "DefWindowProcW"
+   ],
+   "0x8404": [
+    "user32.dll",
+    "DeleteMenu"
+   ],
+   "0x840c": [
+    "user32.dll",
+    "DestroyCaret"
+   ],
+   "0x8414": [
+    "user32.dll",
+    "DestroyCursor"
+   ],
+   "0x841c": [
+    "user32.dll",
+    "DestroyIcon"
+   ],
+   "0x8424": [
+    "user32.dll",
+    "DestroyMenu"
+   ],
+   "0x842c": [
+    "user32.dll",
+    "DestroyWindow"
+   ],
+   "0x8434": [
+    "user32.dll",
+    "DispatchMessageA"
+   ],
+   "0x843c": [
+    "user32.dll",
+    "DrawEdge"
+   ],
+   "0x8444": [
+    "user32.dll",
+    "DrawFocusRect"
+   ],
+   "0x844c": [
+    "user32.dll",
+    "DrawFrameControl"
+   ],
+   "0x8454": [
+    "user32.dll",
+    "DrawIcon"
+   ],
+   "0x845c": [
+    "user32.dll",
+    "DrawIconEx"
+   ],
+   "0x8464": [
+    "user32.dll",
+    "DrawMenuBar"
+   ],
+   "0x846c": [
+    "user32.dll",
+    "DrawTextA"
+   ],
+   "0x8474": [
+    "user32.dll",
+    "DrawTextW"
+   ],
+   "0x847c": [
+    "user32.dll",
+    "DrawTextExA"
+   ],
+   "0x8484": [
+    "user32.dll",
+    "EmptyClipboard"
+   ],
+   "0x848c": [
+    "user32.dll",
+    "EnableMenuItem"
+   ],
+   "0x8494": [
+    "user32.dll",
+    "EnableScrollBar"
+   ],
+   "0x849c": [
+    "user32.dll",
+    "EnableWindow"
+   ],
+   "0x84a4": [
+    "user32.dll",
+    "EndPaint"
+   ],
+   "0x84ac": [
+    "user32.dll",
+    "EnumChildWindows"
+   ],
+   "0x84b4": [
+    "user32.dll",
+    "EnumClipboardFormats"
+   ],
+   "0x84bc": [
+    "user32.dll",
+    "EnumThreadWindows"
+   ],
+   "0x84c4": [
+    "user32.dll",
+    "EnumWindows"
+   ],
+   "0x84cc": [
+    "user32.dll",
+    "EqualRect"
+   ],
+   "0x84d4": [
+    "user32.dll",
+    "FillRect"
+   ],
+   "0x84dc": [
+    "user32.dll",
+    "FindWindowA"
+   ],
+   "0x84e4": [
+    "user32.dll",
+    "FindWindowExA"
+   ],
+   "0x84ec": [
+    "user32.dll",
+    "FrameRect"
+   ],
+   "0x84f4": [
+    "user32.dll",
+    "GetActiveWindow"
+   ],
+   "0x84fc": [
+    "user32.dll",
+    "GetAncestor"
+   ],
+   "0x8504": [
+    "user32.dll",
+    "GetCapture"
+   ],
+   "0x850c": [
+    "user32.dll",
+    "GetClassInfoA"
+   ],
+   "0x8514": [
+    "user32.dll",
+    "GetClassLongA"
+   ],
+   "0x851c": [
+    "user32.dll",
+    "GetClassNameA"
+   ],
+   "0x8524": [
+    "user32.dll",
+    "GetClientRect"
+   ],
+   "0x852c": [
+    "user32.dll",
+    "GetClipboardData"
+   ],
+   "0x8534": [
+    "user32.dll",
+    "GetComboBoxInfo"
+   ],
+   "0x853c": [
+    "user32.dll",
+    "GetCursor"
+   ],
+   "0x8544": [
+    "user32.dll",
+    "GetCursorPos"
+   ],
+   "0x854c": [
+    "user32.dll",
+    "GetDC"
+   ],
+   "0x8554": [
+    "user32.dll",
+    "GetDCEx"
+   ],
+   "0x855c": [
+    "user32.dll",
+    "GetDesktopWindow"
+   ],
+   "0x8564": [
+    "user32.dll",
+    "GetDlgCtrlID"
+   ],
+   "0x856c": [
+    "user32.dll",
+    "GetDlgItem"
+   ],
+   "0x8574": [
+    "user32.dll",
+    "GetFocus"
+   ],
+   "0x857c": [
+    "user32.dll",
+    "GetForegroundWindow"
+   ],
+   "0x8584": [
+    "user32.dll",
+    "GetIconInfo"
+   ],
+   "0x858c": [
+    "user32.dll",
+    "GetKeyNameTextA"
+   ],
+   "0x8594": [
+    "user32.dll",
+    "GetKeyState"
+   ],
+   "0x859c": [
+    "user32.dll",
+    "GetKeyboardLayout"
+   ],
+   "0x85a4": [
+    "user32.dll",
+    "GetKeyboardLayoutList"
+   ],
+   "0x85ac": [
+    "user32.dll",
+    "GetKeyboardState"
+   ],
+   "0x85b4": [
+    "user32.dll",
+    "GetLastActivePopup"
+   ],
+   "0x85bc": [
+    "user32.dll",
+    "GetMenu"
+   ],
+   "0x85c4": [
+    "user32.dll",
+    "GetMenuItemCount"
+   ],
+   "0x85cc": [
+    "user32.dll",
+    "GetMenuItemID"
+   ],
+   "0x85d4": [
+    "user32.dll",
+    "GetMenuItemInfoA"
+   ],
+   "0x85dc": [
+    "user32.dll",
+    "GetMenuItemRect"
+   ],
+   "0x85e4": [
+    "user32.dll",
+    "GetMenuState"
+   ],
+   "0x85ec": [
+    "user32.dll",
+    "GetMenuStringA"
+   ],
+   "0x85f4": [
+    "user32.dll",
+    "GetMessagePos"
+   ],
+   "0x85fc": [
+    "user32.dll",
+    "GetMessageTime"
+   ],
+   "0x8604": [
+    "user32.dll",
+    "GetWindow"
+   ],
+   "0x860c": [
+    "user32.dll",
+    "GetParent"
+   ],
+   "0x8614": [
+    "user32.dll",
+    "GetPropA"
+   ],
+   "0x861c": [
+    "user32.dll",
+    "GetScrollInfo"
+   ],
+   "0x8624": [
+    "user32.dll",
+    "GetScrollPos"
+   ],
+   "0x862c": [
+    "user32.dll",
+    "GetScrollRange"
+   ],
+   "0x8634": [
+    "user32.dll",
+    "GetSubMenu"
+   ],
+   "0x863c": [
+    "user32.dll",
+    "GetSysColor"
+   ],
+   "0x8644": [
+    "user32.dll",
+    "GetSysColorBrush"
+   ],
+   "0x864c": [
+    "user32.dll",
+    "GetSystemMenu"
+   ],
+   "0x8654": [
+    "user32.dll",
+    "GetSystemMetrics"
+   ],
+   "0x865c": [
+    "user32.dll",
+    "GetTopWindow"
+   ],
+   "0x8664": [
+    "user32.dll",
+    "GetWindow"
+   ],
+   "0x866c": [
+    "user32.dll",
+    "GetWindowDC"
+   ],
+   "0x8674": [
+    "user32.dll",
+    "GetWindowLongA"
+   ],
+   "0x867c": [
+    "user32.dll",
+    "GetWindowLongA"
+   ],
+   "0x8684": [
+    "user32.dll",
+    "GetWindowLongW"
+   ],
+   "0x868c": [
+    "user32.dll",
+    "GetWindowPlacement"
+   ],
+   "0x8694": [
+    "user32.dll",
+    "GetWindowRect"
+   ],
+   "0x869c": [
+    "user32.dll",
+    "GetWindowTextA"
+   ],
+   "0x86a4": [
+    "user32.dll",
+    "GetWindowTextW"
+   ],
+   "0x86ac": [
+    "user32.dll",
+    "GetWindowTextLengthW"
+   ],
+   "0x86b4": [
+    "user32.dll",
+    "GetWindowThreadProcessId"
+   ],
+   "0x86bc": [
+    "user32.dll",
+    "GetWindowThreadProcessId"
+   ],
+   "0x86c4": [
+    "user32.dll",
+    "HideCaret"
+   ],
+   "0x86cc": [
+    "user32.dll",
+    "InflateRect"
+   ],
+   "0x86d4": [
+    "user32.dll",
+    "InsertMenuA"
+   ],
+   "0x86dc": [
+    "user32.dll",
+    "InsertMenuItemA"
+   ],
+   "0x86e4": [
+    "user32.dll",
+    "IntersectRect"
+   ],
+   "0x86ec": [
+    "user32.dll",
+    "InvalidateRect"
+   ],
+   "0x86f4": [
+    "user32.dll",
+    "IsCharAlphaA"
+   ],
+   "0x86fc": [
+    "user32.dll",
+    "IsCharAlphaNumericA"
+   ],
+   "0x8704": [
+    "user32.dll",
+    "IsChild"
+   ],
+   "0x870c": [
+    "user32.dll",
+    "IsClipboardFormatAvailable"
+   ],
+   "0x8714": [
+    "user32.dll",
+    "IsDialogMessageA"
+   ],
+   "0x871c": [
+    "user32.dll",
+    "IsIconic"
+   ],
+   "0x8724": [
+    "user32.dll",
+    "IsRectEmpty"
+   ],
+   "0x872c": [
+    "user32.dll",
+    "IsWindow"
+   ],
+   "0x8734": [
+    "user32.dll",
+    "IsWindowEnabled"
+   ],
+   "0x873c": [
+    "user32.dll",
+    "IsWindowUnicode"
+   ],
+   "0x8744": [
+    "user32.dll",
+    "IsWindowVisible"
+   ],
+   "0x874c": [
+    "user32.dll",
+    "IsZoomed"
+   ],
+   "0x8754": [
+    "user32.dll",
+    "KillTimer"
+   ],
+   "0x875c": [
+    "user32.dll",
+    "LoadBitmapA"
+   ],
+   "0x8764": [
+    "user32.dll",
+    "LoadCursorA"
+   ],
+   "0x876c": [
+    "user32.dll",
+    "LoadIconA"
+   ],
+   "0x8774": [
+    "user32.dll",
+    "LoadKeyboardLayoutA"
+   ],
+   "0x877c": [
+    "user32.dll",
+    "LoadStringA"
+   ],
+   "0x8784": [
+    "user32.dll",
+    "MapVirtualKeyA"
+   ],
+   "0x878c": [
+    "user32.dll",
+    "MapWindowPoints"
+   ],
+   "0x8794": [
+    "user32.dll",
+    "MessageBeep"
+   ],
+   "0x879c": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0x87a4": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0x87ac": [
+    "user32.dll",
+    "MessageBoxW"
+   ],
+   "0x87b4": [
+    "user32.dll",
+    "MessageBoxIndirectA"
+   ],
+   "0x87bc": [
+    "user32.dll",
+    "MoveWindow"
+   ],
+   "0x87c4": [
+    "user32.dll",
+    "MsgWaitForMultipleObjects"
+   ],
+   "0x87cc": [
+    "user32.dll",
+    "OemToCharA"
+   ],
+   "0x87d4": [
+    "user32.dll",
+    "OffsetRect"
+   ],
+   "0x87dc": [
+    "user32.dll",
+    "OpenClipboard"
+   ],
+   "0x87e4": [
+    "user32.dll",
+    "PeekMessageA"
+   ],
+   "0x87ec": [
+    "user32.dll",
+    "PostMessageA"
+   ],
+   "0x87f4": [
+    "user32.dll",
+    "PostQuitMessage"
+   ],
+   "0x87fc": [
+    "user32.dll",
+    "PtInRect"
+   ],
+   "0x8804": [
+    "user32.dll",
+    "RedrawWindow"
+   ],
+   "0x880c": [
+    "user32.dll",
+    "RegisterClassA"
+   ],
+   "0x8814": [
+    "user32.dll",
+    "RegisterClipboardFormatA"
+   ],
+   "0x881c": [
+    "user32.dll",
+    "RegisterWindowMessageA"
+   ],
+   "0x8824": [
+    "user32.dll",
+    "ReleaseCapture"
+   ],
+   "0x882c": [
+    "user32.dll",
+    "ReleaseDC"
+   ],
+   "0x8834": [
+    "user32.dll",
+    "RemoveMenu"
+   ],
+   "0x883c": [
+    "user32.dll",
+    "RemovePropA"
+   ],
+   "0x8844": [
+    "user32.dll",
+    "ScreenToClient"
+   ],
+   "0x884c": [
+    "user32.dll",
+    "ScrollWindow"
+   ],
+   "0x8854": [
+    "user32.dll",
+    "SendInput"
+   ],
+   "0x885c": [
+    "user32.dll",
+    "SendMessageA"
+   ],
+   "0x8864": [
+    "user32.dll",
+    "SendMessageA"
+   ],
+   "0x886c": [
+    "user32.dll",
+    "SendMessageTimeoutA"
+   ],
+   "0x8874": [
+    "user32.dll",
+    "SetActiveWindow"
+   ],
+   "0x887c": [
+    "user32.dll",
+    "SetCapture"
+   ],
+   "0x8884": [
+    "user32.dll",
+    "SetCaretPos"
+   ],
+   "0x888c": [
+    "user32.dll",
+    "SetClassLongA"
+   ],
+   "0x8894": [
+    "user32.dll",
+    "SetClipboardData"
+   ],
+   "0x889c": [
+    "user32.dll",
+    "SetCursor"
+   ],
+   "0x88a4": [
+    "user32.dll",
+    "SetFocus"
+   ],
+   "0x88ac": [
+    "user32.dll",
+    "SetForegroundWindow"
+   ],
+   "0x88b4": [
+    "user32.dll",
+    "SetKeyboardState"
+   ],
+   "0x88bc": [
+    "user32.dll",
+    "SetMenu"
+   ],
+   "0x88c4": [
+    "user32.dll",
+    "SetMenuInfo"
+   ],
+   "0x88cc": [
+    "user32.dll",
+    "SetMenuItemInfoA"
+   ],
+   "0x88d4": [
+    "user32.dll",
+    "SetParent"
+   ],
+   "0x88dc": [
+    "user32.dll",
+    "SetPropA"
+   ],
+   "0x88e4": [
+    "user32.dll",
+    "SetRect"
+   ],
+   "0x88ec": [
+    "user32.dll",
+    "SetScrollInfo"
+   ],
+   "0x88f4": [
+    "user32.dll",
+    "SetScrollPos"
+   ],
+   "0x88fc": [
+    "user32.dll",
+    "SetScrollRange"
+   ],
+   "0x8904": [
+    "user32.dll",
+    "SetTimer"
+   ],
+   "0x890c": [
+    "user32.dll",
+    "SetWindowLongA"
+   ],
+   "0x8914": [
+    "user32.dll",
+    "SetWindowLongA"
+   ],
+   "0x891c": [
+    "user32.dll",
+    "SetWindowLongW"
+   ],
+   "0x8924": [
+    "user32.dll",
+    "SetWindowPlacement"
+   ],
+   "0x892c": [
+    "user32.dll",
+    "SetWindowPos"
+   ],
+   "0x8934": [
+    "user32.dll",
+    "SetWindowTextA"
+   ],
+   "0x893c": [
+    "user32.dll",
+    "SetWindowsHookExA"
+   ],
+   "0x8944": [
+    "user32.dll",
+    "SetWindowsHookExW"
+   ],
+   "0x894c": [
+    "user32.dll",
+    "SetWindowRgn"
+   ],
+   "0x8954": [
+    "user32.dll",
+    "ShowCaret"
+   ],
+   "0x895c": [
+    "user32.dll",
+    "ShowCursor"
+   ],
+   "0x8964": [
+    "user32.dll",
+    "ShowOwnedPopups"
+   ],
+   "0x896c": [
+    "user32.dll",
+    "ShowScrollBar"
+   ],
+   "0x8974": [
+    "user32.dll",
+    "ShowWindow"
+   ],
+   "0x897c": [
+    "user32.dll",
+    "SystemParametersInfoA"
+   ],
+   "0x8984": [
+    "user32.dll",
+    "SystemParametersInfoW"
+   ],
+   "0x898c": [
+    "user32.dll",
+    "TrackPopupMenu"
+   ],
+   "0x8994": [
+    "user32.dll",
+    "TranslateMDISysAccel"
+   ],
+   "0x899c": [
+    "user32.dll",
+    "TranslateMessage"
+   ],
+   "0x89a4": [
+    "user32.dll",
+    "UnhookWindowsHookEx"
+   ],
+   "0x89ac": [
+    "user32.dll",
+    "UnionRect"
+   ],
+   "0x89b4": [
+    "user32.dll",
+    "UnregisterClassA"
+   ],
+   "0x89bc": [
+    "user32.dll",
+    "UpdateWindow"
+   ],
+   "0x89c4": [
+    "user32.dll",
+    "WaitForInputIdle"
+   ],
+   "0x89cc": [
+    "user32.dll",
+    "WaitMessage"
+   ],
+   "0x89d4": [
+    "user32.dll",
+    "WinHelpA"
+   ],
+   "0x89dc": [
+    "user32.dll",
+    "WindowFromDC"
+   ],
+   "0x89e4": [
+    "user32.dll",
+    "WindowFromPoint"
+   ],
+   "0x89ec": [
+    "user32.dll",
+    "keybd_event"
+   ],
+   "0x8b08": [
+    "user32.dll",
+    "CreateWindowExA"
+   ],
+   "0xb604": [
+    "ole32.dll",
+    "StringFromCLSID"
+   ],
+   "0xb60c": [
+    "ole32.dll",
+    "CoTaskMemFree"
+   ],
+   "0x11ba0": [
+    "kernel32.dll",
+    "Sleep"
+   ],
+   "0x12db4": [
+    "oleaut32.dll",
+    "VariantInit"
+   ],
+   "0x12dbc": [
+    "oleaut32.dll",
+    "VariantClear"
+   ],
+   "0x12dc4": [
+    "oleaut32.dll",
+    "VariantCopy"
+   ],
+   "0x12dcc": [
+    "oleaut32.dll",
+    "VariantChangeType"
+   ],
+   "0x13218": [
+    "oleaut32.dll",
+    "SafeArrayCreate"
+   ],
+   "0x13220": [
+    "oleaut32.dll",
+    "SafeArrayGetLBound"
+   ],
+   "0x13228": [
+    "oleaut32.dll",
+    "SafeArrayGetUBound"
+   ],
+   "0x13230": [
+    "oleaut32.dll",
+    "SafeArrayAccessData"
+   ],
+   "0x13238": [
+    "oleaut32.dll",
+    "SafeArrayUnaccessData"
+   ],
+   "0x13240": [
+    "oleaut32.dll",
+    "SafeArrayGetElement"
+   ],
+   "0x13248": [
+    "oleaut32.dll",
+    "SafeArrayPutElement"
+   ],
+   "0x13250": [
+    "oleaut32.dll",
+    "SafeArrayPtrOfIndex"
+   ],
+   "0x1cd30": [
+    "ole32.dll",
+    "IsEqualGUID"
+   ],
+   "0x1cd38": [
+    "ole32.dll",
+    "CoInitialize"
+   ],
+   "0x1cd40": [
+    "ole32.dll",
+    "CoInitializeEx"
+   ],
+   "0x1cd48": [
+    "ole32.dll",
+    "CoUninitialize"
+   ],
+   "0x1cd50": [
+    "ole32.dll",
+    "CoGetClassObject"
+   ],
+   "0x1cd58": [
+    "ole32.dll",
+    "CoCreateInstance"
+   ],
+   "0x1cd60": [
+    "ole32.dll",
+    "StringFromCLSID"
+   ],
+   "0x1cd68": [
+    "ole32.dll",
+    "ProgIDFromCLSID"
+   ],
+   "0x1cd70": [
+    "ole32.dll",
+    "CoTaskMemAlloc"
+   ],
+   "0x1cd78": [
+    "ole32.dll",
+    "CoTaskMemFree"
+   ],
+   "0x1cd80": [
+    "ole32.dll",
+    "OleInitialize"
+   ],
+   "0x1cd88": [
+    "ole32.dll",
+    "OleUninitialize"
+   ],
+   "0x1cd90": [
+    "ole32.dll",
+    "OleSetMenuDescriptor"
+   ],
+   "0x1cd98": [
+    "ole32.dll",
+    "OleDraw"
+   ],
+   "0x1cda0": [
+    "ole32.dll",
+    "IsAccelerator"
+   ],
+   "0x1cda8": [
+    "ole32.dll",
+    "CreateStreamOnHGlobal"
+   ],
+   "0x1cdb0": [
+    "oleaut32.dll",
+    "SysFreeString"
+   ],
+   "0x1cdb8": [
+    "oleaut32.dll",
+    "GetActiveObject"
+   ],
+   "0x1cdc0": [
+    "oleaut32.dll",
+    "GetErrorInfo"
+   ],
+   "0x351d0": [
+    "comctl32.dll",
+    "InitCommonControls"
+   ],
+   "0x3526c": [
+    "comctl32.dll",
+    "ImageList_Create"
+   ],
+   "0x35274": [
+    "comctl32.dll",
+    "ImageList_Destroy"
+   ],
+   "0x3527c": [
+    "comctl32.dll",
+    "ImageList_GetImageCount"
+   ],
+   "0x35284": [
+    "comctl32.dll",
+    "ImageList_Add"
+   ],
+   "0x3528c": [
+    "comctl32.dll",
+    "ImageList_ReplaceIcon"
+   ],
+   "0x35294": [
+    "comctl32.dll",
+    "ImageList_SetBkColor"
+   ],
+   "0x3529c": [
+    "comctl32.dll",
+    "ImageList_GetBkColor"
+   ],
+   "0x352b4": [
+    "comctl32.dll",
+    "ImageList_Draw"
+   ],
+   "0x352bc": [
+    "comctl32.dll",
+    "ImageList_Replace"
+   ],
+   "0x352c4": [
+    "comctl32.dll",
+    "ImageList_DrawEx"
+   ],
+   "0x352cc": [
+    "comctl32.dll",
+    "ImageList_Remove"
+   ],
+   "0x352d4": [
+    "comctl32.dll",
+    "ImageList_GetIcon"
+   ],
+   "0x352dc": [
+    "comctl32.dll",
+    "ImageList_BeginDrag"
+   ],
+   "0x352e4": [
+    "comctl32.dll",
+    "ImageList_EndDrag"
+   ],
+   "0x352ec": [
+    "comctl32.dll",
+    "ImageList_DragEnter"
+   ],
+   "0x352f4": [
+    "comctl32.dll",
+    "ImageList_DragLeave"
+   ],
+   "0x352fc": [
+    "comctl32.dll",
+    "ImageList_DragMove"
+   ],
+   "0x35304": [
+    "comctl32.dll",
+    "ImageList_SetDragCursorImage"
+   ],
+   "0x3530c": [
+    "comctl32.dll",
+    "ImageList_DragShowNolock"
+   ],
+   "0x35314": [
+    "comctl32.dll",
+    "ImageList_GetDragImage"
+   ],
+   "0x3531c": [
+    "comctl32.dll",
+    "ImageList_Read"
+   ],
+   "0x35324": [
+    "comctl32.dll",
+    "ImageList_Write"
+   ],
+   "0x3532c": [
+    "comctl32.dll",
+    "ImageList_GetIconSize"
+   ],
+   "0x35334": [
+    "comctl32.dll",
+    "ImageList_SetIconSize"
+   ],
+   "0x36300": [
+    "imm32.dll",
+    "ImmGetContext"
+   ],
+   "0x36308": [
+    "imm32.dll",
+    "ImmReleaseContext"
+   ],
+   "0x36310": [
+    "imm32.dll",
+    "ImmGetCompositionStringA"
+   ],
+   "0x36318": [
+    "imm32.dll",
+    "ImmGetCompositionStringW"
+   ],
+   "0x36320": [
+    "imm32.dll",
+    "ImmSetCompositionStringA"
+   ],
+   "0x36328": [
+    "imm32.dll",
+    "ImmSetCompositionFontA"
+   ],
+   "0x36330": [
+    "imm32.dll",
+    "ImmSetCompositionFontW"
+   ],
+   "0x36338": [
+    "imm32.dll",
+    "ImmSetCompositionWindow"
+   ],
+   "0x39850": [
+    "shell32.dll",
+    "DragAcceptFiles"
+   ],
+   "0x39858": [
+    "shell32.dll",
+    "DragFinish"
+   ],
+   "0x39860": [
+    "shell32.dll",
+    "DragQueryFileA"
+   ],
+   "0x39868": [
+    "shell32.dll",
+    "DragQueryFileA"
+   ],
+   "0x39870": [
+    "shell32.dll",
+    "DragQueryFileW"
+   ],
+   "0x39878": [
+    "shell32.dll",
+    "DragQueryPoint"
+   ],
+   "0x39880": [
+    "shell32.dll",
+    "SHFileOperationA"
+   ],
+   "0x39888": [
+    "shell32.dll",
+    "SHGetFileInfoA"
+   ],
+   "0x39890": [
+    "shell32.dll",
+    "ShellExecuteA"
+   ],
+   "0x39898": [
+    "shell32.dll",
+    "ShellExecuteExA"
+   ],
+   "0x39a50": [
+    "shell32.dll",
+    "SHGetDesktopFolder"
+   ],
+   "0x39a58": [
+    "shell32.dll",
+    "SHGetMalloc"
+   ],
+   "0x39a60": [
+    "shell32.dll",
+    "SHGetSpecialFolderLocation"
+   ],
+   "0x39a68": [
+    "shell32.dll",
+    "SHGetSpecialFolderPathW"
+   ],
+   "0x39aa8": [
+    "comdlg32.dll",
+    "GetOpenFileNameA"
+   ],
+   "0x39ab0": [
+    "comdlg32.dll",
+    "GetSaveFileNameA"
+   ],
+   "0x39ab8": [
+    "comdlg32.dll",
+    "ChooseColorA"
+   ],
+   "0x39ac0": [
+    "comdlg32.dll",
+    "PrintDlgA"
+   ],
+   "0x2d56c8": [
+    "kernel32.dll",
+    "GetProcessId"
+   ],
+   "0x2d7acc": [
+    "kernel32.dll",
+    "GetProcessId"
+   ],
+   "0x2ea52c": [
+    "user32.dll",
+    "SetWindowLongW"
+   ]
+  },
+  "slots": {
+   "0x7941cc": [
+    "kernel32.dll",
+    "DeleteCriticalSection"
+   ],
+   "0x7941d0": [
+    "kernel32.dll",
+    "LeaveCriticalSection"
+   ],
+   "0x7941d4": [
+    "kernel32.dll",
+    "EnterCriticalSection"
+   ],
+   "0x7941d8": [
+    "kernel32.dll",
+    "InitializeCriticalSection"
+   ],
+   "0x7941dc": [
+    "kernel32.dll",
+    "VirtualFree"
+   ],
+   "0x7941e0": [
+    "kernel32.dll",
+    "VirtualAlloc"
+   ],
+   "0x7941e4": [
+    "kernel32.dll",
+    "LocalFree"
+   ],
+   "0x7941e8": [
+    "kernel32.dll",
+    "LocalAlloc"
+   ],
+   "0x7941ec": [
+    "kernel32.dll",
+    "GetVersion"
+   ],
+   "0x7941f0": [
+    "kernel32.dll",
+    "GetCurrentThreadId"
+   ],
+   "0x7941f4": [
+    "kernel32.dll",
+    "InterlockedDecrement"
+   ],
+   "0x7941f8": [
+    "kernel32.dll",
+    "InterlockedIncrement"
+   ],
+   "0x7941fc": [
+    "kernel32.dll",
+    "VirtualQuery"
+   ],
+   "0x794200": [
+    "kernel32.dll",
+    "WideCharToMultiByte"
+   ],
+   "0x794204": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0x794208": [
+    "kernel32.dll",
+    "MultiByteToWideChar"
+   ],
+   "0x79420c": [
+    "kernel32.dll",
+    "lstrlenA"
+   ],
+   "0x794210": [
+    "kernel32.dll",
+    "lstrcpynA"
+   ],
+   "0x794214": [
+    "kernel32.dll",
+    "LoadLibraryExA"
+   ],
+   "0x794218": [
+    "kernel32.dll",
+    "GetThreadLocale"
+   ],
+   "0x79421c": [
+    "kernel32.dll",
+    "GetStartupInfoA"
+   ],
+   "0x794220": [
+    "kernel32.dll",
+    "GetProcAddress"
+   ],
+   "0x794224": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0x794228": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0x79422c": [
+    "kernel32.dll",
+    "GetLocaleInfoA"
+   ],
+   "0x794230": [
+    "kernel32.dll",
+    "GetLastError"
+   ],
+   "0x794234": [
+    "kernel32.dll",
+    "GetCurrentDirectoryA"
+   ],
+   "0x794238": [
+    "kernel32.dll",
+    "GetCommandLineA"
+   ],
+   "0x79423c": [
+    "kernel32.dll",
+    "FreeLibrary"
+   ],
+   "0x794240": [
+    "kernel32.dll",
+    "FindFirstFileA"
+   ],
+   "0x794244": [
+    "kernel32.dll",
+    "FindClose"
+   ],
+   "0x794248": [
+    "kernel32.dll",
+    "ExitProcess"
+   ],
+   "0x79424c": [
+    "kernel32.dll",
+    "ExitThread"
+   ],
+   "0x794250": [
+    "kernel32.dll",
+    "CreateThread"
+   ],
+   "0x794254": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0x794258": [
+    "kernel32.dll",
+    "UnhandledExceptionFilter"
+   ],
+   "0x79425c": [
+    "kernel32.dll",
+    "SetFilePointer"
+   ],
+   "0x794260": [
+    "kernel32.dll",
+    "SetEndOfFile"
+   ],
+   "0x794264": [
+    "kernel32.dll",
+    "RtlUnwind"
+   ],
+   "0x794268": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0x79426c": [
+    "kernel32.dll",
+    "RaiseException"
+   ],
+   "0x794270": [
+    "kernel32.dll",
+    "GetStdHandle"
+   ],
+   "0x794274": [
+    "kernel32.dll",
+    "GetFileSize"
+   ],
+   "0x794278": [
+    "kernel32.dll",
+    "GetFileType"
+   ],
+   "0x79427c": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0x794280": [
+    "kernel32.dll",
+    "CloseHandle"
+   ],
+   "0x794288": [
+    "user32.dll",
+    "GetKeyboardType"
+   ],
+   "0x79428c": [
+    "user32.dll",
+    "LoadStringA"
+   ],
+   "0x794290": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0x794294": [
+    "user32.dll",
+    "CharNextA"
+   ],
+   "0x79429c": [
+    "advapi32.dll",
+    "RegQueryValueExA"
+   ],
+   "0x7942a0": [
+    "advapi32.dll",
+    "RegOpenKeyExA"
+   ],
+   "0x7942a4": [
+    "advapi32.dll",
+    "RegCloseKey"
+   ],
+   "0x7942ac": [
+    "oleaut32.dll",
+    "SysFreeString"
+   ],
+   "0x7942b0": [
+    "oleaut32.dll",
+    "SysReAllocStringLen"
+   ],
+   "0x7942b4": [
+    "oleaut32.dll",
+    "SysAllocStringLen"
+   ],
+   "0x7942bc": [
+    "kernel32.dll",
+    "TlsSetValue"
+   ],
+   "0x7942c0": [
+    "kernel32.dll",
+    "TlsGetValue"
+   ],
+   "0x7942c4": [
+    "kernel32.dll",
+    "LocalAlloc"
+   ],
+   "0x7942c8": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0x7942d0": [
+    "advapi32.dll",
+    "RegSetValueExA"
+   ],
+   "0x7942d4": [
+    "advapi32.dll",
+    "RegQueryValueExA"
+   ],
+   "0x7942d8": [
+    "advapi32.dll",
+    "RegQueryInfoKeyA"
+   ],
+   "0x7942dc": [
+    "advapi32.dll",
+    "RegOpenKeyExA"
+   ],
+   "0x7942e0": [
+    "advapi32.dll",
+    "RegFlushKey"
+   ],
+   "0x7942e4": [
+    "advapi32.dll",
+    "RegEnumKeyExA"
+   ],
+   "0x7942e8": [
+    "advapi32.dll",
+    "RegDeleteValueA"
+   ],
+   "0x7942ec": [
+    "advapi32.dll",
+    "RegCreateKeyExA"
+   ],
+   "0x7942f0": [
+    "advapi32.dll",
+    "RegCloseKey"
+   ],
+   "0x7942f4": [
+    "advapi32.dll",
+    "GetUserNameA"
+   ],
+   "0x7942f8": [
+    "advapi32.dll",
+    "GetCurrentHwProfileA"
+   ],
+   "0x794300": [
+    "kernel32.dll",
+    "lstrlenA"
+   ],
+   "0x794304": [
+    "kernel32.dll",
+    "lstrcpyA"
+   ],
+   "0x794308": [
+    "kernel32.dll",
+    "lstrcmpA"
+   ],
+   "0x79430c": [
+    "kernel32.dll",
+    "WriteFile"
+   ],
+   "0x794310": [
+    "kernel32.dll",
+    "WinExec"
+   ],
+   "0x794314": [
+    "kernel32.dll",
+    "WideCharToMultiByte"
+   ],
+   "0x794318": [
+    "kernel32.dll",
+    "WaitForSingleObject"
+   ],
+   "0x79431c": [
+    "kernel32.dll",
+    "WaitForMultipleObjects"
+   ],
+   "0x794320": [
+    "kernel32.dll",
+    "VirtualQuery"
+   ],
+   "0x794324": [
+    "kernel32.dll",
+    "VirtualFreeEx"
+   ],
+   "0x794328": [
+    "kernel32.dll",
+    "VirtualFree"
+   ],
+   "0x79432c": [
+    "kernel32.dll",
+    "VirtualAllocEx"
+   ],
+   "0x794330": [
+    "kernel32.dll",
+    "VirtualAlloc"
+   ],
+   "0x794334": [
+    "kernel32.dll",
+    "TerminateProcess"
+   ],
+   "0x794338": [
+    "kernel32.dll",
+    "Sleep"
+   ],
+   "0x79433c": [
+    "kernel32.dll",
+    "SizeofResource"
+   ],
+   "0x794340": [
+    "kernel32.dll",
+    "SetThreadLocale"
+   ],
+   "0x794344": [
+    "kernel32.dll",
+    "SetLastError"
+   ],
+   "0x794348": [
+    "kernel32.dll",
+    "SetFileTime"
+   ],
+   "0x79434c": [
+    "kernel32.dll",
+    "SetFilePointer"
+   ],
+   "0x794350": [
+    "kernel32.dll",
+    "SetFileAttributesA"
+   ],
+   "0x794354": [
+    "kernel32.dll",
+    "SetEvent"
+   ],
+   "0x794358": [
+    "kernel32.dll",
+    "SetErrorMode"
+   ],
+   "0x79435c": [
+    "kernel32.dll",
+    "SetEnvironmentVariableA"
+   ],
+   "0x794360": [
+    "kernel32.dll",
+    "SetEndOfFile"
+   ],
+   "0x794364": [
+    "kernel32.dll",
+    "SetCurrentDirectoryA"
+   ],
+   "0x794368": [
+    "kernel32.dll",
+    "ResumeThread"
+   ],
+   "0x79436c": [
+    "kernel32.dll",
+    "ResetEvent"
+   ],
+   "0x794370": [
+    "kernel32.dll",
+    "RemoveDirectoryA"
+   ],
+   "0x794374": [
+    "kernel32.dll",
+    "ReleaseMutex"
+   ],
+   "0x794378": [
+    "kernel32.dll",
+    "ReadProcessMemory"
+   ],
+   "0x79437c": [
+    "kernel32.dll",
+    "ReadFile"
+   ],
+   "0x794380": [
+    "kernel32.dll",
+    "QueryPerformanceFrequency"
+   ],
+   "0x794384": [
+    "kernel32.dll",
+    "QueryPerformanceCounter"
+   ],
+   "0x794388": [
+    "kernel32.dll",
+    "OpenProcess"
+   ],
+   "0x79438c": [
+    "kernel32.dll",
+    "MultiByteToWideChar"
+   ],
+   "0x794390": [
+    "kernel32.dll",
+    "MulDiv"
+   ],
+   "0x794394": [
+    "kernel32.dll",
+    "LockResource"
+   ],
+   "0x794398": [
+    "kernel32.dll",
+    "LocalFileTimeToFileTime"
+   ],
+   "0x79439c": [
+    "kernel32.dll",
+    "LoadResource"
+   ],
+   "0x7943a0": [
+    "kernel32.dll",
+    "LoadLibraryW"
+   ],
+   "0x7943a4": [
+    "kernel32.dll",
+    "LoadLibraryA"
+   ],
+   "0x7943a8": [
+    "kernel32.dll",
+    "LeaveCriticalSection"
+   ],
+   "0x7943ac": [
+    "kernel32.dll",
+    "InitializeCriticalSection"
+   ],
+   "0x7943b0": [
+    "kernel32.dll",
+    "GlobalUnlock"
+   ],
+   "0x7943b4": [
+    "kernel32.dll",
+    "GlobalSize"
+   ],
+   "0x7943b8": [
+    "kernel32.dll",
+    "GlobalReAlloc"
+   ],
+   "0x7943bc": [
+    "kernel32.dll",
+    "GlobalHandle"
+   ],
+   "0x7943c0": [
+    "kernel32.dll",
+    "GlobalLock"
+   ],
+   "0x7943c4": [
+    "kernel32.dll",
+    "GlobalFree"
+   ],
+   "0x7943c8": [
+    "kernel32.dll",
+    "GlobalFindAtomA"
+   ],
+   "0x7943cc": [
+    "kernel32.dll",
+    "GlobalDeleteAtom"
+   ],
+   "0x7943d0": [
+    "kernel32.dll",
+    "GlobalAlloc"
+   ],
+   "0x7943d4": [
+    "kernel32.dll",
+    "GlobalAddAtomA"
+   ],
+   "0x7943d8": [
+    "kernel32.dll",
+    "GetVersionExA"
+   ],
+   "0x7943dc": [
+    "kernel32.dll",
+    "GetVersion"
+   ],
+   "0x7943e0": [
+    "kernel32.dll",
+    "GetUserDefaultLCID"
+   ],
+   "0x7943e4": [
+    "kernel32.dll",
+    "GetTickCount"
+   ],
+   "0x7943e8": [
+    "kernel32.dll",
+    "GetThreadLocale"
+   ],
+   "0x7943ec": [
+    "kernel32.dll",
+    "GetTempPathA"
+   ],
+   "0x7943f0": [
+    "kernel32.dll",
+    "GetSystemInfo"
+   ],
+   "0x7943f4": [
+    "kernel32.dll",
+    "GetSystemDirectoryA"
+   ],
+   "0x7943f8": [
+    "kernel32.dll",
+    "GetStringTypeExA"
+   ],
+   "0x7943fc": [
+    "kernel32.dll",
+    "GetStdHandle"
+   ],
+   "0x794400": [
+    "kernel32.dll",
+    "GetShortPathNameW"
+   ],
+   "0x794404": [
+    "kernel32.dll",
+    "GetShortPathNameA"
+   ],
+   "0x794408": [
+    "kernel32.dll",
+    "GetProfileStringA"
+   ],
+   "0x79440c": [
+    "kernel32.dll",
+    "GetProcAddress"
+   ],
+   "0x794410": [
+    "kernel32.dll",
+    "GetModuleHandleW"
+   ],
+   "0x794414": [
+    "kernel32.dll",
+    "GetModuleHandleA"
+   ],
+   "0x794418": [
+    "kernel32.dll",
+    "GetModuleFileNameW"
+   ],
+   "0x79441c": [
+    "kernel32.dll",
+    "GetModuleFileNameA"
+   ],
+   "0x794420": [
+    "kernel32.dll",
+    "GetLocaleInfoA"
+   ],
+   "0x794424": [
+    "kernel32.dll",
+    "GetLocalTime"
+   ],
+   "0x794428": [
+    "kernel32.dll",
+    "GetLastError"
+   ],
+   "0x79442c": [
+    "kernel32.dll",
+    "GetFullPathNameA"
+   ],
+   "0x794430": [
+    "kernel32.dll",
+    "GetFileTime"
+   ],
+   "0x794434": [
+    "kernel32.dll",
+    "GetFileAttributesExA"
+   ],
+   "0x794438": [
+    "kernel32.dll",
+    "GetFileAttributesA"
+   ],
+   "0x79443c": [
+    "kernel32.dll",
+    "GetExitCodeThread"
+   ],
+   "0x794440": [
+    "kernel32.dll",
+    "GetEnvironmentVariableA"
+   ],
+   "0x794444": [
+    "kernel32.dll",
+    "GetDiskFreeSpaceA"
+   ],
+   "0x794448": [
+    "kernel32.dll",
+    "GetDateFormatA"
+   ],
+   "0x79444c": [
+    "kernel32.dll",
+    "GetCurrentThreadId"
+   ],
+   "0x794450": [
+    "kernel32.dll",
+    "GetCurrentProcessId"
+   ],
+   "0x794454": [
+    "kernel32.dll",
+    "GetCurrentDirectoryA"
+   ],
+   "0x794458": [
+    "kernel32.dll",
+    "GetComputerNameA"
+   ],
+   "0x79445c": [
+    "kernel32.dll",
+    "GetCPInfo"
+   ],
+   "0x794460": [
+    "kernel32.dll",
+    "GetACP"
+   ],
+   "0x794464": [
+    "kernel32.dll",
+    "FreeResource"
+   ],
+   "0x794468": [
+    "kernel32.dll",
+    "InterlockedIncrement"
+   ],
+   "0x79446c": [
+    "kernel32.dll",
+    "InterlockedExchange"
+   ],
+   "0x794470": [
+    "kernel32.dll",
+    "InterlockedDecrement"
+   ],
+   "0x794474": [
+    "kernel32.dll",
+    "FreeLibrary"
+   ],
+   "0x794478": [
+    "kernel32.dll",
+    "FormatMessageA"
+   ],
+   "0x79447c": [
+    "kernel32.dll",
+    "FlushFileBuffers"
+   ],
+   "0x794480": [
+    "kernel32.dll",
+    "FindResourceA"
+   ],
+   "0x794484": [
+    "kernel32.dll",
+    "FindNextFileA"
+   ],
+   "0x794488": [
+    "kernel32.dll",
+    "FindNextChangeNotification"
+   ],
+   "0x79448c": [
+    "kernel32.dll",
+    "FindFirstFileA"
+   ],
+   "0x794490": [
+    "kernel32.dll",
+    "FindFirstChangeNotificationA"
+   ],
+   "0x794494": [
+    "kernel32.dll",
+    "FindCloseChangeNotification"
+   ],
+   "0x794498": [
+    "kernel32.dll",
+    "FindClose"
+   ],
+   "0x79449c": [
+    "kernel32.dll",
+    "FileTimeToLocalFileTime"
+   ],
+   "0x7944a0": [
+    "kernel32.dll",
+    "FileTimeToDosDateTime"
+   ],
+   "0x7944a4": [
+    "kernel32.dll",
+    "ExpandEnvironmentStringsA"
+   ],
+   "0x7944a8": [
+    "kernel32.dll",
+    "EnumCalendarInfoA"
+   ],
+   "0x7944ac": [
+    "kernel32.dll",
+    "EnterCriticalSection"
+   ],
+   "0x7944b0": [
+    "kernel32.dll",
+    "DosDateTimeToFileTime"
+   ],
+   "0x7944b4": [
+    "kernel32.dll",
+    "DeleteFileA"
+   ],
+   "0x7944b8": [
+    "kernel32.dll",
+    "DeleteCriticalSection"
+   ],
+   "0x7944bc": [
+    "kernel32.dll",
+    "CreateThread"
+   ],
+   "0x7944c0": [
+    "kernel32.dll",
+    "CreateSemaphoreA"
+   ],
+   "0x7944c4": [
+    "kernel32.dll",
+    "CreateMutexA"
+   ],
+   "0x7944c8": [
+    "kernel32.dll",
+    "CreateFileW"
+   ],
+   "0x7944cc": [
+    "kernel32.dll",
+    "CreateFileA"
+   ],
+   "0x7944d0": [
+    "kernel32.dll",
+    "CreateEventA"
+   ],
+   "0x7944d4": [
+    "kernel32.dll",
+    "CreateDirectoryA"
+   ],
+   "0x7944d8": [
+    "kernel32.dll",
+    "CopyFileA"
+   ],
+   "0x7944dc": [
+    "kernel32.dll",
+    "CompareStringW"
+   ],
+   "0x7944e0": [
+    "kernel32.dll",
+    "CompareStringA"
+   ],
+   "0x7944e4": [
+    "kernel32.dll",
+    "CompareFileTime"
+   ],
+   "0x7944e8": [
+    "kernel32.dll",
+    "CloseHandle"
+   ],
+   "0x7944f0": [
+    "gdi32.dll",
+    "UnrealizeObject"
+   ],
+   "0x7944f4": [
+    "gdi32.dll",
+    "TextOutW"
+   ],
+   "0x7944f8": [
+    "gdi32.dll",
+    "StretchDIBits"
+   ],
+   "0x7944fc": [
+    "gdi32.dll",
+    "StretchBlt"
+   ],
+   "0x794500": [
+    "gdi32.dll",
+    "StartPage"
+   ],
+   "0x794504": [
+    "gdi32.dll",
+    "StartDocA"
+   ],
+   "0x794508": [
+    "gdi32.dll",
+    "SetWindowOrgEx"
+   ],
+   "0x79450c": [
+    "gdi32.dll",
+    "SetWinMetaFileBits"
+   ],
+   "0x794510": [
+    "gdi32.dll",
+    "SetViewportOrgEx"
+   ],
+   "0x794514": [
+    "gdi32.dll",
+    "SetTextCharacterExtra"
+   ],
+   "0x794518": [
+    "gdi32.dll",
+    "SetTextColor"
+   ],
+   "0x79451c": [
+    "gdi32.dll",
+    "SetTextAlign"
+   ],
+   "0x794520": [
+    "gdi32.dll",
+    "SetStretchBltMode"
+   ],
+   "0x794524": [
+    "gdi32.dll",
+    "SetROP2"
+   ],
+   "0x794528": [
+    "gdi32.dll",
+    "SetPixelV"
+   ],
+   "0x79452c": [
+    "gdi32.dll",
+    "SetPixel"
+   ],
+   "0x794530": [
+    "gdi32.dll",
+    "SetEnhMetaFileBits"
+   ],
+   "0x794534": [
+    "gdi32.dll",
+    "SetDIBColorTable"
+   ],
+   "0x794538": [
+    "gdi32.dll",
+    "SetBrushOrgEx"
+   ],
+   "0x79453c": [
+    "gdi32.dll",
+    "SetBkMode"
+   ],
+   "0x794540": [
+    "gdi32.dll",
+    "SetBkColor"
+   ],
+   "0x794544": [
+    "gdi32.dll",
+    "SetAbortProc"
+   ],
+   "0x794548": [
+    "gdi32.dll",
+    "SelectPalette"
+   ],
+   "0x79454c": [
+    "gdi32.dll",
+    "SelectObject"
+   ],
+   "0x794550": [
+    "gdi32.dll",
+    "SelectClipRgn"
+   ],
+   "0x794554": [
+    "gdi32.dll",
+    "SaveDC"
+   ],
+   "0x794558": [
+    "gdi32.dll",
+    "RoundRect"
+   ],
+   "0x79455c": [
+    "gdi32.dll",
+    "RestoreDC"
+   ],
+   "0x794560": [
+    "gdi32.dll",
+    "RemoveFontMemResourceEx"
+   ],
+   "0x794564": [
+    "gdi32.dll",
+    "Rectangle"
+   ],
+   "0x794568": [
+    "gdi32.dll",
+    "RectVisible"
+   ],
+   "0x79456c": [
+    "gdi32.dll",
+    "RealizePalette"
+   ],
+   "0x794570": [
+    "gdi32.dll",
+    "Polyline"
+   ],
+   "0x794574": [
+    "gdi32.dll",
+    "Polygon"
+   ],
+   "0x794578": [
+    "gdi32.dll",
+    "PlayEnhMetaFile"
+   ],
+   "0x79457c": [
+    "gdi32.dll",
+    "Pie"
+   ],
+   "0x794580": [
+    "gdi32.dll",
+    "PatBlt"
+   ],
+   "0x794584": [
+    "gdi32.dll",
+    "MoveToEx"
+   ],
+   "0x794588": [
+    "gdi32.dll",
+    "MaskBlt"
+   ],
+   "0x79458c": [
+    "gdi32.dll",
+    "LineTo"
+   ],
+   "0x794590": [
+    "gdi32.dll",
+    "IntersectClipRect"
+   ],
+   "0x794594": [
+    "gdi32.dll",
+    "GetWindowOrgEx"
+   ],
+   "0x794598": [
+    "gdi32.dll",
+    "GetWinMetaFileBits"
+   ],
+   "0x79459c": [
+    "gdi32.dll",
+    "GetViewportOrgEx"
+   ],
+   "0x7945a0": [
+    "gdi32.dll",
+    "GetTextMetricsA"
+   ],
+   "0x7945a4": [
+    "gdi32.dll",
+    "GetTextExtentPointA"
+   ],
+   "0x7945a8": [
+    "gdi32.dll",
+    "GetTextExtentPoint32W"
+   ],
+   "0x7945ac": [
+    "gdi32.dll",
+    "GetTextExtentPoint32A"
+   ],
+   "0x7945b0": [
+    "gdi32.dll",
+    "GetTextColor"
+   ],
+   "0x7945b4": [
+    "gdi32.dll",
+    "GetTextAlign"
+   ],
+   "0x7945b8": [
+    "gdi32.dll",
+    "GetSystemPaletteEntries"
+   ],
+   "0x7945bc": [
+    "gdi32.dll",
+    "GetStockObject"
+   ],
+   "0x7945c0": [
+    "gdi32.dll",
+    "GetPixel"
+   ],
+   "0x7945c4": [
+    "gdi32.dll",
+    "GetPaletteEntries"
+   ],
+   "0x7945c8": [
+    "gdi32.dll",
+    "GetObjectW"
+   ],
+   "0x7945cc": [
+    "gdi32.dll",
+    "GetObjectA"
+   ],
+   "0x7945d0": [
+    "gdi32.dll",
+    "GetEnhMetaFilePaletteEntries"
+   ],
+   "0x7945d4": [
+    "gdi32.dll",
+    "GetEnhMetaFileHeader"
+   ],
+   "0x7945d8": [
+    "gdi32.dll",
+    "GetEnhMetaFileDescriptionA"
+   ],
+   "0x7945dc": [
+    "gdi32.dll",
+    "GetEnhMetaFileBits"
+   ],
+   "0x7945e0": [
+    "gdi32.dll",
+    "GetDeviceCaps"
+   ],
+   "0x7945e4": [
+    "gdi32.dll",
+    "GetDIBits"
+   ],
+   "0x7945e8": [
+    "gdi32.dll",
+    "GetDIBColorTable"
+   ],
+   "0x7945ec": [
+    "gdi32.dll",
+    "GetDCOrgEx"
+   ],
+   "0x7945f0": [
+    "gdi32.dll",
+    "GetCurrentPositionEx"
+   ],
+   "0x7945f4": [
+    "gdi32.dll",
+    "GetClipBox"
+   ],
+   "0x7945f8": [
+    "gdi32.dll",
+    "GetCharABCWidthsW"
+   ],
+   "0x7945fc": [
+    "gdi32.dll",
+    "GetCharABCWidthsA"
+   ],
+   "0x794600": [
+    "gdi32.dll",
+    "GetBrushOrgEx"
+   ],
+   "0x794604": [
+    "gdi32.dll",
+    "GetBkColor"
+   ],
+   "0x794608": [
+    "gdi32.dll",
+    "GetBitmapDimensionEx"
+   ],
+   "0x79460c": [
+    "gdi32.dll",
+    "GetBitmapBits"
+   ],
+   "0x794610": [
+    "gdi32.dll",
+    "GdiFlush"
+   ],
+   "0x794614": [
+    "gdi32.dll",
+    "ExtTextOutW"
+   ],
+   "0x794618": [
+    "gdi32.dll",
+    "ExtTextOutA"
+   ],
+   "0x79461c": [
+    "gdi32.dll",
+    "ExtCreatePen"
+   ],
+   "0x794620": [
+    "gdi32.dll",
+    "ExcludeClipRect"
+   ],
+   "0x794624": [
+    "gdi32.dll",
+    "EnumFontFamiliesA"
+   ],
+   "0x794628": [
+    "gdi32.dll",
+    "EndPage"
+   ],
+   "0x79462c": [
+    "gdi32.dll",
+    "EndDoc"
+   ],
+   "0x794630": [
+    "gdi32.dll",
+    "Ellipse"
+   ],
+   "0x794634": [
+    "gdi32.dll",
+    "DeleteObject"
+   ],
+   "0x794638": [
+    "gdi32.dll",
+    "DeleteEnhMetaFile"
+   ],
+   "0x79463c": [
+    "gdi32.dll",
+    "DeleteDC"
+   ],
+   "0x794640": [
+    "gdi32.dll",
+    "CreateSolidBrush"
+   ],
+   "0x794644": [
+    "gdi32.dll",
+    "CreateRectRgn"
+   ],
+   "0x794648": [
+    "gdi32.dll",
+    "CreatePenIndirect"
+   ],
+   "0x79464c": [
+    "gdi32.dll",
+    "CreatePen"
+   ],
+   "0x794650": [
+    "gdi32.dll",
+    "CreatePatternBrush"
+   ],
+   "0x794654": [
+    "gdi32.dll",
+    "CreatePalette"
+   ],
+   "0x794658": [
+    "gdi32.dll",
+    "CreateICA"
+   ],
+   "0x79465c": [
+    "gdi32.dll",
+    "CreateHalftonePalette"
+   ],
+   "0x794660": [
+    "gdi32.dll",
+    "CreateFontIndirectW"
+   ],
+   "0x794664": [
+    "gdi32.dll",
+    "CreateFontIndirectA"
+   ],
+   "0x794668": [
+    "gdi32.dll",
+    "CreateEnhMetaFileA"
+   ],
+   "0x79466c": [
+    "gdi32.dll",
+    "CreateDIBitmap"
+   ],
+   "0x794670": [
+    "gdi32.dll",
+    "CreateDIBSection"
+   ],
+   "0x794674": [
+    "gdi32.dll",
+    "CreateDCA"
+   ],
+   "0x794678": [
+    "gdi32.dll",
+    "CreateCompatibleDC"
+   ],
+   "0x79467c": [
+    "gdi32.dll",
+    "CreateCompatibleBitmap"
+   ],
+   "0x794680": [
+    "gdi32.dll",
+    "CreateBrushIndirect"
+   ],
+   "0x794684": [
+    "gdi32.dll",
+    "CreateBitmap"
+   ],
+   "0x794688": [
+    "gdi32.dll",
+    "CopyEnhMetaFileA"
+   ],
+   "0x79468c": [
+    "gdi32.dll",
+    "CombineRgn"
+   ],
+   "0x794690": [
+    "gdi32.dll",
+    "CloseEnhMetaFile"
+   ],
+   "0x794694": [
+    "gdi32.dll",
+    "BitBlt"
+   ],
+   "0x794698": [
+    "gdi32.dll",
+    "AddFontMemResourceEx"
+   ],
+   "0x79469c": [
+    "gdi32.dll",
+    "AbortDoc"
+   ],
+   "0x7946a4": [
+    "user32.dll",
+    "CreateWindowExA"
+   ],
+   "0x7946a8": [
+    "user32.dll",
+    "keybd_event"
+   ],
+   "0x7946ac": [
+    "user32.dll",
+    "WindowFromPoint"
+   ],
+   "0x7946b0": [
+    "user32.dll",
+    "WindowFromDC"
+   ],
+   "0x7946b4": [
+    "user32.dll",
+    "WinHelpA"
+   ],
+   "0x7946b8": [
+    "user32.dll",
+    "WaitMessage"
+   ],
+   "0x7946bc": [
+    "user32.dll",
+    "WaitForInputIdle"
+   ],
+   "0x7946c0": [
+    "user32.dll",
+    "UpdateWindow"
+   ],
+   "0x7946c4": [
+    "user32.dll",
+    "UnregisterClassA"
+   ],
+   "0x7946c8": [
+    "user32.dll",
+    "UnionRect"
+   ],
+   "0x7946cc": [
+    "user32.dll",
+    "UnhookWindowsHookEx"
+   ],
+   "0x7946d0": [
+    "user32.dll",
+    "TranslateMessage"
+   ],
+   "0x7946d4": [
+    "user32.dll",
+    "TranslateMDISysAccel"
+   ],
+   "0x7946d8": [
+    "user32.dll",
+    "TrackPopupMenu"
+   ],
+   "0x7946dc": [
+    "user32.dll",
+    "SystemParametersInfoW"
+   ],
+   "0x7946e0": [
+    "user32.dll",
+    "SystemParametersInfoA"
+   ],
+   "0x7946e4": [
+    "user32.dll",
+    "ShowWindow"
+   ],
+   "0x7946e8": [
+    "user32.dll",
+    "ShowScrollBar"
+   ],
+   "0x7946ec": [
+    "user32.dll",
+    "ShowOwnedPopups"
+   ],
+   "0x7946f0": [
+    "user32.dll",
+    "ShowCursor"
+   ],
+   "0x7946f4": [
+    "user32.dll",
+    "ShowCaret"
+   ],
+   "0x7946f8": [
+    "user32.dll",
+    "SetWindowRgn"
+   ],
+   "0x7946fc": [
+    "user32.dll",
+    "SetWindowsHookExW"
+   ],
+   "0x794700": [
+    "user32.dll",
+    "SetWindowsHookExA"
+   ],
+   "0x794704": [
+    "user32.dll",
+    "SetWindowTextA"
+   ],
+   "0x794708": [
+    "user32.dll",
+    "SetWindowPos"
+   ],
+   "0x79470c": [
+    "user32.dll",
+    "SetWindowPlacement"
+   ],
+   "0x794710": [
+    "user32.dll",
+    "SetWindowLongW"
+   ],
+   "0x794714": [
+    "user32.dll",
+    "SetWindowLongA"
+   ],
+   "0x794718": [
+    "user32.dll",
+    "SetTimer"
+   ],
+   "0x79471c": [
+    "user32.dll",
+    "SetScrollRange"
+   ],
+   "0x794720": [
+    "user32.dll",
+    "SetScrollPos"
+   ],
+   "0x794724": [
+    "user32.dll",
+    "SetScrollInfo"
+   ],
+   "0x794728": [
+    "user32.dll",
+    "SetRect"
+   ],
+   "0x79472c": [
+    "user32.dll",
+    "SetPropA"
+   ],
+   "0x794730": [
+    "user32.dll",
+    "SetParent"
+   ],
+   "0x794734": [
+    "user32.dll",
+    "SetMenuItemInfoA"
+   ],
+   "0x794738": [
+    "user32.dll",
+    "SetMenuInfo"
+   ],
+   "0x79473c": [
+    "user32.dll",
+    "SetMenu"
+   ],
+   "0x794740": [
+    "user32.dll",
+    "SetKeyboardState"
+   ],
+   "0x794744": [
+    "user32.dll",
+    "SetForegroundWindow"
+   ],
+   "0x794748": [
+    "user32.dll",
+    "SetFocus"
+   ],
+   "0x79474c": [
+    "user32.dll",
+    "SetCursor"
+   ],
+   "0x794750": [
+    "user32.dll",
+    "SetClipboardData"
+   ],
+   "0x794754": [
+    "user32.dll",
+    "SetClassLongA"
+   ],
+   "0x794758": [
+    "user32.dll",
+    "SetCaretPos"
+   ],
+   "0x79475c": [
+    "user32.dll",
+    "SetCapture"
+   ],
+   "0x794760": [
+    "user32.dll",
+    "SetActiveWindow"
+   ],
+   "0x794764": [
+    "user32.dll",
+    "SendMessageTimeoutA"
+   ],
+   "0x794768": [
+    "user32.dll",
+    "SendMessageA"
+   ],
+   "0x79476c": [
+    "user32.dll",
+    "SendInput"
+   ],
+   "0x794770": [
+    "user32.dll",
+    "ScrollWindow"
+   ],
+   "0x794774": [
+    "user32.dll",
+    "ScreenToClient"
+   ],
+   "0x794778": [
+    "user32.dll",
+    "RemovePropA"
+   ],
+   "0x79477c": [
+    "user32.dll",
+    "RemoveMenu"
+   ],
+   "0x794780": [
+    "user32.dll",
+    "ReleaseDC"
+   ],
+   "0x794784": [
+    "user32.dll",
+    "ReleaseCapture"
+   ],
+   "0x794788": [
+    "user32.dll",
+    "RegisterWindowMessageA"
+   ],
+   "0x79478c": [
+    "user32.dll",
+    "RegisterClipboardFormatA"
+   ],
+   "0x794790": [
+    "user32.dll",
+    "RegisterClassA"
+   ],
+   "0x794794": [
+    "user32.dll",
+    "RedrawWindow"
+   ],
+   "0x794798": [
+    "user32.dll",
+    "PtInRect"
+   ],
+   "0x79479c": [
+    "user32.dll",
+    "PostQuitMessage"
+   ],
+   "0x7947a0": [
+    "user32.dll",
+    "PostMessageA"
+   ],
+   "0x7947a4": [
+    "user32.dll",
+    "PeekMessageA"
+   ],
+   "0x7947a8": [
+    "user32.dll",
+    "OpenClipboard"
+   ],
+   "0x7947ac": [
+    "user32.dll",
+    "OffsetRect"
+   ],
+   "0x7947b0": [
+    "user32.dll",
+    "OemToCharA"
+   ],
+   "0x7947b4": [
+    "user32.dll",
+    "MsgWaitForMultipleObjects"
+   ],
+   "0x7947b8": [
+    "user32.dll",
+    "MoveWindow"
+   ],
+   "0x7947bc": [
+    "user32.dll",
+    "MessageBoxIndirectA"
+   ],
+   "0x7947c0": [
+    "user32.dll",
+    "MessageBoxW"
+   ],
+   "0x7947c4": [
+    "user32.dll",
+    "MessageBoxA"
+   ],
+   "0x7947c8": [
+    "user32.dll",
+    "MessageBeep"
+   ],
+   "0x7947cc": [
+    "user32.dll",
+    "MapWindowPoints"
+   ],
+   "0x7947d0": [
+    "user32.dll",
+    "MapVirtualKeyA"
+   ],
+   "0x7947d4": [
+    "user32.dll",
+    "LoadStringA"
+   ],
+   "0x7947d8": [
+    "user32.dll",
+    "LoadKeyboardLayoutA"
+   ],
+   "0x7947dc": [
+    "user32.dll",
+    "LoadIconA"
+   ],
+   "0x7947e0": [
+    "user32.dll",
+    "LoadCursorA"
+   ],
+   "0x7947e4": [
+    "user32.dll",
+    "LoadBitmapA"
+   ],
+   "0x7947e8": [
+    "user32.dll",
+    "KillTimer"
+   ],
+   "0x7947ec": [
+    "user32.dll",
+    "IsZoomed"
+   ],
+   "0x7947f0": [
+    "user32.dll",
+    "IsWindowVisible"
+   ],
+   "0x7947f4": [
+    "user32.dll",
+    "IsWindowUnicode"
+   ],
+   "0x7947f8": [
+    "user32.dll",
+    "IsWindowEnabled"
+   ],
+   "0x7947fc": [
+    "user32.dll",
+    "IsWindow"
+   ],
+   "0x794800": [
+    "user32.dll",
+    "IsRectEmpty"
+   ],
+   "0x794804": [
+    "user32.dll",
+    "IsIconic"
+   ],
+   "0x794808": [
+    "user32.dll",
+    "IsDialogMessageA"
+   ],
+   "0x79480c": [
+    "user32.dll",
+    "IsClipboardFormatAvailable"
+   ],
+   "0x794810": [
+    "user32.dll",
+    "IsChild"
+   ],
+   "0x794814": [
+    "user32.dll",
+    "IsCharAlphaNumericA"
+   ],
+   "0x794818": [
+    "user32.dll",
+    "IsCharAlphaA"
+   ],
+   "0x79481c": [
+    "user32.dll",
+    "InvalidateRect"
+   ],
+   "0x794820": [
+    "user32.dll",
+    "IntersectRect"
+   ],
+   "0x794824": [
+    "user32.dll",
+    "InsertMenuItemA"
+   ],
+   "0x794828": [
+    "user32.dll",
+    "InsertMenuA"
+   ],
+   "0x79482c": [
+    "user32.dll",
+    "InflateRect"
+   ],
+   "0x794830": [
+    "user32.dll",
+    "HideCaret"
+   ],
+   "0x794834": [
+    "user32.dll",
+    "GetWindowThreadProcessId"
+   ],
+   "0x794838": [
+    "user32.dll",
+    "GetWindowTextLengthW"
+   ],
+   "0x79483c": [
+    "user32.dll",
+    "GetWindowTextW"
+   ],
+   "0x794840": [
+    "user32.dll",
+    "GetWindowTextA"
+   ],
+   "0x794844": [
+    "user32.dll",
+    "GetWindowRect"
+   ],
+   "0x794848": [
+    "user32.dll",
+    "GetWindowPlacement"
+   ],
+   "0x79484c": [
+    "user32.dll",
+    "GetWindowLongW"
+   ],
+   "0x794850": [
+    "user32.dll",
+    "GetWindowLongA"
+   ],
+   "0x794854": [
+    "user32.dll",
+    "GetWindowDC"
+   ],
+   "0x794858": [
+    "user32.dll",
+    "GetTopWindow"
+   ],
+   "0x79485c": [
+    "user32.dll",
+    "GetSystemMetrics"
+   ],
+   "0x794860": [
+    "user32.dll",
+    "GetSystemMenu"
+   ],
+   "0x794864": [
+    "user32.dll",
+    "GetSysColorBrush"
+   ],
+   "0x794868": [
+    "user32.dll",
+    "GetSysColor"
+   ],
+   "0x79486c": [
+    "user32.dll",
+    "GetSubMenu"
+   ],
+   "0x794870": [
+    "user32.dll",
+    "GetScrollRange"
+   ],
+   "0x794874": [
+    "user32.dll",
+    "GetScrollPos"
+   ],
+   "0x794878": [
+    "user32.dll",
+    "GetScrollInfo"
+   ],
+   "0x79487c": [
+    "user32.dll",
+    "GetPropA"
+   ],
+   "0x794880": [
+    "user32.dll",
+    "GetParent"
+   ],
+   "0x794884": [
+    "user32.dll",
+    "GetWindow"
+   ],
+   "0x794888": [
+    "user32.dll",
+    "GetMessageTime"
+   ],
+   "0x79488c": [
+    "user32.dll",
+    "GetMessagePos"
+   ],
+   "0x794890": [
+    "user32.dll",
+    "GetMenuStringA"
+   ],
+   "0x794894": [
+    "user32.dll",
+    "GetMenuState"
+   ],
+   "0x794898": [
+    "user32.dll",
+    "GetMenuItemRect"
+   ],
+   "0x79489c": [
+    "user32.dll",
+    "GetMenuItemInfoA"
+   ],
+   "0x7948a0": [
+    "user32.dll",
+    "GetMenuItemID"
+   ],
+   "0x7948a4": [
+    "user32.dll",
+    "GetMenuItemCount"
+   ],
+   "0x7948a8": [
+    "user32.dll",
+    "GetMenu"
+   ],
+   "0x7948ac": [
+    "user32.dll",
+    "GetLastActivePopup"
+   ],
+   "0x7948b0": [
+    "user32.dll",
+    "GetKeyboardState"
+   ],
+   "0x7948b4": [
+    "user32.dll",
+    "GetKeyboardLayoutList"
+   ],
+   "0x7948b8": [
+    "user32.dll",
+    "GetKeyboardLayout"
+   ],
+   "0x7948bc": [
+    "user32.dll",
+    "GetKeyState"
+   ],
+   "0x7948c0": [
+    "user32.dll",
+    "GetKeyNameTextA"
+   ],
+   "0x7948c4": [
+    "user32.dll",
+    "GetIconInfo"
+   ],
+   "0x7948c8": [
+    "user32.dll",
+    "GetForegroundWindow"
+   ],
+   "0x7948cc": [
+    "user32.dll",
+    "GetFocus"
+   ],
+   "0x7948d0": [
+    "user32.dll",
+    "GetDlgItem"
+   ],
+   "0x7948d4": [
+    "user32.dll",
+    "GetDlgCtrlID"
+   ],
+   "0x7948d8": [
+    "user32.dll",
+    "GetDesktopWindow"
+   ],
+   "0x7948dc": [
+    "user32.dll",
+    "GetDCEx"
+   ],
+   "0x7948e0": [
+    "user32.dll",
+    "GetDC"
+   ],
+   "0x7948e4": [
+    "user32.dll",
+    "GetCursorPos"
+   ],
+   "0x7948e8": [
+    "user32.dll",
+    "GetCursor"
+   ],
+   "0x7948ec": [
+    "user32.dll",
+    "GetComboBoxInfo"
+   ],
+   "0x7948f0": [
+    "user32.dll",
+    "GetClipboardData"
+   ],
+   "0x7948f4": [
+    "user32.dll",
+    "GetClientRect"
+   ],
+   "0x7948f8": [
+    "user32.dll",
+    "GetClassNameA"
+   ],
+   "0x7948fc": [
+    "user32.dll",
+    "GetClassLongA"
+   ],
+   "0x794900": [
+    "user32.dll",
+    "GetClassInfoA"
+   ],
+   "0x794904": [
+    "user32.dll",
+    "GetCapture"
+   ],
+   "0x794908": [
+    "user32.dll",
+    "GetAncestor"
+   ],
+   "0x79490c": [
+    "user32.dll",
+    "GetActiveWindow"
+   ],
+   "0x794910": [
+    "user32.dll",
+    "FrameRect"
+   ],
+   "0x794914": [
+    "user32.dll",
+    "FindWindowExA"
+   ],
+   "0x794918": [
+    "user32.dll",
+    "FindWindowA"
+   ],
+   "0x79491c": [
+    "user32.dll",
+    "FillRect"
+   ],
+   "0x794920": [
+    "user32.dll",
+    "EqualRect"
+   ],
+   "0x794924": [
+    "user32.dll",
+    "EnumWindows"
+   ],
+   "0x794928": [
+    "user32.dll",
+    "EnumThreadWindows"
+   ],
+   "0x79492c": [
+    "user32.dll",
+    "EnumClipboardFormats"
+   ],
+   "0x794930": [
+    "user32.dll",
+    "EnumChildWindows"
+   ],
+   "0x794934": [
+    "user32.dll",
+    "EndPaint"
+   ],
+   "0x794938": [
+    "user32.dll",
+    "EnableWindow"
+   ],
+   "0x79493c": [
+    "user32.dll",
+    "EnableScrollBar"
+   ],
+   "0x794940": [
+    "user32.dll",
+    "EnableMenuItem"
+   ],
+   "0x794944": [
+    "user32.dll",
+    "EmptyClipboard"
+   ],
+   "0x794948": [
+    "user32.dll",
+    "DrawTextExA"
+   ],
+   "0x79494c": [
+    "user32.dll",
+    "DrawTextW"
+   ],
+   "0x794950": [
+    "user32.dll",
+    "DrawTextA"
+   ],
+   "0x794954": [
+    "user32.dll",
+    "DrawMenuBar"
+   ],
+   "0x794958": [
+    "user32.dll",
+    "DrawIconEx"
+   ],
+   "0x79495c": [
+    "user32.dll",
+    "DrawIcon"
+   ],
+   "0x794960": [
+    "user32.dll",
+    "DrawFrameControl"
+   ],
+   "0x794964": [
+    "user32.dll",
+    "DrawFocusRect"
+   ],
+   "0x794968": [
+    "user32.dll",
+    "DrawEdge"
+   ],
+   "0x79496c": [
+    "user32.dll",
+    "DispatchMessageA"
+   ],
+   "0x794970": [
+    "user32.dll",
+    "DestroyWindow"
+   ],
+   "0x794974": [
+    "user32.dll",
+    "DestroyMenu"
+   ],
+   "0x794978": [
+    "user32.dll",
+    "DestroyIcon"
+   ],
+   "0x79497c": [
+    "user32.dll",
+    "DestroyCursor"
+   ],
+   "0x794980": [
+    "user32.dll",
+    "DestroyCaret"
+   ],
+   "0x794984": [
+    "user32.dll",
+    "DeleteMenu"
+   ],
+   "0x794988": [
+    "user32.dll",
+    "DefWindowProcW"
+   ],
+   "0x79498c": [
+    "user32.dll",
+    "DefWindowProcA"
+   ],
+   "0x794990": [
+    "user32.dll",
+    "DefMDIChildProcA"
+   ],
+   "0x794994": [
+    "user32.dll",
+    "DefFrameProcA"
+   ],
+   "0x794998": [
+    "user32.dll",
+    "CreatePopupMenu"
+   ],
+   "0x79499c": [
+    "user32.dll",
+    "CreateMenu"
+   ],
+   "0x7949a0": [
+    "user32.dll",
+    "CreateIconIndirect"
+   ],
+   "0x7949a4": [
+    "user32.dll",
+    "CreateIcon"
+   ],
+   "0x7949a8": [
+    "user32.dll",
+    "CreateCaret"
+   ],
+   "0x7949ac": [
+    "user32.dll",
+    "CopyRect"
+   ],
+   "0x7949b0": [
+    "user32.dll",
+    "CopyImage"
+   ],
+   "0x7949b4": [
+    "user32.dll",
+    "CopyIcon"
+   ],
+   "0x7949b8": [
+    "user32.dll",
+    "CloseClipboard"
+   ],
+   "0x7949bc": [
+    "user32.dll",
+    "ClipCursor"
+   ],
+   "0x7949c0": [
+    "user32.dll",
+    "ClientToScreen"
+   ],
+   "0x7949c4": [
+    "user32.dll",
+    "ChildWindowFromPoint"
+   ],
+   "0x7949c8": [
+    "user32.dll",
+    "CheckMenuItem"
+   ],
+   "0x7949cc": [
+    "user32.dll",
+    "CharUpperBuffW"
+   ],
+   "0x7949d0": [
+    "user32.dll",
+    "CharUpperW"
+   ],
+   "0x7949d4": [
+    "user32.dll",
+    "CharLowerBuffW"
+   ],
+   "0x7949d8": [
+    "user32.dll",
+    "CharLowerW"
+   ],
+   "0x7949dc": [
+    "user32.dll",
+    "CallWindowProcW"
+   ],
+   "0x7949e0": [
+    "user32.dll",
+    "CallWindowProcA"
+   ],
+   "0x7949e4": [
+    "user32.dll",
+    "CallNextHookEx"
+   ],
+   "0x7949e8": [
+    "user32.dll",
+    "BeginPaint"
+   ],
+   "0x7949ec": [
+    "user32.dll",
+    "CharNextA"
+   ],
+   "0x7949f0": [
+    "user32.dll",
+    "CharLowerBuffA"
+   ],
+   "0x7949f4": [
+    "user32.dll",
+    "CharLowerA"
+   ],
+   "0x7949f8": [
+    "user32.dll",
+    "CharUpperBuffA"
+   ],
+   "0x7949fc": [
+    "user32.dll",
+    "CharUpperA"
+   ],
+   "0x794a00": [
+    "user32.dll",
+    "CharToOemA"
+   ],
+   "0x794a04": [
+    "user32.dll",
+    "AdjustWindowRectEx"
+   ],
+   "0x794a08": [
+    "user32.dll",
+    "ActivateKeyboardLayout"
+   ],
+   "0x794a10": [
+    "kernel32.dll",
+    "Sleep"
+   ],
+   "0x794a18": [
+    "ole32.dll",
+    "CoTaskMemFree"
+   ],
+   "0x794a1c": [
+    "ole32.dll",
+    "StringFromCLSID"
+   ],
+   "0x794a24": [
+    "oleaut32.dll",
+    "SafeArrayPtrOfIndex"
+   ],
+   "0x794a28": [
+    "oleaut32.dll",
+    "SafeArrayPutElement"
+   ],
+   "0x794a2c": [
+    "oleaut32.dll",
+    "SafeArrayGetElement"
+   ],
+   "0x794a30": [
+    "oleaut32.dll",
+    "SafeArrayUnaccessData"
+   ],
+   "0x794a34": [
+    "oleaut32.dll",
+    "SafeArrayAccessData"
+   ],
+   "0x794a38": [
+    "oleaut32.dll",
+    "SafeArrayGetUBound"
+   ],
+   "0x794a3c": [
+    "oleaut32.dll",
+    "SafeArrayGetLBound"
+   ],
+   "0x794a40": [
+    "oleaut32.dll",
+    "SafeArrayCreate"
+   ],
+   "0x794a44": [
+    "oleaut32.dll",
+    "VariantChangeType"
+   ],
+   "0x794a48": [
+    "oleaut32.dll",
+    "VariantCopy"
+   ],
+   "0x794a4c": [
+    "oleaut32.dll",
+    "VariantClear"
+   ],
+   "0x794a50": [
+    "oleaut32.dll",
+    "VariantInit"
+   ],
+   "0x794a58": [
+    "ole32.dll",
+    "CreateStreamOnHGlobal"
+   ],
+   "0x794a5c": [
+    "ole32.dll",
+    "IsAccelerator"
+   ],
+   "0x794a60": [
+    "ole32.dll",
+    "OleDraw"
+   ],
+   "0x794a64": [
+    "ole32.dll",
+    "OleSetMenuDescriptor"
+   ],
+   "0x794a68": [
+    "ole32.dll",
+    "OleUninitialize"
+   ],
+   "0x794a6c": [
+    "ole32.dll",
+    "OleInitialize"
+   ],
+   "0x794a70": [
+    "ole32.dll",
+    "CoTaskMemFree"
+   ],
+   "0x794a74": [
+    "ole32.dll",
+    "CoTaskMemAlloc"
+   ],
+   "0x794a78": [
+    "ole32.dll",
+    "ProgIDFromCLSID"
+   ],
+   "0x794a7c": [
+    "ole32.dll",
+    "StringFromCLSID"
+   ],
+   "0x794a80": [
+    "ole32.dll",
+    "CoCreateInstance"
+   ],
+   "0x794a84": [
+    "ole32.dll",
+    "CoGetClassObject"
+   ],
+   "0x794a88": [
+    "ole32.dll",
+    "CoUninitialize"
+   ],
+   "0x794a8c": [
+    "ole32.dll",
+    "CoInitializeEx"
+   ],
+   "0x794a90": [
+    "ole32.dll",
+    "CoInitialize"
+   ],
+   "0x794a94": [
+    "ole32.dll",
+    "IsEqualGUID"
+   ],
+   "0x794a9c": [
+    "oleaut32.dll",
+    "GetErrorInfo"
+   ],
+   "0x794aa0": [
+    "oleaut32.dll",
+    "GetActiveObject"
+   ],
+   "0x794aa4": [
+    "oleaut32.dll",
+    "SysFreeString"
+   ],
+   "0x794aac": [
+    "comctl32.dll",
+    "ImageList_SetIconSize"
+   ],
+   "0x794ab0": [
+    "comctl32.dll",
+    "ImageList_GetIconSize"
+   ],
+   "0x794ab4": [
+    "comctl32.dll",
+    "ImageList_Write"
+   ],
+   "0x794ab8": [
+    "comctl32.dll",
+    "ImageList_Read"
+   ],
+   "0x794abc": [
+    "comctl32.dll",
+    "ImageList_GetDragImage"
+   ],
+   "0x794ac0": [
+    "comctl32.dll",
+    "ImageList_DragShowNolock"
+   ],
+   "0x794ac4": [
+    "comctl32.dll",
+    "ImageList_SetDragCursorImage"
+   ],
+   "0x794ac8": [
+    "comctl32.dll",
+    "ImageList_DragMove"
+   ],
+   "0x794acc": [
+    "comctl32.dll",
+    "ImageList_DragLeave"
+   ],
+   "0x794ad0": [
+    "comctl32.dll",
+    "ImageList_DragEnter"
+   ],
+   "0x794ad4": [
+    "comctl32.dll",
+    "ImageList_EndDrag"
+   ],
+   "0x794ad8": [
+    "comctl32.dll",
+    "ImageList_BeginDrag"
+   ],
+   "0x794adc": [
+    "comctl32.dll",
+    "ImageList_GetIcon"
+   ],
+   "0x794ae0": [
+    "comctl32.dll",
+    "ImageList_Remove"
+   ],
+   "0x794ae4": [
+    "comctl32.dll",
+    "ImageList_DrawEx"
+   ],
+   "0x794ae8": [
+    "comctl32.dll",
+    "ImageList_Replace"
+   ],
+   "0x794aec": [
+    "comctl32.dll",
+    "ImageList_Draw"
+   ],
+   "0x794af0": [
+    "comctl32.dll",
+    "ImageList_GetBkColor"
+   ],
+   "0x794af4": [
+    "comctl32.dll",
+    "ImageList_SetBkColor"
+   ],
+   "0x794af8": [
+    "comctl32.dll",
+    "ImageList_ReplaceIcon"
+   ],
+   "0x794afc": [
+    "comctl32.dll",
+    "ImageList_Add"
+   ],
+   "0x794b00": [
+    "comctl32.dll",
+    "ImageList_GetImageCount"
+   ],
+   "0x794b04": [
+    "comctl32.dll",
+    "ImageList_Destroy"
+   ],
+   "0x794b08": [
+    "comctl32.dll",
+    "ImageList_Create"
+   ],
+   "0x794b0c": [
+    "comctl32.dll",
+    "InitCommonControls"
+   ],
+   "0x794b14": [
+    "imm32.dll",
+    "ImmSetCompositionWindow"
+   ],
+   "0x794b18": [
+    "imm32.dll",
+    "ImmSetCompositionFontW"
+   ],
+   "0x794b1c": [
+    "imm32.dll",
+    "ImmSetCompositionFontA"
+   ],
+   "0x794b20": [
+    "imm32.dll",
+    "ImmSetCompositionStringA"
+   ],
+   "0x794b24": [
+    "imm32.dll",
+    "ImmGetCompositionStringW"
+   ],
+   "0x794b28": [
+    "imm32.dll",
+    "ImmGetCompositionStringA"
+   ],
+   "0x794b2c": [
+    "imm32.dll",
+    "ImmReleaseContext"
+   ],
+   "0x794b30": [
+    "imm32.dll",
+    "ImmGetContext"
+   ],
+   "0x794b38": [
+    "shell32.dll",
+    "ShellExecuteExA"
+   ],
+   "0x794b3c": [
+    "shell32.dll",
+    "ShellExecuteA"
+   ],
+   "0x794b40": [
+    "shell32.dll",
+    "SHGetFileInfoA"
+   ],
+   "0x794b44": [
+    "shell32.dll",
+    "SHFileOperationA"
+   ],
+   "0x794b48": [
+    "shell32.dll",
+    "DragQueryPoint"
+   ],
+   "0x794b4c": [
+    "shell32.dll",
+    "DragQueryFileW"
+   ],
+   "0x794b50": [
+    "shell32.dll",
+    "DragQueryFileA"
+   ],
+   "0x794b54": [
+    "shell32.dll",
+    "DragFinish"
+   ],
+   "0x794b58": [
+    "shell32.dll",
+    "DragAcceptFiles"
+   ],
+   "0x794b60": [
+    "shell32.dll",
+    "SHGetSpecialFolderPathW"
+   ],
+   "0x794b64": [
+    "shell32.dll",
+    "SHGetSpecialFolderLocation"
+   ],
+   "0x794b68": [
+    "shell32.dll",
+    "SHGetMalloc"
+   ],
+   "0x794b6c": [
+    "shell32.dll",
+    "SHGetDesktopFolder"
+   ],
+   "0x794b74": [
+    "comdlg32.dll",
+    "PrintDlgA"
+   ],
+   "0x794b78": [
+    "comdlg32.dll",
+    "ChooseColorA"
+   ],
+   "0x794b7c": [
+    "comdlg32.dll",
+    "GetSaveFileNameA"
+   ],
+   "0x794b80": [
+    "comdlg32.dll",
+    "GetOpenFileNameA"
+   ],
+   "0x794b88": [
+    "kernel32.dll",
+    "GetProcessId"
+   ],
+   "0x794b90": [
+    "kernel32.dll",
+    "GetProcessId"
+   ],
+   "0x794b98": [
+    "user32.dll",
+    "SetWindowLongW"
+   ]
+  }
+ }
+}

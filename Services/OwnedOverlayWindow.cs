@@ -29,7 +29,7 @@ namespace SoulLink.Services
         private static readonly IntPtr MaNoactivate = new IntPtr(3);
 
         private readonly Window _owner;
-        private readonly FrameworkElement _anchor;
+        private FrameworkElement _anchor;
         private readonly string _diagnosticName;
         private readonly bool _allowInactiveOwner;
         private bool _requested;
@@ -72,6 +72,24 @@ namespace SoulLink.Services
 
         public bool IsRequested => _requested;
         public bool NativeVisible { get; private set; }
+
+        /// <summary>当前锚定的 WPF 元素。</summary>
+        public FrameworkElement Anchor => _anchor;
+
+        /// <summary>
+        /// 换锚点（多画面时焦点格子会变）。
+        /// ★ 只换测量与定位目标，不销毁/重建浮层 HWND ——
+        ///   重建 HWND 正是过去保护层"请求显示但原生不可见"的来源。
+        /// </summary>
+        public void SetAnchor(FrameworkElement anchor)
+        {
+            if (_closed) return;
+            if (anchor == null || ReferenceEquals(anchor, _anchor)) return;
+            try { _anchor.SizeChanged -= OnAnchorSizeChanged; } catch { }
+            _anchor = anchor;
+            _anchor.SizeChanged += OnAnchorSizeChanged;
+            SyncToAnchor();
+        }
 
         /// <summary>在同一 Owner 的浮层中置顶，不使用全局 Topmost。</summary>
         public void BringToFront()
@@ -145,8 +163,11 @@ namespace SoulLink.Services
                     return;
                 }
 
-                double widthDip = _widthOverride ?? _anchor.ActualWidth;
-                double heightDip = _heightOverride ?? _anchor.ActualHeight;
+                // ★ 永远以锚点实时尺寸为准，不再用外部传入的 override。
+                //   override 是"显示那一刻"的快照；窗口随后变大或切换布局后它就是旧值，
+                //   实测会算出比外框还宽的矩形，把保护层推到窗口外面。
+                double widthDip = _anchor.ActualWidth;
+                double heightDip = _anchor.ActualHeight;
                 if (widthDip < 1 || heightDip < 1 || _anchor.ActualWidth < 1 || _anchor.ActualHeight < 1)
                 {
                     HideForOwnerState();
@@ -178,6 +199,14 @@ namespace SoulLink.Services
 
                 var handle = new WindowInteropHelper(this).Handle;
                 if (handle == IntPtr.Zero) return;
+
+                // ★ 每次都同步 WPF 侧属性：只在首次 Show 时设一次 Left/Top，
+                //   WPF 之后会在自己的布局里把窗口拽回旧位置（实测漂移来源）。
+                Width = widthDip;
+                Height = heightDip;
+                Left = x / transform.Value.M11;
+                Top = y / transform.Value.M22;
+
                 SetWindowPos(handle, IntPtr.Zero, x, y, width, height,
                     SwpNozorder | SwpNoactivate | (NativeVisible ? 0 : SwpShowwindow));
                 // WPF Window.IsVisible may still be true after SW_HIDE (notably after
@@ -290,7 +319,7 @@ namespace SoulLink.Services
             base.OnClosed(e);
         }
 
-        private void Trace(string stage, bool stack)
+    private void Trace(string stage, bool stack)
         {
             if (!SoulLink.Controls.RdpConsole.VerboseLog) return;
             try
