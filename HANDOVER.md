@@ -1,0 +1,423 @@
+# SoulLink 项目交接文档
+
+> 最后更新：2026-11-17 · v1.13.0
+
+---
+
+## 一、这是什么
+
+**SoulLink** 是一个 WPF (.NET 8) 写的**多开挂机中控台**，用于在一台 Windows 上同时管理多个 RDP 会话里的原神账号。
+
+核心能力：
+
+| 功能 | 说明 |
+|---|---|
+| **中控台** | 内嵌 RDP 窗口，直接在软件里操作各账号的桌面 |
+| **在线会话** | 自动发现本机所有 Windows 会话（query user） |
+| **启动台** | 快捷动作（启动 BGI、跑一条龙等）+ 自动化流程 |
+| **联机大厅** | 4 人协同跑图的组队、匹配、发车 |
+| **更新 BGI** | 批量把新版 BGI 解压覆盖到各账号目录 |
+| **自动化** | 节点图编排：触发器 → 条件 → 执行器 |
+
+---
+
+## 二、目录结构
+
+```
+SoulLink/
+├── SoulLink.csproj          主程序（WPF）
+├── App.xaml.cs              启动入口
+│
+├── Models/
+│   ├── Models.cs            配置模型（AppSettings、Account、Action…）
+│   ├── LobbyModels.cs       联机大厅模型
+│   ├── FlowModels.cs        自动化流程模型
+│   └── FlowNodeCatalog.cs   节点类型目录
+│
+├── Services/
+│   ├── SessionService.cs    会话发现（query user / qwinsta）
+│   ├── SystemLauncher.cs    跨会话启动进程
+│   ├── ActionService.cs     快捷动作执行
+│   ├── FlowRunner.cs        自动化流程图执行
+│   ├── FlowValidator.cs     流程图校验
+│   ├── BgiStatusParser.cs   BGI 日志解析
+│   ├── BgiLogWatcher.cs     BGI 日志监听
+│   ├── BgiTaskPreparer.cs   ★ BGI 停止（快捷键 + 杀进程）
+│   ├── BgiUpdater.cs        ★ BGI 更新（解压覆盖）
+│   ├── DeviceIdentity.cs    设备码
+│   ├── LobbyApi.cs          ★ 联机大厅 HTTP 客户端
+│   ├── LobbyConnection.cs   心跳 / 重连 / 状态
+│   ├── ScheduleRunner.cs    定时任务
+│   └── ConfigStore.cs       配置读写
+│
+├── Views/
+│   ├── MainWindow.xaml      主窗口 + 导航
+│   ├── ConsolePage.xaml     中控台（RDP）
+│   ├── LaunchPage.xaml      启动台
+│   ├── LobbyPage.xaml       联机大厅
+│   ├── BgiUpdatePage.xaml   ★ 更新 BGI
+│   ├── SettingsPage.xaml    设置
+│   ├── FlowEditorWindow.xaml 流程编辑器
+│   ├── ThemedMessageWindow.xaml 主题弹窗
+│   └── ...
+│
+├── Controls/
+│   ├── RdpConsole.cs        RDP ActiveX 封装
+│   └── FlowCanvas.cs        流程图画布
+│
+├── Server/                  ★ 联机大厅服务端（独立项目）
+│   ├── SoulLink.Server.csproj
+│   ├── Program.cs           API 端点
+│   ├── Db.cs                SQLite 数据层
+│   ├── Lobby.cs             业务逻辑
+│   ├── Dto.cs               数据契约
+│   ├── deploy.sh            Ubuntu 部署脚本
+│   └── README.md            服务端文档
+│
+├── bgi-scripts/
+│   └── AAA_联机罐子/        ★ BGI 协同跑图脚本
+│       ├── main.js
+│       ├── settings.json
+│       ├── assets/routes/   内置路线
+│       ├── assets/targetItems/ 拾取物品图
+│       └── targets/         白名单名字图
+│
+├── tools/
+│   └── 7za/7za.exe          ★ 解压工具（构建依赖，必须入库）
+│
+├── dist/                    发布产物
+│   ├── SoulLink.exe
+│   ├── 7za.exe
+│   └── sl-rescue.exe
+│
+├── releases/                版本归档
+│   ├── v1.13.0-reliable/
+│   ├── SoulLink-v1.13.0-Update.zip
+│   └── rollback.ps1         回退脚本
+│
+└── dist/stable/             ★★ 挂机版（生产使用，改动需谨慎）
+```
+
+---
+
+## 三、当前状态（v1.13.0）
+
+### 版本信息
+
+| 项目 | 值 |
+|---|---|
+| 版本 | 1.13.0 |
+| 提交 | 36b3962 |
+| 标签 | v1.13.0-reliable |
+| 归档 | releases/v1.13.0-reliable/ |
+| 更新包 | releases/SoulLink-v1.13.0-Update.zip (87.2 MB) |
+
+### 服务端
+
+| 项目 | 值 |
+|---|---|
+| 地址 | http://121.4.78.52:45080 |
+| 服务 | soullink-server（systemd，开机自启） |
+| 目录 | /opt/soullink-server |
+| 数据库 | /opt/soullink-server/soul-link.db |
+| 部署脚本 | Server/deploy.sh |
+
+### BGI 脚本
+
+`bgi-scripts/AAA_联机罐子/` —— 部署时整个目录拷到 `<BGI>\User\JsScript\` 下。
+
+**已在 A1 单人模式验证跑通 5 条路线。**
+
+---
+
+## 四、关键约束（必须遵守）
+
+### 红线
+
+1. **`dist/stable/` 是生产挂机版**，未经明确许可**绝对不要**更新或回退。
+   - 当前是 1.11.0（用户授权的版本）
+   - 备份：SoulLink-Stable-1.11.0.exe、SoulLink-Stable-1.5.3.exe
+
+2. **A1 和 A4 是核心账号，不能碰**
+   - 不注入、不 tsdiscon、不 logoff、不 query target
+   - 测试只用 A2 / A3
+
+3. **必须管理员权限运行**（RDP ActiveX 注入需要）
+
+4. **进程操作必须按 SessionId 过滤**
+   ```csharp
+   if (p.SessionId == targetSessionId) { ... }  // 才能动
+   ```
+   任何涉及 BGI / 原神 / 茶包助手的操作都遵守这条。
+
+### 环境
+
+- 机器用户：`lummy`
+- 本地账号：`A1 A2 A3 A4`（大写）
+- BGI 路径：`D:\AAA挂机专区\<user>\BetterGI\BetterGI.exe`
+- `lummy` 没有 BGI
+- 屏幕 2560×1440，DPI 150%（144）
+
+---
+
+## 五、重要技术细节
+
+### 5.1 会话发现
+
+`Services/SessionService.cs`
+
+`query user` 的输出格式**随系统区域变化**：
+
+```
+常见：  2026/11/16 22:05
+某些：  11.16 4:10        ← 点号分隔、无年份、单位小时
+```
+
+**解析必须宽松**：核心字段（用户 会话名 ID 状态）先认出，时间单独解析，失败不影响。
+
+### 5.2 BGI 停止
+
+`Services/BgiTaskPreparer.cs`
+
+```
+① 找该会话的 BetterGI 进程
+② 读 <BGI>\User\config.json 的 cancelTaskHotkey
+③ PostMessage 定点投递（不抢焦点）
+④ 等 3 秒，没退就 Kill
+⑤ 等 15 秒确认退出
+```
+
+**停 BGI 是必须的**：一条龙和配置组都要求 BGI 空闲，不先停会冲突。
+
+### 5.3 BGI 更新
+
+`Services/BgiUpdater.cs`
+
+**为什么用 7za.exe 而不是托管解压：**
+
+| 方案 | 519MB 包耗时 |
+|---|---|
+| SharpCompress（纯 C#） | 几分钟，CPU 满载风扇狂转 |
+| 7z.dll COM 接口 | 该 dll 不支持，返回 0x80040111 |
+| **7za.exe 命令行** | **5 秒** |
+
+**关键坑：**
+- 不能重定向 7za 的输出（管道缓冲区满了会死锁，卡在 87 个文件）
+- 不能原地搬移剥顶层目录（会误删已解压内容）
+- 正确做法：解压到 `_raw` 子目录，找出真正的内容根再复制
+
+### 5.4 联机大厅
+
+**客户端**：`Services/LobbyApi.cs` + `LobbyConnection.cs`
+**服务端**：`Server/` （ASP.NET Core 8 + SQLite）
+
+**业务规则：**
+- 身份 = 设备码（首次运行生成，存 `device.json`）
+- 只有私人房间：私人·四人 / 私人·大小号（成对）
+- 房间码 = 通行证，只有创建者能看到
+- 每设备最多 1 个四人房 + 1 对大小号房
+- 大小号房两两绑定，成员不能跨房间
+- 房间 3 天无活动自动销毁
+- 建房不自动上线，要点「加入房间」
+
+**发车：** 服务端下发所有成员的设备码 + 各自动作配置，客户端只执行自己那条。
+
+### 5.5 BGI 协同跑图脚本
+
+`bgi-scripts/AAA_联机罐子/`
+
+**和原版「AAA狗粮联机团购」的区别：**
+
+| | 团购脚本 | 本脚本 |
+|---|---|---|
+| 队伍结构 | 1P/2P/3P/4P 各跑一片 | 全员跑同一条 |
+| 占位 | 需要 | 不需要 |
+| 换人 | 跑完踢人 | 不换，一起跑完 |
+| mojang | 需要 | 不需要 |
+
+**白名单机制（移植自团购脚本）：**
+1. 模板匹配：`targets/*.png` 在申请列表区域找
+2. OCR 兜底：直接读文字
+3. 相似度用编辑距离，文件名不必精确
+
+**人数规则：**
+- 白名单填 3 个 → 4 人队
+- 填 2 个 → 3 人队
+- 填 1 个 → 2 人队
+- **全空 → 单人模式**（跳过组队直接跑，用于验证）
+
+---
+
+## 六、常用操作
+
+### 构建
+
+```powershell
+cd E:\Documents\deepseek-harness\SoulLink
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o dist
+```
+
+**产物必须包含三个文件：**
+- SoulLink.exe
+- 7za.exe（更新 BGI 功能必需）
+- sl-rescue.exe
+
+### 服务端更新
+
+```bash
+# 本地打包
+cd Server
+dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o ../dist-server
+
+# 上传 dist-server/SoulLink.Server 到服务器 /opt/soullink-server/
+
+# 服务器上
+systemctl stop soullink-server
+chmod +x /opt/soullink-server/SoulLink.Server
+systemctl start soullink-server
+```
+
+### 回退
+
+```powershell
+cd releases
+.\rollback.ps1
+```
+
+### 版本升号流程
+
+```
+1. 改 SoulLink.csproj 的 <Version>
+2. git commit
+3. dotnet publish（让 ProductVersion 带正确 commit）
+4. 归档到 releases/vX.Y.Z-reliable/
+5. git tag -a vX.Y.Z-reliable
+6. 打包 releases/SoulLink-vX.Y.Z-Update.zip
+```
+
+---
+
+## 七、已知问题 / 待办
+
+### 联机大厅
+
+- [ ] 发车广播：其他成员客户端的执行目前靠各自轮询，未做实时推送
+- [ ] 房间内成员列表刷新依赖 5 秒轮询，可以改 WebSocket
+
+### BGI 更新
+
+- [ ] 进度条在解压阶段是「不确定」状态（不知道总数）
+- [ ] 可选：加「更新完自动启动 BGI」开关
+
+### BGI 脚本
+
+- [ ] 组队模式（2-4 人）尚未实战验证，只有单人模式跑通
+- [ ] 拾取逻辑移植自原脚本，效果待验证
+- [ ] 白名单 OCR 识别的准确率待观察
+
+### 其他
+
+- [ ] `dist/stable/` 待用户授权后更新到 1.13.0
+- [ ] tools/ 下有些临时截图可以清理
+
+---
+
+## 八、调试技巧
+
+### 强制打开指定页面
+
+```
+SoulLink.exe --page=<tag>
+```
+
+可用 tag：`launch` `console` `update` `sessions` `procs` `cli` `settings`
+
+### 日志位置
+
+```
+%LOCALAPPDATA%\SoulLink\
+├── error.log          异常堆栈
+├── boot.log           启动记录
+├── flow-menu.log      菜单调试
+├── ipc.log            IPC 通信
+└── rdp-debug-*.log    RDP 调试
+```
+
+### 备份位置
+
+```
+%LOCALAPPDATA%\SoulLink\bgi-backups\<账号>\User_时间戳
+```
+
+### 验证 BGI 是否更新成功
+
+**不要看修改时间**（7za 保留包内时间戳）**也不要看版本号**（BGI 新版本不改内部版本号）。
+
+**用哈希对比：**
+
+```powershell
+7za x 包.7z -o临时目录 -y
+(Get-FileHash 临时目录\BetterGI\BetterGI.exe).Hash
+(Get-FileHash D:\AAA挂机专区\A2\BetterGI\BetterGI.exe).Hash
+# 相同 = 已更新
+```
+
+---
+
+## 九、踩过的坑（血泪教训）
+
+### UI 相关
+
+| 坑 | 原因 | 解法 |
+|---|---|---|
+| 编辑器输入框无响应 | AuroraBackdrop 动画背景抢焦点 | 移除动画背景 |
+| 菜单闪烁 / 打不开 | 三处叠加 bug（陈旧引用 / MenuLayer 覆盖 / DPI 坐标失配） | 改成纯 MouseEnter/MouseLeave + 共享关闭定时器 |
+| ComboBox 选了不显示 | 自定义 ControlTemplate 只有 ToggleButton | 用原生模板 |
+| 取消按钮执行了保存 | DialogResult = true 写错 | 改成 false |
+| 页面空白 | _pages 注册成了内容控件而不是容器 | 注册容器 Grid |
+
+### 进程相关
+
+| 坑 | 原因 | 解法 |
+|---|---|---|
+| 错误杀掉其他账号的进程 | 只按进程名找 | 必须按 SessionId 过滤 |
+| 解压卡在 87 个文件 | 重定向 stdout 但从不读取 → 管道死锁 | 不重定向，用 -bso0/-bsp0 |
+| 解压后文件没了 | 原地 Directory.Move 时先删了目标目录 | 解压到独立 _raw 子目录 |
+
+### 会话相关
+
+| 坑 | 原因 | 解法 |
+|---|---|---|
+| 某些机器读不到会话 | query user 日期格式不同（11.16 4:10） | 正则放宽，时间单独解析 |
+
+### 存档相关
+
+| 坑 | 原因 | 解法 |
+|---|---|---|
+| ProductVersion 带旧 commit | 提交前构建的 | 提交后重新 publish |
+| 7za.exe 没入库 | tools/ 被 gitignore | 改规则：tools/* + !tools/7za |
+
+---
+
+## 十、下一步建议
+
+按优先级：
+
+1. **组队实测** —— BGI 脚本的组队模式（2/3/4 人）还没实战验证过
+2. **拾取验证** —— 确认 F 图标识别和物品匹配在游戏里有效
+3. **服务端稳定性** —— 长时间运行后看 SQLite 有无问题
+4. **更新 stable** —— 等用户明确授权后再动
+
+---
+
+## 附：重要文件速查
+
+| 想改什么 | 看哪个文件 |
+|---|---|
+| 加导航页 | Views/MainWindow.xaml + .xaml.cs 的 _pages |
+| 改会话解析 | Services/SessionService.cs 的 SessionRx |
+| 改 BGI 停止逻辑 | Services/BgiTaskPreparer.cs |
+| 改解压方式 | Services/BgiUpdater.cs 的 ExtractToTempAsync |
+| 改大厅接口 | Server/Program.cs + Services/LobbyApi.cs |
+| 改 BGI 脚本逻辑 | bgi-scripts/AAA_联机罐子/main.js |
+| 改主题颜色 | Theme/Styles.xaml |
