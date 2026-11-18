@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "PathPickerCheck/1.0.0": {
+        "dependencies": {
+          "SoulLink": "2.3.0"
+        },
+        "runtime": {
+          "PathPickerCheck.dll": {}
+        }
+      },
+      "SoulLink/2.3.0": {
+        "runtime": {
+          "SoulLink.dll": {
+            "assemblyVersion": "2.3.0.0",
+            "fileVersion": "2.3.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "PathPickerCheck/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "SoulLink/2.3.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

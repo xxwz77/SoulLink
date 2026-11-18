@@ -13,7 +13,7 @@ namespace SoulLink.Models
         public string Glyph { get; init; } = "\uE8B7";
         public List<FlowParamDef> Params { get; init; } = new();
     }
-    public enum FlowParamKind { Text=0, Number=1, Bool=2, ActionPicker=3, UserPicker=4, OneDragonPicker=5, ScriptGroupPicker=6, Select=7 }
+    public enum FlowParamKind { Text=0, Number=1, Bool=2, ActionPicker=3, UserPicker=4, OneDragonPicker=5, ScriptGroupPicker=6, Select=7, FilePath=8, ProcessName=9 }
     public sealed class FlowParamDef
     {
         public string Key { get; init; } = ""; public string Label { get; init; } = "";
@@ -92,8 +92,8 @@ namespace SoulLink.Models
             D(FlowNodeType.ActMouseMove,FlowNodeKind.Action,"鼠标移动","通过目标账号投送通道移动鼠标","\uE8B0",P("x","X","960",FlowParamKind.Number),P("y","Y","540",FlowParamKind.Number));
             D(FlowNodeType.ActKeyPress,FlowNodeKind.Action,"模拟按键","支持 F12、Ctrl+A 等组合","\uE765",P("keys","按键"),P("times","次数","1",FlowParamKind.Number));
             D(FlowNodeType.ActMouseWheel,FlowNodeKind.Action,"鼠标滚轮","正数上滚，负数下滚","\uE8B0",P("delta","滚动量","120",FlowParamKind.Number));
-            D(FlowNodeType.ActLaunchProcess,FlowNodeKind.Action,"打开程序","在目标会话启动程序；启动成功不代表进程持续运行","\uE768",P("path","程序路径"),P("args","启动参数","",required:false));
-            D(FlowNodeType.ActKillProcess,FlowNodeKind.Action,"关闭进程","只操作目标账号；不存在目标进程属于幂等成功","\uE711",P("process","进程名"),P("force","强制结束","true",FlowParamKind.Bool));
+            D(FlowNodeType.ActLaunchProcess,FlowNodeKind.Action,"打开程序","在目标会话启动程序；启动成功不代表进程持续运行","\uE768",P("path","程序路径","",FlowParamKind.FilePath),P("args","启动参数","",required:false));
+            D(FlowNodeType.ActKillProcess,FlowNodeKind.Action,"关闭进程","只操作目标账号；不存在目标进程属于幂等成功","\uE711",P("process","进程名","",FlowParamKind.ProcessName),P("force","强制结束","true",FlowParamKind.Bool));
             D(FlowNodeType.ActJoinRoom,FlowNodeKind.Action,"上线房间","调用房间服务；成功以服务端响应为准","\uE8FA",P("code","房间码"));
             D(FlowNodeType.ActDelay,FlowNodeKind.Action,"等待","条件满足后开始等待，到时继续；条件中断则重新计时","\uE916",P("seconds","秒数","10",FlowParamKind.Number));
             D(FlowNodeType.ActEndFlow,FlowNodeKind.Terminate,"每天完成","到达后当天停止扫描；到本节点日界自动重置。属性里可手动切换今天是否运行","\uE71A");

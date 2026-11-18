@@ -1014,6 +1014,95 @@ namespace SoulLink.Views
                     break;
                 }
 
+                case FlowParamKind.FilePath:
+                {
+                    // 程序路径：可直接输入，也可用「浏览…」从磁盘选择
+                    var row = new Grid { Margin = new Thickness(0, 6, 0, 0) };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    var box = new TextBox
+                    {
+                        Text = node.Get(p.Key, p.Default), MinHeight = 32,
+                        Style = (Style)FindResource("InlineTextBox"),
+                        VerticalContentAlignment = VerticalAlignment.Center
+                    };
+                    box.TextChanged += (_, __) => { node.Set(p.Key, box.Text ?? ""); MarkDirty(); };
+                    Grid.SetColumn(box, 0);
+                    var browse = new Button
+                    {
+                        Content = "浏览…", Margin = new Thickness(6, 0, 0, 0), Padding = new Thickness(10, 5, 10, 5),
+                        Style = (Style)FindResource("GhostButton"), FontSize = 11
+                    };
+                    browse.Click += (_, __) =>
+                    {
+                        var dlg = new Microsoft.Win32.OpenFileDialog
+                        {
+                            Title = "选择要打开的程序",
+                            Filter = "程序 (*.exe)|*.exe|所有文件 (*.*)|*.*",
+                            CheckFileExists = true
+                        };
+                        try
+                        {
+                            if (dlg.ShowDialog(this) == true)
+                            {
+                                box.Text = dlg.FileName;
+                                node.Set(p.Key, dlg.FileName);
+                                MarkDirty();
+                            }
+                        }
+                        catch { }
+                    };
+                    Grid.SetColumn(browse, 1);
+                    row.Children.Add(box); row.Children.Add(browse);
+                    block.Children.Add(row);
+                    _propUi.Add(box); _propUi.Add(browse);
+                    break;
+                }
+
+                case FlowParamKind.ProcessName:
+                {
+                    // 进程名：可从当前运行中的程序里挑，也可手填
+                    var row = new Grid { Margin = new Thickness(0, 6, 0, 0) };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    var box = new TextBox
+                    {
+                        Text = node.Get(p.Key, p.Default), MinHeight = 32,
+                        Style = (Style)FindResource("InlineTextBox"),
+                        VerticalContentAlignment = VerticalAlignment.Center
+                    };
+                    box.TextChanged += (_, __) => { node.Set(p.Key, box.Text ?? ""); MarkDirty(); };
+                    Grid.SetColumn(box, 0);
+                    var pick = new Button
+                    {
+                        Content = "选程序…", Margin = new Thickness(6, 0, 0, 0), Padding = new Thickness(10, 5, 10, 5),
+                        Style = (Style)FindResource("GhostButton"), FontSize = 11,
+                        ToolTip = "从当前运行的进程中挑选"
+                    };
+                    pick.Click += (_, __) =>
+                    {
+                        try
+                        {
+                            // 用目标账号会话里的真实程序列表，避免手打错进程名
+                            var target = node.Get("user");
+                            if (target.Length == 0) target = _account.UserName;
+                            var picker = new ProcessPickerWindow(target) { Owner = this };
+                            if (picker.ShowDialog() == true && picker.Selected != null)
+                            {
+                                box.Text = picker.Selected.Name;
+                                node.Set(p.Key, picker.Selected.Name);
+                                MarkDirty();
+                            }
+                        }
+                        catch (Exception ex) { ThemedMessage.Info(this, "提示", "选择程序失败：" + ex.Message); }
+                    };
+                    Grid.SetColumn(pick, 1);
+                    row.Children.Add(box); row.Children.Add(pick);
+                    block.Children.Add(row);
+                    _propUi.Add(box); _propUi.Add(pick);
+                    break;
+                }
+
                 case FlowParamKind.Select:
                 {
                     // ★ 固定选项下拉：值域是枚举的参数不该让用户手打

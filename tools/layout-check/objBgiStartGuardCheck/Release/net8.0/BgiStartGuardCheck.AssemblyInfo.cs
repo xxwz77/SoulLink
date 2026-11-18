@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BgiStartGuardCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7f0a18d05690849e8d4d94342e6c04cd33319f7d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+dddfd9da43aa948e0129c91cd419097754956c2b")]
 [assembly: System.Reflection.AssemblyProductAttribute("BgiStartGuardCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BgiStartGuardCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
