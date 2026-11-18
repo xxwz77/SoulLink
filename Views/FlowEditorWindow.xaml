@@ -252,6 +252,12 @@
                         </Border>
                     </Grid>
 
+                    <!-- ★ 首次使用引导层：铺满窗口的分步高亮 + 说明卡片。
+                         用户可勾选“以后不再自动弹出”，之后仍能从使用说明里重播。 -->
+                    <Canvas x:Name="GuideLayer" Grid.Row="0" Grid.RowSpan="3"
+                            Background="#66060B16" Visibility="Collapsed"
+                            Panel.ZIndex="200" />
+
                     <!-- ★ 模块菜单覆盖层：不用 Popup（会跑到其他应用上面），
                          放在窗口内部用 Canvas 绝对定位，只在本窗口内显示 -->
                     <Canvas x:Name="MenuLayer" Grid.Row="0" Grid.RowSpan="3"

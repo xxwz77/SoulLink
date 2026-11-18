@@ -72,6 +72,9 @@ namespace SoulLink.Views
             Canvas.Load(flow);
             UpdateEmptyHint();
 
+            // 首次打开时播放引导；用户可勾选“不再弹出”，之后仍可从使用说明重播。
+            Loaded += (_, __) => ShowFlowGuide(force: false);
+
         }
 
         /// <summary>
@@ -608,6 +611,182 @@ namespace SoulLink.Views
             MenuLayer.Visibility = Visibility.Visible;
         }
 
+        // ── 首次使用引导（分步高亮 + “不再弹出”） ──────────────────────
+
+        private bool _guideShown;
+
+        private sealed class GuideStep
+        {
+            public string Title = "";
+            public string Body = "";
+            public Func<FrameworkElement?> Target = () => null;
+        }
+
+        private void ShowFlowGuide(bool force)
+        {
+            try
+            {
+                if (!force && (_guideShown || !_cfg.Settings.ShowFlowGuide)) return;
+                _guideShown = true;
+
+                var steps = new[]
+                {
+                    new GuideStep { Title = "1 / 4 · 从左栏添加模块",
+                        Body = "「条件」判断当前状态，「动作」在条件成立后执行，「每天完成」标记流程结束。点一下即可加到画布。",
+                        Target = () => LibPanel },
+                    new GuideStep { Title = "2 / 4 · 连线表示先后顺序",
+                        Body = "从模块下方圆点拖到下一个模块；也可以先点起点、再点目标。一个出口连多个模块表示并行。",
+                        Target = () => Canvas },
+                    new GuideStep { Title = "3 / 4 · 状态灯表示此刻是否成立",
+                        Body = "节点上「● 满足 / ○ 不满足」每秒刷新，只反映当前条件，不代表已经执行过。",
+                        Target = () => CanvasScroll },
+                    new GuideStep { Title = "4 / 4 · 选中节点后在这里改参数",
+                        Body = "「每天完成」节点里可以设日界（00:00 / 04:00），还能手动切换“今天是否运行”。",
+                        Target = () => PropPanel }
+                };
+
+                int index = 0;
+                void Render()
+                {
+                    GuideLayer.Children.Clear();
+                    GuideLayer.Visibility = Visibility.Visible;
+
+                    var step = steps[index];
+                    var target = step.Target();
+                    Rect targetRect = Rect.Empty;
+                    if (target != null && target.IsVisible && target.ActualWidth > 1)
+                    {
+                        try
+                        {
+                            targetRect = target.TransformToAncestor(this)
+                                .TransformBounds(new Rect(0, 0, target.ActualWidth, target.ActualHeight));
+                        }
+                        catch { targetRect = Rect.Empty; }
+                    }
+
+                    if (!targetRect.IsEmpty)
+                    {
+                        var ring = new Border
+                        {
+                            Width = targetRect.Width + 8,
+                            Height = targetRect.Height + 8,
+                            BorderBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
+                            BorderThickness = new Thickness(2),
+                            CornerRadius = new CornerRadius(10),
+                            IsHitTestVisible = false
+                        };
+                        System.Windows.Controls.Canvas.SetLeft(ring, Math.Max(0, targetRect.X - 4));
+                        System.Windows.Controls.Canvas.SetTop(ring, Math.Max(0, targetRect.Y - 4));
+                        var pulse = new System.Windows.Media.Animation.DoubleAnimation
+                        {
+                            From = 0.35,
+                            To = 1,
+                            Duration = TimeSpan.FromMilliseconds(750),
+                            AutoReverse = true,
+                            RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever
+                        };
+                        ring.BeginAnimation(OpacityProperty, pulse);
+                        GuideLayer.Children.Add(ring);
+                    }
+
+                    var card = new Border
+                    {
+                        Width = 380,
+                        Padding = new Thickness(16, 14, 16, 12),
+                        CornerRadius = new CornerRadius(12),
+                        Background = new SolidColorBrush(Color.FromRgb(0x16, 0x1F, 0x36)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0x4F, 0xE3, 0xFF)),
+                        BorderThickness = new Thickness(1)
+                    };
+                    var body = new StackPanel();
+                    body.Children.Add(new TextBlock
+                    {
+                        Text = step.Title,
+                        FontSize = 13,
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = new SolidColorBrush(Color.FromRgb(0xBF, 0xEF, 0xFF)),
+                        TextWrapping = TextWrapping.Wrap
+                    });
+                    body.Children.Add(new TextBlock
+                    {
+                        Text = step.Body,
+                        FontSize = 11.5,
+                        Margin = new Thickness(0, 8, 0, 0),
+                        Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xB4, 0xD4)),
+                        TextWrapping = TextWrapping.Wrap,
+                        LineHeight = 18
+                    });
+
+                    var noMore = new CheckBox
+                    {
+                        Content = "以后不再自动弹出",
+                        IsChecked = !_cfg.Settings.ShowFlowGuide,
+                        Style = (Style)FindResource("GlassCheckBox"),
+                        FontSize = 11,
+                        Margin = new Thickness(0, 12, 0, 0)
+                    };
+                    body.Children.Add(noMore);
+
+                    var nav = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
+                    var next = new Button
+                    {
+                        Content = index == steps.Length - 1 ? "开始使用" : "下一步",
+                        Style = (Style)FindResource("PrimaryButton"),
+                        Padding = new Thickness(18, 6, 18, 6),
+                        FontSize = 11.5
+                    };
+                    next.Click += (_, __) =>
+                    {
+                        _cfg.Settings.ShowFlowGuide = !(noMore.IsChecked == true);
+                        _dirty = true;
+                        if (index >= steps.Length - 1) { CloseGuide(); return; }
+                        index++;
+                        Render();
+                    };
+                    nav.Children.Add(next);
+
+                    var skip = new Button
+                    {
+                        Content = "跳过",
+                        Style = (Style)FindResource("GhostButton"),
+                        Margin = new Thickness(8, 0, 0, 0),
+                        Padding = new Thickness(14, 6, 14, 6),
+                        FontSize = 11.5
+                    };
+                    skip.Click += (_, __) =>
+                    {
+                        _cfg.Settings.ShowFlowGuide = !(noMore.IsChecked == true);
+                        _dirty = true;
+                        CloseGuide();
+                    };
+                    nav.Children.Add(skip);
+                    body.Children.Add(nav);
+
+                    card.Child = body;
+                    card.Measure(new Size(380, double.PositiveInfinity));
+                    double cardH = card.DesiredSize.Height;
+
+                    double hostW = ActualWidth > 10 ? ActualWidth : 1200;
+                    double hostH = ActualHeight > 10 ? ActualHeight : 800;
+                    double left = Math.Max(12, (hostW - 380) / 2);
+                    double top = targetRect.IsEmpty ? (hostH - cardH) / 2 : targetRect.Bottom + 16;
+                    if (top + cardH > hostH - 12) top = Math.Max(12, hostH - cardH - 12);
+                    System.Windows.Controls.Canvas.SetLeft(card, left);
+                    System.Windows.Controls.Canvas.SetTop(card, top);
+                    GuideLayer.Children.Add(card);
+                }
+
+                Render();
+            }
+            catch { }
+        }
+
+        private void CloseGuide()
+        {
+            GuideLayer.Children.Clear();
+            GuideLayer.Visibility = Visibility.Collapsed;
+        }
+
         private void BuildHelp()
         {
             HelpPanel.Children.Clear();
@@ -633,16 +812,45 @@ namespace SoulLink.Views
                 });
             }
 
-            Add("添加节点", "点左栏「节点库」里的任一类型，它会出现在画布左上角，然后拖到合适位置。");
-            Add("移动节点", "按住节点拖动。只有正在拖的那个会动。");
-            Add("建立连线", "从下方出口连接到下一模块。一个出口可连接多个模块；当天完成没有出口。");
-            Add("删除连线", "双击连线，或在连线上点右键，都可以删除。");
-            Add("删除节点", "右键节点，或在左栏属性里点「删除这个节点」。");
-            Add("编辑参数", "点节点，左栏下方会显示它的所有参数。");
-            Add("组合条件", "有多个上游时，可选「全部满足才继续」或「任一满足就继续」。勾选「不满足时继续」可反过来判断。");
-            Add("执行次数", "条件从不满足变为满足时执行动作，持续满足不会重复。到达「当天完成」后，明天才恢复。");
-            Add("条件保留", "条件满足后会保留，可等待其它条件；流程完成后重新获取状态。有「当天完成」则当天不再执行。");
-            Add("保存校验", "链路不完整无法保存。底部会实时显示是否能运行。");
+            // ★ 按当前实际行为重写：旧说明里的"条件保留""执行次数""昨天今天"等说法
+            //   已与现在的运行模型不符，容易误导。
+            Add("① 每个模块都是一个条件或动作",
+                "左栏「模块库」点一下即可加到画布。条件判断当前状态，动作在条件成立后执行。");
+            Add("② 连线决定顺序",
+                "从模块下方圆点拖到下一个模块；也可以先点起点模块，再点目标模块。一个出口可以连多个，表示并行。");
+            Add("③ 状态灯表示此刻是否成立",
+                "节点旁「● 满足 / ○ 不满足」每秒刷新。它只表示当前条件，不代表已经执行过。");
+            Add("④ 条件怎么组合",
+                "多个上游汇入同一模块时，可选「全部满足才继续」或「任一满足就继续」；勾选「不满足时继续」可反向判断。");
+            Add("⑤ 日志/定时这类信号会保留",
+                "日志命中、定时、手动等瞬时信号一旦出现就会保留，等其它条件满足后一起触发，不会因为等待而失效。");
+            Add("⑥ 进程/会话这类状态只看当下",
+                "它们不会保留：进程退出、会话断开，条件立刻变成不满足。");
+            Add("⑦ 有「每天完成」= 每天只跑一次",
+                "走到「每天完成」并完成后，本流程当天不再扫描；到该节点自己设定的日界（00:00 或 04:00）自动重置。");
+            Add("⑧ 没有「每天完成」= 循环执行",
+                "每轮执行完会清空本轮状态重新获取条件，条件再次成立就会再跑，不设日界。");
+            Add("⑨ 今天跑不跑看顶部",
+                "右上角与左下角都写着「今日是否会运行」，会区分：未启用 / 已暂停 / 今日已执行 / 会运行。");
+            Add("⑩ 想今天再跑一次",
+                "点「每天完成」节点，在属性里勾选「今天运行这个流程」恢复；取消勾选则今天不再运行。");
+            Add("⑪ 画笔模式",
+                "开启后依次点模块即可连续连线；Esc 或再点开关关闭。");
+            Add("⑫ 保存前会检查",
+                "缺条件、缺动作、未选目标、连线成环或重复都会提示；底部实时显示能否运行。");
+
+            // 重新播放引导的入口（用户勾选“不再弹出”后，仍可从这里再看一次）
+            var replay = new Button
+            {
+                Content = "▶ 重新播放引导动画",
+                Style = (Style)FindResource("GhostButton"),
+                Margin = new Thickness(0, 14, 0, 4),
+                Padding = new Thickness(10, 6, 10, 6),
+                FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            replay.Click += (_, __) => ShowFlowGuide(force: true);
+            HelpPanel.Children.Add(replay);
         }
 
         // ── 从模块库拖拽节点到画布 ──────────────────────────────

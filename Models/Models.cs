@@ -324,6 +324,8 @@ namespace SoulLink.Models
         public bool AllowRemoteInvoke { get; set; } = true;
         public bool MinimizeToTray { get; set; } = true;
         public string LastExportPath { get; set; } = "";
+        /// <summary>自动化编辑器首次打开时显示引导动画；用户勾选“不再弹出”后置为 false。</summary>
+        public bool ShowFlowGuide { get; set; } = true;
 
         // ── 开机自启 ────────────────────────────────────────────────────
         /// <summary>

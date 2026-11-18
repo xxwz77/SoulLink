@@ -25,8 +25,11 @@ namespace SoulLink.Services
                 if (manifestData < 0) return false;
 
                 // ★ 清单里含中文注释：必须按字节定位，不能用字符串索引（UTF-8 下字节偏移更大）。
+                // ★ 属性值必须干净：曾经把填充空格写进引号内（level="asInvoker   "），
+                //   Windows 解析 XML 失败，直接返回 ERROR_SXS_CANT_GEN_ACTCTX(14001)，
+                //   进程根本起不来。填充只能放在引号之外，且不能破坏标签语法。
                 byte[] needle = Encoding.ASCII.GetBytes("level=\"requireAdministrator\"");
-                byte[] replacement = Encoding.ASCII.GetBytes("level=\"asInvoker           \"");
+                byte[] replacement = Encoding.ASCII.GetBytes("level=\"asInvoker\"           ");
                 if (needle.Length != replacement.Length) return false;
 
                 int at = -1;

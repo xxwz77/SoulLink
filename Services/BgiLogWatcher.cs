@@ -92,15 +92,22 @@ namespace SoulLink.Services
                 }
                 if (pipes.Count == 0) return live;
 
-                // Must match the CURRENT identity, not just the "SoulLink*" prefix:
-                // otherwise SoulLink-Stable agents count as ours and the test build
-                // shows "channel ready" although it never deployed anything.
+                // 代理有两种合法进程名：
+                //   同名（旧路径，直接用主程序）           → "SoulLink"
+                //   独立副本（新路径，asInvoker 代理本体） → "SoulLink.proxy"
+                // ★ 必须按身份精确匹配，不能用 "SoulLink*" 前缀，
+                //   否则 SoulLink-Stable 的代理会被算成本版本的通道。
+                // ★ 也不能只认 "SoulLink"：改用独立副本后进程名变了，
+                //   会导致明明投送成功、界面却一直显示未投送（实测踩过）。
                 string expected = AppIdentity.Name;
+                string expectedProxy = expected + ".proxy";
                 foreach (var proc in Process.GetProcesses())
                 {
                     try
                     {
-                        if (!string.Equals(proc.ProcessName, expected, StringComparison.OrdinalIgnoreCase)) continue;
+                        bool ours = string.Equals(proc.ProcessName, expected, StringComparison.OrdinalIgnoreCase)
+                                 || string.Equals(proc.ProcessName, expectedProxy, StringComparison.OrdinalIgnoreCase);
+                        if (!ours) continue;
                         int sid = proc.SessionId;
                         if (pipes.Contains(sid)) live.Add(sid);
                     }

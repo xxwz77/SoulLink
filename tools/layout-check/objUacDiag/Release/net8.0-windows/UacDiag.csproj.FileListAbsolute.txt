@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binUacDiag\Release\net8.0-windows\UacDiag.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binUacDiag\Release\net8.0-windows\UacDiag.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binUacDiag\Release\net8.0-windows\UacDiag.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binUacDiag\Release\net8.0-windows\UacDiag.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binUacDiag\Release\net8.0-windows\UacDiag.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\UacDiag.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\UacDiag.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\UacDiag.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\UacDiag.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\UacDiag.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\refint\UacDiag.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\UacDiag.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\UacDiag.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\ref\UacDiag.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objUacDiag\Release\net8.0-windows\UacDiag.csproj.Up2Date
