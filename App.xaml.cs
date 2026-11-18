@@ -153,6 +153,9 @@ namespace SoulLink
 
             Breadcrumb("config loaded: " + ConfigStore.ConfigPath);
 
+            // 清理上次被强杀时遗留的投送任务与临时文件（正常退出会自行删除）。
+            try { Services.LaunchSweeper.Sweep(); } catch { }
+
             var parsed = CommandLine.Parse(StartArgs);
             QuietStart = parsed.WantsQuiet;
 

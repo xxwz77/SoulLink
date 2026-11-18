@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BranchCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f949211df808614dad6c4f405a63166209ad9ce9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7f0a18d05690849e8d4d94342e6c04cd33319f7d")]
 [assembly: System.Reflection.AssemblyProductAttribute("BranchCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BranchCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
