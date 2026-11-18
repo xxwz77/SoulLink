@@ -622,6 +622,7 @@ namespace SoulLink.Views
 
         private bool _guideShown;
         private bool _guideRunning;
+        private double _guideW, _guideH;
 
         private sealed class GuideStep
         {
@@ -675,6 +676,7 @@ namespace SoulLink.Views
             GuideLayer.Height = ActualHeight > 10 ? ActualHeight : 800;
 
             double W = GuideLayer.Width, H = GuideLayer.Height;
+            _guideW = W; _guideH = H;
 
             // ① 半透明遮罩（整块操作区压暗）
             var veil = new System.Windows.Shapes.Rectangle
@@ -825,17 +827,39 @@ namespace SoulLink.Views
         }
 
         /// <summary>示例模块的横向起点：尽量落在高亮区右侧，避免压住高亮内容。</summary>
-        private double DemoX(Rect hole)
+        /// <summary>
+        /// 示例区域：始终落在“高亮区内部”，并且整体居中对齐。
+        /// ★ 之前各步骤把 Y 写死成 hole.Y+20/+30，导致示例总是贴在顶部、与高亮区不协调；
+        ///   这里统一由高亮区推导，保证每一步都稳定地出现在同一视觉位置。
+        /// </summary>
+        private Rect DemoArea(Rect hole, int count, double gap = 20)
         {
-            double W = ActualWidth > 10 ? ActualWidth : 1200;
-            if (hole.IsEmpty) return Math.Max(40, W * 0.28);
-            double x = hole.X + hole.Width + 40;
-            if (x + 240 <= W - 40) return x;
-            // 右侧放不下：贴右边缘留出 40 边距
-            return Math.Max(40, W - 280);
+            const double CARD_W = 228, CARD_H = 70;
+            double W = _guideW > 10 ? _guideW : 1200;
+            double H = _guideH > 10 ? _guideH : 800;
+
+            // 画布区（高亮区）左上角起，固定留出标题/画笔开关的空间；
+            // 说明面板固定在左下，按钮在右下，所以示例放在“上中部”，永不与它们重叠。
+            double originX = hole.IsEmpty ? Math.Max(280, W * 0.30) : hole.X;
+            double originY = hole.IsEmpty ? 120 : hole.Y;
+
+            double blockH = count * CARD_H + (count - 1) * gap;
+            double x = originX + 56;
+            double y = originY + 70;
+
+            // 不要把示例压到左下说明面板或右下按钮上
+            double panelTop = H - 300;          // 说明面板大致起始高度
+            if (y + blockH > panelTop - 20) y = Math.Max(originY + 24, panelTop - 20 - blockH);
+            if (y < 60) y = 60;
+
+            x = Math.Max(24, Math.Min(x, W - CARD_W - 24));
+            y = Math.Max(56, Math.Min(y, H - blockH - 96));
+            return new Rect(x, y, CARD_W, blockH);
         }
 
         /// <summary>在遮罩里画一个“示例模块”，state：true=满足 false=不满足。</summary>
+        private Rect _lastDemo = Rect.Empty;
+
         private void DrawDemoNode(Canvas layer, double x, double y, string title, string summary,
             string glyph, Color accent, bool? state, bool showPort = true)
         {
@@ -884,6 +908,13 @@ namespace SoulLink.Views
             Grid.SetColumn(stack, 2); grid.Children.Add(stack);
             card.Child = grid;
 
+            // 边界夹紧：示例必须落在遮罩范围内，否则会跑到框外（用户截图里就是这样）
+            double maxX = Math.Max(16, _guideW - 228 - 16);
+            double maxY = Math.Max(16, _guideH - 70 - 16);
+            x = Math.Max(16, Math.Min(x, maxX));
+            y = Math.Max(16, Math.Min(y, maxY));
+            _lastDemo = new Rect(x, y, 228, 70);
+
             System.Windows.Controls.Canvas.SetLeft(card, x);
             System.Windows.Controls.Canvas.SetTop(card, y);
             layer.Children.Add(card);
@@ -900,6 +931,22 @@ namespace SoulLink.Views
                 System.Windows.Controls.Canvas.SetTop(port, y + 70 - 10);
                 layer.Children.Add(port);
             }
+        }
+
+        /// <summary>画一个示例节点并返回它实际占据的矩形（已按遮罩边界夹紧）。</summary>
+        private Rect AddDemo(Canvas layer, double x, double y, string title, string summary,
+            string glyph, Color accent, bool? state, bool showPort = true)
+        {
+            DrawDemoNode(layer, x, y, title, summary, glyph, accent, state, showPort);
+            return _lastDemo;
+        }
+
+        /// <summary>把 A、B 两个示例连起来（坐标直接用 A 出口到 B 入口，避免手算偏移）。</summary>
+        private void DrawDemoLinkBetween(Canvas layer, Rect a, Rect b, bool powered)
+        {
+            double x1 = a.X + 114, y1 = a.Y + 70;
+            double x2 = b.X + 114, y2 = b.Y;
+            DrawDemoLink(layer, x1, y1, x2, y2, powered);
         }
 
         private void DrawDemoLink(Canvas layer, double x1, double y1, double x2, double y2, bool powered)
@@ -943,7 +990,7 @@ namespace SoulLink.Views
                 Target = () => LibPanel,
                 Draw = (layer, hole) =>
                 {
-                    double x = DemoX(hole), y = Math.Max(60, hole.Y + 20);
+                    var area = DemoArea(hole, 2); double x = area.X, y = area.Y;
                     DrawDemoNode(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
                     DrawDemoNode(layer, x, y + 120, "BGI 是否运行", "检查目标账号 BGI 进程状态", "\uE950", cond, false);
                 }
@@ -964,7 +1011,7 @@ namespace SoulLink.Views
                 Target = () => Canvas,
                 Draw = (layer, hole) =>
                 {
-                    double x = DemoX(hole), y = Math.Max(60, hole.Y + 30);
+                    var area = DemoArea(hole, 3); double x = area.X, y = area.Y;
                     DrawDemoNode(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
                     DrawDemoNode(layer, x, y + 110, "BGI 是否运行", "检查目标账号 BGI 进程状态", "\uE950", cond, false);
                     DrawDemoNode(layer, x, y + 220, "进程检查", "严格检查目标用户，不会拿其它账号冒充", "\uE77B", cond, null);
@@ -985,10 +1032,10 @@ namespace SoulLink.Views
                 Target = () => Canvas,
                 Draw = (layer, hole) =>
                 {
-                    double x = DemoX(hole), y = Math.Max(50, hole.Y + 30);
-                    DrawDemoNode(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
-                    DrawDemoNode(layer, x + 300, y + 130, "执行一条龙", "清场后启动指定一条龙", "\uE768", act, null);
-                    DrawDemoLink(layer, x + 114, y + 70, x + 300 + 114, y + 130, true);
+                    var area = DemoArea(hole, 2); double x = area.X, y = area.Y;
+                    var d3a = AddDemo(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
+                    var d3b = AddDemo(layer, x + 300, y + 130, "执行一条龙", "清场后启动指定一条龙", "\uE768", act, null);
+                    DrawDemoLinkBetween(layer, d3a, d3b, true);
                 }
             });
 
@@ -1006,10 +1053,10 @@ namespace SoulLink.Views
                 Target = () => Canvas,
                 Draw = (layer, hole) =>
                 {
-                    double x = DemoX(hole), y = Math.Max(60, hole.Y + 20);
-                    DrawDemoNode(layer, x, y, "等待", "条件满足后开始等待，到时继续", "\uE823", act, true);
-                    DrawDemoNode(layer, x + 280, y + 120, "打开程序", "在目标会话启动程序；启动成功不代表持续运行", "\uE768", act, false);
-                    DrawDemoLink(layer, x + 114, y + 70, x + 280 + 114, y + 120, true);
+                    var area = DemoArea(hole, 2); double x = area.X, y = area.Y;
+                    var d4a = AddDemo(layer, x, y, "等待", "条件满足后开始等待，到时继续", "\uE823", act, true);
+                    var d4b = AddDemo(layer, x + 280, y + 120, "打开程序", "在目标会话启动程序；启动成功不代表持续运行", "\uE768", act, false);
+                    DrawDemoLinkBetween(layer, d4a, d4b, true);
                 }
             });
 
@@ -1027,10 +1074,10 @@ namespace SoulLink.Views
                 Target = () => PropPanel,
                 Draw = (layer, hole) =>
                 {
-                    double x = DemoX(hole), y = Math.Max(60, hole.Y + 20);
-                    DrawDemoNode(layer, x, y, "执行一条龙", "清场后启动指定一条龙", "\uE768", act, true);
-                    DrawDemoNode(layer, x + 280, y + 130, "每天完成", "到达后当天停止扫描；到日界自动重置", "\uE71A", end, true);
-                    DrawDemoLink(layer, x + 114, y + 70, x + 280 + 114, y + 130, true);
+                    var area5 = DemoArea(hole, 2); double x = area5.X, y = area5.Y;
+                    var d5a = AddDemo(layer, x, y, "执行一条龙", "清场后启动指定一条龙", "\uE768", act, true);
+                    var d5b = AddDemo(layer, x + 280, y + 130, "每天完成", "到达后当天停止扫描；到日界自动重置", "\uE71A", end, true);
+                    DrawDemoLinkBetween(layer, d5a, d5b, true);
                 }
             });
 
@@ -1048,9 +1095,9 @@ namespace SoulLink.Views
                 Target = () => ValidateHint,
                 Draw = (layer, hole) =>
                 {
-                    double y = Math.Max(60, hole.Y - 120);
-                    DrawDemoNode(layer, DemoX(hole), y, "打开程序", "在目标会话启动程序；启动成功不代表持续运行", "\uE768", act, false);
-                    DrawDemoNode(layer, DemoX(hole), y + 110, "每天完成", "到达后当天停止扫描；到日界自动重置", "\uE71A", end, null);
+                    var area = DemoArea(hole, 2); double x = area.X, y = area.Y;
+                    DrawDemoNode(layer, x, y, "打开程序", "在目标会话启动程序；启动成功不代表持续运行", "\uE768", act, false);
+                    DrawDemoNode(layer, x, y + 110, "每天完成", "到达后当天停止扫描；到日界自动重置", "\uE71A", end, null);
 
                     var sample = new Border
                     {
@@ -1068,7 +1115,7 @@ namespace SoulLink.Views
                         TextWrapping = TextWrapping.Wrap,
                         MaxWidth = 520
                     };
-                    System.Windows.Controls.Canvas.SetLeft(sample, DemoX(hole));
+                    System.Windows.Controls.Canvas.SetLeft(sample, x);
                     System.Windows.Controls.Canvas.SetTop(sample, y + 230);
                     layer.Children.Add(sample);
                 }

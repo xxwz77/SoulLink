@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("LiveChannelCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+206690154b644644daf16b4c4c07a8ec4dec42fc")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8cacd860ea8c4368683095c2fafe42de385e672d")]
 [assembly: System.Reflection.AssemblyProductAttribute("LiveChannelCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("LiveChannelCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
