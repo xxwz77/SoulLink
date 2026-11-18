@@ -306,7 +306,7 @@ namespace SoulLink.Services
             }
         }
 
-        /// <summary>引导命令行：SoulLink.exe --system-run &lt;job 文件&gt;</summary>
+        /// <summary>引导命令行：无 UAC 清单的宿主 --system-run &lt;job 文件&gt;</summary>
         private static string BuildBootstrapCmd(string jobPath, string? bootstrapExe)
         {
             string self = !string.IsNullOrWhiteSpace(bootstrapExe)
@@ -316,8 +316,99 @@ namespace SoulLink.Services
             if (string.IsNullOrEmpty(self) || !File.Exists(self))
                 throw new InvalidOperationException("找不到 SoulLink.exe 本体，无法建立 SYSTEM 引导：" + self);
 
-            return Q(self) + " --system-run " + Q(jobPath);
+            // ★ 关键：主程序带 requireAdministrator 清单，SYSTEM 计划任务直接启动它会
+            //   返回 ERROR_ELEVATION_REQUIRED(740)，投送必然失败。
+            //   这里为引导单独准备一个去掉该清单的副本，只有它参与计划任务。
+            string host = EnsureBootstrapHost(self);
+            return Q(host) + " --system-run " + Q(jobPath);
         }
+
+        /// <summary>
+        /// 生成/复用不含 requireAdministrator 清单的引导宿主。
+        /// 引导进程只做 WTSQueryUserToken + CreateProcessAsUser，本来就以 SYSTEM 运行，
+        /// 不需要也不会触发 UAC。
+        /// </summary>
+        private static string EnsureBootstrapHost(string self)
+        {
+            try
+            {
+                string name = Path.GetFileNameWithoutExtension(self) + ".bootstraphost.exe";
+                string dir = Path.Combine(AppIdentity.TempRoot, "boot");
+                Directory.CreateDirectory(dir);
+                string host = Path.Combine(dir, name);
+
+                var src = new FileInfo(self);
+                var dst = new FileInfo(host);
+                if (dst.Exists && dst.Length == src.Length && dst.LastWriteTimeUtc >= src.LastWriteTimeUtc)
+                    return host;
+
+                // 换掉嵌入清单：把 requestedExecutionLevel 改成 asInvoker。
+                string manifestPath = Path.Combine(dir, "bootstraphost.manifest");
+                File.WriteAllText(manifestPath, BootstrapManifest, new UTF8Encoding(false));
+
+                if (dst.Exists) { try { dst.IsReadOnly = false; dst.Delete(); } catch { } }
+
+                string mt = FindMtExe();
+                if (mt.Length > 0)
+                {
+                    var psi = new ProcessStartInfo(mt,
+                        "-nologo -manifest " + Q(manifestPath) + " -outputresource:" + Q(host) + ";#1 " + Q(self))
+                    { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+                    using var p = Process.Start(psi);
+                    p?.StandardOutput.ReadToEnd();
+                    p?.StandardError.ReadToEnd();
+                    p?.WaitForExit(30000);
+                }
+
+                if (!File.Exists(host) || new FileInfo(host).Length != src.Length)
+                {
+                    File.Copy(self, host, true);
+                    // 没有 mt.exe 时直接改 PE 内嵌清单；失败则不能用作 SYSTEM 引导（会 740）。
+                    if (!ManifestPatcher.MakeAsInvoker(host)) throw new InvalidOperationException("引导宿主清单改写失败");
+                }
+                return host;
+            }
+            catch
+            {
+                return self;
+            }
+        }
+
+        private static string FindMtExe()
+        {
+            try
+            {
+                // Windows SDK 的 mt.exe 不一定装了；找不到就退回复制（复制后仍是原清单）
+                string[] roots =
+                {
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Windows Kits", "10", "bin"),
+                };
+                foreach (var root in roots)
+                {
+                    if (!Directory.Exists(root)) continue;
+                    var hit = Directory.GetFiles(root, "mt.exe", SearchOption.AllDirectories)
+                        .OrderByDescending(f => f).FirstOrDefault();
+                    if (!string.IsNullOrEmpty(hit) && File.Exists(hit)) return hit;
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        private static readonly string BootstrapManifest = string.Join(Environment.NewLine, new[]
+        {
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
+            "<assembly manifestVersion=\"1.0\" xmlns=\"urn:schemas-microsoft-com:asm.v1\">",
+            "  <assemblyIdentity version=\"1.0.0.0\" name=\"SoulLink.bootstrap\" />",
+            "  <trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v2\">",
+            "    <security>",
+            "      <requestedPrivileges xmlns=\"urn:schemas-microsoft-com:asm.v3\">",
+            "        <requestedExecutionLevel level=\"asInvoker\" uiAccess=\"false\" />",
+            "      </requestedPrivileges>",
+            "    </security>",
+            "  </trustInfo>",
+            "</assembly>"
+        });
 
         /// <summary>
         /// 定位自身 exe：优先当前进程。

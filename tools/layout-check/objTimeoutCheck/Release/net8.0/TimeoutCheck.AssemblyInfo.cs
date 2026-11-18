@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TimeoutCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+daf0904d1400e0cdece1e9fc179b72f513eb1101")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f949211df808614dad6c4f405a63166209ad9ce9")]
 [assembly: System.Reflection.AssemblyProductAttribute("TimeoutCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TimeoutCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
