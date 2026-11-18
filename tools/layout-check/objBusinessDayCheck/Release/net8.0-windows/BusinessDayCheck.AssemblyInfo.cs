@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BusinessDayCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+699ed5a5ba884005e7f64a6e843388b69091a941")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9ed37e83d370d7425d2953b34686428243844a7f")]
 [assembly: System.Reflection.AssemblyProductAttribute("BusinessDayCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BusinessDayCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

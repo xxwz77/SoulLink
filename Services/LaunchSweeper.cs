@@ -18,6 +18,9 @@ namespace SoulLink.Services
         {
             try { SweepTasks(); } catch { }
             try { SweepFiles(); } catch { }
+            // ★ 版本更新后，磁盘上的旧代理副本必须删除；它大小可能与新程序相同，
+            //   只比大小/时间会一直复用它（实测踩过：新旧都是 66,335,966，哈希却不同）。
+            try { ProxyHost.RemoveIfStale(); } catch { }
         }
 
         /// <summary>删除本应用前缀、且已超过 10 分钟的一次性投送任务。</summary>
@@ -55,7 +58,8 @@ namespace SoulLink.Services
                 {
                     var fi = new FileInfo(file);
                     if (fi.LastWriteTimeUtc > cutoff) continue;
-                    if (!(fi.Directory!.Name == "jobs" || fi.Directory.Name == "boot")) continue;
+                    // ★ 必须包含 proxy：旧代理副本不清会在版本更新后继续被复用（实测踩过）。
+                    if (!(fi.Directory!.Name == "jobs" || fi.Directory.Name == "boot" || fi.Directory.Name == "proxy")) continue;
                     fi.IsReadOnly = false;
                     fi.Delete();
                     removed++;

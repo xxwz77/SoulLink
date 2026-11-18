@@ -8,17 +8,17 @@
     ".NETCoreApp,Version=v8.0": {
       "FlowEditorLiveCheck/1.0.0": {
         "dependencies": {
-          "SoulLink": "2.3.0"
+          "SoulLink": "2.4.0"
         },
         "runtime": {
           "FlowEditorLiveCheck.dll": {}
         }
       },
-      "SoulLink/2.3.0": {
+      "SoulLink/2.4.0": {
         "runtime": {
           "SoulLink.dll": {
-            "assemblyVersion": "2.3.0.0",
-            "fileVersion": "2.3.0.0"
+            "assemblyVersion": "2.4.0.0",
+            "fileVersion": "2.4.0.0"
           }
         }
       }
@@ -30,7 +30,7 @@
       "serviceable": false,
       "sha512": ""
     },
-    "SoulLink/2.3.0": {
+    "SoulLink/2.4.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

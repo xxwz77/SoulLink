@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "IdentityChannelCheck/1.0.0": {
+        "dependencies": {
+          "SoulLink": "2.4.0"
+        },
+        "runtime": {
+          "IdentityChannelCheck.dll": {}
+        }
+      },
+      "SoulLink/2.4.0": {
+        "runtime": {
+          "SoulLink.dll": {
+            "assemblyVersion": "2.4.0.0",
+            "fileVersion": "2.4.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "IdentityChannelCheck/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "SoulLink/2.4.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

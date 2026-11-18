@@ -81,6 +81,8 @@ namespace SoulLink.Services
                     string name = Path.GetFileName(raw);
                     if (!IsRelayPipeName(name)) continue;
                     if (name.EndsWith(AppIdentity.RelayEventSuffix, StringComparison.OrdinalIgnoreCase)) continue;
+                    // only this identity's pipes, never another build's channel
+                    if (!name.StartsWith(AppIdentity.RelayPipePrefix, StringComparison.OrdinalIgnoreCase)) continue;
                     int marker = name.LastIndexOf("_Relay_", StringComparison.OrdinalIgnoreCase);
                     if (marker < 0) continue;
                     string rest = name.Substring(marker + "_Relay_".Length);
@@ -90,12 +92,15 @@ namespace SoulLink.Services
                 }
                 if (pipes.Count == 0) return live;
 
+                // Must match the CURRENT identity, not just the "SoulLink*" prefix:
+                // otherwise SoulLink-Stable agents count as ours and the test build
+                // shows "channel ready" although it never deployed anything.
+                string expected = AppIdentity.Name;
                 foreach (var proc in Process.GetProcesses())
                 {
                     try
                     {
-                        bool sameFamily = proc.ProcessName.StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase);
-                        if (!sameFamily) continue;
+                        if (!string.Equals(proc.ProcessName, expected, StringComparison.OrdinalIgnoreCase)) continue;
                         int sid = proc.SessionId;
                         if (pipes.Contains(sid)) live.Add(sid);
                     }

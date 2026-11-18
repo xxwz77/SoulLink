@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "SoulLink/2.4.0": {
+        "runtime": {
+          "SoulLink.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "SoulLink/2.4.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
