@@ -499,6 +499,35 @@ namespace SoulLink.Services
             catch { }
         }
 
+        /// <summary>
+        /// 取该用户令牌的“提权副本”。
+        /// · UAC 关闭：登录令牌本身已是完整管理员令牌，直接返回 0（沿用原令牌）。
+        /// · UAC 开启：登录令牌是 TokenElevationTypeLimited，用 TokenLinkedToken 取管理员令牌。
+        /// 取不到（例如该用户不是管理员）返回 0，调用方按标准令牌继续，不报错。
+        /// </summary>
+        private static IntPtr TryGetElevatedToken(IntPtr token)
+        {
+            try
+            {
+                int size = Marshal.SizeOf<int>();
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    if (!GetTokenInformation(token, TOKEN_INFORMATION_CLASS.TokenElevationType, buf, size, out _))
+                        return IntPtr.Zero;
+                    int type = Marshal.ReadInt32(buf);
+                    // 1 = TokenElevationTypeLimited（标准令牌，存在提权副本）
+                    if (type != 1) return IntPtr.Zero;
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+
+                if (!GetTokenInformation(token, TOKEN_INFORMATION_CLASS.TokenLinkedToken,
+                        out IntPtr linked, IntPtr.Size, out _)) return IntPtr.Zero;
+                return linked;
+            }
+            catch { return IntPtr.Zero; }
+        }
+
         /// <summary>核心：以目标会话用户身份创建进程。</summary>
         private static (bool ok, int pid, string message) LaunchAsUser(Job job)
         {
@@ -519,12 +548,20 @@ namespace SoulLink.Services
                         "WTSQueryUserToken 失败（错误 " + err + "）。会话 " + job.SessionId + " 可能没有已登录的用户。");
                 }
 
-                // ② 转成主令牌
-                if (!DuplicateTokenEx(userToken, TOKEN_ALL_ACCESS, IntPtr.Zero,
+                // ② 优先取“提权令牌”：UAC 开启时，登录令牌是标准令牌，
+                //    它的 linked token 才是管理员令牌。这样即使 UAC 开着，
+                //    启动的目标程序也能拿到管理员权限。
+                IntPtr elevated = TryGetElevatedToken(userToken);
+                IntPtr source = elevated != IntPtr.Zero ? elevated : userToken;
+
+                if (!DuplicateTokenEx(source, TOKEN_ALL_ACCESS, IntPtr.Zero,
                         SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out primary))
                 {
-                    return (false, 0, "DuplicateTokenEx 失败（错误 " + Marshal.GetLastWin32Error() + "）。");
+                    int dupErr = Marshal.GetLastWin32Error();
+                    if (elevated != IntPtr.Zero) CloseHandle(elevated);
+                    return (false, 0, "DuplicateTokenEx 失败（错误 " + dupErr + "）。");
                 }
+                if (elevated != IntPtr.Zero) CloseHandle(elevated);
 
                 // ③ 用户环境变量（不建的话会继承 SYSTEM 的 PATH / TEMP，程序可能找不到依赖）
                 CreateEnvironmentBlock(out env, primary, false);
@@ -722,7 +759,10 @@ namespace SoulLink.Services
 
         private enum SECURITY_IMPERSONATION_LEVEL { SecurityAnonymous, SecurityIdentification, SecurityImpersonation, SecurityDelegation }
         private enum TOKEN_TYPE { TokenPrimary = 1, TokenImpersonation = 2 }
-        private enum TOKEN_INFORMATION_CLASS { TokenElevation = 20 }
+        private enum TOKEN_INFORMATION_CLASS { TokenElevation = 20, TokenElevationType = 18, TokenLinkedToken = 19 }
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetTokenInformation(IntPtr token, TOKEN_INFORMATION_CLASS cls, out IntPtr info, int len, out int ret);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct LUID { public uint LowPart; public int HighPart; }

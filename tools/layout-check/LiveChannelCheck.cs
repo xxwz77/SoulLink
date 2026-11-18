@@ -1,26 +1,25 @@
-using System;using System.IO.Pipes;using System.Threading;using System.Threading.Tasks;using SoulLink.Services;
+using System;using System.IO.Pipes;using System.Threading;using SoulLink.Services;
 public static class LiveChannelCheck
 {
  static int fails;static void Check(bool ok,string s){Console.WriteLine((ok?"ok   ":"FAIL ")+s);if(!ok)fails++;}
  public static int Main()
  {
-  // 用随机会话号，避免与真实/其它测试管道冲突
   int sid=9000+new Random().Next(1,800);
-  string pipe="SoulLink_Relay_"+sid+"_deadbeef";
-  // 1) 没有任何代理时不应报告就绪
-  var none=BgiLogWatcher.DiscoverLiveAgentSessions();
-  Check(!none.Contains(sid),"没有活代理时不算通道就绪");
-  // 2) 建一个可连接的服务器管道，模拟活代理
+  string pipe="SoulLink_Relay_"+sid+"_probe";
+  // 只有管道没有进程：不能算就绪（避免残留误报），但也绝不能去连接它
   var server=new NamedPipeServerStream(pipe,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous);
-  var accept=Task.Run(()=>{try{server.WaitForConnection();}catch{}});
-  Thread.Sleep(200);
   var live=BgiLogWatcher.DiscoverLiveAgentSessions();
-  Check(live.Contains(sid),"可连通的代理被识别为通道就绪");
-  // 3) 关掉后应立即不再报告
+  Check(!live.Contains(sid),"只有管道、没有代理进程时不算就绪");
+  // 关键：探测不能占用连接，服务器必须仍可正常接受连接
+  bool canStillAccept=true;
+  try{
+    var accept=server.WaitForConnectionAsync();
+    using var client=new NamedPipeClientStream(".",pipe,PipeDirection.InOut);
+    client.Connect(500);
+    canStillAccept=accept.Wait(500);
+  }catch{canStillAccept=false;}
+  Check(canStillAccept,"状态探测不会占用代理管道（这是绿一下就消失的原因）");
   try{server.Dispose();}catch{}
-  Thread.Sleep(300);
-  var after=BgiLogWatcher.DiscoverLiveAgentSessions();
-  Check(!after.Contains(sid),"代理退出后不再报告通道就绪");
   Console.WriteLine(fails==0?"ALL PASSED":"FAILURES="+fails);return fails;
  }
 }

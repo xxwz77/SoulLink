@@ -72,6 +72,10 @@ namespace SoulLink.Services
             var live = new HashSet<int>();
             try
             {
+                // 以「真的有代理进程在跑」为准：进程名与本程序同族，且会话号与管道一致。
+                // ★ 不连接管道：代理管道只接受一个连接，探测会把它占掉并导致代理退出
+                //   （表现为“通道绿一下就消失”）。
+                var pipes = new HashSet<int>();
                 foreach (var raw in Directory.GetFiles(@"\\.\pipe\"))
                 {
                     string name = Path.GetFileName(raw);
@@ -82,16 +86,21 @@ namespace SoulLink.Services
                     string rest = name.Substring(marker + "_Relay_".Length);
                     int us = rest.IndexOf('_');
                     if (us <= 0) continue;
-                    if (!int.TryParse(rest.Substring(0, us), out int sid) || sid <= 0) continue;
-                    // 只有真正还能连上的管道才算“代理活着”；
-                    // 残留的管道对象连不上，就不会再误报成通道就绪。
+                    if (int.TryParse(rest.Substring(0, us), out int sid) && sid > 0) pipes.Add(sid);
+                }
+                if (pipes.Count == 0) return live;
+
+                foreach (var proc in Process.GetProcesses())
+                {
                     try
                     {
-                        using var probe = new System.IO.Pipes.NamedPipeClientStream(".", name, System.IO.Pipes.PipeDirection.InOut);
-                        probe.Connect(120);
-                        live.Add(sid);
+                        bool sameFamily = proc.ProcessName.StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase);
+                        if (!sameFamily) continue;
+                        int sid = proc.SessionId;
+                        if (pipes.Contains(sid)) live.Add(sid);
                     }
                     catch { }
+                    finally { proc.Dispose(); }
                 }
             }
             catch { }
