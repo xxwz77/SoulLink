@@ -132,6 +132,9 @@ namespace SoulLink.Services
             // 用 SoulLink.exe 自己当代理 —— 自包含单文件，目标会话里不需要任何运行时
             string self = SystemLauncher.ResolveSelfExe();
             if (!File.Exists(self)) return (false, "找不到 SoulLink.exe 本体：" + self);
+            // ★ 代理要以普通用户令牌启动：必须用不带管理员清单的副本，否则 740。
+            string agent = ProxyHost.Resolve();
+            if (!File.Exists(agent)) return (false, "找不到可用于投送的代理副本：" + agent);
 
             _cts = new CancellationTokenSource();
 
@@ -141,7 +144,7 @@ namespace SoulLink.Services
 
             // 走 SYSTEM 通道投送（schtasks /ru SYSTEM → CreateProcessAsUser）
             var launch = await SystemLauncher.LaunchAsync(
-                SessionId, self, "--relay " + PipeName,
+                SessionId, agent, "--relay " + PipeName,
                 interactive: false, bootstrapExe: self).ConfigureAwait(false);
 
             if (!launch.Ok)

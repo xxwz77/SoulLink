@@ -316,11 +316,10 @@ namespace SoulLink.Services
             if (string.IsNullOrEmpty(self) || !File.Exists(self))
                 throw new InvalidOperationException("找不到 SoulLink.exe 本体，无法建立 SYSTEM 引导：" + self);
 
-            // ★ 关键：主程序带 requireAdministrator 清单，SYSTEM 计划任务直接启动它会
-            //   返回 ERROR_ELEVATION_REQUIRED(740)，投送必然失败。
-            //   这里为引导单独准备一个去掉该清单的副本，只有它参与计划任务。
-            string host = EnsureBootstrapHost(self);
-            return Q(host) + " --system-run " + Q(jobPath);
+            // 引导进程就是本程序：它以 SYSTEM 身份运行，只需要 WTSQueryUserToken，
+            // 不会触发 UAC。真正会被 740 拦住的是它随后用普通用户令牌启动的子进程，
+            // 所以那个子进程必须使用不带管理员清单的代理本体（见 ProxyHost）。
+            return Q(self) + " --system-run " + Q(jobPath);
         }
 
         /// <summary>

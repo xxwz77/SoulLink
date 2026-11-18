@@ -227,6 +227,7 @@ namespace SoulLink.Views
                             BgiLastWrite = bgiTime,
                             HasChannel = hasChannel
                         };
+                        if (hasChannel) newVm.ChannelError = "";
                         newVm.SetRealName(realName);
                         newVm.SetRemark(remark);
                         _sessions.Add(newVm);
@@ -234,6 +235,7 @@ namespace SoulLink.Views
                     else
                     {
                         exist.BgiLastWrite = bgiTime;
+                        if (hasChannel) exist.ChannelError = "";
                         exist.HasChannel = hasChannel;
                         exist.SetRealName(realName);
                         exist.SetRemark(remark);
@@ -2301,23 +2303,55 @@ namespace SoulLink.Views
             {
                 if (_hasChannel == value) return;
                 _hasChannel = value;
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasChannel)));
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ChannelText)));
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ChannelBrush)));
+                if (value) { ChannelError = ""; }
+                NotifyChannel();
             }
         }
 
-        /// <summary>投送通道状态文字。</summary>
-        public string ChannelText => HasChannel ? "通道就绪" : "通道未投送";
+        private string _channelError = "";
+        /// <summary>最近一次投送失败的原因；空表示没有失败记录。</summary>
+        public string ChannelError
+        {
+            get => _channelError;
+            set
+            {
+                if (_channelError == value) return;
+                _channelError = value ?? "";
+                NotifyChannel();
+            }
+        }
 
-        /// <summary>通道状态颜色：就绪绿、未投送灰蓝（不是错误，只是还没做）。</summary>
+        private void NotifyChannel()
+        {
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasChannel)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ChannelText)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ChannelBrush)));
+        }
+
+        /// <summary>三种状态：就绪 / 未投送 / 投送失败。</summary>
+        public string ChannelText
+            => HasChannel ? "通道就绪"
+               : ChannelError.Length > 0 ? ("投送失败：" + ShortError(ChannelError))
+               : "通道未投送";
+
+        private static string ShortError(string msg)
+        {
+            var m = (msg ?? "").Replace("\n", " ").Trim();
+            const string prefix = "投送注入代理失败：";
+            if (m.StartsWith(prefix, StringComparison.Ordinal)) m = m.Substring(prefix.Length);
+            return m.Length <= 28 ? m : m.Substring(0, 28) + "…";
+        }
+
+        /// <summary>通道状态颜色：就绪绿、未投送灰蓝、失败红。</summary>
         public System.Windows.Media.Brush ChannelBrush
         {
             get
             {
                 Color c = HasChannel
                     ? Color.FromRgb(0x8F, 0xE8, 0xD0)     // 就绪：绿
-                    : Color.FromRgb(0x8B, 0x9C, 0xC8);    // 未投送：灰蓝
+                    : ChannelError.Length > 0
+                        ? Color.FromRgb(0xFF, 0x9B, 0x9B)  // 失败：红
+                        : Color.FromRgb(0x8B, 0x9C, 0xC8); // 未投送：灰蓝
                 var b = new System.Windows.Media.SolidColorBrush(c);
                 b.Freeze();
                 return b;

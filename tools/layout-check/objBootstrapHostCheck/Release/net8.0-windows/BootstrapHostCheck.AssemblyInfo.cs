@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BootstrapHostCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f949211df808614dad6c4f405a63166209ad9ce9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e806b9a482b3af5165f1ea0ce60e2c0e36d00af8")]
 [assembly: System.Reflection.AssemblyProductAttribute("BootstrapHostCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BootstrapHostCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

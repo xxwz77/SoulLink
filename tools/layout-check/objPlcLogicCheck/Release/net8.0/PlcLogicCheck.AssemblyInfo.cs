@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PlcLogicCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+91e155612831750ef97e97543b77ba4284289bfb")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e806b9a482b3af5165f1ea0ce60e2c0e36d00af8")]
 [assembly: System.Reflection.AssemblyProductAttribute("PlcLogicCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PlcLogicCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

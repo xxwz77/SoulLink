@@ -4,7 +4,8 @@ public static class LiveChannelCheck
  static int fails;static void Check(bool ok,string s){Console.WriteLine((ok?"ok   ":"FAIL ")+s);if(!ok)fails++;}
  public static int Main()
  {
-  int sid=97;
+  // 用随机会话号，避免与真实/其它测试管道冲突
+  int sid=9000+new Random().Next(1,800);
   string pipe="SoulLink_Relay_"+sid+"_deadbeef";
   // 1) 没有任何代理时不应报告就绪
   var none=BgiLogWatcher.DiscoverLiveAgentSessions();
