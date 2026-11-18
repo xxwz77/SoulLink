@@ -1,0 +1,1 @@
+namespace SoulLink.Services{public static class SessionService{public static string CurrentUser=>"主用户";public static string BareName(string name){int i=name.LastIndexOf('\\');return i>=0?name.Substring(i+1):name;}}public partial class App{public static SoulLink.Models.AppConfig Config=new();}}

@@ -1,0 +1,1 @@
+namespace SoulLink.Models{public class AutomationFlow{public int DayBoundaryHour{get;set;}public string DailyLatchKey{get;set;}="";public string RunDayKey{get;set;}="";public bool RunComplete{get;set;}}}

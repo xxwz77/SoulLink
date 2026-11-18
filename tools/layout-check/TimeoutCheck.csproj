@@ -11,5 +11,6 @@
     <Compile Include="TimeoutCheck.cs" />
     <Compile Include="..\\..\\Models\\FlowModels.cs" Link="FlowModels.cs" />
     <Compile Include="..\\..\\Models\\FlowNodeCatalog.cs" Link="FlowNodeCatalog.cs" />
+    <Compile Include="..\..\Models\PlcLogic.cs" /><Compile Include="..\..\Models\FlowGraphRules.cs" />
   </ItemGroup>
 </Project>

@@ -37,7 +37,7 @@ namespace SoulLink.Views
         private async Task LoadSessionsAsync(SessionInfo? focus)
         {
             var all = await SessionService.QueryAsync().ConfigureAwait(true);
-            _sessions = SessionService.FilterUsers(all);
+            _sessions = AccountScope.Sessions(SessionService.FilterUsers(all));
 
             _users.Clear();
             foreach (var s in _sessions)

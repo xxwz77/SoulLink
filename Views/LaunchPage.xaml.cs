@@ -49,6 +49,8 @@ namespace SoulLink.Views
                 // 只在本页可见时刷新，切走就跳过，省开销
                 if (!IsVisible) return;
                 RefreshSessions();
+                // 自动化卡片也跟随刷新，否则必须切页才能看到状态/名称变化。
+                RefreshAutomationList();
                 // 右侧原始日志：跟随点击的会话
                 if (_follower == null) RefreshSelectedLog();
                 // 左侧：主会话显示总览，其它账号显示单账号状态
@@ -119,8 +121,17 @@ namespace SoulLink.Views
             {
                 try
                 {
-                    var all = await SessionService.QueryAsync().ConfigureAwait(false);
-                    var users = SessionService.FilterUsers(all);
+                    // ★ 优先读账号状态中心快照：它每秒统一刷新一次，
+                    //   本页原来每 3 秒自己 query user + 枚举 BGI 进程，
+                    //   与其他页面重复。快照太旧时才自己查。
+                    List<SessionInfo> all;
+                    var snap = AccountStateCenter.Sessions;
+                    bool fresh = snap.Count > 0
+                        && (DateTime.Now - AccountStateCenter.LastRefresh).TotalSeconds < 5;
+                    if (fresh) all = snap;
+                    else all = await SessionService.QueryAsync().ConfigureAwait(false);
+
+                    var users = SessionService.FilterUsers(all); // 总览是导航入口，主用户必须始终可见
                     await Dispatcher.InvokeAsync(() => ApplySessions(users));
                 }
                 catch { }
@@ -144,8 +155,27 @@ namespace SoulLink.Views
                 try
                 {
                     bgiTimes = new Dictionary<int, DateTime>();
-                    foreach (var kv in BgiLogWatcher.Discover())
-                        bgiTimes[kv.Key] = kv.Value.LastWrite;
+                    // ★ 快照里已有每账号 BGI 的日志写入时间，优先用它；
+                    //   快照不可用时才现枚举（枚举进程较慢，不该每页都做）。
+                    bool usedSnapshot = false;
+                    try
+                    {
+                        if ((DateTime.Now - AccountStateCenter.LastRefresh).TotalSeconds < 5)
+                        {
+                            foreach (var st in AccountStateCenter.All())
+                            {
+                                if (st.BgiRunning && st.HasSession && st.BgiLogWrite != DateTime.MinValue)
+                                    bgiTimes[st.SessionId] = st.BgiLogWrite;
+                            }
+                            usedSnapshot = true;
+                        }
+                    }
+                    catch { }
+
+                    if (!usedSnapshot)
+                        foreach (var kv in BgiLogWatcher.Discover())
+                            bgiTimes[kv.Key] = kv.Value.LastWrite;
+
                     channelSessions = BgiLogWatcher.DiscoverChannelSessions();
                 }
                 catch
@@ -326,8 +356,10 @@ namespace SoulLink.Views
             public System.Windows.Controls.TextBlock? Line1;
             public System.Windows.Controls.TextBlock? Line2;
             public System.Windows.Controls.TextBlock? Line3;
+            /// <summary>右上角的"今日统计"文字（经验/摩拉/拾取/狗粮）。</summary>
+            public System.Windows.Controls.TextBlock? TodayLine;
             /// <summary>卡片右上角的"每日报错"角标。</summary>
-            public System.Windows.Controls.TextBlock? ErrorBadge;
+
         }
 
         private readonly List<OverviewRow> _overviewRows = new List<OverviewRow>();
@@ -351,7 +383,7 @@ namespace SoulLink.Views
                             foreach (var vm in _sessions)
                             {
                                 var s = vm.Session;
-                                if (s.IsConsoleSession) continue;
+                                if (!AccountScope.Allows(s.UserName)) continue;
                                 bgi.TryGetValue(s.Id, out var inst);
                                 wanted.Add((s, inst));
                             }
@@ -399,12 +431,26 @@ namespace SoulLink.Views
                                     //   ① A1 · 联机锄地-融合      （账号 · 配置组/脚本）
                                     //   ② 第 2/3 轮 · 思          （轮次 / 角色）
                                     //   ③ 路线 60/78 · 03-xxx     （当前路线）
-                                    // 卡片内用 Grid：左侧三行信息，右上角放"每日报错"角标
+                                    // 卡片内三行信息 + 右上角"今日统计"。
+                                    // （报错角标已移除：报错在「运行状态」详情面板里有完整展示）
                                     var inner = new System.Windows.Controls.Grid();
                                     inner.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
                                     { Width = new System.Windows.GridLength(1, System.Windows.GridUnitType.Star) });
                                     inner.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
                                     { Width = System.Windows.GridLength.Auto });
+
+                                    var todayLine = new System.Windows.Controls.TextBlock
+                                    {
+                                        FontSize = 9.5,
+                                        VerticalAlignment = System.Windows.VerticalAlignment.Top,
+                                        HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                                        Margin = new Thickness(8, 1, 0, 0),
+                                        Foreground = new System.Windows.Media.SolidColorBrush(
+                                            System.Windows.Media.Color.FromRgb(0x9F, 0xE8, 0xC8)),
+                                        Visibility = Visibility.Collapsed
+                                    };
+                                    System.Windows.Controls.Grid.SetColumn(todayLine, 1);
+                                    inner.Children.Add(todayLine);
 
                                     // ★ 用 Grid 而不是 StackPanel：StackPanel 水平方向给的可用宽度是
                                     //   无限大，TextWrapping 不生效，长路线名会撑出卡片。
@@ -416,18 +462,7 @@ namespace SoulLink.Views
                                     };
                                     System.Windows.Controls.Grid.SetColumn(sp, 0);
 
-                                    var badge = new System.Windows.Controls.TextBlock
-                                    {
-                                        FontSize = 9.5,
-                                        VerticalAlignment = System.Windows.VerticalAlignment.Top,
-                                        HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
-                                        Margin = new Thickness(8, 1, 0, 0),
-                                        Visibility = Visibility.Collapsed
-                                    };
-                                    System.Windows.Controls.Grid.SetColumn(badge, 1);
-
                                     inner.Children.Add(sp);
-                                    inner.Children.Add(badge);
 
                                     var l1 = new System.Windows.Controls.TextBlock
                                     {
@@ -456,7 +491,7 @@ namespace SoulLink.Views
                                     card.Child = inner;
 
                                     row.Card = card; row.Line1 = l1; row.Line2 = l2; row.Line3 = l3;
-                                    row.ErrorBadge = badge;
+                                    row.TodayLine = todayLine;
                                     _overviewRows.Add(row);
                                     OverviewList.Children.Add(card);
                                 }
@@ -482,7 +517,7 @@ namespace SoulLink.Views
             {
                 if (string.IsNullOrWhiteSpace(user)) return "";
                 // ★ 统一走解析器：手动指定 > 正在运行 > 记忆
-                return BgiPathResolver.GetPath(user);
+                return BgiDataCenter.Get(user).ExePath;
             }
             catch { return ""; }
         }
@@ -553,14 +588,32 @@ namespace SoulLink.Views
                             if (!_statusCache.TryGetValue(inst.LogFile, out entry)
                                 || entry.Key != key)
                             {
+                                // ★ 深读一段再解析：
+                                //   「开始执行地图追踪任务」这类行只在任务开始时写一次，
+                                //   而 BGI 每秒写 ~11 行，尾部 300 行只覆盖约 30 秒 ——
+                                //   过了这个窗口就永远解析不到任务名/路线，
+                                //   表现就是"路线名显示一下又消失"（用户实测）。
+                                //   这里读 4000 行 / 最多 16MB，与左侧状态面板一致。
                                 var fresh = new BgiStatus();
-                                string text = BgiLogWatcher.TailLinesDeep(inst.LogFile, 300);
+                                string text = BgiLogWatcher.TailLinesDeep(
+                                    inst.LogFile, 4000, 16L * 1024 * 1024);
                                 fresh.Update(text);
 
                                 var (errs, warns, fails) = BgiLogWatcher.CountDailyErrors(inst.LogFile);
                                 if (errs > fresh.ErrorCount) fresh.ErrorCount = errs;
                                 if (warns > fresh.WarnCount) fresh.WarnCount = warns;
                                 if (fails > fresh.FailCount) fresh.FailCount = fails;
+
+                                // ★ 兜底：如果这次没解析到任务/路线，沿用该文件上一次解析到的结构字段。
+                                //   日志滚出深读窗口后仍能保持显示，不会"闪一下就没了"。
+                                lock (_statusCache)
+                                {
+                                    if (_structCache.TryGetValue(inst.LogFile, out var prev) && prev != null)
+                                        fresh.MergeStructuralFrom(prev);
+                                }
+                                var keep = new BgiStatus();
+                                keep.MergeStructuralFrom(fresh);
+                                lock (_statusCache) _structCache[inst.LogFile] = keep;
 
                                 entry = new StatusCacheEntry { Key = key, Status = fresh };
                                 _statusCache[inst.LogFile] = entry;
@@ -577,16 +630,24 @@ namespace SoulLink.Views
                         {
                             try
                             {
+                                var accountState = AccountStateCenter.GetByUser(row.User);
+                                if (accountState != null)
+                                {
+                                    var current = accountState.Groups.All().Where(g => g.State == ScriptGroupState.Running)
+                                        .OrderByDescending(g => g.StartedAt).FirstOrDefault()
+                                        ?? accountState.Groups.All().OrderByDescending(g => g.StartedAt).FirstOrDefault();
+                                    if (current != null && current.Name.Length > 0)
+                                    {
+                                        st.ConfigGroup = current.Name;
+                                        st.PicksRoute = current.Name;
+                                        st.TaskName = "";
+                                    }
+                                }
                                 // ★ 没跑 BGI：分两种说法
                                 //   今天跑过（有当天日志）→ "今天运行过，当前已退出"
                                 //   今天没跑过（无日志）  → "今日还未运行 BetterGI"
                                 if (!running)
                                 {
-                                    if (row.ErrorBadge != null)
-                                    {
-                                        row.ErrorBadge.Text = "";
-                                        row.ErrorBadge.Visibility = Visibility.Collapsed;
-                                    }
                                     if (row.Line1 != null && row.Line1.Text != row.User)
                                         row.Line1.Text = row.User;
                                     if (row.Line2 != null)
@@ -620,32 +681,6 @@ namespace SoulLink.Views
                                 if (!string.IsNullOrEmpty(group) && group != "—")
                                     head += "  ·  " + group;
                                 if (row.Line1 != null && row.Line1.Text != head) row.Line1.Text = head;
-
-                                // ★ 每日报错角标：必须在任何 continue 之前更新，
-                                //   否则"有异常的账号"（如 A4）会提前 continue 掉、
-                                //   角标永远不显示 —— 之前就只有 A1 有、A4 没有。
-                                if (row.ErrorBadge != null)
-                                {
-                                    if (st.ErrorLevel >= 2)
-                                    {
-                                        string badgeText = "";
-                                        if (st.FailCount > 0) badgeText += "失败 " + st.FailCount;
-                                        if (st.ErrorCount > 0)
-                                            badgeText += (badgeText.Length > 0 ? " · " : "") + "错误 " + st.ErrorCount;
-                                        if (row.ErrorBadge.Text != badgeText) row.ErrorBadge.Text = badgeText;
-                                        row.ErrorBadge.Foreground = st.FailCount > 0
-                                            ? new System.Windows.Media.SolidColorBrush(
-                                                System.Windows.Media.Color.FromRgb(0xFF, 0x7B, 0x7B))
-                                            : new System.Windows.Media.SolidColorBrush(
-                                                System.Windows.Media.Color.FromRgb(0xFF, 0xD5, 0x4A));
-                                        row.ErrorBadge.Visibility = Visibility.Visible;
-                                    }
-                                    else
-                                    {
-                                        row.ErrorBadge.Text = "";
-                                        row.ErrorBadge.Visibility = Visibility.Collapsed;
-                                    }
-                                }
 
                                 // ★ 有 BGI 进程，但今天这份日志里没有任何状态信息
                                 //   （刚启动、或还没开始跑任务）→ 也要给个明确说法。
@@ -700,13 +735,31 @@ namespace SoulLink.Views
                                 }
 
                                 // ② 轮次/任务（有轮次显示轮次，无轮次显示任务名）
-                                string roundLine = st.RoundDisplay;
-                                if (roundLine == "—") roundLine = "等待日志中的状态…";
+                                // ★ 兜底不要再写"等待日志中的状态"：那会让人以为没解析到，
+                                //   实际可能只是这类任务本身没有轮次概念（地图追踪等）。
+                                //   有任务名就显示任务名，实在没有就留空。
+                                string roundLine = st.SafeRoundDisplay;
+                                if (string.IsNullOrWhiteSpace(roundLine))
+                                    roundLine = (st.GroupDisplay == "—") ? "" : st.GroupDisplay;
                                 if (row.Line2 != null)
                                 {
                                     if (row.Line2.Text != roundLine) row.Line2.Text = roundLine;
                                     row.Line2.Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush");
                                     row.Line2.Visibility = Visibility.Visible;
+                                }
+
+                                // ②b 今日狗粮收益（右上角）
+                                //     ★ 数据源是狗粮脚本自己写的 records 文件，
+                                //       不是从日志累加 —— 准确且不受日志滚动影响。
+                                //       达到路线参考上限（A=13万/B=5万）后中心会停止统计。
+                                if (row.TodayLine != null)
+                                {
+                                    var st2 = accountState;
+                                    string todayText = FormatTodayForAccount(st2);
+                                    if (row.TodayLine.Text != todayText)
+                                        row.TodayLine.Text = todayText;
+                                    row.TodayLine.Visibility = todayText.Length > 0
+                                        ? Visibility.Visible : Visibility.Collapsed;
                                 }
 
                                 // ③ 路线 / 进度（三种格式都由 RouteDisplay 统一处理）
@@ -838,6 +891,59 @@ namespace SoulLink.Views
         /// 每个日志文件的状态解析缓存（按"最后写入时间+长度"判断是否需要重算）。
         /// 避免每秒重复扫描几十 MB 的日志。
         /// </summary>
+        /// <summary>
+        /// 主界面右上角的"今日"信息：走哪条线 + 今日收益。
+        /// ★ 收益来自狗粮脚本的 records（准确），不是日志累加。
+        /// </summary>
+        private static string FormatToday(DailyStats? td)
+        {
+            try
+            {
+                // 这里只有 DailyStats，真正的路线与收益在 AccountState 上，
+                // 由调用方通过 FormatTodayForAccount 提供。
+                if (td == null) return "";
+                var parts = new List<string>();
+                if (td.PickTotal > 0) parts.Add("拾取 " + FormatNum(td.PickTotal));
+                return string.Join(" · ", parts);
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>按账号状态格式化"今日：线路 + 收益"。</summary>
+        private static string FormatTodayForAccount(AccountState? st)
+        {
+            if (st == null) return "";
+            var parts = new List<string>();
+
+            // ① 今日走哪条线（只有当日记录才显示）
+            if (st.DogfoodValid)
+            {
+                string route = st.DogfoodRoute == DogfoodEndingRoute.EndingA
+                    ? "收尾A·联机"
+                    : "收尾B·自跑";
+                parts.Add(route);
+            }
+
+            // ② 今日收益
+            if (st.DogfoodExp > 0) parts.Add("经验 +" + FormatNum(st.DogfoodExp));
+            if (st.DogfoodMora > 0) parts.Add("摩拉 +" + FormatNum(st.DogfoodMora));
+
+            return string.Join(" · ", parts);
+        }
+
+        /// <summary>大数字加千分位（摩拉量级到千万，不加分隔看不清）。</summary>
+        private static string FormatNum(long v)
+            => v.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>
+        /// 按日志文件记住"上一次解析到的结构字段"（任务名/路线/配置组/轮次…）。
+        /// ★ 用途：任务启动行（"开始执行地图追踪任务"）只在任务开始时写一次，
+        ///   而 BGI 每秒写约 11 行，滚动很快。若那段内容滚出读取窗口，
+        ///   界面就会"闪一下变空"。这里保留上次结果用于补齐。
+        /// </summary>
+        private readonly Dictionary<string, BgiStatus> _structCache
+            = new Dictionary<string, BgiStatus>();
+
         private sealed class StatusCacheEntry
         {
             public string Key = "";
@@ -947,7 +1053,21 @@ namespace SoulLink.Views
                         _statusSessionId = sid;           // ★ 清完必须重新写回
                         _statusFile = logFile;            // ★ 同上，用局部变量恢复
                         _bgiStatus = new BgiStatus();
-                        _statusEverResolved = false;      // 换账号：允许重新显示占位
+
+                        // ★ 先用该文件上次解析到的结构字段预填，避免"闪一下横杠"。
+                        //   换账号/重连时如果缓存里有记录，就立刻显示上次的任务名与路线，
+                        //   深读结果回来后再覆盖成最新的。
+                        try
+                        {
+                            lock (_statusCache)
+                            {
+                                if (_structCache.TryGetValue(logFile, out var cached) && cached != null)
+                                    _bgiStatus.MergeStructuralFrom(cached);
+                            }
+                        }
+                        catch { }
+
+                        _statusEverResolved = _bgiStatus.HasData;   // 有缓存就不算"未解析"
                         StatusPicksBox.Visibility = Visibility.Collapsed;
                         ApplyStatusToUi();
                         StatusMeta.Text = user + " · PID " + pid;
@@ -1184,6 +1304,16 @@ namespace SoulLink.Views
         {
             try
             {
+                var currentState = _sessions.FirstOrDefault(x => x.Session.Id == _statusSessionId)?.Session;
+                if (currentState != null)
+                {
+                    var accountState = AccountStateCenter.GetByUser(currentState.UserName);
+                    var current = accountState?.Groups.All().Where(g => g.State == ScriptGroupState.Running)
+                        .OrderByDescending(g => g.StartedAt).FirstOrDefault()
+                        ?? accountState?.Groups.All().OrderByDescending(g => g.StartedAt).FirstOrDefault();
+                    if (current != null && current.Name.Length > 0)
+                    { _bgiStatus.ConfigGroup = current.Name; _bgiStatus.PicksRoute = current.Name; _bgiStatus.TaskName = ""; }
+                }
                 if (!_bgiStatus.HasData)
                 {
                     // ★ 关键：一旦解析成功过，就**不要再退回横杠**。
@@ -1208,7 +1338,8 @@ namespace SoulLink.Views
                 //   无轮次 → "每日采集 / 每日采集 / 03-霜仙花… 共1440条"
                 //   一条龙 → "灭绝提瓦特 / 灭绝提瓦特 / 一条龙：灭绝提瓦特"
                 SetText(StatusGroup, _bgiStatus.GroupDisplay);
-                SetText(StatusRound, _bgiStatus.RoundDisplay);
+                SetText(StatusRound, string.IsNullOrWhiteSpace(_bgiStatus.SafeRoundDisplay)
+                    ? "—" : _bgiStatus.SafeRoundDisplay);
                 SetText(StatusRoute, _bgiStatus.RouteDisplay);
                 SetText(StatusEta, _bgiStatus.EtaDisplay);
 
@@ -1478,7 +1609,9 @@ namespace SoulLink.Views
                 foreach (var f in App.Config.Automations)
                     if (f.AccountId == account.Id) flows.Add(f);
 
-                AutomationMeta.Text = flows.Count == 0 ? "（还没有流程）" : ("共 " + flows.Count + " 个流程");
+                AutomationMeta.Text = flows.Count == 0 ? "" : ("共 " + flows.Count + " 个流程");
+                if (flows.Count == 0)
+                    AutomationList.Children.Add(new TextBlock { Text = "暂无自动化任务", FontSize = 10.5, Foreground = (Brush)FindResource("TextMuted"), Margin = new Thickness(4,5,4,5) });
 
                 foreach (var f in flows)
                     AutomationList.Children.Add(BuildAutomationCard(f, account));
@@ -1495,10 +1628,11 @@ namespace SoulLink.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // 状态点：暂停=灰，等待条件=青，就绪=绿
-            Color dotColor = paused
-                ? Color.FromRgb(0x8B, 0x9C, 0xC8)
-                : (f.Active ? Color.FromRgb(0x4F, 0xE3, 0xFF) : Color.FromRgb(0x41, 0xF0, 0xC0));
+            // 暂停灰 / END 琥珀 / 有触点成立青绿 / 全灭灰。
+            bool anyLit = f.RuntimeStates.Any(kv => kv.Value.Value && f.FindNode(kv.Key)?.IsContact == true);
+            Color dotColor = paused ? Color.FromRgb(0x8B,0x9C,0xC8)
+                : f.IsDailyComplete ? Color.FromRgb(0xFF,0xB1,0x4D)
+                : anyLit ? Color.FromRgb(0x41,0xF0,0xC0) : Color.FromRgb(0x65,0x75,0x91);
 
             var dot = new Ellipse
             {
@@ -1548,7 +1682,8 @@ namespace SoulLink.Views
             };
             btnPause.Click += (_, __) =>
             {
-                f.Paused = !f.Paused;
+                if (!f.Enabled) { f.Enabled = true; f.Paused = false; }
+                else f.Paused = !f.Paused;
                 ConfigStore.Save(App.Config);
                 RefreshAutomationList();
             };
@@ -1650,41 +1785,12 @@ namespace SoulLink.Views
             return null;
         }
 
-        /// <summary>流程的一句话摘要。</summary>
         private static string AutomationSummary(AutomationFlow f)
         {
-            int trig = 0, cond = 0, act = 0;
-            foreach (var n in f.Nodes)
-            {
-                if (n.Kind == FlowNodeKind.Trigger) trig++;
-                else if (n.Kind == FlowNodeKind.Condition) cond++;
-                else act++;   // Action 与 Terminate 都算"执行"
-            }
-
-            string when = f.Trigger?.Title ?? "无触发器";
-
-            string state;
-            if (f.Active)
-            {
-                // 武装中：显示条件进度
-                int latched = f.Latched?.Count ?? 0;
-                state = "● 等待条件 " + latched + "/" + cond;
-                if (latched < cond && f.Latched != null)
-                {
-                    var names = new List<string>();
-                    foreach (var n in f.Nodes)
-                        if (n.Kind == FlowNodeKind.Condition && !f.Latched.Contains(n.Id))
-                            names.Add(n.Title);
-                    if (names.Count > 0)
-                        state += "（缺 " + string.Join("、", names.ToArray(), 0, Math.Min(2, names.Count)) + "）";
-                }
-            }
-            else
-            {
-                state = when + " · " + cond + " 条件 · " + act + " 执行";
-            }
-
-            return state;
+            int contacts = f.Nodes.Count(n => n.IsContact);
+            int outs = f.Nodes.Count(n => n.Kind == FlowNodeKind.Action);
+            int lit = f.RuntimeStates.Count(kv => kv.Value.Value && f.FindNode(kv.Key)?.IsContact == true);
+            return contacts + " 个条件（满足 " + lit + "） · " + outs + " 个动作 · " + f.TodayRunState().Text;
         }
 
         private void NewAutomation_Click(object sender, RoutedEventArgs e)
@@ -1714,7 +1820,10 @@ namespace SoulLink.Views
                 var flow = new AutomationFlow
                 {
                     AccountId = account.Id,
-                    Name = account.UserName + " 自动化"
+                    Name = account.UserName + " 自动化",
+                    // ★ 记录创建时间：定时触发器据此判断"这个时间点是否属于本流程"，
+                    //   避免"10:00 新建 04:00 的流程，当天立刻补跑"。
+                    CreatedAt = DateTime.Now
                 };
 
                 // ★ 用户要求：只有点了保存才真正入库，
@@ -1740,6 +1849,7 @@ namespace SoulLink.Views
                     Owner = Window.GetWindow(this)
                 };
                 dlg.ShowDialog();
+                ConfigStore.Save(App.Config);
                 RefreshAutomationList();
             }
             catch (Exception ex)
@@ -1762,6 +1872,7 @@ namespace SoulLink.Views
                 SetRunHint("正在运行「" + flow.DisplayName + "」…", true);
 
                 var result = await FlowRunner.RunAsync(flow, sess.Id, App.Config, manual: true);
+                ConfigStore.Save(App.Config);
                 string detail = string.Join(Environment.NewLine, result.Steps);
 
                 // 手动点击 → 弹窗（主题样式）

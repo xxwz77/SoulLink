@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\refint\FlowCanvasCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\FlowCanvasCheck.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\ref\FlowCanvasCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasCheck\Release\net8.0-windows\FlowCanv.274E3F5E.Up2Date

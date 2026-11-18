@@ -47,7 +47,7 @@ namespace SoulLink.Views
 
             try
             {
-                foreach (var a in App.Config.Accounts)
+                foreach (var a in AccountScope.Accounts(App.Config))
                     if (!string.IsNullOrWhiteSpace(a.UserName))
                         names.Add(a.UserName);
             }
@@ -75,7 +75,7 @@ namespace SoulLink.Views
                 string display = n;
                 try
                 {
-                    foreach (var a in App.Config.Accounts)
+                    foreach (var a in AccountScope.Accounts(App.Config))
                         if (string.Equals(a.UserName, n, StringComparison.OrdinalIgnoreCase)
                             && !string.IsNullOrWhiteSpace(a.DisplayName))
                         { display = n + " · " + a.DisplayName; break; }
@@ -107,6 +107,11 @@ namespace SoulLink.Views
 
         /// <summary>从指定 BGI 目录读一条龙 / 配置组名。</summary>
         private static List<string> ListBgiConfigs(string user, string sub)
+        {
+            return BgiDataCenter.ListConfigs(user, sub).ToList();
+        }
+
+        private static List<string> OldListBgiConfigs(string user, string sub)
         {
             var list = new List<string>();
             try

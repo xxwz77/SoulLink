@@ -74,8 +74,57 @@ namespace SoulLink.Services
             var settings = App.Config.Settings;
 
             // ① 该用户会话号 → 该会话里正在跑的 BGI
+            //
+            // ★ 优先用账号状态中心的快照：它每秒统一刷新一次，
+            //   所有调用方共享同一份数据，避免"每个条件各查一遍 query user + 枚举进程"。
+            //   只有快照不可用（未启动 / 太旧）时才退回直查。
             try
             {
+                var st = AccountStateCenter.GetByUser(userName);
+                if (st != null
+                    && (DateTime.Now - AccountStateCenter.LastRefresh).TotalSeconds < 3)
+                {
+                    // 会话号来自快照
+                    if (st.HasSession && st.BgiRunning)
+                    {
+                        // 进程信息仍需要 Instance 里的日志文件路径，
+                        // 但这只在"确实在跑"时才取，且 Discover 本身有缓存。
+                        var mapQuick = BgiLogWatcher.Discover();
+                        if (mapQuick.TryGetValue(st.SessionId, out var instQuick) && instQuick != null)
+                        {
+                            info.LiveInstances.Add(instQuick);
+                            info.Running = true;
+                        }
+                    }
+
+                    if (info.Running || !string.IsNullOrWhiteSpace(st.BgiPath))
+                    {
+                        // 走到这里说明快照可用，直接用它的结论
+                        var knownSt = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(st.BgiPath)) knownSt.Add(st.BgiPath);
+                        info.Known = knownSt;
+
+                        bool pinnedSt = settings.BgiPinnedUsers
+                            .Contains(userName, StringComparer.OrdinalIgnoreCase);
+                        if (pinnedSt && !string.IsNullOrWhiteSpace(st.BgiPath))
+                        {
+                            info.Path = st.BgiPath;
+                            info.Source = BgiPathSource.Pinned;
+                        }
+                        else if (info.Running && info.LiveInstances.Count > 0)
+                        {
+                            info.Path = Normalize(info.LiveInstances[0].ExePath);
+                            info.Source = BgiPathSource.AutoRunning;
+                        }
+                        else if (!string.IsNullOrWhiteSpace(st.BgiPath))
+                        {
+                            info.Path = st.BgiPath;
+                            info.Source = BgiPathSource.Remembered;
+                        }
+                        return info;
+                    }
+                }
+
                 var list = sessions;
                 if (list == null)
                 {

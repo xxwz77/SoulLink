@@ -78,7 +78,7 @@ namespace SoulLink.Views
             try
             {
                 // 配置里配过的账号优先
-                foreach (var a in App.Config.Accounts)
+                foreach (var a in AccountScope.Accounts(App.Config))
                     if (!string.IsNullOrWhiteSpace(a.UserName))
                         names.Add(a.UserName);
             }
@@ -111,7 +111,7 @@ namespace SoulLink.Views
                 string display = n;
                 try
                 {
-                    foreach (var a in App.Config.Accounts)
+                    foreach (var a in AccountScope.Accounts(App.Config))
                         if (string.Equals(a.UserName, n, StringComparison.OrdinalIgnoreCase)
                             && !string.IsNullOrWhiteSpace(a.DisplayName))
                         { display = n + " · " + a.DisplayName; break; }

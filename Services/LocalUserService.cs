@@ -390,6 +390,8 @@ namespace SoulLink.Services
         public static Result SetHidden(string userName, bool hidden)
         {
             if (!IsElevated()) return Result.Fail("需要管理员权限");
+            if (string.Equals(SessionService.BareName(userName),SessionService.CurrentUser,StringComparison.OrdinalIgnoreCase))
+                return Result.Fail("不能隐藏当前主用户");
             try
             {
                 using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(UserListKey, true);
@@ -412,6 +414,16 @@ namespace SoulLink.Services
                 + "' -PasswordNeverExpires $" + (neverExpire ? "true" : "false"));
             return r.Ok ? Result.Success(neverExpire ? "已设为永不过期" : "已恢复过期策略")
                         : Result.Fail(Clean(r.Output));
+        }
+
+        /// <summary>修改现有本地账户密码，同时保持密码永不过期策略。</summary>
+        public static async Task<Result> SetPasswordAsync(string userName, string password, bool neverExpire)
+        {
+            if (!IsElevated()) return Result.Fail("需要管理员权限");
+            var invalid = ValidatePassword(password, userName);
+            if (invalid != null) return Result.Fail(invalid);
+            var r = await RunPowerShellAsync("$p = ConvertTo-SecureString '" + Escape(password) + "' -AsPlainText -Force; Set-LocalUser -Name '" + Escape(userName) + "' -Password $p -PasswordNeverExpires $" + (neverExpire ? "true" : "false"));
+            return r.Ok ? Result.Success("密码已修改") : Result.Fail(Clean(r.Output));
         }
 
         /// <summary>转义单引号，避免用户名破坏 PowerShell 字符串。</summary>

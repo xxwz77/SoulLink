@@ -20,6 +20,10 @@ namespace SoulLink.Views
         private readonly bool _isNew;
         private bool _ready;
         private bool _dirty;
+        private readonly System.Windows.Threading.DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+        private bool _previewBusy;
+        private bool _suppressTodayToggle;
+        private int _previewVersion;
 
         public FlowEditorWindow(AutomationFlow flow, Account account, AppConfig cfg,
                                 bool isNew = false)
@@ -31,11 +35,12 @@ namespace SoulLink.Views
             _cfg = cfg;
 
             HeaderText.Text = account.Caption + " 的自动化";
-            SubHeader.Text = "流程名可自定义；每个账号的流程互相独立，不会互相影响";
+            SubHeader.Text = "条件满足时执行动作；连接方式决定多个条件如何组合";
+            RefreshDailyState();
             NameBox.Text = flow.Name;
             EnabledCheck.IsChecked = flow.Enabled;
-            PersistCheck.IsChecked = flow.PersistLatched;
-            SelectByTagValue(ArmTimeoutCombo, flow.ArmTimeoutMinutes.ToString());
+            _flow.EnsurePlcModel();
+            if (_flow.MigrationNotes.Count > 0) { OnCanvasNotice(string.Join("；", _flow.MigrationNotes)); _dirty = true; }
 
             BuildLibrary();
             BuildHelp();
@@ -44,10 +49,22 @@ namespace SoulLink.Views
             Canvas.Changed += () =>
             {
                 _dirty = true;
+                _previewVersion++;
                 RefreshCondModeRow();
                 RefreshValidateHint();
+                _ = RefreshConditionPreview();
             };
             Canvas.NodeDeleteRequested += OnNodeDelete;
+            BgiDataCenter.AccountDataChanged += OnSharedBgiDataChanged;
+            Closed += (_, __) => BgiDataCenter.AccountDataChanged -= OnSharedBgiDataChanged;
+            Canvas.Notice += OnCanvasNotice;
+            Canvas.PaintStatusChanged += PaintStatus_Changed;
+            FlowRunner.Scanned += OnFlowScanned;
+            Closed += (_, __) => FlowRunner.Scanned -= OnFlowScanned;
+            _previewTimer.Tick += async (_, __) => await RefreshConditionPreview();
+            Loaded += async (_, __) => { _previewTimer.Start(); await RefreshConditionPreview(); };
+            Unloaded += (_, __) => _previewTimer.Stop();
+            Closed += (_, __) => _previewTimer.Stop();
 
             RefreshCondModeRow();
 
@@ -57,25 +74,48 @@ namespace SoulLink.Views
 
         }
 
-        /// <summary>条件聚合方式那一行：只有在有 ≥2 个条件时才显示。</summary>
-        private void RefreshCondModeRow()
+        /// <summary>
+        /// 连线操作反馈。
+        /// ★ 用户要求"改完要说清楚发生了什么"：连线被顶替、被拒绝都要看得见，
+        ///   否则用户盯着一条没反应的线，会以为是画布坏了。
+        /// </summary>
+        private string _operationNotice = "";
+        /// <summary>画笔状态显示在画布浮层，不占用底部校验提示行。</summary>
+        private void PaintStatus_Changed(string text)
         {
-            try
-            {
-                int condCount = 0;
-                foreach (var n in _flow.Nodes)
-                    if (n.Kind == FlowNodeKind.Condition) condCount++;
-
-                CondModeRow.Visibility = condCount >= 2 ? Visibility.Visible : Visibility.Collapsed;
-
-                foreach (ComboBoxItem it in CondModeCombo.Items)
-                {
-                    bool match = (it.Tag as string) == _flow.ConditionMode.ToString();
-                    if (match && it.IsSelected != true) it.IsSelected = true;
-                }
-            }
-            catch { }
+            if (PaintBar == null) return;
+            PaintBar.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible;
+            if (PaintBarText != null) PaintBarText.Text = text ?? "";
         }
+        private void OnCanvasNotice(string text)
+        {
+            _operationNotice = text ?? "";
+            ShowHintText();
+            _noticeTimer?.Stop();
+            _noticeTimer ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(8) };
+            _noticeTimer.Tick -= NoticeTick;
+            _noticeTimer.Tick += NoticeTick;
+            _noticeTimer.Start();
+        }
+        private System.Windows.Threading.DispatcherTimer? _noticeTimer;
+        private void NoticeTick(object? sender, EventArgs e)
+        {
+            _noticeTimer?.Stop(); _operationNotice = ""; RefreshValidateHint();
+        }
+        private void ShowHintText()
+        {
+            if (ValidateHint == null) return;
+            var view = ValidateHint.Content as TextBlock ?? new TextBlock();
+            ValidateHint.Content = view;
+            if (_operationNotice.Length == 0) return;
+            ValidateHint.Visibility = Visibility.Visible;
+            view.Text = _operationNotice;
+            ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0x4F,0xE3,0xFF));
+            ValidateHint.ToolTip = _operationNotice;
+        }
+
+        /// <summary>条件聚合方式那一行：只有在有 ≥2 个条件时才显示。</summary>
+        private void RefreshCondModeRow() { } // 每个条件自行选择全部满足或任一满足。
 
         private void UpdateEmptyHint()
         {
@@ -83,58 +123,89 @@ namespace SoulLink.Views
             RefreshValidateHint();
         }
 
-        /// <summary>
-        /// 实时显示流程是否可运行。
-        /// ★ 用户要求：保存时提醒，所以编辑过程中也要让用户看到当前状态。
-        /// </summary>
+        private FlowValidator.Issue? _hintIssue;
+        private Button? _bgiPickerButton;
+        private readonly Dictionary<string, FrameworkElement> _fieldTargets = new(StringComparer.OrdinalIgnoreCase);
+        private FrameworkElement? _highlightedField;
+        private readonly Brush _normalFieldBorder = new SolidColorBrush(Color.FromArgb(0x30,0xFF,0xFF,0xFF));
+        private static readonly Brush ErrorFieldBorder = new SolidColorBrush(Color.FromRgb(0xFF,0x9B,0x9B));
+
         private void RefreshValidateHint()
         {
+            if (ValidateHint == null) return;
             try
             {
-                if (ValidateHint == null) return;
-
-                var rep = FlowValidator.Validate(_flow, _cfg);
-                if (_flow.Nodes.Count == 0)
-                {
-                    ValidateHint.Visibility = Visibility.Collapsed;
-                    return;
-                }
-
+                var report = FlowValidator.Validate(_flow, _cfg);
+                var text = ValidateHint.Content as TextBlock ?? new TextBlock();
+                ValidateHint.Content = text;
+                text.TextWrapping = TextWrapping.Wrap;
+                if (_flow.Nodes.Count == 0) { ValidateHint.Visibility = Visibility.Collapsed; _hintIssue = null; return; }
+                if (_operationNotice.Length > 0) { ShowHintText(); return; }
                 ValidateHint.Visibility = Visibility.Visible;
-
-                if (rep.HasError)
+                var issue = report.Issues.FirstOrDefault(i => i.IsError) ?? report.Issues.FirstOrDefault();
+                _hintIssue = issue;
+                // 左下角同时给出“能否运行”和“今天会不会跑”两个结论。
+                var today = _flow.TodayRunState();
+                string todayTip = "\n今日：" + today.Text;
+                if (report.HasError)
                 {
-                    int errs = 0;
-                    string first = "";
-                    foreach (var i in rep.Issues)
-                    {
-                        if (!i.IsError) continue;
-                        errs++;
-                        if (first.Length == 0) first = i.Message;
-                    }
-
-                    // ★ 直接把**第一条问题**显示出来，不让用户去悬停猜
-                    ValidateHint.Text = "✕ " + first + (errs > 1 ? "（还有 " + (errs - 1) + " 个）" : "");
-                    ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x9B, 0x9B));
-                    ValidateHint.ToolTip = rep.ToText();
-                    ValidateHint.MaxWidth = 520;
+                    text.Text = "✕ " + (issue?.Message ?? "流程不能运行") + "（点击前往）" + todayTip;
+                    ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0xFF,0x9B,0x9B));
+                    ValidateHint.Cursor = issue?.Node != null ? Cursors.Hand : Cursors.Arrow;
+                    ValidateHint.ToolTip = report.ToText() + "\n\n点击定位到相关模块" + todayTip;
                 }
-                else if (rep.Issues.Count > 0)
+                else if (issue != null)
                 {
-                    ValidateHint.Text = "⚠ 可以运行（" + rep.Issues.Count + " 条提醒）";
-                    ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xD9, 0x8A));
-                    ValidateHint.ToolTip = rep.ToText();
+                    text.Text = "提醒：" + issue.Message + "（点击前往）" + todayTip;
+                    ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0xFF,0xD9,0x8A));
+                    ValidateHint.Cursor = issue.Node != null ? Cursors.Hand : Cursors.Arrow;
+                    ValidateHint.ToolTip = report.ToText() + todayTip;
                 }
                 else
                 {
-                    ValidateHint.Text = "✔ 结构完整，可以运行";
-                    ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0x6E, 0xF0, 0xC8));
-                    ValidateHint.ToolTip = null;
+                    text.Text = "✔ 可以运行" + todayTip;
+                    ValidateHint.Foreground = new SolidColorBrush(today.WillRun
+                        ? Color.FromRgb(0x6E,0xF0,0xC8) : Color.FromRgb(0xFF,0xB1,0x4D));
+                    ValidateHint.Cursor = Cursors.Arrow; ValidateHint.ToolTip = today.Text;
                 }
             }
             catch { }
         }
 
+        private void ValidateHint_Click(object sender, RoutedEventArgs e)
+        {
+            if (_operationNotice.Length > 0) { _operationNotice = ""; _noticeTimer?.Stop(); RefreshValidateHint(); return; }
+            if (_hintIssue?.Node != null)
+            {
+                Canvas.Select(_hintIssue.Node);
+                HighlightIssue(_hintIssue);
+            }
+        }
+        private void HighlightIssue(FlowValidator.Issue issue)
+        {
+            var target = _fieldTargets.TryGetValue(issue.ParamKey, out var field) ? field : null;
+            if (issue.Target == "bgi") target = _bgiPickerButton;
+            if (target == null) return;
+            _highlightedField = target;
+            if (target is Control control) { control.BorderBrush = ErrorFieldBorder; control.BorderThickness = new Thickness(2); }
+            target.BringIntoView(); target.Focus();
+        }
+        private void ClearFieldHighlights()
+        {
+            if (_highlightedField != null)
+            { if (_highlightedField is Control control) { control.BorderBrush = _normalFieldBorder; control.BorderThickness = new Thickness(1); } }
+            _highlightedField = null;
+        }
+        private void RegisterField(string key, FrameworkElement target)
+        {
+            _fieldTargets[key] = target;
+            target.Tag = key;
+        }
+        private void RefreshFieldHighlight()
+        {
+            ClearFieldHighlights();
+            if (_hintIssue != null && Canvas.SelectedNode == _hintIssue.Node) HighlightIssue(_hintIssue);
+        }
         // ══════════ 左侧模块库 ══════════
 
         /// <summary>
@@ -157,13 +228,14 @@ namespace SoulLink.Views
             LibPanel.Children.Clear();
             _allCards.Clear();   // 防止重复累积
 
-            foreach (var kind in new[]
-            {
-                FlowNodeKind.Trigger,
-                FlowNodeKind.Condition,
-                FlowNodeKind.Action,
-                FlowNodeKind.Terminate
-            })
+            // ★ 触发器与条件已合并为一个「判定」块：
+            //   两者本质是同一套判定逻辑，只是位置不同 ——
+            //   放第一个（无上游连线）就是触发器，放后面就是条件。
+            //   这样模块库不再有"触发器/条件"之分，用户不必先想清楚"这算哪个"。
+            var judgeCount = FlowNodeCatalog.ByKind(FlowNodeKind.Condition).Count;
+            if (judgeCount > 0) LibPanel.Children.Add(BuildJudgeCard(judgeCount));
+
+            foreach (var kind in new[] { FlowNodeKind.Action, FlowNodeKind.Terminate })
             {
                 var defs = FlowNodeCatalog.ByKind(kind);
                 if (defs.Count == 0) continue;
@@ -173,18 +245,18 @@ namespace SoulLink.Views
 
         private static string KindName(FlowNodeKind kind) => kind switch
         {
-            FlowNodeKind.Trigger => "触发器",
+            FlowNodeKind.Trigger => "条件",
             FlowNodeKind.Condition => "条件",
-            FlowNodeKind.Terminate => "结束",
-            _ => "执行器"
+            FlowNodeKind.Terminate => "当天完成",
+            _ => "动作"
         };
 
         private static string KindDesc(FlowNodeKind kind) => kind switch
         {
-            FlowNodeKind.Trigger => "只能有一个，决定流程什么时候开始",
-            FlowNodeKind.Condition => "满足才继续往下执行，可以多个（AND/OR）",
-            FlowNodeKind.Terminate => "立刻结束本次流程，条件同时清零",
-            _ => "真正干活的部分，执行完可以再接条件"
+            FlowNodeKind.Trigger => "判断当前状态，满足就继续",
+            FlowNodeKind.Condition => "判断当前状态，满足就继续",
+            FlowNodeKind.Terminate => "到达后今天不再重复执行",
+            _ => "条件满足后执行实际操作"
         };
 
         private static Color AccentOf(FlowNodeKind kind) => kind switch
@@ -196,6 +268,82 @@ namespace SoulLink.Views
         };
 
         /// <summary>一个类别卡片：标题 + 数量 + 说明，点一下弹出该类节点清单。</summary>
+        /// <summary>
+        /// 「判定」卡片：包含原来的触发器 + 条件（合并显示）。
+        /// ★ 去重原则：同一件事不再同时出现"触发器版"和"条件版"，
+        ///   只保留一个模块，由它在图中的位置决定语义。
+        /// </summary>
+        private Border BuildJudgeCard(int count)
+        {
+            var accent = Color.FromRgb(0xA9, 0x7B, 0xFF);
+
+            var sp = new StackPanel();
+            sp.Children.Add(new TextBlock
+            {
+                Text = "条件",
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(accent)
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text = count + " 个模块",
+                FontSize = 10,
+                Foreground = (Brush)FindResource("TextMuted"),
+                Margin = new Thickness(0, 3, 0, 0)
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text = "满足条件后，继续下一步",
+                FontSize = 10,
+                Foreground = (Brush)FindResource("TextMuted"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 5, 0, 0),
+                LineHeight = 15
+            });
+
+            var card = new Border
+            {
+                CornerRadius = new CornerRadius(11),
+                Padding = new Thickness(12, 11, 12, 11),
+                Margin = new Thickness(0, 0, 0, 9),
+                Background = new SolidColorBrush(Color.FromArgb(0x1A, accent.R, accent.G, accent.B)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, accent.R, accent.G, accent.B)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                Child = sp
+            };
+
+            _allCards.Add((FlowNodeKind.Trigger, card));
+
+            card.MouseEnter += (_, __) =>
+            {
+                card.Background = new SolidColorBrush(Color.FromArgb(0x30, accent.R, accent.G, accent.B));
+                CancelCloseMenu();
+                ShowJudgeMenu(card);
+            };
+            card.MouseLeave += (_, __) =>
+            {
+                card.Background = new SolidColorBrush(Color.FromArgb(0x1A, accent.R, accent.G, accent.B));
+                ScheduleCloseMenu();
+            };
+
+            return card;
+        }
+
+        /// <summary>判定卡片弹出的清单：触发器 + 条件合并，同一模块只出现一次。</summary>
+        private void ShowJudgeMenu(FrameworkElement anchor)
+        {
+            var seen = new HashSet<FlowNodeType>();
+            var merged = new List<FlowNodeDef>();
+            foreach (var d in FlowNodeCatalog.ByKind(FlowNodeKind.Trigger))
+                if (seen.Add(d.Type)) merged.Add(d);
+            foreach (var d in FlowNodeCatalog.ByKind(FlowNodeKind.Condition))
+                if (seen.Add(d.Type)) merged.Add(d);
+
+            ShowMergedMenu(merged, Color.FromRgb(0xA9, 0x7B, 0xFF), anchor);
+        }
+
         private Border BuildKindCard(FlowNodeKind kind, int count)
         {
             Color accent = AccentOf(kind);
@@ -331,11 +479,17 @@ namespace SoulLink.Views
 
         /// <summary>在点击的类别卡片右侧弹出该类别的具体节点清单。</summary>
         private void ShowKindMenu(FlowNodeKind kind, FrameworkElement anchor)
+            => ShowMergedMenu(FlowNodeCatalog.ByKind(kind), AccentOf(kind), anchor);
+
+        /// <summary>
+        /// 构建并显示节点清单（供各类别与"判定"合并卡片共用）。
+        /// ★ 同一个 def 只会渲染一次，因此调用方无需自己去重。
+        /// </summary>
+        private void ShowMergedMenu(List<FlowNodeDef> defs, Color accent, FrameworkElement anchor)
         {
             KindMenu.Children.Clear();
-            Color accent = AccentOf(kind);
 
-            foreach (var d in FlowNodeCatalog.ByKind(kind))
+            foreach (var d in defs)
             {
                 var def = d;
 
@@ -481,11 +635,13 @@ namespace SoulLink.Views
 
             Add("添加节点", "点左栏「节点库」里的任一类型，它会出现在画布左上角，然后拖到合适位置。");
             Add("移动节点", "按住节点拖动。只有正在拖的那个会动。");
-            Add("建立连线", "从节点右侧的圆点按住，拖到目标节点附近放开即可（不用精确对准，46px 内自动吸附）。");
+            Add("建立连线", "从下方出口连接到下一模块。一个出口可连接多个模块；当天完成没有出口。");
             Add("删除连线", "双击连线，或在连线上点右键，都可以删除。");
             Add("删除节点", "右键节点，或在左栏属性里点「删除这个节点」。");
             Add("编辑参数", "点节点，左栏下方会显示它的所有参数。");
-            Add("条件状态", "条件满足后会变绿并显示「✔ 已满足」。只有流程结束时才清零。");
+            Add("组合条件", "有多个上游时，可选「全部满足才继续」或「任一满足就继续」。勾选「不满足时继续」可反过来判断。");
+            Add("执行次数", "条件从不满足变为满足时执行动作，持续满足不会重复。到达「当天完成」后，明天才恢复。");
+            Add("条件保留", "条件满足后会保留，可等待其它条件；流程完成后重新获取状态。有「当天完成」则当天不再执行。");
             Add("保存校验", "链路不完整无法保存。底部会实时显示是否能运行。");
         }
 
@@ -573,16 +729,9 @@ namespace SoulLink.Views
         {
             try
             {
-                // 触发器只能有一个
-                if (def.Kind == FlowNodeKind.Trigger)
-                {
-                    var exist = _flow.Trigger;
-                    if (exist != null)
-                    {
-                        ThemedMessage.Info(this, "提示", "一个流程只能有一个触发器。\n如需更换，请先右键删除原来的触发器。");
-                        return;
-                    }
-                }
+                // ★ 不再限制"只能有一个触发器"：
+                //   多个没有上游连线的判定节点都是入口，任一命中即可触发流程。
+                //   触发器与条件已经合并，用户拖几次都合理。
 
                 var node = new FlowNode
                 {
@@ -596,26 +745,22 @@ namespace SoulLink.Views
                 foreach (var p in def.Params)
                     node.Set(p.Key, p.Default);
 
-                // ★ 用到 BGI 的节点：如果本账号没配 BGI 路径，
-                //   自动把目标用户设成第一个有路径的账号，
-                //   避免一新建就显示"没有配置 BGI 路径"（用户实测）。
-                if (UsesBgi(def.Type))
+                // 新建模块默认当前流程账号；已有节点保持自己保存的目标用户。
+                if (node.Params.TryGetValue("user", out var defaultUser) && defaultUser.Length == 0)
+                    node.Set("user", _account.UserName);
+
+                // ★ 不要自动把"目标用户"填成别的账号。
+                //
+                //   原来这里为了让下拉有内容，会把目标用户设成"第一个有 BGI 路径的账号"，
+                //   结果本账号 A2 的流程会指向 A1 的 BGI —— 切换账号后路径完全不同步，
+                //   而且执行时会在错误的会话里跑（用户实测反馈"更改账号没用同步更改 bgi 位置"）。
+                //
+                //   正确做法：目标用户留空 = 本流程绑定的账号。
+                //   列表为空就让它空着，由用户自己在该账号下配 BGI 路径。
+                if (UsesBgi(def.Type) && node.Get("user").Length == 0)
                 {
-                    // ★ 统一走解析器
-                    var map = _cfg.Settings.BgiPaths;
-                    var meResolved = BgiPathResolver.GetPath(_account.UserName);
-                    bool meHas = !string.IsNullOrEmpty(meResolved) && File.Exists(meResolved);
-                    if (!meHas && map != null)
-                    {
-                        foreach (var kv in map)
-                        {
-                            if (!string.IsNullOrWhiteSpace(kv.Value) && File.Exists(kv.Value))
-                            {
-                                node.Set("user", kv.Key);
-                                break;
-                            }
-                        }
-                    }
+                    // 明确写空，避免沿用旧默认值
+                    node.Set("user", "");
                 }
 
                 // 位置：拖动落点优先；没有落点（单击）时错开摆放
@@ -626,15 +771,27 @@ namespace SoulLink.Views
                 }
                 else
                 {
-                    int sameKind = 0;
-                    foreach (var n in _flow.Nodes) if (n.Kind == def.Kind) sameKind++;
-                    node.X = 40 + Math.Max(0, sameKind % 3) * 210;
-                    node.Y = 40 + Math.Max(0, sameKind / 3) * 100;
+                    // 找一个没被任何已有节点占用的空格，避免新节点叠在一起看不见。
+                    double gapX = 24, gapY = 30, stepX = 260, stepY = 110;
+                    for (int row = 0; row < 40; row++)
+                    {
+                        for (int col = 0; col < 8; col++)
+                        {
+                            double x = 40 + col * stepX, y = 40 + row * stepY;
+                            bool free = !_flow.Nodes.Any(n =>
+                                Math.Abs(n.X - x) < stepX - gapX && Math.Abs(n.Y - y) < stepY - gapY);
+                            if (!free) continue;
+                            node.X = x; node.Y = y; row = 40; break;
+                        }
+                    }
                 }
 
                 _flow.Nodes.Add(node);
                 _dirty = true;
                 Canvas.Load(_flow);
+                // 新节点放到视口中间附近，避免落在滚动区外面看不见。
+                Canvas.UpdateLayout();
+                Canvas.BringIntoView(new Rect(node.X, node.Y, 228, 70));
                 Canvas.Select(node);
                 UpdateEmptyHint();
                 RefreshCondModeRow();
@@ -681,6 +838,7 @@ namespace SoulLink.Views
         {
             PropPanel.Children.Clear();
             ClearPropPanel();
+            _fieldTargets.Clear(); ClearFieldHighlights();
 
             if (node == null)
             {
@@ -718,8 +876,8 @@ namespace SoulLink.Views
                 BorderThickness = new Thickness(1)
             };
 
-            // 只列出**同类**节点（触发器只能换触发器，条件换条件……）
-            foreach (var cand in FlowNodeCatalog.ByKind(node.Kind))
+            // 原触发器和条件已统一成触点，可在同一池里切换数据源。
+            foreach (var cand in FlowNodeCatalog.ByKind(node.IsContact ? FlowNodeKind.Condition : node.Kind))
                 typeCombo.Items.Add(new ComboBoxItem { Content = cand.Title, Tag = cand.Type });
 
             foreach (ComboBoxItem it in typeCombo.Items)
@@ -759,6 +917,20 @@ namespace SoulLink.Views
             PropPanel.Children.Add(typeCombo);
             _propUi.Add(typeCombo);
 
+            if (node.IsContact)
+            {
+                var op = new ComboBox { Margin = new Thickness(0,12,0,0), Height = 32 };
+                op.Items.Add(new ComboBoxItem { Content = "全部满足才继续", Tag = "AND" });
+                op.Items.Add(new ComboBoxItem { Content = "任一满足就继续", Tag = "OR" });
+                foreach (ComboBoxItem item in op.Items) if ((string)item.Tag == (node.Logic == FlowLogicOp.OR ? "OR" : "AND")) item.IsSelected = true;
+                op.SelectionChanged += (_,__) => { node.Logic = op.SelectedIndex == 1 ? FlowLogicOp.OR : FlowLogicOp.AND; MarkDirty(); Canvas.Redraw(); };
+                PropPanel.Children.Add(op);
+                var neg = new CheckBox { Content = "条件不满足时继续", IsChecked = node.Negated, Style = (Style)FindResource("GlassCheckBox"), Margin = new Thickness(0,8,0,0) };
+                neg.Checked += (_,__) => { node.Negated = true; MarkDirty(); Canvas.Redraw(); };
+                neg.Unchecked += (_,__) => { node.Negated = false; MarkDirty(); Canvas.Redraw(); };
+                PropPanel.Children.Add(neg);
+            }
+
             // 标题 + 说明
             PropPanel.Children.Add(new TextBlock
             {
@@ -792,6 +964,10 @@ namespace SoulLink.Views
             // ★ BGI 相关节点：显示将使用的 BGI 路径，让用户能确认/修改
             if (UsesBgi(node.Type))
                 AddBgiPathEditor(node);
+
+            // ★ 日界只属于 END 节点；无 END 的流程是循环执行。
+            if (node.Kind == FlowNodeKind.Terminate)
+                AddEndEditors(node);
 
             // 删除按钮
             var del = new Button
@@ -838,6 +1014,65 @@ namespace SoulLink.Views
                     break;
                 }
 
+                case FlowParamKind.Select:
+                {
+                    // ★ 固定选项下拉：值域是枚举的参数不该让用户手打
+                    //   （手打容易写错：finished / Finished / 完成 都可能）。
+                    var combo = new ComboBox
+                    {
+                        Height = 36,
+                        Margin = new Thickness(0, 6, 0, 0),
+                        Padding = new Thickness(10, 0, 6, 0),
+                        FontSize = 12.5,
+                        Foreground = (Brush)FindResource("TextPrimary"),
+                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                        BorderThickness = new Thickness(1)
+                    };
+
+                    string curVal = node.Get(p.Key, p.Default);
+                    var opts = p.Options != null && p.Options.Count > 0
+                        ? p.Options : new System.Collections.Generic.List<string>();
+
+                    bool matched = false;
+                    foreach (var raw in opts)
+                    {
+                        string text = raw, val = raw;
+                        int bar = raw.IndexOf('|');
+                        if (bar >= 0) { text = raw.Substring(0, bar); val = raw.Substring(bar + 1); }
+
+                        var item = new ComboBoxItem { Content = text, Tag = val };
+                        combo.Items.Add(item);
+                        if (!matched && string.Equals(val, curVal, StringComparison.OrdinalIgnoreCase))
+                        { item.IsSelected = true; matched = true; }
+                    }
+
+                    // 当前值不在选项里（老数据/手填过）→ 补一项，避免静默改值
+                    if (!matched)
+                    {
+                        var extra = new ComboBoxItem
+                        {
+                            Content = string.IsNullOrEmpty(curVal) ? "（未选择）" : curVal,
+                            Tag = curVal
+                        };
+                        combo.Items.Add(extra);
+                        extra.IsSelected = true;
+                    }
+
+                    combo.SelectionChanged += (_, __) =>
+                    {
+                        if (combo.SelectedItem is ComboBoxItem it)
+                        {
+                            node.Set(p.Key, it.Tag as string ?? "");
+                            MarkDirty();
+                            Canvas.Redraw();
+                        }
+                    };
+                    block.Children.Add(combo);
+                    _propUi.Add(combo);
+                    break;
+                }
+
                 case FlowParamKind.UserPicker:
                 {
                     var combo = new ComboBox
@@ -852,7 +1087,7 @@ namespace SoulLink.Views
                         BorderThickness = new Thickness(1)
                     };
                     combo.Items.Add(new ComboBoxItem { Content = "（本账号）", Tag = "" });
-                    foreach (var a in _cfg.Accounts)
+                    foreach (var a in AccountScope.Accounts(_cfg))
                         combo.Items.Add(new ComboBoxItem
                         {
                             Content = a.UserName + (string.IsNullOrWhiteSpace(a.DisplayName) ? "" : "　" + a.DisplayName),
@@ -869,8 +1104,8 @@ namespace SoulLink.Views
                         if (combo.SelectedItem is ComboBoxItem it)
                         {
                             node.Set(p.Key, it.Tag as string ?? "");
-                            MarkDirty();
-                            Canvas.Redraw();
+                            MarkDirty(); Canvas.Redraw();
+                            Dispatcher.InvokeAsync(() => ShowPropPanel(node));
                         }
                     };
                     block.Children.Add(combo);
@@ -892,7 +1127,7 @@ namespace SoulLink.Views
                         BorderThickness = new Thickness(1)
                     };
                     combo.Items.Add(new ComboBoxItem { Content = "（页面选定的那条）", Tag = "" });
-                    foreach (var n in ListBgiConfigs("OneDragon"))
+                    foreach (var n in ListBgiConfigs("OneDragon", node.Get("user")))
                         combo.Items.Add(new ComboBoxItem { Content = n, Tag = n });
 
                     string cur = node.Get(p.Key);
@@ -928,21 +1163,25 @@ namespace SoulLink.Views
                         BorderThickness = new Thickness(1)
                     };
                     combo.Items.Add(new ComboBoxItem { Content = "（未选择）", Tag = "" });
-                    foreach (var n in ListBgiConfigs("ScriptGroup"))
+                    string savedGroup = node.Get(p.Key).Trim().Trim('"');
+                    var groupNames = ListBgiConfigs("ScriptGroup", node.Get("user")).ToList();
+                    if (savedGroup.Length > 0 && !groupNames.Contains(savedGroup, StringComparer.OrdinalIgnoreCase)) groupNames.Insert(0, savedGroup);
+                    foreach (var n in groupNames)
                         combo.Items.Add(new ComboBoxItem { Content = n, Tag = n });
 
                     string cur = node.Get(p.Key);
                     foreach (ComboBoxItem it in combo.Items)
                         if ((it.Tag as string) == cur) { it.IsSelected = true; break; }
-                    if (combo.SelectedIndex < 0) combo.SelectedIndex = 0;
+                    // 旧配置已选择时必须选中，不能因为目录未读取就清空。
+                    if (combo.SelectedIndex < 0 && cur.Length > 0)
+                    { var saved = new ComboBoxItem { Content = cur, Tag = cur }; combo.Items.Add(saved); saved.IsSelected = true; }
 
                     combo.SelectionChanged += (_, __) =>
                     {
                         if (combo.SelectedItem is ComboBoxItem it)
                         {
                             node.Set(p.Key, it.Tag as string ?? "");
-                            MarkDirty();
-                            Canvas.Redraw();
+                            MarkDirty(); Canvas.Redraw();
                         }
                     };
                     block.Children.Add(combo);
@@ -1120,6 +1359,17 @@ namespace SoulLink.Views
             catch { }
         }
 
+        private static T? FindAncestor<T>(DependencyObject? d) where T : DependencyObject
+        {
+            while (d != null) { if (d is T found) return found; d = VisualTreeHelper.GetParent(d); }
+            return null;
+        }
+
+        private void TitleRow_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            try { if (e.OriginalSource is DependencyObject d && FindAncestor<TextBox>(d) != null) return; DragMove(); } catch { }
+        }
+
         /// <summary>这些执行器要启动 BGI，需要知道 BGI 在哪。</summary>
         private static bool UsesBgi(FlowNodeType t) => t switch
         {
@@ -1153,7 +1403,7 @@ namespace SoulLink.Views
 
             // ★ 统一走解析器
             string path = BgiPathResolver.GetPath(user);
-            if (string.IsNullOrEmpty(path)) path = BgiPathResolver.GetPath(_account.UserName);
+            // 只读当前目标账号的路径，不使用其它账号兜底。
             if (!string.IsNullOrEmpty(path) && !File.Exists(path)) path = "";
 
             var box = new TextBox
@@ -1200,7 +1450,7 @@ namespace SoulLink.Views
                 if (dlg.ShowDialog() != true) return;
 
                 // ★ 用户明确选择 = 手动指定，走 Pin（自动探测之后不再覆盖）
-                BgiPathResolver.Pin(user, dlg.FileName);
+                BgiDataCenter.SetPath(user, dlg.FileName);
 
                 box.Text = dlg.FileName;
                 box.Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8));
@@ -1209,6 +1459,7 @@ namespace SoulLink.Views
                 // 路径变了，一条龙/配置组列表要重新读
                 Dispatcher.InvokeAsync(() => ShowPropPanel(node));
             };
+            _bgiPickerButton = btn;
             block.Children.Add(btn);
 
             // 提示
@@ -1224,73 +1475,29 @@ namespace SoulLink.Views
             PropPanel.Children.Add(block);
         }
 
-        private void MarkDirty() => _dirty = true;
-
-        /// <summary>
-        /// 列出本账号 BGI 目录下指定子目录里的配置名。
-        /// 目录从账号保存的 BGI 路径推出：&lt;exe目录&gt;\User\&lt;sub&gt;。
-        /// </summary>
-        private List<string> ListBgiConfigs(string sub)
+        private void MarkDirty()
         {
-            var list = new List<string>();
-            try
-            {
-                // ★ 统一走解析器
-                string exe = BgiPathResolver.GetPath(_account.UserName);
-                if (string.IsNullOrEmpty(exe))
-                {
-                    // 退回：看该账号有没有在跑 BGI
-                    foreach (var p in System.Diagnostics.Process.GetProcessesByName("BetterGI"))
-                    {
-                        try
-                        {
-                            string? f = p.MainModule?.FileName;
-                            if (string.IsNullOrEmpty(f)) continue;
-                            exe = f;
-                            break;
-                        }
-                        catch { }
-                    }
-                }
-                if (string.IsNullOrEmpty(exe)) return list;
-
-                string? dir = Path.GetDirectoryName(exe);
-                if (string.IsNullOrEmpty(dir)) return list;
-
-                string target = Path.Combine(dir, "User", sub);
-                if (!Directory.Exists(target)) return list;
-
-                foreach (var f in Directory.GetFiles(target, "*.json"))
-                {
-                    string n = Path.GetFileNameWithoutExtension(f);
-                    if (!string.IsNullOrWhiteSpace(n)) list.Add(n);
-                }
-                list.Sort(StringComparer.OrdinalIgnoreCase);
-            }
-            catch { }
-            return list;
+            _dirty = true;
+            ClearFieldHighlights();
+            RefreshValidateHint();
         }
 
-        // ══════════ 事件 ══════════
-
-        private void TitleRow_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void OnSharedBgiDataChanged(string userName)
         {
-            try
+            var selected = Canvas.SelectedNode;
+            if (selected != null && selected.Get("user").Length > 0 && !selected.Get("user").Equals(userName, StringComparison.OrdinalIgnoreCase)) return;
+            if (selected == null && !_account.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase)) return;
+            Dispatcher.InvokeAsync(() =>
             {
-                if (e.OriginalSource is DependencyObject d && FindAncestor<TextBox>(d) != null) return;
-                DragMove();
-            }
-            catch { }
+                if (Canvas.SelectedNode != null) ShowPropPanel(Canvas.SelectedNode);
+                RefreshValidateHint();
+            });
         }
 
-        private static T? FindAncestor<T>(DependencyObject d) where T : DependencyObject
+        private List<string> ListBgiConfigs(string sub, string? userName = null)
         {
-            while (d != null)
-            {
-                if (d is T t) return t;
-                d = VisualTreeHelper.GetParent(d);
-            }
-            return null;
+            string user = string.IsNullOrWhiteSpace(userName) ? _account.UserName : userName;
+            return BgiDataCenter.ListConfigs(user, sub).ToList();
         }
 
         private void NameBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -1300,49 +1507,130 @@ namespace SoulLink.Views
             _dirty = true;
         }
 
+        private void RefreshDailyState()
+        {
+            if (DailyStateText == null) return;
+            var today = _flow.TodayRunState();
+            DailyStateText.Text = today.Text;
+            DailyStateText.ToolTip = _flow.HasEnd
+                ? "日界在「当天完成」节点上设置；到达日界自动清除标记并开始新一轮。"
+                : "没有「当天完成」节点：每轮结束会重新获取条件，可再次执行。";
+            DailyStateText.Foreground = new SolidColorBrush(today.WillRun
+                ? Color.FromRgb(0x6E, 0xF0, 0xC8)
+                : Color.FromRgb(0xFF, 0xB1, 0x4D));
+        }
+        private void OnFlowScanned(AutomationFlow flow)
+        {
+            if (flow.Id != _flow.Id) return;
+            Dispatcher.InvokeAsync(() => { RefreshDailyState(); Canvas.SetLiveStates(flow.RuntimeStates); });
+        }
+        private async Task RefreshConditionPreview()
+        {
+            if (_previewBusy || !IsLoaded || !IsVisible) return;
+            _previewBusy = true;
+            int version = ++_previewVersion;
+            try
+            {
+                int sid = AccountStateCenter.Get(_flow.AccountId)?.SessionId ?? 0;
+                var states = await FlowPreview.EvaluateAsync(_flow, sid, _cfg).ConfigureAwait(false);
+                if (version != _previewVersion) return;
+                await Dispatcher.InvokeAsync(() => Canvas.SetLiveStates(states));
+            }
+            catch { /* 状态预览失败不能影响编辑，也不触发任何动作。 */ }
+            finally { _previewBusy = false; }
+        }
+        internal static bool HasBusinessDaySelector(System.Windows.Controls.ComboBox box)
+            => box.Items.Cast<ComboBoxItem>().Any(i => i.Tag as string == "0")
+               && box.Items.Cast<ComboBoxItem>().Any(i => i.Tag as string == "4");
+
+        /// <summary>END 节点属性：日界选择 + 今日是否已执行 + 手动清除标记。</summary>
+        private void AddEndEditors(FlowNode node)
+        {
+            PropPanel.Children.Add(new TextBlock
+            {
+                Text = "日界", FontSize = 10.5, Foreground = (Brush)FindResource("TextMuted"),
+                Margin = new Thickness(0, 12, 0, 0)
+            });
+            var combo = new ComboBox { Height = 32, Margin = new Thickness(0, 6, 0, 0) };
+            combo.Items.Add(new ComboBoxItem { Content = "00:00（自然日）", Tag = "0" });
+            combo.Items.Add(new ComboBoxItem { Content = "04:00（凌晨四点）", Tag = "4" });
+            SelectByTagValue(combo, node.DayBoundaryHour.ToString());
+            combo.SelectionChanged += (_, __) =>
+            {
+                if (combo.SelectedItem is not ComboBoxItem item || !int.TryParse(item.Tag as string, out int hour)) return;
+                if (node.DayBoundaryHour == hour) return;
+                node.DayBoundaryHour = hour;
+                PlcLogic.ClearDailyLatch(_flow);
+                _flow.RunComplete = false;
+                _dirty = true;
+                RefreshDailyState();
+                Canvas.Redraw();
+            };
+            PropPanel.Children.Add(combo);
+            _propUi.Add(combo);
+
+            PropPanel.Children.Add(new TextBlock
+            {
+                Text = "今日状态", FontSize = 10.5, Foreground = (Brush)FindResource("TextMuted"),
+                Margin = new Thickness(0, 12, 0, 0)
+            });
+            var todayState = _flow.TodayRunState();
+            var stateText = new TextBlock
+            {
+                Text = todayState.Text,
+                FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0),
+                Foreground = new SolidColorBrush(todayState.WillRun
+                    ? Color.FromRgb(0x6E, 0xF0, 0xC8) : Color.FromRgb(0xFF, 0xB1, 0x4D))
+            };
+            PropPanel.Children.Add(stateText);
+            // 双向开关：勾选=今日运行，取消=今日不运行。任何时刻都能改，两个方向都立即生效。
+            _suppressTodayToggle = true;
+            var todayToggle = new CheckBox
+            {
+                Content = "今天运行这个流程",
+                IsChecked = _flow.TodayRunState().WillRun,
+                Style = (Style)FindResource("GlassCheckBox"),
+                Margin = new Thickness(0, 8, 0, 0), FontSize = 11.5,
+                IsEnabled = _flow.Enabled && !_flow.Paused
+            };
+            todayToggle.ToolTip = _flow.Enabled && !_flow.Paused
+                ? "取消勾选＝今天不再运行；重新勾选＝恢复今天运行。"
+                : "流程未启用或已暂停，今日不会运行；请先启用流程。";
+            void ApplyTodayWanted(bool want)
+            {
+                var at = DateTime.Now;
+                _flow.ToggleTodayRequested = want;
+                _flow.RunResetRequested = false;
+                PlcLogic.SetTodayRun(_flow, at, want);   // 立即反映到界面与保存内容
+                _dirty = true;
+                RefreshDailyState();
+                RefreshValidateHint();
+                var now = _flow.TodayRunState(at);
+                stateText.Text = now.Text;
+                stateText.Foreground = new SolidColorBrush(now.WillRun
+                    ? Color.FromRgb(0x6E, 0xF0, 0xC8) : Color.FromRgb(0xFF, 0xB1, 0x4D));
+            }
+            todayToggle.Checked += (_, __) =>
+            {
+                if (_suppressTodayToggle) return;
+                ApplyTodayWanted(true);
+            };
+            todayToggle.Unchecked += (_, __) =>
+            {
+                if (_suppressTodayToggle) return;
+                ApplyTodayWanted(false);
+            };
+            _suppressTodayToggle = false;
+            PropPanel.Children.Add(todayToggle);
+        }
+
         private void EnabledCheck_Changed(object sender, RoutedEventArgs e)
         {
             if (!_ready) return;
             _flow.Enabled = EnabledCheck.IsChecked == true;
             _dirty = true;
-        }
-
-        /// <summary>
-        /// 「中断后保留进度」开关：决定条件锁存是否写进配置文件。
-        /// ★ 与"执行结束后是否清零"无关 —— 执行结束（成功/失败/结束流程）
-        ///   一律 Disarm() 清空条件，见 FlowRunner。
-        ///   这个开关只影响：流程还没执行完就关掉程序时，已满足的条件是否保留。
-        /// </summary>
-        private void PersistCheck_Changed(object sender, RoutedEventArgs e)
-        {
-            if (!_ready) return;
-            _flow.PersistLatched = PersistCheck.IsChecked == true;
-            _dirty = true;
-        }
-
-        private void CondMode_Changed(object sender, SelectionChangedEventArgs e)
-        {
-            if (!_ready) return;
-            if (CondModeCombo.SelectedItem is ComboBoxItem it && (it.Tag as string) == "Any")
-                _flow.ConditionMode = FlowConditionMode.Any;
-            else
-                _flow.ConditionMode = FlowConditionMode.All;
-            _dirty = true;
-        }
-
-        /// <summary>
-        /// 「等待条件最多」：触发器命中后，条件最多等多久。
-        /// 超时自动退出流程并清空条件，等下一次触发器重新开始；0 = 不超时。
-        /// </summary>
-        private void ArmTimeout_Changed(object sender, SelectionChangedEventArgs e)
-        {
-            if (!_ready) return;
-            int minutes = 60;
-            if (ArmTimeoutCombo.SelectedItem is ComboBoxItem it
-                && it.Tag is string tag && int.TryParse(tag, out int v))
-                minutes = v;
-            _flow.ArmTimeoutMinutes = minutes;
-            _dirty = true;
+            RefreshDailyState();
+            RefreshValidateHint();
         }
 
         /// <summary>把下拉框选中到指定 Tag 值；找不到则选第一项。</summary>
@@ -1362,68 +1650,31 @@ namespace SoulLink.Views
             {
                 var r = ThemedMessage.YesNoCancel(this, "保存", "有未保存的修改，要保存吗？");
                 if (r == MessageBoxResult.Cancel) return;
-                if (r == MessageBoxResult.Yes) Save_Click(null, null!);
+                if (r == MessageBoxResult.Yes && !SaveFlow()) return;
             }
             Close();
         }
 
-        private void Save_Click(object? sender, RoutedEventArgs e)
+        private bool SaveFlow(bool showMessage = true)
         {
             try
             {
                 _flow.Name = string.IsNullOrWhiteSpace(NameBox.Text) ? "未命名流程" : NameBox.Text.Trim();
                 _flow.Enabled = EnabledCheck.IsChecked == true;
-                _flow.PersistLatched = PersistCheck.IsChecked == true;
-                if (ArmTimeoutCombo.SelectedItem is ComboBoxItem ti
-                    && ti.Tag is string ttag && int.TryParse(ttag, out int tmin))
-                    _flow.ArmTimeoutMinutes = tmin;
-
-                // ★ 保存前校验：链路不完整 / 结构非法 / 数据缺失 → 不让保存
+                _flow.EnsurePlcModel();
                 var report = FlowValidator.Validate(_flow, _cfg);
-                if (report.HasError)
-                {
-                    var errs = new List<string>();
-                    var warns = new List<string>();
-                    foreach (var i in report.Issues)
-                        (i.IsError ? errs : warns).Add((i.IsError ? "• " : "⚠ ") + i.Message);
-
-                    string text = "这个流程还不能运行，请先修正下面的问题：\n\n"
-                                + string.Join("\n", errs);
-                    if (warns.Count > 0)
-                        text += "\n\n另外：\n" + string.Join("\n", warns);
-
-                    ThemedMessage.Info(this, "流程不完整", text);
-
-                    // 选中第一个出问题的节点，方便直接定位
-                    foreach (var i in report.Issues)
-                        if (i.IsError && i.Node != null) { Canvas.Select(i.Node); break; }
-
-                    return;
-                }
-
-                // ★ 新建的流程在**保存时**才真正加入配置，
-                //   避免主页出现空白流程（用户要求）。
-                if (_isNew && !_cfg.Automations.Exists(f => f.Id == _flow.Id))
-                    _cfg.Automations.Add(_flow);
-
-                ConfigStore.Save(_cfg);
-                _dirty = false;
-                LogBus.Ok("已保存自动化流程：" + _flow.DisplayName);
-
-                string okText = "已保存。\n\n流程「" + _flow.DisplayName + "」会在满足触发器时自动执行。";
-                if (report.Issues.Count > 0)
-                {
-                    var warns = new List<string>();
-                    foreach (var i in report.Issues) warns.Add("⚠ " + i.Message);
-                    okText += "\n\n提醒：\n" + string.Join("\n", warns);
-                }
-                ThemedMessage.Info(this, "提示", okText);
+                if (report.HasError) { if (showMessage) ThemedMessage.Info(this, "流程不完整", report.ToText()); return false; }
+                if (_isNew && !_cfg.Automations.Exists(f => f.Id == _flow.Id)) _cfg.Automations.Add(_flow);
+                ConfigStore.Save(_cfg); _dirty = false;
+                if (showMessage) ThemedMessage.Info(this, "提示", "流程已保存。\n" + (report.Issues.Count > 0 ? report.ToText() : "条件每轮重新判断；从不满足变为满足时执行动作。"));
+                return true;
             }
-            catch (Exception ex)
-            {
-                ThemedMessage.Info(this, "提示", "保存失败：" + ex.Message);
-            }
+            catch (Exception ex) { if (showMessage) ThemedMessage.Info(this, "保存失败", ex.Message); return false; }
         }
+
+        private void Save_Click(object? sender, RoutedEventArgs e) => SaveFlow();
+
+
 
         private void DeleteFlow_Click(object sender, RoutedEventArgs e)
         {
@@ -1439,8 +1690,8 @@ namespace SoulLink.Views
         {
             try
             {
-                // 保存当前编辑
-                _flow.Name = string.IsNullOrWhiteSpace(NameBox.Text) ? "未命名流程" : NameBox.Text.Trim();
+                // 立即运行与关闭共用同一个保存事务，避免新流程未入库。
+                if (!SaveFlow(showMessage: false)) return;
 
                 // 运行前同样校验
                 var vr = FlowValidator.Validate(_flow, _cfg);
@@ -1452,19 +1703,14 @@ namespace SoulLink.Views
                     return;
                 }
 
-                ConfigStore.Save(_cfg);
-                _dirty = false;
-
                 var sessions = await SessionService.QueryAsync();
                 var s = SessionService.Find(sessions, _account.UserName);
-                if (s == null)
-                {
-                    ThemedMessage.Info(this, "提示", "账号 " + _account.UserName + " 当前没有会话，无法执行。");
-                    return;
-                }
+                int sid = s?.Id ?? 0; // 无会话的触点也能判断；真正需要会话的 OUT 会报告明确错误。
 
                 LogBus.Info("手动运行流程：" + _flow.DisplayName);
-                var result = await FlowRunner.RunAsync(_flow, s.Id, _cfg, manual: true);
+                var result = await FlowRunner.RunAsync(_flow, sid, _cfg, manual: true);
+                Canvas.Redraw();
+                RefreshDailyState();
 
                 string detail = string.Join(Environment.NewLine, result.Steps);
                 ThemedMessage.Info(this, "执行结果",

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <StartupObject>ValidatorCheck</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="ValidatorCheck.cs" />
+    <Compile Include="..\..\Models\FlowModels.cs" />
+    <Compile Include="..\..\Models\FlowNodeCatalog.cs" />
+    <Compile Include="..\..\Models\FlowGraphRules.cs" />
+    <Compile Include="..\..\Services\FlowValidator.cs" />
+    <!-- BgiPathResolver 依赖 App.Config 等运行时设施，做最小替身 -->
+    <Compile Include="ValidatorStubs.cs" /><Compile Include="..\..\Models\PlcLogic.cs" />
+  </ItemGroup>
+</Project>

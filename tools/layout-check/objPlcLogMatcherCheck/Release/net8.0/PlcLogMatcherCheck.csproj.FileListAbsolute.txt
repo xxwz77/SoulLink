@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\refint\PlcLogMatcherCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\PlcLogMatcherCheck.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\ref\PlcLogMatcherCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcLogMatcherCheck\Release\net8.0\PlcLogMa.763514DF.Up2Date

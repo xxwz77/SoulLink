@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <StartupObject>PlcLogMatcherCheck</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 直接编译生产实现，禁止在测试项目中复制匹配逻辑。 -->
+    <Compile Include="PlcLogMatcherCheck.cs" />
+    <Compile Include="..\..\Services\PlcLogMatcher.cs" />
+  </ItemGroup>
+</Project>

@@ -83,35 +83,72 @@ namespace SoulLink.Services
             catch { }
         }
 
+        private static readonly object ConfigIo = new();
+
         public static AppConfig Load()
         {
+            string originalJson = "";
             try
             {
                 if (!File.Exists(ConfigPath)) return Defaults();
-                string json = File.ReadAllText(ConfigPath, Encoding.UTF8);
+                string json = File.ReadAllText(ConfigPath, Encoding.UTF8); originalJson = json;
                 var cfg = JsonSerializer.Deserialize<AppConfig>(json, Opt);
                 if (cfg == null) return Defaults();
                 if (cfg.Settings == null) cfg.Settings = new AppSettings();
                 if (cfg.Accounts == null) cfg.Accounts = new List<Account>();
                 if (cfg.Actions == null) cfg.Actions = new List<ActionItem>();
             if (cfg.AutomationProfiles == null) cfg.AutomationProfiles = new List<AutomationProfile>();
+                if (cfg.Automations == null) cfg.Automations = new List<AutomationFlow>();
+                bool migrated = false;
+                foreach (var flow in cfg.Automations)
+                {
+                    if (flow.EngineVersion < 2)
+                    {
+                        if (flow.CreatedAt == null) flow.CreatedAt = DateTime.Now;
+                        flow.EnsurePlcModel(); migrated = true;
+                    }
+                    else
+                    {
+                        flow.EnsurePlcModel();
+                        if (flow.LifecycleVersion < 1)
+                        {
+                            // 旧实验状态不能推断外部副作用是否完成；保留已明确的 END 锁存，其余本轮状态重置。
+                            if (flow.RunDayKey.Length == 0)
+                            {
+                                flow.RunDayKey = PlcLogic.DayKey(DateTime.Now, flow.EndBoundaryHour ?? 0);
+                                flow.RunComplete = false; flow.PlcPower.Clear(); flow.ActionResults.Clear();
+                                flow.SatisfiedContacts.Clear(); flow.RunningActions.Clear(); flow.WaitingActions.Clear(); flow.DelayUntil.Clear();
+                                flow.MigrationNotes.Add("旧运行进度已安全重置；END 的完成日保留，日界默认 00:00，可在编辑器选择 04:00。");
+                            }
+                            flow.LifecycleVersion = 1; migrated = true;
+                        }
+                    }
+                }
+                if (migrated)
+                {
+                    // 备份成功后才允许保存新格式；写盘失败抛给外层，禁止把整套配置重置成默认。
+                    string? dir = Path.GetDirectoryName(ConfigPath);
+                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                    string backup = Path.Combine(dir ?? "", "config-before-flow-migration.json");
+                    File.WriteAllText(backup, originalJson, new UTF8Encoding(false));
+                    Save(cfg);
+                }
                 return cfg;
             }
-            catch
+            catch (Exception ex)
             {
-                // 配置损坏时备份后重建，避免程序打不开
-                try
-                {
-                    if (File.Exists(ConfigPath))
-                        File.Copy(ConfigPath, ConfigPath + ".broken-" + DateTime.Now.ToString("yyyyMMddHHmmss"), true);
-                }
-                catch { }
+                // 迁移/保存失败不是配置损坏：保留原内容并继续旧格式，绝不覆盖原文件或重置账号。
+                App.AppendErrorLog("ConfigStore.LoadOrMigrate", ex);
+                if (originalJson.Length > 0)
+                    try { return JsonSerializer.Deserialize<AppConfig>(originalJson, Opt) ?? Defaults(); } catch { }
                 return Defaults();
             }
         }
 
         public static void Save(AppConfig cfg)
         {
+            lock (ConfigIo)
+            {
             string path = ConfigPath;
             string? dir = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
@@ -125,7 +162,9 @@ namespace SoulLink.Services
             }
             catch
             {
-                try { File.Copy(tmp, path, true); File.Delete(tmp); } catch { }
+                // 落盘失败必须让调用者知道，不能宣称 END 已可靠持久化。
+                File.Copy(tmp, path, true); File.Delete(tmp);
+            }
             }
         }
 

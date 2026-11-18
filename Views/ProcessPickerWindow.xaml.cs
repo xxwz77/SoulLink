@@ -35,7 +35,7 @@ namespace SoulLink.Views
         {
             try
             {
-                var sessions = SessionService.FilterUsers(await SessionService.QueryAsync());
+                var sessions = AccountScope.Sessions(SessionService.FilterUsers(await SessionService.QueryAsync()));
                 var s = SessionService.Find(sessions, _user);
                 if (s == null)
                 {

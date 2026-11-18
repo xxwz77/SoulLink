@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\refint\FlowCanvasInputCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\FlowCanvasInputCheck.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\ref\FlowCanvasInputCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objFlowCanvasInputCheck\Release\net8.0-windows\FlowCanv.9CCB1E41.Up2Date

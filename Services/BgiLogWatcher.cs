@@ -45,27 +45,33 @@ namespace SoulLink.Services
             var result = new HashSet<int>();
             try
             {
-                // ★ 直接枚举命名管道：每个会话的注入通道都会创建
-                //     \\.\pipe\<身份>_Relay_<会话号>_<随机串>
-                //   管道存在 = 通道在线。这比读进程命令行可靠得多
-                //   （.NET 8 的 Process 没有 CommandLine 属性，需读 PEB）。
-                string prefix = AppIdentity.RelayPipePrefix;   // SoulLink_Relay_
+                // 通道属于 Windows 会话，不属于某个版本。两个版本都能看到已投送的通道。
                 foreach (var path in Directory.GetFiles(@"\\.\pipe\"))
                 {
                     string name = Path.GetFileName(path);
-                    if (string.IsNullOrEmpty(name)) continue;
-                    if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (name.EndsWith("_Events", StringComparison.OrdinalIgnoreCase)) continue;  // 事件管道跳过
-
-                    string rest = name.Substring(prefix.Length);      // "6_e6940012"
+                    if (!IsRelayPipeName(name)) continue;
+                    if (name.EndsWith(AppIdentity.RelayEventSuffix, StringComparison.OrdinalIgnoreCase)) continue;
+                    int marker = name.LastIndexOf("_Relay_", StringComparison.OrdinalIgnoreCase);
+                    string rest = name.Substring(marker + "_Relay_".Length);
                     int us = rest.IndexOf('_');
                     if (us <= 0) continue;
-                    if (int.TryParse(rest.Substring(0, us), out int sid) && sid > 0)
-                        result.Add(sid);
+                    if (int.TryParse(rest.Substring(0, us), out int sid) && sid > 0) result.Add(sid);
                 }
             }
             catch { }
             return result;
+        }
+
+        /// <summary>识别任意 SoulLink 版本的代理管道，不按当前版本身份过滤。</summary>
+        internal static bool IsRelayPipeName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            if (!name.StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase)) return false;
+            int marker = name.LastIndexOf("_Relay_", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0) return false;
+            string rest = name.Substring(marker + 7);
+            int us = rest.IndexOf('_');
+            return us > 0 && int.TryParse(rest.Substring(0, us), out int sid) && sid > 0;
         }
 
         /// <summary>从命令行字符串解析出会话号（形如 ...Relay_6_abc123）。</summary>
@@ -74,10 +80,9 @@ namespace SoulLink.Services
             if (string.IsNullOrEmpty(commandLine)) return -1;
             try
             {
-                string prefix = AppIdentity.RelayPipePrefix;
-                int i = commandLine.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-                if (i < 0) return -1;
-                i += prefix.Length;
+                int marker = commandLine.LastIndexOf("_Relay_", StringComparison.OrdinalIgnoreCase);
+                if (marker < 0 || commandLine.IndexOf("SoulLink", StringComparison.OrdinalIgnoreCase) < 0) return -1;
+                int i = marker + "_Relay_".Length;
                 int j = i;
                 while (j < commandLine.Length && char.IsDigit(commandLine[j])) j++;
                 if (j == i) return -1;
@@ -135,6 +140,7 @@ namespace SoulLink.Services
                             result[p.SessionId] = one;
                     }
                     catch { }
+                    finally { p.Dispose(); }
                 }
             }
             catch { }

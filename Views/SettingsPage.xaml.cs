@@ -105,6 +105,7 @@ namespace SoulLink.Views
             TrayCheck.IsChecked = App.Config.Settings.MinimizeToTray;
             RemoteCheck.IsChecked = App.Config.Settings.AllowRemoteInvoke;
             FallbackCheck.IsChecked = App.Config.Settings.AllowCurrentSessionFallback;
+            OnlyAutomationCheck.IsChecked = App.Config.Settings.OnlyAutomationAccounts;
             ConfigPathText.Text = ConfigStore.ConfigPath;
 
             // 联机大厅服务器地址
@@ -139,7 +140,7 @@ namespace SoulLink.Views
             if (BgiPathList == null) return;
             BgiPathList.Children.Clear();
 
-            if (App.Config.Accounts.Count == 0)
+            if (AccountScope.Accounts(App.Config).Count == 0)
             {
                 BgiPathList.Children.Add(new TextBlock
                 {
@@ -151,7 +152,7 @@ namespace SoulLink.Views
             }
 
             int auto = 0, manual = 0;
-            foreach (var a in App.Config.Accounts)
+            foreach (var a in AccountScope.Accounts(App.Config))
             {
                 bool pinned = BgiPathResolver.IsPinned(a.UserName);
                 if (pinned) manual++; else auto++;
@@ -159,7 +160,7 @@ namespace SoulLink.Views
             }
 
             if (BgiPathStatus != null)
-                BgiPathStatus.Text = "共 " + App.Config.Accounts.Count + " 个账号："
+                BgiPathStatus.Text = "共 " + AccountScope.Accounts(App.Config).Count + " 个账号："
                     + manual + " 个手动指定 · " + auto + " 个自动识别";
         }
 
@@ -265,8 +266,7 @@ namespace SoulLink.Views
                     return;
                 }
 
-                BgiPathResolver.Pin(user, info.Path);
-                ConfigStore.Save(App.Config);
+                BgiDataCenter.SetPath(user, info.Path);
                 RebuildBgiPathList();
                 if (BgiPathStatus != null)
                     BgiPathStatus.Text = user + "：已设为 " + info.Path;
@@ -299,7 +299,7 @@ namespace SoulLink.Views
         private void RefreshAccounts()
         {
             _accounts.Clear();
-            foreach (var a in App.Config.Accounts)
+            foreach (var a in AccountScope.Accounts(App.Config))
                 _accounts.Add(new AccountVm(a));
         }
 
@@ -422,7 +422,11 @@ namespace SoulLink.Views
             App.Config.Settings.MinimizeToTray = TrayCheck.IsChecked == true;
             App.Config.Settings.AllowRemoteInvoke = RemoteCheck.IsChecked == true;
             App.Config.Settings.AllowCurrentSessionFallback = FallbackCheck.IsChecked == true;
+            App.Config.Settings.OnlyAutomationAccounts = OnlyAutomationCheck.IsChecked == true;
             ConfigStore.Save(App.Config);
+            RefreshAccounts(); RebuildBgiPathList(); _ = RefreshAutoStartAsync();
+            if (Application.Current?.MainWindow is MainWindow window)
+            { window.LaunchView.Activate(); window.DataCenterView.Activate(); window.ConsoleView.RebuildUserList(); }
         }
 
         // ── 配置 ─────────────────────────────────────────────────────────────
@@ -439,9 +443,9 @@ namespace SoulLink.Views
                 // ① 启动账户候选：当前登录用户 + 本机所有已启用的本地账户
                 AutoStartUserCombo.Items.Clear();
                 var users = new List<string>();
-                users.Add(AutoStart.CurrentUser);   // 默认第一项 = 当前用户
+                if (AccountScope.Allows(AutoStart.CurrentUser)) users.Add(AutoStart.CurrentUser);
                 // 从账号配置里补充（这些是本机能登录的 RDP 用户）
-                foreach (var a in App.Config.Accounts)
+                foreach (var a in AccountScope.Accounts(App.Config))
                 {
                     string n = string.IsNullOrWhiteSpace(a.RdpUserName) ? a.UserName : a.RdpUserName;
                     if (!string.IsNullOrWhiteSpace(n) &&
@@ -462,7 +466,7 @@ namespace SoulLink.Views
                 // ② 自动连接的 RDP 用户（多选）
                 AutoConnectList.Children.Clear();
                 var selected = App.Config.Settings.AutoConnectAccountIds ?? new List<string>();
-                if (App.Config.Accounts.Count == 0)
+                if (AccountScope.Accounts(App.Config).Count == 0)
                 {
                     AutoConnectList.Children.Add(new TextBlock
                     {
@@ -470,7 +474,7 @@ namespace SoulLink.Views
                         Style = (Style)FindResource("Caption")
                     });
                 }
-                foreach (var a in App.Config.Accounts)
+                foreach (var a in AccountScope.Accounts(App.Config))
                 {
                     var cb = new CheckBox
                     {

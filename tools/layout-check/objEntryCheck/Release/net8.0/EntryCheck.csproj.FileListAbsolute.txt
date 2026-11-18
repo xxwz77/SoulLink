@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binEntryCheck\Release\net8.0\EntryCheck.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binEntryCheck\Release\net8.0\EntryCheck.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binEntryCheck\Release\net8.0\EntryCheck.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binEntryCheck\Release\net8.0\EntryCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binEntryCheck\Release\net8.0\EntryCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\EntryCheck.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\EntryCheck.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\EntryCheck.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\EntryCheck.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\EntryCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\refint\EntryCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\EntryCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\EntryCheck.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\ref\EntryCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objEntryCheck\Release\net8.0\EntryCheck.csproj.Up2Date

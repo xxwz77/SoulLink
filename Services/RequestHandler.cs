@@ -126,6 +126,7 @@ namespace SoulLink.Services
 
             int? sessionOverride = req.Session ?? (account != null && account.SessionId > 0 ? account.SessionId : (int?)null);
 
+            if (!AccountScope.Allows(userName,cfg)) return new IpcResponse { Ok=false,Message="主用户已被全局挂机账号模式排除" };
             var targetAccount = account ?? new Account { UserName = userName };
             var sessions = SessionService.FilterUsers(await SessionService.QueryAsync().ConfigureAwait(false));
             SessionInfo? session = sessionOverride.HasValue

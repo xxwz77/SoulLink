@@ -58,6 +58,7 @@ namespace SoulLink.Views
             _pages["launch"] = PageLaunch;
             _pages["console"] = PageConsole;
             _pages["update"] = PageUpdate;
+            _pages["datacenter"] = PageDataCenter;
             _pages["remote"] = PageRemote;
             _pages["sessions"] = PageSessions;
             _pages["procs"] = PageProcs;
@@ -471,6 +472,7 @@ namespace SoulLink.Views
         {
             if (sender is FrameworkElement fe && fe.Tag is string tag)
             {
+                App.Breadcrumb("NavRow_Click -> " + tag);
                 NavigateTo(tag);
                 SetNavCollapsed(true, "点图标切页");
             }
@@ -801,7 +803,7 @@ namespace SoulLink.Views
             foreach (var t in new FrameworkElement?[]
             {
                 NavTitleText, NavTextLaunch, NavTextConsole,
-                NavTextUpdate, NavTextSessions, NavTextProcs, NavTextCli
+                NavTextDataCenter, NavTextUpdate, NavTextRemote, NavTextSessions, NavTextProcs, NavTextCli
             })
             {
                 if (t != null) t.Visibility = vis;
@@ -958,6 +960,7 @@ namespace SoulLink.Views
             {
                 case "automation": AutomationView.Activate(); break;
                 case "console": ConsoleView.Activate(); break;
+                case "datacenter": DataCenterView.Activate(); break;
                 case "remote": RemoteView.ReloadAsync(); break;
                 case "update": UpdateView.Reload(); break;
                 case "sessions": LobbyView.Refresh(); break;
@@ -977,6 +980,11 @@ namespace SoulLink.Views
 
                 var primary = (System.Windows.Media.Brush)FindResource("TextPrimary");
                 var muted = (System.Windows.Media.Brush)FindResource("TextMuted");
+                // ★ 文字与图标要分开取色：
+                //   原来两者都用 muted（#7A8CB4E0，仅 48% 不透明），
+                //   在展开的深色面板上文字几乎糊在一起（用户反馈"文字颜色不对"）。
+                //   图标用 muted 作次级元素，文字用 secondary 保证可读。
+                var textIdle = (System.Windows.Media.Brush)FindResource("TextSecondary");
                 // 图标颜色：未选中用次级色，选中用主色。缺这行时深色主题下图标是黑的（用户实测）。
                 // 选中底色：与旧版一致的紫色半透明
                 var activeBg = new System.Windows.Media.SolidColorBrush(
@@ -991,11 +999,16 @@ namespace SoulLink.Views
                     bool on = t == _activePage;
                     row.Background = on ? activeBg : System.Windows.Media.Brushes.Transparent;
 
-                    // 图标是第 0 列的 TextBlock，文字是第 1 列
+                    // 图标是第 0 列（Glyph），文字是第 1 列。
+                    // 选中：两者都用主色；未选中：图标 muted、文字 secondary。
                     foreach (var el in row.Children)
                     {
-                        if (el is System.Windows.Controls.TextBlock tb)
-                            tb.Foreground = on ? primary : muted;
+                        if (el is not System.Windows.Controls.TextBlock tb) continue;
+                        bool isGlyph = System.Windows.Controls.Grid.GetColumn(tb) == 0;
+                        if (on)
+                            tb.Foreground = primary;
+                        else
+                            tb.Foreground = isGlyph ? muted : textIdle;
                     }
                 }
             }

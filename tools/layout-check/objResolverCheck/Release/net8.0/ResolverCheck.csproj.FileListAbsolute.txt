@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binResolverCheck\Release\net8.0\ResolverCheck.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binResolverCheck\Release\net8.0\ResolverCheck.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binResolverCheck\Release\net8.0\ResolverCheck.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binResolverCheck\Release\net8.0\ResolverCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binResolverCheck\Release\net8.0\ResolverCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\ResolverCheck.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\ResolverCheck.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\ResolverCheck.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\ResolverCheck.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\ResolverCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\refint\ResolverCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\ResolverCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\ResolverCheck.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\ref\ResolverCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objResolverCheck\Release\net8.0\Resolver.724E2E41.Up2Date

@@ -37,7 +37,11 @@ namespace SoulLink.Views
         {
             InitializeComponent();
             Loaded += (_, __) => Reload();
+            BgiDataCenter.AccountDataChanged += OnSharedDataChanged;
+            Unloaded += (_, __) => BgiDataCenter.AccountDataChanged -= OnSharedDataChanged;
         }
+
+        private void OnSharedDataChanged(string userName) { if (IsVisible) Dispatcher.InvokeAsync(Reload); }
 
         // ══════════ 加载 ══════════
 
@@ -53,7 +57,7 @@ namespace SoulLink.Views
 
                 // 用户来源：配置里的账号 + BgiPaths 里有的
                 var users = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var a in cfg.Accounts)
+                foreach (var a in AccountScope.Accounts(cfg))
                     if (!string.IsNullOrWhiteSpace(a.UserName)) users.Add(a.UserName.Trim());
                 foreach (var k in map.Keys)
                     if (!string.IsNullOrWhiteSpace(k)) users.Add(k.Trim());
@@ -213,7 +217,7 @@ namespace SoulLink.Views
             {
                 vm.BgiPath = p;
                 // ★ 用户手填 = 明确指定，走 Pin（之后自动探测不再覆盖）
-                BgiPathResolver.Pin(vm.UserName, p);
+                BgiDataCenter.SetPath(vm.UserName, p);
                 ConfigStore.Save(App.Config);
 
                 // 路径改了 → 整页重载，让复选框状态跟着更新

@@ -249,6 +249,26 @@ namespace SoulLink.Services
         private static readonly Regex RxCountProgress = new Regex(
             @"当前进度\s*[:：]\s*(?<n>\d+)\s*个\s*$", RegexOptions.Compiled);
 
+        // ③c 地图追踪任务（实测最高频，占启动行 1 万+ 次）：
+        //   → 开始执行地图追踪任务: "A06-欧蒂克莱尔左侧-8个.json"
+        //   注意：这条**不带**"当前进度：任务「X」，执行路线「Y」"的成对行，
+        //   所以原来完全解析不到，界面显示"等待日志中的状态"（用户实测）。
+        private static readonly Regex RxMapTrace = new Regex(
+            @"开始执行地图追踪任务\s*[:：]\s*""(?<route>[^""]+)""" + @"|开始执行地图追踪任务\s*[:：]\s*(?<route2>[^\r\n""]+)",
+            RegexOptions.Compiled);
+
+        // ③d 独立 JS 脚本任务：→ 开始执行JS脚本: "xxx.js"
+        private static readonly Regex RxJsScript = new Regex(
+            @"开始执行JS脚本\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
+
+        // ③e 独立任务：→ 开始执行独立任务: "xxx"
+        private static readonly Regex RxStandalone = new Regex(
+            @"开始执行独立任务\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
+
+        // ③f 一条龙任务启动：锄地一条龙任务启动 [配置组: "X"]
+        private static readonly Regex RxOneDragonStart2 = new Regex(
+            @"一条龙任务启动\s*\[配置组\s*[:：]\s*""(?<g>[^""]+)""\]", RegexOptions.Compiled);
+
         // ★ 当前动作：BGI 的很多任务只输出动作，不输出"路线/进度"。
         //   例如：开始挖矿 / 动作：下落攻击 / 成功切换角色:"莉奈娅"
         //   原来这类行全部识别不到 → 界面一直显示"等待日志中的状态信息"
@@ -407,6 +427,66 @@ namespace SoulLink.Services
                         {
                             AreaName = a.Groups["area"].Value;
                             RouteProgress = a.Groups["cur"].Value + "/" + a.Groups["total"].Value;
+                            Recovered = true;
+                            matched = true;
+                        }
+                    }
+
+                    // ③c 地图追踪任务：→ 开始执行地图追踪任务: "xxx.json"
+                    //     ★ 这是实测最高频的格式（1 万+ 次），原来完全没解析，
+                    //       导致 RouteFile 永远是空 → 界面只能显示"已拾取 N 个"。
+                    if (!matched)
+                    {
+                        var mt = RxMapTrace.Match(line);
+                        if (mt.Success)
+                        {
+                            string route = mt.Groups["route"].Success
+                                ? mt.Groups["route"].Value
+                                : mt.Groups["route2"].Value;
+                            route = route.Trim();
+                            if (route.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                                route = route.Substring(0, route.Length - 5);
+                            RouteFile = route;
+                            TaskName = "地图追踪";
+                            RouteProgress = "";
+                            // 新任务开始 → 本路线拾取数清零
+                            PickCount = "";
+                            Recovered = true;
+                            matched = true;
+                        }
+                    }
+
+                    // ③d JS 脚本 / 独立任务
+                    if (!matched)
+                    {
+                        var js = RxJsScript.Match(line);
+                        if (js.Success)
+                        {
+                            RouteFile = js.Groups["name"].Value;
+                            TaskName = "JS脚本";
+                            Recovered = true;
+                            matched = true;
+                        }
+                        else
+                        {
+                            var sd = RxStandalone.Match(line);
+                            if (sd.Success)
+                            {
+                                RouteFile = sd.Groups["name"].Value;
+                                TaskName = "独立任务";
+                                Recovered = true;
+                                matched = true;
+                            }
+                        }
+                    }
+
+                    // ③e 一条龙任务启动 [配置组: "X"]
+                    if (!matched)
+                    {
+                        var od = RxOneDragonStart2.Match(line);
+                        if (od.Success)
+                        {
+                            OneDragonConfig = od.Groups["g"].Value;
                             Recovered = true;
                             matched = true;
                         }
@@ -636,6 +716,22 @@ namespace SoulLink.Services
                 if (!string.IsNullOrEmpty(TaskName)) return TaskName;
                 if (!string.IsNullOrEmpty(OneDragonConfig)) return OneDragonConfig;
                 return "—";
+            }
+        }
+
+        /// <summary>
+        /// 轮次行：有轮次显示"第 X/Y 轮"，否则显示任务名。
+        /// ★ 原来无轮次时返回 "—"，界面据此显示"等待日志中的状态…"，
+        ///   而地图追踪这类任务本来就没有轮次 —— 会误导成"没解析到"。
+        /// </summary>
+        public string SafeRoundDisplay
+        {
+            get
+            {
+                string r = RoundDisplay;
+                if (r != "—") return r;
+                if (!string.IsNullOrWhiteSpace(TaskName)) return TaskName;
+                return "";
             }
         }
 

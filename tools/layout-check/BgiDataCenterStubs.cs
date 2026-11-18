@@ -1,0 +1,3 @@
+using System;using SoulLink.Models;
+namespace SoulLink.Models{public class AppConfig{}}
+namespace SoulLink.Services{public static class BgiPathResolver{public static string Normalize(string p)=>p;public static void Pin(string u,string p){}public static string GetPath(string u)=>"";}public static class AccountStateCenter{public static void MarkConfigurationDirty(){}}public static class ConfigStore{public static void Save(AppConfig cfg){}}public partial class App{public static AppConfig Config=new();}}

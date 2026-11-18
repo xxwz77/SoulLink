@@ -45,7 +45,7 @@ namespace SoulLink.Views
         {
             InitializeComponent();
             _cfg = cfg;
-            _accounts = cfg.Accounts;
+            _accounts = AccountScope.Accounts(cfg);
 
             // 用户名由用户直接输入，执行时再按用户名匹配会话。
             // 不做保存时校验，避免"想给还没登录的账号预先配动作"时被挡住。
@@ -924,7 +924,7 @@ namespace SoulLink.Views
             {
                 if (string.IsNullOrWhiteSpace(user)) return "";
                 // ★ 统一走解析器：手动指定 > 正在运行 > 记忆，避免各处看到不同结果
-                return BgiPathResolver.GetPath(user);
+                return BgiDataCenter.Get(user).ExePath;
             }
             catch { return ""; }
         }
@@ -937,8 +937,7 @@ namespace SoulLink.Views
                 if (user.Length == 0 || string.IsNullOrWhiteSpace(path)) return;
                 var cfg = App.Config.Settings;
                 // ★ 用户手填 = 明确指定，走 Pin（自动探测之后不再覆盖）
-                BgiPathResolver.Pin(user, path);
-                ConfigStore.Save(App.Config);
+                BgiDataCenter.SetPath(user, path);
             }
             catch { }
         }

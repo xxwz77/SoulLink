@@ -182,6 +182,19 @@
                                                    Foreground="{StaticResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
+                                    <Grid Height="38" Tag="datacenter" ToolTip="数据中心"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE9D9;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextDataCenter" Grid.Column="1" Text="数据中心"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
                                     <Grid Height="38" Tag="update" ToolTip="更新 BGI"
                                           Background="Transparent" MouseLeftButtonUp="NavRow_Click">
                                         <Grid.ColumnDefinitions>
@@ -195,17 +208,19 @@
                                                    Foreground="{StaticResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
-                                    <Grid Height="38" Tag="remote" ToolTip="远程管理">
+                                    <Grid Height="38" Tag="remote" ToolTip="远程管理"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE968;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}"
+                                                   Background="Transparent" MouseLeftButtonUp="NavRow_Click" />
                                         <TextBlock x:Name="NavTextRemote" Grid.Column="1" Text="远程管理"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{StaticResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
+                                                   Visibility="Collapsed" MouseLeftButtonUp="NavRow_Click" />
                                     </Grid>
                                     <Grid Height="38" Tag="sessions" ToolTip="联机大厅"
                                           Background="Transparent" MouseLeftButtonUp="NavRow_Click">
@@ -312,6 +327,9 @@
                             </Grid>
                             <Grid x:Name="PageConsole" Visibility="Collapsed">
                                 <vm:ConsolePage x:Name="ConsoleView" />
+                            </Grid>
+                            <Grid x:Name="PageDataCenter" Visibility="Collapsed">
+                                <vm:DataCenterPage x:Name="DataCenterView" />
                             </Grid>
                             <Grid x:Name="PageUpdate" Visibility="Collapsed">
                                 <vm:BgiUpdatePage x:Name="UpdateView" />

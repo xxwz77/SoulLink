@@ -1,241 +1,90 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
+using System.Linq;
 using SoulLink.Models;
 
 namespace SoulLink.Services
 {
-    /// <summary>
-    /// 流程结构校验：保存前检查"链路完整且有数据、结构合法"。
-    ///
-    /// 校验项（用户要求）：
-    ///   1. 必须有一个触发器；
-    ///   2. 触发器必须连出去（否则永远不会执行）；
-    ///   3. 每个条件/执行器必须至少有一条入边（孤立模块没用）；
-    ///   4. 参数必填项不能为空（"有数据"）；
-    ///   5. 不能成环；
-    ///   6. 执行器必须能从触发器到达（否则是死代码）。
-    /// </summary>
+    /// <summary>PLC v2 结构校验：多 LD 入口合法；实时条件与本轮瞬时信号分开处理。</summary>
     public static class FlowValidator
     {
-        public sealed class Issue
-        {
-            public string Message = "";
-            /// <summary>true = 错误（不能运行）；false = 提醒（能运行但不推荐）</summary>
-            public bool IsError;
-            public FlowNode? Node;
-        }
-
+        public sealed class Issue { public string Message = ""; public bool IsError; public FlowNode? Node; public string ParamKey = ""; public string Target = ""; }
         public sealed class Report
         {
-            public List<Issue> Issues = new List<Issue>();
+            public List<Issue> Issues = new();
             public bool HasError => Issues.Exists(i => i.IsError);
             public bool Ok => Issues.Count == 0;
-
-            public string ToText()
-            {
-                var sb = new StringBuilder();
-                foreach (var i in Issues)
-                    sb.AppendLine((i.IsError ? "✕ " : "⚠ ") + i.Message);
-                return sb.ToString().TrimEnd();
-            }
+            public string ToText() => string.Join("\n", Issues.Select(i => (i.IsError ? "✕ " : "⚠ ") + i.Message));
         }
-
         public static Report Validate(AutomationFlow flow, AppConfig? cfg = null)
         {
-            var r = new Report();
-            if (flow == null)
+            var r = new Report(); if (flow == null) { r.Issues.Add(new Issue { IsError=true, Message="流程为空" }); return r; }
+            flow.EnsurePlcModel();
+            void Error(FlowNode? n,string m) => r.Issues.Add(new Issue { Node=n,IsError=true,Message=m });
+            void Field(FlowNode n,string key,string m) => r.Issues.Add(new Issue { Node=n,IsError=true,Message=m,ParamKey=key,Target="field" });
+            var ids = flow.Nodes.Select(n=>n.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (flow.Edges.GroupBy(e => e.From + "|" + e.To, StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1))
+                Error(null,"存在重复连线，请删除多余连线");
+            if (ids.Count != flow.Nodes.Count) Error(null,"节点 Id 重复");
+            if (flow.Nodes.Count == 0) Error(null,"没有条件：请先添加一个判断模块");
+            foreach (var e in flow.Edges)
             {
-                r.Issues.Add(new Issue { Message = "流程为空", IsError = true });
-                return r;
+                if (!ids.Contains(e.From) || !ids.Contains(e.To)) Error(null,"存在指向已删除模块的连线");
+                if (e.Branch.Length > 0) Error(flow.FindNode(e.From),"旧是/否分支尚未迁移");
+                if (flow.FindNode(e.From)?.Kind == FlowNodeKind.Terminate) Error(flow.FindNode(e.From),"「当天完成」是最后一步，不能有出口");
             }
-
-            // ① 触发器
-            var trigger = flow.Trigger;
-            if (trigger == null)
-            {
-                r.Issues.Add(new Issue { Message = "没有触发器：流程永远不会开始", IsError = true });
-                return r;
-            }
-
-            if (flow.Nodes.Count == 1)
-            {
-                r.Issues.Add(new Issue { Message = "只有触发器，还没有任何条件和执行器" });
-                return r;
-            }
-
-            // ② 触发器必须连出去
-            if (flow.TargetsOf(trigger.Id).Count == 0)
-            {
-                r.Issues.Add(new Issue
-                {
-                    Message = "触发器没有连到任何模块：从它右侧圆点拖一条线出来",
-                    IsError = true,
-                    Node = trigger
-                });
-            }
-
-            // ③ 孤立模块 / 入边检查
             foreach (var n in flow.Nodes)
             {
-                if (n.Id == trigger.Id) continue;
-
-                var srcs = flow.SourcesOf(n.Id);
-                if (srcs.Count == 0)
-                {
-                    r.Issues.Add(new Issue
-                    {
-                        Message = "「" + n.Title + "」没有连接到上游：它永远不会被执行",
-                        IsError = true,
-                        Node = n
-                    });
-                }
-            }
-
-            // ④ 参数必填校验
-            foreach (var n in flow.Nodes)
-            {
+                if (!n.IsContact && flow.SourcesOf(n.Id).Count == 0) Error(n,"「"+n.Title+"」前面没有条件，不会自行执行");
+                if (n.IsContact && n.Logic == FlowLogicOp.LD && flow.SourcesOf(n.Id).Count > 0) Error(n,"起始条件不能再连接上游");
+                // 只有条件需要继续连接；动作放在末尾是正常结构。
+                if (n.IsContact && flow.TargetsOf(n.Id).Count == 0)
+                    r.Issues.Add(new Issue { Node=n,Message="条件「"+n.Title+"」后面还没有连接动作" });
                 var def = FlowNodeCatalog.Get(n.Type);
-                if (def == null) continue;
-
+                if (def == null) { Error(n,"未知模块："+n.Type); continue; }
                 foreach (var p in def.Params)
+                    if (p.Required && p.Default.Length == 0 && string.IsNullOrWhiteSpace(n.Get(p.Key))) Field(n,p.Key,"「"+n.Title+"」的「"+p.Label+"」没有填写");
+                if (n.Get("user").Length > 0 && cfg != null && (!cfg.Accounts.Any(a => string.Equals(a.UserName, SessionService.BareName(n.Get("user")), StringComparison.OrdinalIgnoreCase)) || !AccountScope.Allows(n.Get("user"),cfg)))
+                    Field(n,"user","「"+n.Title+"」的目标账号不存在；不会回退操作其它账号");
+                if (n.Type == FlowNodeType.TrigSchedule && !TimeSpan.TryParse(n.Get("time"),out _)) Error(n,"时刻必须是 HH:mm");
+                if (n.Type == FlowNodeType.CondTimeRange && (!TimeSpan.TryParse(n.Get("from"),out _) || !TimeSpan.TryParse(n.Get("to"),out _))) Error(n,"时间段必须是 HH:mm");
+                foreach (var p in def.Params.Where(p=>p.Kind==FlowParamKind.Number && n.Get(p.Key).Length>0))
+                    if (!double.TryParse(n.Get(p.Key),out var v) || v<0) Error(n,"「"+n.Title+"」的「"+p.Label+"」必须是非负数字");
+                if (n.Type == FlowNodeType.ActDelay && n.GetInt("seconds",0)>3600) Error(n,"等待最长 3600 秒");
+                if (n.GetBool("isRegex",false) && n.Get("pattern").Length>0)
+                    try { _=new System.Text.RegularExpressions.Regex(n.Get("pattern")); } catch(Exception ex) { Error(n,"正则无效："+ex.Message); }
+                if (UsesBgi(n.Type) && cfg != null)
                 {
-                    // "目标用户"永远可选（留空=本账号）
-                    if (p.Key == "user") continue;
-                    // 明确标了可选的跳过
-                    if (!p.Required) continue;
-                    // 有默认值的不用填
-                    if (!string.IsNullOrWhiteSpace(p.Default)) continue;
-
-                    string v = n.Get(p.Key);
-                    if (string.IsNullOrWhiteSpace(v))
-                    {
-                        r.Issues.Add(new Issue
-                        {
-                            Message = "「" + n.Title + "」的「" + p.Label + "」没有填写",
-                            IsError = true,
-                            Node = n
-                        });
-                    }
+                    string user = n.Get("user");
+                    if (user.Length == 0) user=cfg.Accounts.FirstOrDefault(a=>a.Id==flow.AccountId)?.UserName ?? "";
+                    string path=BgiPathResolver.GetPath(user);
+                    if (path.Length == 0) r.Issues.Add(new Issue{Node=n,IsError=true,Message="「"+n.Title+"」找不到目标账号 BGI 路径",Target="bgi"});
+                    else if (!System.IO.File.Exists(path)) r.Issues.Add(new Issue{Node=n,IsError=true,Message="「"+n.Title+"」BGI 路径不存在："+path,Target="bgi"});
                 }
+                if (n.Type == FlowNodeType.ActRunAction && cfg != null && !cfg.Actions.Any(a=>a.Id==n.Get("actionId"))) Field(n,"actionId","快捷动作不存在");
             }
-
-            // ⑤ 成环检测
-            if (HasCycle(flow, trigger.Id))
-            {
-                r.Issues.Add(new Issue { Message = "存在环形连线：流程会无限循环", IsError = true });
-            }
-
-            // ⑥ 可达性：所有执行器都应能从触发器走到
-            var reachable = ReachableFrom(flow, trigger.Id);
-            foreach (var n in flow.Nodes)
-            {
-                if (n.Id == trigger.Id) continue;
-                if (reachable.Contains(n.Id)) continue;
-
-                r.Issues.Add(new Issue
-                {
-                    Message = "「" + n.Title + "」从触发器走不到：检查连线",
-                    IsError = true,
-                    Node = n
-                });
-            }
-
-            // ⑦ BGI 路径检查：用到 BGI 的节点必须能解析到真实文件
-            foreach (var n in flow.Nodes)
-            {
-                if (!UsesBgi(n.Type)) continue;
-
-                string user = n.Get("user").Trim();
-                // ★ 统一走解析器：手动指定 > 正在运行 > 记忆
-                string path = string.IsNullOrWhiteSpace(user) ? "" : BgiPathResolver.GetPath(user);
-                if (string.IsNullOrWhiteSpace(path))
-                {
-                    // 退回：任取一个已配置的（仅用于校验放行，不写回）
-                    var map = cfg?.Settings?.BgiPaths;
-                    if (map != null)
-                        foreach (var kv in map)
-                            if (!string.IsNullOrWhiteSpace(kv.Value)) { path = kv.Value; break; }
-                }
-
-                if (string.IsNullOrWhiteSpace(path))
-                {
-                    r.Issues.Add(new Issue
-                    {
-                        Message = "「" + n.Title + "」找不到 BGI 程序：请在右侧选择 BGI 路径",
-                        IsError = true,
-                        Node = n
-                    });
-                }
-                else if (!System.IO.File.Exists(path))
-                {
-                    r.Issues.Add(new Issue
-                    {
-                        Message = "「" + n.Title + "」的 BGI 路径不存在：" + path,
-                        IsError = true,
-                        Node = n
-                    });
-                }
-            }
-
-            // ⑧ 提醒：只有条件没有执行器
-            int actCount = 0;
-            foreach (var n in flow.Nodes)
-                if (n.Kind == FlowNodeKind.Action || n.Kind == FlowNodeKind.Terminate) actCount++;
-            if (actCount == 0 && flow.Nodes.Count > 1)
-            {
-                r.Issues.Add(new Issue { Message = "没有执行器：条件满足后什么都不会做" });
-            }
-
+            if (HasCycle(flow)) Error(null,"连线形成循环，请改成从上到下依次执行");
+            var reachable=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach(var ep in flow.EntryPoints){reachable.Add(ep.Id);Reach(flow,ep.Id,reachable);}
+            foreach(var n in flow.Nodes)if(!reachable.Contains(n.Id))Error(n,"「"+n.Title+"」没有连接到起始条件");
+            if (!flow.Nodes.Any(n=>n.Kind==FlowNodeKind.Action||n.Kind==FlowNodeKind.Terminate))Error(null,"还没有动作或「当天完成」模块");
+            var ends=flow.Nodes.Where(n=>n.Kind==FlowNodeKind.Terminate).ToList();
+            if (ends.Count == 0 && flow.Nodes.Any(n => n.Kind == FlowNodeKind.Action))
+                r.Issues.Add(new Issue { Message = "未设置「当天完成」：流程会循环执行，完成后重新获取条件" });
+            if(ends.Count>1)Error(null,"每个流程最多一个「当天完成」，避免部分动作尚未执行就停止");
+            if(ends.Count==1)
+                foreach(var n in flow.Nodes.Where(n=>n.Kind==FlowNodeKind.Action))
+                    if(n.Id!=ends[0].Id&&!FlowGraphRules.CanReach(flow,n.Id,ends[0].Id))
+                        r.Issues.Add(new Issue{Node=n,Message="动作「"+n.Title+"」不在「当天完成」前面；到达完成后，这个动作今天不会再执行"});
             return r;
         }
-
-        /// <summary>这些执行器要启动/停止 BGI，必须有可用的 BGI 路径。</summary>
-        private static bool UsesBgi(FlowNodeType t) => t switch
+        private static bool UsesBgi(FlowNodeType t)=>t==FlowNodeType.ActStartBgi||t==FlowNodeType.ActStartOneDragon||t==FlowNodeType.ActStartGroups||t==FlowNodeType.ActStopBgi;
+        private static void Reach(AutomationFlow f,string id,HashSet<string> seen){foreach(var t in f.TargetsOf(id))if(seen.Add(t))Reach(f,t,seen);}
+        private static bool HasCycle(AutomationFlow f)
         {
-            FlowNodeType.ActStartBgi => true,
-            FlowNodeType.ActStartOneDragon => true,
-            FlowNodeType.ActStartGroups => true,
-            FlowNodeType.ActStopBgi => true,
-            _ => false
-        };
-
-        private static bool HasCycle(AutomationFlow flow, string startId)
-        {
-            var state = new Dictionary<string, int>();   // 0=未访问 1=进行中 2=完成
-
-            bool Dfs(string id)
-            {
-                if (state.TryGetValue(id, out int st))
-                {
-                    if (st == 1) return true;    // 回到进行中的节点 = 环
-                    if (st == 2) return false;
-                }
-                state[id] = 1;
-                foreach (var t in flow.TargetsOf(id))
-                    if (Dfs(t)) return true;
-                state[id] = 2;
-                return false;
-            }
-
-            foreach (var n in flow.Nodes)
-                if (!state.ContainsKey(n.Id) && Dfs(n.Id)) return true;
-
-            return false;
-        }
-
-        private static HashSet<string> ReachableFrom(AutomationFlow flow, string startId)
-        {
-            var seen = new HashSet<string>();
-            var stack = new Stack<string>();
-            stack.Push(startId);
-            while (stack.Count > 0)
-            {
-                var cur = stack.Pop();
-                if (!seen.Add(cur)) continue;
-                foreach (var t in flow.TargetsOf(cur)) stack.Push(t);
-            }
-            return seen;
+            var state=new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
+            bool Dfs(string id){if(state.TryGetValue(id,out var s))return s==1;state[id]=1;foreach(var t in f.TargetsOf(id))if(Dfs(t))return true;state[id]=2;return false;}
+            return f.Nodes.Any(n=>!state.ContainsKey(n.Id)&&Dfs(n.Id));
         }
     }
 }

@@ -33,7 +33,7 @@ namespace SoulLink.Services
             if (s == null && account.SessionId > 0)
                 s = SessionService.Find(list, account.UserName);
 
-            if (s == null && cfg.Settings.AllowCurrentSessionFallback
+            if (s == null && cfg.Settings.AllowCurrentSessionFallback && !cfg.Settings.OnlyAutomationAccounts
                 && string.Equals(SessionService.BareName(account.UserName), SessionService.CurrentUser,
                     StringComparison.OrdinalIgnoreCase))
             {
@@ -71,7 +71,12 @@ namespace SoulLink.Services
             if (!File.Exists(exe))
                 return ExecResult.Fail("目标程序不存在：" + exe);
 
-            // 走 SYSTEM 通道（schtasks /ru SYSTEM → CreateProcessAsUser），不依赖任何外部工具
+            // 所有 BGI 启动统一先停止脚本并确认进程退出，不能由某个页面绕过。
+            if (Path.GetFileName(exe).Equals("BetterGI.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                var guard = await BgiStartGuard.BeforeStartAsync(t.Session.Id, exe, ct).ConfigureAwait(false);
+                if (!guard.Ok) return ExecResult.Fail(guard.Message);
+            }
             var launch = await SystemLauncher.LaunchAsync(
                 t.Session.Id, exe, arguments ?? "",
                 workingDir: Path.GetDirectoryName(exe) ?? "").ConfigureAwait(false);
@@ -140,11 +145,16 @@ namespace SoulLink.Services
 
         // ── 重启 ──────────────────────────────────────────────────────────────
 
+        private static Task<ExecResult> LaunchCoreWithoutRepeatGuardAsync(Target t, string exePath, string? arguments, CancellationToken ct)
+            => LaunchAsync(t, exePath, arguments, ct);
+
         public static async Task<ExecResult> RestartAsync(Target t, string exePath, string? arguments, CancellationToken ct = default)
         {
+            if (Path.GetFileName(exePath).Equals("BetterGI.exe",StringComparison.OrdinalIgnoreCase))
+            { var guard=await BgiStartGuard.BeforeStartAsync(t.Session.Id,exePath,ct).ConfigureAwait(false); if(!guard.Ok)return ExecResult.Fail(guard.Message); }
             var close = await CloseAsync(t, exePath, ct).ConfigureAwait(false);
             await Task.Delay(900, ct).ConfigureAwait(false);
-            var open = await LaunchAsync(t, exePath, arguments, ct).ConfigureAwait(false);
+            var open = await LaunchCoreWithoutRepeatGuardAsync(t, exePath, arguments, ct).ConfigureAwait(false);
             return new ExecResult
             {
                 Ok = open.Ok,
@@ -160,6 +170,7 @@ namespace SoulLink.Services
         public static async Task<ExecResult> ExecuteAsync(ActionItem action, AppConfig cfg, CancellationToken ct = default)
         {
             var account = cfg.Accounts.FirstOrDefault(a => a.Id == action.AccountId);
+            if (account != null && !AccountScope.IsAllowed(account,cfg)) return ExecResult.Fail("主用户已被全局挂机账号模式排除");
             if (account == null) return ExecResult.Fail("动作「" + action.Name + "」绑定的账号不存在。");
 
             if (action.DelaySeconds > 0)

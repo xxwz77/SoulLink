@@ -318,6 +318,8 @@ namespace SoulLink.Models
 
         /// <summary>允许在找不到会话时回退到当前用户会话</summary>
         public bool AllowCurrentSessionFallback { get; set; } = true;
+        /// <summary>仅管理挂机账号：全局隐藏并禁止主用户作为自动化/更新/投送目标。</summary>
+        public bool OnlyAutomationAccounts { get; set; }
         /// <summary>服务端发起的动作也执行（CLI / IPC 调用）</summary>
         public bool AllowRemoteInvoke { get; set; } = true;
         public bool MinimizeToTray { get; set; } = true;

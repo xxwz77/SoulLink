@@ -716,6 +716,7 @@ namespace SoulLink.Views
                 //   导致"A2 连上过一次、之后掉线"时监控直接跳过它，
                 //   永远不再重连（用户实测：A3 拉起成功、A2 一直 Disc）。
                 var sessionsNow = await SessionService.QueryAsync().ConfigureAwait(true);
+                var existingChannels = await Task.Run(() => BgiLogWatcher.DiscoverChannelSessions()).ConfigureAwait(true);
 
                 var watching = new List<(UserRow row, string caption)>();
                 foreach (var id in ids)
@@ -738,7 +739,9 @@ namespace SoulLink.Views
                         continue;
                     }
 
-                    // 会话活着：已投送过的就不再盯
+                    // 任一版本已为该会话投送过，就不重复创建代理。
+                    if (cur != null && cur.Id > 0 && existingChannels.Contains(cur.Id))
+                    { _deployHandled.Add(id); continue; }
                     if (_deployHandled.Contains(id)) continue;
                     watching.Add((hit, hit.Account.Caption));
                 }
@@ -1315,9 +1318,9 @@ namespace SoulLink.Views
 
         // ── 用户列表 ─────────────────────────────────────────────────────────
 
-        private void RebuildUserList()
+        internal void RebuildUserList()
         {
-            var accounts = App.Config.Accounts.Select((a, index) => new { a, index })
+            var accounts = AccountScope.Accounts(App.Config).Select((a, index) => new { a, index })
                 .OrderBy(x => x.a.SortOrder <= 0 ? x.index + 1 : x.a.SortOrder).Select(x => x.a).ToList();
 
             // 保留已有 Console，按账号 Id 对齐

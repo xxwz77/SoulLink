@@ -1,0 +1,2 @@
+using System;using System.Collections.Generic;using SoulLink.Models;
+namespace SoulLink.Services { public static class FlowRunner { public sealed class RunResult { public bool Triggered;public bool Passed;public string Message="";public List<string> Steps=new();public Dictionary<string,bool> ContactLit{get;}=new(StringComparer.OrdinalIgnoreCase);} } }

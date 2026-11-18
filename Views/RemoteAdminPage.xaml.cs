@@ -32,7 +32,7 @@ namespace SoulLink.Views
         public RemoteAdminPage()
         {
             InitializeComponent();
-            Loaded += (_, __) => { if (_loaded) return; _loaded = true; _ = ReloadAsync(); };
+            Loaded += (_, __) => { if (_loaded) return; _loaded = true; NewHostText.Text = "连接地址：" + AccountProvisioner.NextLoopbackHost(App.Config.Accounts); ValidateNewUser(); _ = ReloadAsync(); };
         }
 
         private bool _loaded;
@@ -92,6 +92,7 @@ namespace SoulLink.Views
         private void RenderUsers()
         {
             UserList.Children.Clear();
+            // 内置账户恢复展示，但仅供查看，不提供任何修改操作。
 
             if (_users.Count == 0)
             {
@@ -111,9 +112,18 @@ namespace SoulLink.Views
             foreach (var u in _users) UserList.Children.Add(BuildRow(u));
         }
 
+        private static bool IsKnownBuiltInName(string name)
+        {
+            string bare = name.Contains('\\') ? name.Substring(name.LastIndexOf('\\') + 1) : name;
+            string[] names = { "Administrator", "Guest", "DefaultAccount", "WDAGUtilityAccount", "defaultuser0", "All Users", "Default" };
+            return names.Any(n => string.Equals(n,bare,StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsReadOnly(LocalUserInfo u) => u.IsBuiltIn || IsKnownBuiltInName(u.Name);
+
         private UIElement BuildRow(LocalUserInfo u)
         {
-            var grid = new Grid { Height = 34, Background = Brushes.Transparent };
+            var grid = new Grid { Height = 30, Background = Brushes.Transparent };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
@@ -159,7 +169,7 @@ namespace SoulLink.Views
             var status = new TextBlock
             {
                 Text = (u.Enabled ? "启用" : "已禁用") + (u.Hidden ? " · 已隐藏" : "")
-                        + (u.IsBuiltIn ? " · 内置" : ""),
+                        + (IsReadOnly(u) ? " · 内置" : ""),
                 FontSize = 10.5,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (Brush)FindResource(u.Hidden || !u.Enabled ? "TextMuted" : "TextSecondary")
@@ -174,15 +184,18 @@ namespace SoulLink.Views
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 10, 0)
             };
-            ops.Children.Add(MiniButton(u.Hidden ? "显示" : "隐藏",
-                u.Hidden ? "让该账户重新出现在登录界面" : "从登录界面隐藏该账户",
-                () => ToggleHiddenAsync(u)));
-            ops.Children.Add(MiniButton(u.PasswordNeverExpires ? "恢复过期" : "永不过期",
-                "设置密码是否永不过期",
-                () => ToggleExpireAsync(u)));
-            if (!u.IsBuiltIn)
-                ops.Children.Add(MiniButton("删除", "删除该账户（不可恢复）",
-                    () => DeleteUserAsync(u), danger: true));
+            if (IsReadOnly(u))
+                ops.Children.Add(new TextBlock { Text="仅供查看", FontSize=9.5, Foreground=(Brush)FindResource("TextMuted"), VerticalAlignment=VerticalAlignment.Center });
+            else
+            {
+                if (!string.Equals(u.Name,SessionService.CurrentUser,StringComparison.OrdinalIgnoreCase))
+                    ops.Children.Add(MiniButton(u.Hidden ? "显示" : "隐藏",
+                        u.Hidden ? "让该账户重新出现在登录界面" : "从登录界面隐藏该账户",
+                        () => ToggleHiddenAsync(u)));
+                ops.Children.Add(MiniButton("修改密码", "修改 Windows 密码，并同步保存的连接密码", () => ChangePasswordAsync(u)));
+                ops.Children.Add(MiniButton(u.PasswordNeverExpires ? "恢复过期" : "永不过期", "设置密码是否永不过期", () => ToggleExpireAsync(u)));
+                ops.Children.Add(MiniButton("删除", "删除该账户（不可恢复）", () => DeleteUserAsync(u), danger: true));
+            }
             Grid.SetColumn(ops, 5);
             grid.Children.Add(ops);
 
@@ -211,8 +224,8 @@ namespace SoulLink.Views
             {
                 Content = text,
                 ToolTip = tip,
-                FontSize = 10,
-                Padding = new Thickness(7, 2, 7, 2),
+                FontSize = 9.5,
+                Padding = new Thickness(6, 1, 6, 1),
                 Margin = new Thickness(4, 0, 0, 0),
                 Cursor = Cursors.Hand,
                 Style = (Style)FindResource(danger ? "DangerButton" : "GhostButton")
@@ -232,6 +245,20 @@ namespace SoulLink.Views
         {
             var r = LocalUserService.SetHidden(u.Name, !u.Hidden);
             Log((r.Ok ? "✔ " : "✘ ") + u.Name + "：" + r.Output, !r.Ok);
+            await ReloadAsync();
+        }
+
+        private async Task ChangePasswordAsync(LocalUserInfo u)
+        {
+            var dlg = new ChangePasswordWindow(u.Name, u.PasswordNeverExpires) { Owner = Window.GetWindow(this) };
+            if (dlg.ShowDialog() != true || dlg.Password == null) return;
+            var r = await LocalUserService.SetPasswordAsync(u.Name, dlg.Password, dlg.NeverExpire);
+            Log((r.Ok ? "✔ " : "✘ ") + u.Name + "：" + r.Output, !r.Ok);
+            if (!r.Ok) return;
+            foreach (var account in App.Config.Accounts.Where(a => string.Equals(a.UserName,u.Name,StringComparison.OrdinalIgnoreCase)
+                || string.Equals(a.RdpUserName,u.Name,StringComparison.OrdinalIgnoreCase)))
+                ConfigStore.SetPassword(account, dlg.Password);
+            ConfigStore.Save(App.Config);
             await ReloadAsync();
         }
 
@@ -258,17 +285,37 @@ namespace SoulLink.Views
 
         // ── 新建用户 ─────────────────────────────────────────────────────
 
-        private void BtnNewUser_Click(object sender, RoutedEventArgs e)
+        private void NewField_TextChanged(object sender, TextChangedEventArgs e) => ValidateNewUser();
+        private void NewPassword_Changed(object sender, RoutedEventArgs e) => ValidateNewUser();
+        private bool ValidateNewUser()
         {
-            var dlg = new NewUserWindow { Owner = Window.GetWindow(this) };
-            if (dlg.ShowDialog() == true && dlg.Result != null)
+            string user = NewUserBox.Text?.Trim() ?? "", pwd = NewPwdBox.Password ?? "", pwd2 = NewPwd2Box.Password ?? "";
+            string error = user.Length == 0 ? "" : LocalUserService.ValidateUserName(user) ?? "";
+            if (error.Length == 0 && pwd.Length > 0) error = LocalUserService.ValidatePassword(pwd,user) ?? "";
+            if (error.Length == 0 && pwd2.Length > 0 && pwd != pwd2) error = "两次输入的密码不一致";
+            NewValidText.Text = error;
+            bool ready = user.Length > 0 && pwd.Length > 0 && pwd == pwd2 && error.Length == 0;
+            BtnCreateUser.IsEnabled = ready; return ready;
+        }
+        private async void CreateUser_Click(object sender, RoutedEventArgs e)
+        {
+            if (!ValidateNewUser()) return;
+            string user = NewUserBox.Text.Trim(), pwd = NewPwdBox.Password, nick = NewNickBox.Text?.Trim() ?? "";
+            BtnCreateUser.IsEnabled = false; BtnCreateUser.Content = "创建中…";
+            try
             {
-                Log("已创建账户：" + dlg.Result.Name
-                    + (dlg.SavedAccount != null
-                        ? " · 已生成连接配置 " + dlg.SavedAccount.RdpHost
-                        : ""));
-                _ = ReloadAsync();
+                var spec = new LocalUserService.CreateSpec { UserName=user, Password=pwd, AddToAdministrators=NewAdminCheck.IsChecked==true, AddToRemoteDesktopUsers=NewRemoteCheck.IsChecked==true, Hide=NewHideCheck.IsChecked==true, PasswordNeverExpires=NewNeverExpireCheck.IsChecked==true };
+                var result = await LocalUserService.CreateAsync(spec);
+                if (!result.Ok) { NewValidText.Text=result.Output; Log("创建失败："+result.Output,true); return; }
+                if (NewConfigCheck.IsChecked==true) AccountProvisioner.Persist(AccountProvisioner.Create(user,pwd,nick,App.Config.Accounts));
+                Log("已创建账户："+user);
+                NewUserBox.Clear(); NewPwdBox.Clear(); NewPwd2Box.Clear(); NewNickBox.Clear();
+                await ReloadAsync();
+                NewHostText.Text = "连接地址：" + AccountProvisioner.NextLoopbackHost(App.Config.Accounts);
+                if (Application.Current?.MainWindow is MainWindow main) main.ConsoleView.RebuildUserList();
             }
+            catch (Exception ex) { NewValidText.Text=ex.Message; Log("创建失败："+ex.Message,true); }
+            finally { BtnCreateUser.Content="创建用户"; ValidateNewUser(); }
         }
 
         // ── RDP Wrapper ──────────────────────────────────────────────────

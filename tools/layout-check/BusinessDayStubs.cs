@@ -1,0 +1,1 @@
+using System.Text;namespace SoulLink.Services{public static class SessionService{public static string BareName(string s){int i=s.LastIndexOf('\\');return i>=0?s.Substring(i+1):s;}}public static class SystemLauncher{public static Encoding ConsoleEncoding()=>Encoding.UTF8;}}

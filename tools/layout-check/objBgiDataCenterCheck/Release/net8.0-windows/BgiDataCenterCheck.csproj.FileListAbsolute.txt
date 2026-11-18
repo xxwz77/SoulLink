@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\refint\BgiDataCenterCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\BgiDataCenterCheck.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\ref\BgiDataCenterCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiDataCenterCheck\Release\net8.0-windows\BgiDataC.6DB09639.Up2Date

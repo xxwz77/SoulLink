@@ -1,0 +1,1 @@
+using System.Collections.Generic;namespace SoulLink.Services{public static class BgiDataCenter{public static List<string> ListConfigs(string user,string sub)=>new();}public static class FlowRunner{}}

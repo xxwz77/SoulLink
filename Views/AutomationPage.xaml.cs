@@ -23,7 +23,7 @@ namespace SoulLink.Views
   private void Load(AutomationProfile profile)
   {
    ProfileName.Text = profile.Name; ScheduleEnabled.IsChecked = profile.Enabled; ScheduleTime.Text = profile.DailyTime;
-   AccountChoices.Items.Clear(); foreach (var account in App.Config.Accounts.OrderBy(a => a.SortOrder)) { var check = new CheckBox { Content = account.Caption + " · " + account.UserName, IsChecked = profile.AccountIds.Contains(account.Id), Tag = account.Id, Style = (Style)FindResource("GlassCheckBox"), Margin = new Thickness(0,4,0,4) }; AccountChoices.Items.Add(check); }
+   AccountChoices.Items.Clear(); foreach (var account in AccountScope.Accounts(App.Config).OrderBy(a => a.SortOrder)) { var check = new CheckBox { Content = account.Caption + " · " + account.UserName, IsChecked = profile.AccountIds.Contains(account.Id), Tag = account.Id, Style = (Style)FindResource("GlassCheckBox"), Margin = new Thickness(0,4,0,4) }; AccountChoices.Items.Add(check); }
    ActionChoices.Items.Clear(); foreach (var action in App.Config.Actions) { var check = new CheckBox { Content = action.Name, IsChecked = profile.ActionIds.Contains(action.Id), Tag = action.Id, Style = (Style)FindResource("GlassCheckBox"), Margin = new Thickness(0,4,0,4) }; ActionChoices.Items.Add(check); }
    StatusText.Text = "配置仅保存于 SoulLink，不依赖 autoBGI。默认不启用定时任务。";
   }

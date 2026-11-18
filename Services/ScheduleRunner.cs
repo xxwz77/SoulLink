@@ -65,6 +65,7 @@ namespace SoulLink.Services
         private readonly HashSet<string> _running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _sync = new object();
         private bool _disposed;
+        private readonly HashSet<string> _invalidLogged = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// 扫描间隔（秒）。
@@ -109,20 +110,7 @@ namespace SoulLink.Services
         {
             if (_startupCleaned) return;
             _startupCleaned = true;
-
-            try
-            {
-                bool changed = false;
-                foreach (var f in cfg.Automations)
-                {
-                    if (f.PersistLatched) continue;
-                    if (!f.Active && (f.Latched == null || f.Latched.Count == 0)) continue;
-                    f.Disarm();
-                    changed = true;
-                }
-                if (changed) ConfigStore.Save(cfg);
-            }
-            catch { }
+            foreach (var f in cfg.Automations) { f.EnsurePlcModel(); f.Disarm(); }
         }
 
         /// <summary>
@@ -141,6 +129,7 @@ namespace SoulLink.Services
 
                 foreach (var flow in cfg.Automations.ToList())
                 {
+                    flow.EnsurePlcModel();
                     if (!flow.Enabled || flow.Paused) continue;
 
                     string id = "flow:" + flow.Id;
@@ -152,43 +141,30 @@ namespace SoulLink.Services
                     {
                         try
                         {
-                            // 找到该流程绑定账号的会话号
-                            int sid = 0;
-                            string user = "";
-                            foreach (var a in cfg.Accounts)
-                                if (a.Id == flow.AccountId) { user = a.UserName; break; }
-
-                            if (user.Length > 0)
-                            {
-                                var sessions = await SessionService.QueryAsync().ConfigureAwait(false);
-                                var s = SessionService.Find(sessions, user);
-                                if (s != null) sid = s.Id;
-                            }
+                            // 使用状态中心当前快照，不为每个流程再跑一次 query user。
+                            int sid = AccountStateCenter.Get(flow.AccountId)?.SessionId ?? 0;
 
                             // ★ 运行前校验：不合法的流程一律不执行
                             //   （用户要求：可以保存但有提示，但绝对不能运行）
                             var vr = FlowValidator.Validate(flow, cfg);
                             if (vr.HasError)
                             {
-                                LogBus.Warn("自动化「" + flow.DisplayName + "」结构不完整，已跳过",
-                                    vr.ToText());
+                                if (_invalidLogged.Add(flow.Id))
+                                    LogBus.Warn("自动化「" + flow.DisplayName + "」结构不完整，已跳过", vr.ToText());
                                 return;
                             }
 
                             var result = await FlowRunner.RunAsync(flow, sid, cfg, manual: false)
                                                        .ConfigureAwait(false);
 
+                            _invalidLogged.Remove(flow.Id);
                             if (result.Triggered)
                             {
                                 LogBus.Write(result.Passed ? LogLevel.Ok : LogLevel.Info,
                                     "自动化「" + flow.DisplayName + "」" + (result.Passed ? "已执行" : "条件未通过"),
                                     result.Message + "\n" + string.Join("\n", result.Steps));
 
-                                // ★ 条件锁存也要落盘：
-                                //   PersistLatched=true  → 保存（重启后保持满足状态）
-                                //   PersistLatched=false → 不保存（只活在内存里）
-                                if (flow.PersistLatched || result.Passed)
-                                    ConfigStore.Save(cfg);
+                                // FlowRunner 按通断/OUT/END 状态差异保存，不在每次扫描写全配置。
                             }
                         }
                         catch (Exception ex)
@@ -202,7 +178,7 @@ namespace SoulLink.Services
                     });
                 }
             }
-            catch { }
+            catch (Exception ex) { LogBus.Error("自动化流程调度异常", ex.Message); }
         }
 
         /// <summary>一轮扫描：找出到点该执行的动作 + 该触发的自动化流程。</summary>

@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\refint\BgiStartGuardCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\BgiStartGuardCheck.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\ref\BgiStartGuardCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objBgiStartGuardCheck\Release\net8.0\BgiStart.D7940554.Up2Date

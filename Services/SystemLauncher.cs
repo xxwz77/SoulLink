@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -146,6 +147,17 @@ namespace SoulLink.Services
             string workingDir = "", bool interactive = true, string? bootstrapExe = null,
             CancellationToken ct = default)
         {
+            if (AccountScope.OnlyAutomationAccounts())
+            {
+                var sessions = await SessionService.QueryAsync().ConfigureAwait(false);
+                var target = sessions.FirstOrDefault(s => s.Id == sessionId);
+                if (target != null && !AccountScope.Allows(target.UserName)) return Result.Fail("主用户已被全局挂机账号模式排除");
+            }
+            if (Path.GetFileName(exePath).Equals("BetterGI.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                var guard = await BgiStartGuard.BeforeStartAsync(sessionId, exePath, ct).ConfigureAwait(false);
+                if (!guard.Ok) return Result.Fail(guard.Message);
+            }
             await LaunchGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {

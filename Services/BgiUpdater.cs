@@ -115,9 +115,10 @@ namespace SoulLink.Services
                         return;
                     }
 
-                    Log("│ [" + t.UserName + "] 停止 BGI / 茶包助手…");
-                    await StopBgiAsync(sid, t.BgiExePath,
-                        s => Log("│   [" + t.UserName + "] " + s)).ConfigureAwait(false);
+                    Log("│ [" + t.UserName + "] 停止当前脚本并关闭 BGI / 茶包助手…");
+                    var guard = await BgiStartGuard.BeforeStartAsync(sid, t.BgiExePath, ct).ConfigureAwait(false);
+                    Log("│   [" + t.UserName + "] " + guard.Message);
+                    if (!guard.Ok) throw new InvalidOperationException(t.UserName + "：" + guard.Message);
                     KillInSession(TeaBagProcessName, sid,
                         s => Log("│   [" + t.UserName + "] " + s));
                 })).ConfigureAwait(false);
@@ -443,12 +444,7 @@ namespace SoulLink.Services
 
         // ══════════ 停 BGI（复用现状方案）══════════
 
-        /// <summary>
-        /// 停止目标会话的 BGI。
-        /// 先发该账号配置的停止快捷键，等 3 秒；不行再杀进程。
-        /// 进程不存在直接返回。
-        /// </summary>
-        private static async Task StopBgiAsync(int sessionId, string bgiExePath,
+        private static async Task UnusedStopBgiAsync(int sessionId, string bgiExePath,
                                                Action<string> step)
         {
             var bgis = FindInSession(BgiProcessName, sessionId);

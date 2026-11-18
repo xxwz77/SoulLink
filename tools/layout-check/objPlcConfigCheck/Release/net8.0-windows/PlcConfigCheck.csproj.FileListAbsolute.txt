@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\refint\PlcConfigCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\PlcConfigCheck.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\ref\PlcConfigCheck.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objPlcConfigCheck\Release\net8.0-windows\PlcConfi.FF6A0088.Up2Date

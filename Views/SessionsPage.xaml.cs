@@ -51,8 +51,17 @@ namespace SoulLink.Views
             try
             {
                 string? keep = (Grid.SelectedItem as SessionVm)?.Session.UserName;
-                var all = await SessionService.QueryAsync().ConfigureAwait(true);
-                var users = SessionService.FilterUsers(all);
+
+                // ★ 优先读状态中心的快照（它每秒统一刷新一次，所有页面共用）。
+                //   只有中心还没启动/太旧时才自己查，避免首帧空白。
+                List<SessionInfo> all;
+                var snap = AccountStateCenter.Sessions;
+                bool snapFresh = snap.Count > 0
+                    && (DateTime.Now - AccountStateCenter.LastRefresh).TotalSeconds < 5;
+                if (snapFresh) all = snap;
+                else all = await SessionService.QueryAsync().ConfigureAwait(true);
+
+                var users = AccountScope.Sessions(SessionService.FilterUsers(all));
 
                 _items.Clear();
                 foreach (var s in users) _items.Add(new SessionVm(s));

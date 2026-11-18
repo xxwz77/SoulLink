@@ -1,53 +1,15 @@
-using System;
-using System.Collections.Generic;
-using SoulLink.Models;
-
+using System;using SoulLink.Models;
 public static class TimeoutCheck
 {
-    public static int Main()
-    {
-        int fails = 0;
-        void Check(bool c, string what) { if (!c) { Console.WriteLine("FAIL " + what); fails++; } else Console.WriteLine("ok   " + what); }
-
-        var f = new AutomationFlow();
-
-        // 默认值
-        Check(f.ArmTimeoutMinutes == 60, "默认超时 60 分钟");
-
-        // Arm 记录时刻 + 清空条件
-        f.Active = true;
-        f.Latched = new List<string> { "a", "b" };
-        f.ArmedAt = DateTime.Now;
-        Check(f.Active && f.Latched.Count == 2, "武装前状态");
-
-        f.Arm();
-        Check(f.Active, "Arm 后 Active");
-        Check(f.Latched.Count == 0, "Arm 清空条件");
-        Check(f.ArmedAt.HasValue, "Arm 记录时刻");
-
-        // 模拟超时判定（与 FlowRunner 同逻辑）
-        f.Latched.Add("cond1");
-        f.ArmedAt = DateTime.Now.AddMinutes(-61);
-        int timeout = f.ArmTimeoutMinutes;
-        var elapsed = DateTime.Now - f.ArmedAt.Value;
-        Check(elapsed.TotalMinutes >= timeout, "61 分钟前武装 → 判定超时");
-
-        f.Disarm();
-        Check(!f.Active, "Disarm 后 Active=false");
-        Check(f.Latched.Count == 0, "Disarm 清空条件");
-        Check(!f.ArmedAt.HasValue, "Disarm 清空时刻");
-
-        // 未超时
-        f.Arm();
-        f.ArmedAt = DateTime.Now.AddMinutes(-30);
-        elapsed = DateTime.Now - f.ArmedAt.Value;
-        Check(elapsed.TotalMinutes < timeout, "30 分钟前武装 → 未超时");
-
-        // 不超时开关
-        var f2 = new AutomationFlow { ArmTimeoutMinutes = 0 };
-        Check(!(f2.ArmTimeoutMinutes > 0), "0 = 不超时，不会触发判定");
-
-        Console.WriteLine(fails == 0 ? "ALL TIMEOUT CHECKS PASSED" : fails + " FAILURES");
-        return fails;
-    }
+ public static int Main()
+ {
+  int fails=0;void Check(bool ok,string text){Console.WriteLine((ok?"ok   ":"FAIL ")+text);if(!ok)fails++;}
+  var f=new AutomationFlow();f.Active=true;f.Latched.Add("old");f.Arm();
+  Check(f.Active&&f.Latched.Count==1&&!f.IsLatched("old")&&!f.Latch("old"),"旧 Arm/Latch 不再改变实时条件或启动超时");
+  Check(!f.SatisfiedContacts.Contains("old"),"旧状态不会进入本轮瞬时信号");
+  f.Disarm();Check(!f.Active&&!f.ArmedAt.HasValue&&f.Latched.Count==0,"旧兼容状态安全清理");
+  var a=new AutomationFlow();var b=new AutomationFlow();a.SatisfiedContacts.Add("momentary");Check(b.SatisfiedContacts.Count==0,"瞬时等待状态按流程独立");
+  Check(PlcLogic.DayKey(new DateTime(2026,11,18,3,59,0),4)=="2026-11-17","无等待超时，跨日由业务日键决定");
+  Console.WriteLine(fails==0?"ALL PASSED":"FAILURES="+fails);return fails;
+ }
 }

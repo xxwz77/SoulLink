@@ -1,0 +1,3 @@
+using System;namespace SoulLink{public partial class App{public static void AppendErrorLog(string where,Exception ex){Console.WriteLine(where+": "+ex.Message);}}}
+namespace SoulLink.Services{public static class AppIdentity{public static string ConfigDir=>Environment.GetEnvironmentVariable("SOULLINK_CONFIG")!;}}
+namespace SoulLink.Core{public static class SecretBox{public static string Protect(string s)=>s;public static string Unprotect(string? s)=>s??"";}}

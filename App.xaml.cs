@@ -96,6 +96,7 @@ namespace SoulLink
             //   （用户实测：点了关闭，流程还在执行）。
             Exit += (_, __) =>
             {
+                try { Services.AccountStateCenter.Stop(); } catch { }
                 try { Services.ScheduleRunnerHost.Shutdown(); } catch { }
             };
 
@@ -118,6 +119,34 @@ namespace SoulLink
             };
 
             Breadcrumb("OnStartup begin");
+
+            // ★ 自检：把模块目录的实际内容写进 boot.log。
+            //   之前多次出现"源码里有、界面没有"，靠猜排查浪费太多时间，
+            //   这里直接输出权威结果，一看日志就知道到底注册了哪些。
+            try
+            {
+                var all = Models.FlowNodeCatalog.All();
+                var trig = Models.FlowNodeCatalog.ByKind(Models.FlowNodeKind.Trigger);
+                var cond = Models.FlowNodeCatalog.ByKind(Models.FlowNodeKind.Condition);
+                Breadcrumb("automation-ui: chinese-v2 modules=" + all.Count + " conditions=" + cond.Count
+                         + " actions=" + Models.FlowNodeCatalog.ByKind(Models.FlowNodeKind.Action).Count
+                         + " daily-finish=" + Models.FlowNodeCatalog.ByKind(Models.FlowNodeKind.Terminate).Count);
+                foreach (var d in cond) Breadcrumb("  C " + d.Type + " " + d.Title);
+
+                // ★ 端口布局标记（Bug 2/3 的判定依据）：
+                //   "源码改了但看的是旧窗口"反复扯不清，加一行版本标记，
+                //   启动后 grep 得到就是新版；grep 不到就说明跑的是旧 exe。
+                Breadcrumb("automation-ports: input-top output-bottom; explicit-hint=full-reason click-to-select");
+
+                string err = Models.FlowNodeCatalog.LastAddError;
+                if (!string.IsNullOrWhiteSpace(err))
+                    foreach (var line in err.Split('\n'))
+                        if (line.Trim().Length > 0) Breadcrumb("  ADD-FAIL " + line.Trim());
+            }
+            catch (Exception ex)
+            {
+                Breadcrumb("catalog self-check FAILED: " + ex.GetType().Name + " " + ex.Message);
+            }
             StartArgs = e.Args ?? Array.Empty<string>();
             Config = ConfigStore.Load();
             ThemeManager.Apply();
@@ -353,6 +382,28 @@ namespace SoulLink
                     _window = null;
                     if (!toTray) ExitApp();
                 };
+
+                // 老流程没有 CreatedAt：按当前时间补上，
+                // 避免"一启动就把当天更早的历史时间点当作补跑目标"。
+                // 只在内存里补，下次保存时自然写盘。
+                try
+                {
+                    foreach (var f in Config.Automations ?? new System.Collections.Generic.List<Models.AutomationFlow>())
+                        if (f.CreatedAt == null) f.CreatedAt = DateTime.Now;
+                }
+                catch { }
+
+                // 启动账号状态中心：每账号一份快照，供触发器/条件/界面统一取数。
+                // ★ 必须先于调度器启动，否则第一轮 Tick 会拿不到快照而各自现查。
+                try
+                {
+                    AccountStateCenter.Start(Config);
+                    Breadcrumb("AccountStateCenter started");
+                }
+                catch (Exception ex)
+                {
+                    LogBus.Error("启动账号状态中心失败：" + ex.Message);
+                }
 
                 // 启动进程内定时调度器（只处理"仅运行时"的计划）
                 try

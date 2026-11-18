@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -43,47 +44,12 @@ namespace SoulLink.Services
 
             try
             {
-                // ── ① 停止 BGI ─────────────────────────────────────────────
+                // 所有 stopBgi 调用都走全局启动守卫，不再把停止脚本快捷键当成关闭进程快捷键。
                 if (stopBgi)
                 {
-                    var bgis = FindProcessesInSession("BetterGI", sessionId);
-                    if (bgis.Count == 0)
-                    {
-                        log.Append("BGI 未在运行，无需停止；");
-                        method = "none";
-                    }
-                    else
-                    {
-                        // 先试快捷键（BGI 会自己优雅收尾）
-                        string hotkey = ReadCancelHotkey(bgiExePath);
-                        if (!string.IsNullOrEmpty(hotkey))
-                        {
-                            log.Append("发送停止快捷键 " + hotkey + "；");
-                            SendHotkeyToSession(bgis[0].Id, hotkey);
-                            method = "hotkey";
-
-                            // 等 3 秒看它是否自己退出
-                            if (await WaitAllExitAsync("BetterGI", sessionId, 3000, ct).ConfigureAwait(false))
-                            {
-                                log.Append("BGI 已响应快捷键退出；");
-                            }
-                            else
-                            {
-                                log.Append("快捷键未让它退出，改为结束进程；");
-                                KillAllInSession("BetterGI", sessionId);
-                                method = "kill";
-                            }
-                        }
-                        else
-                        {
-                            // 没配快捷键 → 直接关进程
-                            log.Append("该账号未配置「停止当前脚本」快捷键，直接结束 BGI 进程；");
-                            KillAllInSession("BetterGI", sessionId);
-                            method = "kill";
-                        }
-
-                        await WaitAllExitAsync("BetterGI", sessionId, 15000, ct).ConfigureAwait(false);
-                    }
+                    var guard = await BgiStartGuard.BeforeStartAsync(sessionId, bgiExePath, ct).ConfigureAwait(false);
+                    if (!guard.Ok) return guard;
+                    log.Append(guard.Message + "；"); method = guard.StopMethod;
                 }
 
                 // ── ② 关闭原神（可选）─────────────────────────────────────
@@ -98,7 +64,8 @@ namespace SoulLink.Services
                     {
                         log.Append("结束原神进程 " + games.Count + " 个；");
                         KillAllInSession("YuanShen", sessionId);
-                        await WaitAllExitAsync("YuanShen", sessionId, 15000, ct).ConfigureAwait(false);
+                        if (!await WaitAllExitAsync("YuanShen", sessionId, 15000, ct).ConfigureAwait(false))
+                            return new Result { Ok=false, Message="原神进程未全部退出，已阻止继续", StopMethod=method };
                     }
                 }
 
@@ -173,6 +140,78 @@ namespace SoulLink.Services
             return false;
         }
 
+        /// <summary>守卫调用的停止脚本确认接口：根据目标会话日志/状态确认，不用进程退出冒充脚本停止。</summary>
+        internal static DateTime _stopBaselineUtc;
+        internal static string[] ScriptStopMarkers = { "执行结束", "取消执行", "停止当前脚本", "已停止", "任务已停止", "任务结束", "未成功完成" };
+        internal static bool HasScriptStopEvidence(string log, DateTime baselineUtc)
+        {
+            if (string.IsNullOrEmpty(log)) return false;
+            foreach (var raw in log.Replace("\r","").Split('\n'))
+            {
+                var line = raw.Trim();
+                if (!ScriptStopMarkers.Any(m => line.Contains(m,StringComparison.OrdinalIgnoreCase))) continue;
+                var m = System.Text.RegularExpressions.Regex.Match(line, @"\[(?<d>\d{4}-\d{2}-\d{2}[ T])?(?<t>\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?)\]");
+                if (!m.Success) continue;
+                string stamp = (m.Groups["d"].Success ? m.Groups["d"].Value.Trim()+" " : DateTime.UtcNow.ToString("yyyy-MM-dd")+" ") + m.Groups["t"].Value;
+                if (DateTime.TryParse(stamp, out var at) && at.ToUniversalTime() >= baselineUtc) return true;
+            }
+            return false;
+        }
+
+        public static async Task<bool> WaitForScriptStoppedAsync(int sessionId, TimeSpan timeout, CancellationToken ct)
+        {
+            var until = DateTime.UtcNow + timeout;
+            while (DateTime.UtcNow < until)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (BgiLogWatcher.Discover().TryGetValue(sessionId, out var inst) && inst != null
+                    && HasScriptStopEvidence(BgiLogWatcher.TailLines(inst.LogFile, 250).text, _stopBaselineUtc)) return true;
+                try { await Task.Delay(250, ct).ConfigureAwait(false); } catch { return false; }
+            }
+            return false;
+        }
+
+        internal static bool HasRunningProcess(int sessionId)
+        {
+            var processes = FindProcessesInSession("BetterGI", sessionId);
+            bool any = processes.Count > 0;
+            foreach (var p in processes) p.Dispose();
+            return any;
+        }
+
+        internal static bool HasRunningProcess(int sessionId, string exePath)
+        {
+            // 必须是当前会话、且真实 exe 等于目标 BGI；不会把其它账号或其它程序算成 BGI。
+            try
+            {
+                string wanted = BgiPathResolver.Normalize(exePath);
+                if (wanted.Length == 0) return HasRunningProcess(sessionId);
+                foreach (var p in Process.GetProcessesByName("BetterGI"))
+                using (p)
+                {
+                    try
+                    {
+                        if (p.SessionId != sessionId) continue;
+                        string actual = BgiPathResolver.Normalize(p.MainModule?.FileName ?? "");
+                        if (actual.Equals(wanted,StringComparison.OrdinalIgnoreCase)) return true;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        public static async Task<bool> CloseProcessesAsync(int sessionId, CancellationToken ct)
+        {
+            try { KillAllInSession("BetterGI", sessionId); }
+            catch { return false; }
+            return await WaitAllExitAsync("BetterGI", sessionId, 15000, ct).ConfigureAwait(false);
+        }
+
+        public static Task<bool> ConfirmAllExitedAsync(int sessionId, TimeSpan timeout, CancellationToken ct)
+            => WaitAllExitAsync("BetterGI", sessionId, (int)timeout.TotalMilliseconds, ct);
+
         // ── 读取 BGI 的「停止当前脚本」快捷键 ────────────────────────────
 
         private static readonly Regex RxCancel =
@@ -191,6 +230,10 @@ namespace SoulLink.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(bgiExePath)) return "";
+                // 数据中心已按账号读取时复用同一结果；直接调用仍允许传入任意 exe 做兼容。
+                foreach (var a in App.Config.Accounts)
+                    if (string.Equals(BgiPathResolver.Normalize(BgiPathResolver.GetPath(a.UserName)), BgiPathResolver.Normalize(bgiExePath), StringComparison.OrdinalIgnoreCase))
+                        return BgiDataCenter.Refresh(a.UserName).CancelTaskHotkey;
                 string? dir = Path.GetDirectoryName(bgiExePath);
                 if (string.IsNullOrEmpty(dir)) return "";
 

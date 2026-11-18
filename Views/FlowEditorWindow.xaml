@@ -69,7 +69,7 @@
                                        VerticalAlignment="Center" Margin="0,0,8,0" />
                             <!-- ★ 用 InlineTextBox + MinHeight 而不是 GlassTextBox + 固定 Height：
                                  GlassTextBox 的 Padding=12,9 在 36px 高的框里会把文字上下裁掉。 -->
-                            <TextBox x:Name="NameBox" Width="240" MinHeight="30"
+                            <TextBox x:Name="NameBox" Width="170" MinHeight="30"
                                      Style="{StaticResource InlineTextBox}"
                                      VerticalContentAlignment="Center"
                                      TextChanged="NameBox_TextChanged" />
@@ -77,13 +77,9 @@
                                       Style="{StaticResource GlassCheckBox}"
                                       VerticalAlignment="Center" Margin="14,0,0,0"
                                       Checked="EnabledCheck_Changed" Unchecked="EnabledCheck_Changed" />
-                            <!-- ★ 提示必须写清「结束时照样清零」，否则会被理解成"条件一直保持"。
-                                 实际语义：只有在**流程还没执行完**时重启程序，勾选才会保留已满足的条件。 -->
-                            <CheckBox x:Name="PersistCheck" Content="中断后保留进度" IsChecked="True"
-                                      Style="{StaticResource GlassCheckBox}"
-                                      VerticalAlignment="Center" Margin="12,0,0,0"
-                                      ToolTip="流程一旦执行结束（成功或失败），已满足的条件都会清空，下次重新判断。&#x0a;&#x0a;勾选：条件只满足了一部分、还没执行就关掉程序时，已满足的那部分会保存，下次打开接着用。&#x0a;取消：条件全部只存内存，关掉程序就从头重新判断。"
-                                      Checked="PersistCheck_Changed" Unchecked="PersistCheck_Changed" />
+                            <TextBlock x:Name="DailyStateText" Text="无 END：循环执行" FontSize="10.5"
+                                       Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       ToolTip="日界属于「当天完成」节点；没有 END 的流程循环执行。" />
                         </StackPanel>
 
                         <Button Grid.Column="2" Style="{StaticResource WindowButton}" Height="30"
@@ -168,15 +164,60 @@
                                     <ctl:FlowCanvas x:Name="Canvas" />
                                 </ScrollViewer>
 
+                                <!-- 画笔状态单独一行，绝不覆盖底部“能否运行”的校验提示 -->
+                                <Border x:Name="PaintBar" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                                        Margin="12" Padding="10,7" CornerRadius="8" Visibility="Collapsed"
+                                        Background="#EE102037" BorderBrush="#664FE3FF" BorderThickness="1"
+                                        Panel.ZIndex="4" IsHitTestVisible="False">
+                                    <TextBlock x:Name="PaintBarText" FontSize="11" TextWrapping="Wrap"
+                                               Foreground="#FFBFEFFF" />
+                                </Border>
+
+                                <!-- 明确的模式开关：与画布依赖属性双向绑定，Esc 也会同步关闭。 -->
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                            Margin="12" Panel.ZIndex="3">
+                                    <ToggleButton x:Name="PaintModeToggle"
+                                                  IsChecked="{Binding PaintMode, ElementName=Canvas, Mode=TwoWay}"
+                                                  Padding="14,9" Focusable="False">
+                                        <ToggleButton.Style>
+                                            <Style TargetType="ToggleButton" BasedOn="{StaticResource ChipToggle}">
+                                                <Setter Property="Content" Value="画笔模式：已关闭" />
+                                                <Setter Property="ToolTip" Value="开启后，从模块下方出口按住左键拖到目标；成功后自动以目标继续。空白处松开结束本次串联，Esc 关闭画笔。" />
+                                                <Style.Triggers>
+                                                    <Trigger Property="IsChecked" Value="True">
+                                                        <Setter Property="Content" Value="画笔模式：已开启" />
+                                                    </Trigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ToggleButton.Style>
+                                    </ToggleButton>
+                                    <Border Margin="8,0,0,0" Padding="10,8" CornerRadius="8"
+                                            Background="#DD102037" BorderBrush="#664FE3FF" BorderThickness="1"
+                                            VerticalAlignment="Center" IsHitTestVisible="False">
+                                        <TextBlock Text="依次点击起点和目标 · 也可拖拽 · Esc 退出" FontSize="10.5"
+                                                   Foreground="#FFBFEFFF" />
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsChecked, ElementName=PaintModeToggle}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                    </Border>
+                                </StackPanel>
+
                                 <!-- 空状态提示 -->
                                 <StackPanel x:Name="EmptyHint" VerticalAlignment="Center"
                                             HorizontalAlignment="Center" IsHitTestVisible="False">
                                     <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="40"
                                                HorizontalAlignment="Center" Foreground="#33C8E0FF" />
-                                    <TextBlock Text="从左侧点一个【触发器】开始" FontSize="13"
+                                    <TextBlock Text="从左侧添加一个【条件】开始" FontSize="13"
                                                Foreground="{StaticResource TextMuted}"
                                                HorizontalAlignment="Center" Margin="0,12,0,0" />
-                                    <TextBlock Text="再点条件/执行器，然后从节点右侧圆点拖线连接" FontSize="11"
+                                    <TextBlock Text="再添加条件或动作，从下方出口连接到下一模块" FontSize="11"
                                                Foreground="{StaticResource TextMuted}"
                                                HorizontalAlignment="Center" Margin="0,6,0,0" />
                                 </StackPanel>
@@ -226,63 +267,26 @@
                             <ScrollViewer x:Name="KindMenuScroll" MaxHeight="560"
                                           VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Auto">
-                                <WrapPanel x:Name="KindMenu" Orientation="Vertical" ItemWidth="252" />
+                                <!-- ★ 用 StackPanel 而不是 WrapPanel：
+                             WrapPanel + ItemWidth 在项数多时会**换到第二列**，
+                             而第二列被可视区域裁掉，表现为"模块变少了"（用户实测）。
+                             StackPanel 只竖向排列，超出的由外层 ScrollViewer 滚动。 -->
+                        <StackPanel x:Name="KindMenu" />
                             </ScrollViewer>
                         </Border>
                     </Canvas>
 
-                    <!-- ══════════ 底栏 ══════════ -->
                     <Grid Grid.Row="2" Margin="24,12,24,18">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-
-                        <!-- 条件聚合方式 + 等待超时 -->
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" x:Name="CondModeRow" Visibility="Collapsed">
-                                <TextBlock Text="多个条件：" FontSize="11" Foreground="{StaticResource TextMuted}"
-                                           VerticalAlignment="Center" />
-                                <ComboBox x:Name="CondModeCombo" Width="150" Height="32"
-                                          SelectionChanged="CondMode_Changed">
-                                    <ComboBoxItem Content="全部满足（AND）" Tag="All" IsSelected="True" />
-                                    <ComboBoxItem Content="任一满足（OR）" Tag="Any" />
-                                </ComboBox>
-                                <Border Width="1" Background="#22FFFFFF" Margin="14,6,14,6" />
-                            </StackPanel>
-
-                            <!-- ★ 触发器命中后，条件最多等多久；超时自动退出并清空条件。
-                                 0 = 一直等（不超时）。 -->
-                            <TextBlock Text="等待条件最多：" FontSize="11" Foreground="{StaticResource TextMuted}"
-                                       VerticalAlignment="Center" />
-                            <ComboBox x:Name="ArmTimeoutCombo" Width="128" Height="32" Margin="6,0,0,0"
-                                      SelectionChanged="ArmTimeout_Changed">
-                                <ComboBoxItem Content="不超时" Tag="0" />
-                                <ComboBoxItem Content="10 分钟" Tag="10" />
-                                <ComboBoxItem Content="30 分钟" Tag="30" />
-                                <ComboBoxItem Content="1 小时" Tag="60" IsSelected="True" />
-                                <ComboBoxItem Content="3 小时" Tag="180" />
-                                <ComboBoxItem Content="6 小时" Tag="360" />
-                                <ComboBoxItem Content="24 小时" Tag="1440" />
-                            </ComboBox>
-                        </StackPanel>
-
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" x:Name="ValidateHint" HorizontalAlignment="Left" HorizontalContentAlignment="Left"
+                                MaxWidth="590" Padding="0" Background="Transparent" BorderThickness="0"
+                                Foreground="{StaticResource TextMuted}" Cursor="Arrow" ToolTip="点击可定位到相关模块" Click="ValidateHint_Click">
+                            <TextBlock TextWrapping="Wrap" TextTrimming="CharacterEllipsis" Text="" />
+                        </Button>
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <TextBlock x:Name="ValidateHint" Text="" FontSize="11"
-                                       VerticalAlignment="Center" Margin="0,0,14,0"
-                                       Visibility="Collapsed" TextTrimming="CharacterEllipsis"
-                                       MaxWidth="240" />
-                            <Button Style="{StaticResource GhostButton}" Padding="16,9" Click="DeleteFlow_Click">
-                                <TextBlock Text="删除流程" FontSize="12" />
-                            </Button>
-                            <Button Style="{StaticResource GhostButton}" Padding="16,9" Margin="10,0,0,0"
-                                    Click="RunNow_Click">
-                                <TextBlock Text="立即运行" FontSize="12" />
-                            </Button>
-                            <Button Style="{StaticResource PrimaryButton}" Padding="24,9" Margin="10,0,0,0"
-                                    Click="Save_Click">
-                                <TextBlock Text="保存" FontSize="12.5" FontWeight="SemiBold" />
-                            </Button>
+                            <Button Style="{StaticResource GhostButton}" Padding="16,9" Click="DeleteFlow_Click"><TextBlock Text="删除流程" FontSize="12" /></Button>
+                            <Button Style="{StaticResource GhostButton}" Padding="16,9" Margin="10,0,0,0" Click="RunNow_Click"><TextBlock Text="立即运行" FontSize="12" /></Button>
+                            <Button Style="{StaticResource PrimaryButton}" Padding="24,9" Margin="10,0,0,0" Click="Save_Click"><TextBlock Text="保存" FontSize="12.5" FontWeight="SemiBold" /></Button>
                         </StackPanel>
                     </Grid>
                 </Grid>

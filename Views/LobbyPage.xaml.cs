@@ -481,7 +481,7 @@ namespace SoulLink.Views
                 mid.Children.Add(new TextBlock
                 {
                     Text = codeText, FontSize = 10, Margin = new Thickness(0, 2, 0, 0),
-                    FontFamily = room.Code.Length > 0 ? new FontFamily("Consolas") : null,
+                    FontFamily = new FontFamily("Consolas"),
                     Foreground = room.Code.Length > 0
                         ? new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8))
                         : new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x6B))
@@ -850,7 +850,7 @@ namespace SoulLink.Views
                 {
                     Text = room.Code.Length > 0 ? room.Code : "🔒 需要房间码",
                     FontSize = room.Code.Length > 0 ? 12 : 10,
-                    FontFamily = room.Code.Length > 0 ? new FontFamily("Consolas") : null,
+                    FontFamily = new FontFamily("Consolas"),
                     Foreground = room.Code.Length > 0
                         ? new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8))
                         : new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x6B))
@@ -1280,11 +1280,8 @@ namespace SoulLink.Views
                         }
                         catch { }
 
-                        var prep = await BgiTaskPreparer.PrepareAsync(
-                            s.Id, exe,
-                            stopBgi: true,              // 固定执行，不可关闭
-                            closeGenshin: closeGenshin, // 本地偏好
-                            extraWaitSeconds: 2).ConfigureAwait(true);
+                        var prep = await BgiStartGuard.BeforeStartAsync(s.Id, exe).ConfigureAwait(true);
+                        if (!prep.Ok) { LogBus.Warn("发车已阻止：" + user, prep.Message); return; }
 
                         LogBus.Write(prep.Ok ? LogLevel.Info : LogLevel.Warn,
                             "发车准备「" + user + "」", prep.Message);
