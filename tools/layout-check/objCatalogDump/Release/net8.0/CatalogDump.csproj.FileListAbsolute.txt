@@ -1,0 +1,15 @@
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binCatalogDump\Release\net8.0\CatalogDump.exe
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binCatalogDump\Release\net8.0\CatalogDump.deps.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binCatalogDump\Release\net8.0\CatalogDump.runtimeconfig.json
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binCatalogDump\Release\net8.0\CatalogDump.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\binCatalogDump\Release\net8.0\CatalogDump.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\CatalogDump.GeneratedMSBuildEditorConfig.editorconfig
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\CatalogDump.AssemblyInfoInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\CatalogDump.AssemblyInfo.cs
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\CatalogDump.csproj.CoreCompileInputs.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\CatalogDump.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\refint\CatalogDump.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\CatalogDump.pdb
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\CatalogDump.genruntimeconfig.cache
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\ref\CatalogDump.dll
+E:\Documents\deepseek-harness\SoulLink\tools\layout-check\objCatalogDump\Release\net8.0\CatalogD.30A5C369.Up2Date

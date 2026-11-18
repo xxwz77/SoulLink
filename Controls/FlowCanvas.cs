@@ -172,6 +172,10 @@ namespace SoulLink.Controls
         /// <summary>界面只读预览状态；不进入流程持久化状态，不触发任何动作。</summary>
         public void SetLiveStates(IReadOnlyDictionary<string, PlcNodeState> states)
         {
+            // 先确保节点视图存在（Redraw 会清空 _statusViews 并重建）
+            if (_statusViews.Count == 0 && _flow != null) Redraw();
+            // ★ 覆盖值必须在 Redraw 之后再填：Redraw 会重建视图，
+            //   先填会被重建过程绕开，表现为灯永远停留在默认颜色。
             _liveOverrides.Clear();
             foreach (var kv in states) _liveOverrides[kv.Key] = new PlcNodeState
             { Value=kv.Value.Value, Input=kv.Value.Input, Output=kv.Value.Output, Available=kv.Value.Available };

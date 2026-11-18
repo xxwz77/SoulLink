@@ -2,7 +2,7 @@
   "version": 4,
   "targets": {
     "net8.0-windows": {
-      "SoulLink/2.5.0": {
+      "SoulLink/2.6.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
         "compile": {
@@ -18,7 +18,7 @@
     }
   },
   "libraries": {
-    "SoulLink/2.5.0": {
+    "SoulLink/2.6.0": {
       "type": "project",
       "path": "../../SoulLink.csproj",
       "msbuildProject": "../../SoulLink.csproj"
@@ -26,7 +26,7 @@
   },
   "projectFileDependencyGroups": {
     "net8.0-windows": [
-      "SoulLink >= 2.5.0"
+      "SoulLink >= 2.6.0"
     ]
   },
   "packageFolders": {

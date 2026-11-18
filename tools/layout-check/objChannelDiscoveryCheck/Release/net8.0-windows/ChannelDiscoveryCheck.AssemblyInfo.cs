@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ChannelDiscoveryCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b314be572628b497aac18b4dc499f40e3afaee0f")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+206690154b644644daf16b4c4c07a8ec4dec42fc")]
 [assembly: System.Reflection.AssemblyProductAttribute("ChannelDiscoveryCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ChannelDiscoveryCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

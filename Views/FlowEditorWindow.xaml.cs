@@ -244,6 +244,7 @@ namespace SoulLink.Views
                 if (defs.Count == 0) continue;
                 LibPanel.Children.Add(BuildKindCard(kind, defs.Count));
             }
+
         }
 
         private static string KindName(FlowNodeKind kind) => kind switch
@@ -611,181 +612,486 @@ namespace SoulLink.Views
             MenuLayer.Visibility = Visibility.Visible;
         }
 
-        // ── 首次使用引导（分步高亮 + “不再弹出”） ──────────────────────
+        // ── 首次使用引导：半透明遮罩 + 分步高亮 + 自绘示例（不依赖真实状态） ──
+        //
+        //   ★ 设计要点（按反馈修正）：
+        //     1. 遮罩盖住整个操作区，只挖空当前要讲解的区域，视线自然被引过去；
+        //     2. 示例节点/状态灯由本层自己画“假数据”，不受真实流程与预览影响，
+        //        演什么就一定是什么；
+        //     3. 不再有弹窗：说明文字与按钮直接放在遮罩层里，按钮固定在右下角。
 
         private bool _guideShown;
+        private bool _guideRunning;
 
         private sealed class GuideStep
         {
+            public string Step = "";
             public string Title = "";
-            public string Body = "";
+            public List<string> Lines = new();
+            /// <summary>要高亮的区域（null = 只显示说明，不挖空）。</summary>
             public Func<FrameworkElement?> Target = () => null;
+            /// <summary>遮罩内自绘的示例内容。</summary>
+            public Action<Canvas, Rect>? Draw;
         }
 
         private void ShowFlowGuide(bool force)
         {
             try
             {
+                if (_guideRunning) return;
                 if (!force && (_guideShown || !_cfg.Settings.ShowFlowGuide)) return;
                 _guideShown = true;
+                _guideRunning = true;
 
-                var steps = new[]
-                {
-                    new GuideStep { Title = "1 / 4 · 从左栏添加模块",
-                        Body = "「条件」判断当前状态，「动作」在条件成立后执行，「每天完成」标记流程结束。点一下即可加到画布。",
-                        Target = () => LibPanel },
-                    new GuideStep { Title = "2 / 4 · 连线表示先后顺序",
-                        Body = "从模块下方圆点拖到下一个模块；也可以先点起点、再点目标。一个出口连多个模块表示并行。",
-                        Target = () => Canvas },
-                    new GuideStep { Title = "3 / 4 · 状态灯表示此刻是否成立",
-                        Body = "节点上「● 满足 / ○ 不满足」每秒刷新，只反映当前条件，不代表已经执行过。",
-                        Target = () => CanvasScroll },
-                    new GuideStep { Title = "4 / 4 · 选中节点后在这里改参数",
-                        Body = "「每天完成」节点里可以设日界（00:00 / 04:00），还能手动切换“今天是否运行”。",
-                        Target = () => PropPanel }
-                };
-
+                var steps = BuildGuideSteps();
                 int index = 0;
-                void Render()
+
+                void Show()
                 {
-                    GuideLayer.Children.Clear();
-                    GuideLayer.Visibility = Visibility.Visible;
-
-                    var step = steps[index];
-                    var target = step.Target();
-                    Rect targetRect = Rect.Empty;
-                    if (target != null && target.IsVisible && target.ActualWidth > 1)
-                    {
-                        try
-                        {
-                            targetRect = target.TransformToAncestor(this)
-                                .TransformBounds(new Rect(0, 0, target.ActualWidth, target.ActualHeight));
-                        }
-                        catch { targetRect = Rect.Empty; }
-                    }
-
-                    if (!targetRect.IsEmpty)
-                    {
-                        var ring = new Border
-                        {
-                            Width = targetRect.Width + 8,
-                            Height = targetRect.Height + 8,
-                            BorderBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
-                            BorderThickness = new Thickness(2),
-                            CornerRadius = new CornerRadius(10),
-                            IsHitTestVisible = false
-                        };
-                        System.Windows.Controls.Canvas.SetLeft(ring, Math.Max(0, targetRect.X - 4));
-                        System.Windows.Controls.Canvas.SetTop(ring, Math.Max(0, targetRect.Y - 4));
-                        var pulse = new System.Windows.Media.Animation.DoubleAnimation
-                        {
-                            From = 0.35,
-                            To = 1,
-                            Duration = TimeSpan.FromMilliseconds(750),
-                            AutoReverse = true,
-                            RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever
-                        };
-                        ring.BeginAnimation(OpacityProperty, pulse);
-                        GuideLayer.Children.Add(ring);
-                    }
-
-                    var card = new Border
-                    {
-                        Width = 380,
-                        Padding = new Thickness(16, 14, 16, 12),
-                        CornerRadius = new CornerRadius(12),
-                        Background = new SolidColorBrush(Color.FromRgb(0x16, 0x1F, 0x36)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0x4F, 0xE3, 0xFF)),
-                        BorderThickness = new Thickness(1)
-                    };
-                    var body = new StackPanel();
-                    body.Children.Add(new TextBlock
-                    {
-                        Text = step.Title,
-                        FontSize = 13,
-                        FontWeight = FontWeights.SemiBold,
-                        Foreground = new SolidColorBrush(Color.FromRgb(0xBF, 0xEF, 0xFF)),
-                        TextWrapping = TextWrapping.Wrap
-                    });
-                    body.Children.Add(new TextBlock
-                    {
-                        Text = step.Body,
-                        FontSize = 11.5,
-                        Margin = new Thickness(0, 8, 0, 0),
-                        Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xB4, 0xD4)),
-                        TextWrapping = TextWrapping.Wrap,
-                        LineHeight = 18
-                    });
-
-                    var noMore = new CheckBox
-                    {
-                        Content = "以后不再自动弹出",
-                        IsChecked = !_cfg.Settings.ShowFlowGuide,
-                        Style = (Style)FindResource("GlassCheckBox"),
-                        FontSize = 11,
-                        Margin = new Thickness(0, 12, 0, 0)
-                    };
-                    body.Children.Add(noMore);
-
-                    var nav = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
-                    var next = new Button
-                    {
-                        Content = index == steps.Length - 1 ? "开始使用" : "下一步",
-                        Style = (Style)FindResource("PrimaryButton"),
-                        Padding = new Thickness(18, 6, 18, 6),
-                        FontSize = 11.5
-                    };
-                    next.Click += (_, __) =>
-                    {
-                        _cfg.Settings.ShowFlowGuide = !(noMore.IsChecked == true);
-                        _dirty = true;
-                        if (index >= steps.Length - 1) { CloseGuide(); return; }
-                        index++;
-                        Render();
-                    };
-                    nav.Children.Add(next);
-
-                    var skip = new Button
-                    {
-                        Content = "跳过",
-                        Style = (Style)FindResource("GhostButton"),
-                        Margin = new Thickness(8, 0, 0, 0),
-                        Padding = new Thickness(14, 6, 14, 6),
-                        FontSize = 11.5
-                    };
-                    skip.Click += (_, __) =>
-                    {
-                        _cfg.Settings.ShowFlowGuide = !(noMore.IsChecked == true);
-                        _dirty = true;
-                        CloseGuide();
-                    };
-                    nav.Children.Add(skip);
-                    body.Children.Add(nav);
-
-                    card.Child = body;
-                    card.Measure(new Size(380, double.PositiveInfinity));
-                    double cardH = card.DesiredSize.Height;
-
-                    double hostW = ActualWidth > 10 ? ActualWidth : 1200;
-                    double hostH = ActualHeight > 10 ? ActualHeight : 800;
-                    double left = Math.Max(12, (hostW - 380) / 2);
-                    double top = targetRect.IsEmpty ? (hostH - cardH) / 2 : targetRect.Bottom + 16;
-                    if (top + cardH > hostH - 12) top = Math.Max(12, hostH - cardH - 12);
-                    System.Windows.Controls.Canvas.SetLeft(card, left);
-                    System.Windows.Controls.Canvas.SetTop(card, top);
-                    GuideLayer.Children.Add(card);
+                    if (index >= steps.Count) { EndGuide(); return; }
+                    RenderGuide(steps[index], index, steps.Count,
+                        next: () => { index++; Show(); },
+                        skip: EndGuide,
+                        toggleNoMore: checkedValue => { _cfg.Settings.ShowFlowGuide = !checkedValue; _dirty = true; });
                 }
 
-                Render();
+                Show();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _guideRunning = false;
+                EndGuide();
+                ThemedMessage.Info(this, "引导", "引导没能显示：" + ex.Message);
+            }
         }
 
-        private void CloseGuide()
+        private void RenderGuide(GuideStep step, int index, int total,
+            Action next, Action skip, Action<bool> toggleNoMore)
         {
             GuideLayer.Children.Clear();
-            GuideLayer.Visibility = Visibility.Collapsed;
+            GuideLayer.Visibility = Visibility.Visible;
+            GuideLayer.Background = Brushes.Transparent;
+            GuideLayer.Width = ActualWidth > 10 ? ActualWidth : 1200;
+            GuideLayer.Height = ActualHeight > 10 ? ActualHeight : 800;
+
+            double W = GuideLayer.Width, H = GuideLayer.Height;
+
+            // ① 半透明遮罩（整块操作区压暗）
+            var veil = new System.Windows.Shapes.Rectangle
+            {
+                Width = W, Height = H,
+                Fill = new SolidColorBrush(Color.FromArgb(0xB8, 0x05, 0x0A, 0x14)),
+                IsHitTestVisible = true
+            };
+            System.Windows.Controls.Canvas.SetLeft(veil, 0);
+            System.Windows.Controls.Canvas.SetTop(veil, 0);
+            GuideLayer.Children.Add(veil);
+
+            // ② 高亮区域：把遮罩“挖空”一格，并在其上加描边
+            Rect hole = Rect.Empty;
+            var target = step.Target();
+            if (target != null && target.IsVisible && target.ActualWidth > 1)
+            {
+                try
+                {
+                    hole = target.TransformToAncestor(this)
+                        .TransformBounds(new Rect(0, 0, target.ActualWidth, target.ActualHeight));
+                }
+                catch { hole = Rect.Empty; }
+            }
+
+            if (!hole.IsEmpty)
+            {
+                var clear = new System.Windows.Shapes.Rectangle
+                {
+                    Width = hole.Width, Height = hole.Height,
+                    Fill = new SolidColorBrush(Color.FromArgb(0x1A, 0x4F, 0xE3, 0xFF)),
+                    Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
+                    StrokeThickness = 2,
+                    RadiusX = 10, RadiusY = 10,
+                    IsHitTestVisible = false
+                };
+                System.Windows.Controls.Canvas.SetLeft(clear, hole.X);
+                System.Windows.Controls.Canvas.SetTop(clear, hole.Y);
+                GuideLayer.Children.Add(clear);
+            }
+
+            // ③ 自绘示例（假数据）
+            if (step.Draw != null)
+            {
+                var demoLayer = new Canvas { IsHitTestVisible = false, Width = W, Height = H };
+                GuideLayer.Children.Add(demoLayer);
+                try { step.Draw(demoLayer, hole); } catch { }
+            }
+
+            // ④ 说明面板：贴在右侧或下方，不遮挡高亮区
+            var panel = new Border
+            {
+                Width = Math.Min(400, W * 0.40),
+                CornerRadius = new CornerRadius(14),
+                Background = new SolidColorBrush(Color.FromArgb(0xF7, 0x11, 0x19, 0x2C)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0xAA, 0x4F, 0xE3, 0xFF)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(18, 16, 18, 14)
+            };
+
+            var stack = new StackPanel();
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = step.Step + "　" + step.Title,
+                FontSize = 14, FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xCF, 0xF3, 0xFF)),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            foreach (var line in step.Lines)
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = "· " + line,
+                    FontSize = 11.5,
+                    Margin = new Thickness(0, 9, 0, 0),
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xA8, 0xBC, 0xDA)),
+                    TextWrapping = TextWrapping.Wrap,
+                    LineHeight = 19
+                });
+            }
+
+            var noMore = new CheckBox
+            {
+                Content = "以后不再自动弹出（可在「使用说明」里重播）",
+                IsChecked = !_cfg.Settings.ShowFlowGuide,
+                Style = (Style)FindResource("GlassCheckBox"),
+                FontSize = 10.5,
+                Margin = new Thickness(0, 14, 0, 0)
+            };
+            noMore.Checked += (_, __) => toggleNoMore(true);
+            noMore.Unchecked += (_, __) => toggleNoMore(false);
+            stack.Children.Add(noMore);
+
+            panel.Child = stack;
+            panel.Measure(new Size(panel.Width, double.PositiveInfinity));
+            double panelH = panel.DesiredSize.Height;
+
+            // 摆放优先级：高亮区右侧 → 高亮区下方 → 窗口右下角，尽量不压住示例与高亮区
+            double left = 20;
+            double top = H - panelH - 76;
+            System.Windows.Controls.Canvas.SetLeft(panel, Math.Max(16, left));
+            System.Windows.Controls.Canvas.SetTop(panel, Math.Max(16, top));
+            GuideLayer.Children.Add(panel);
+
+            // ⑤ 进度圆点
+            var dots = new StackPanel { Orientation = Orientation.Horizontal };
+            for (int i = 0; i < total; i++)
+            {
+                dots.Children.Add(new System.Windows.Shapes.Ellipse
+                {
+                    Width = 7, Height = 7, Margin = new Thickness(0, 0, 6, 0),
+                    Fill = new SolidColorBrush(i == index
+                        ? Color.FromRgb(0x4F, 0xE3, 0xFF)
+                        : Color.FromArgb(0x55, 0x9F, 0xB4, 0xD4))
+                });
+            }
+            System.Windows.Controls.Canvas.SetLeft(dots, 24);
+            System.Windows.Controls.Canvas.SetTop(dots, H - 42);
+            GuideLayer.Children.Add(dots);
+
+            // ⑥ 按钮固定在右下角
+            var nav = new StackPanel { Orientation = Orientation.Horizontal };
+            var skipBtn = new Button
+            {
+                Content = "跳过引导",
+                Style = (Style)FindResource("GhostButton"),
+                Padding = new Thickness(16, 8, 16, 8), FontSize = 11.5
+            };
+            skipBtn.Click += (_, __) => skip();
+            nav.Children.Add(skipBtn);
+
+            var nextBtn = new Button
+            {
+                Content = index >= total - 1 ? "完成" : "下一步",
+                Style = (Style)FindResource("PrimaryButton"),
+                Margin = new Thickness(10, 0, 0, 0),
+                Padding = new Thickness(22, 8, 22, 8), FontSize = 11.5, MinWidth = 96
+            };
+            nextBtn.Click += (_, __) => next();
+            nav.Children.Add(nextBtn);
+
+            nav.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            System.Windows.Controls.Canvas.SetLeft(nav, Math.Max(24, W - nav.DesiredSize.Width - 24));
+            System.Windows.Controls.Canvas.SetTop(nav, H - nav.DesiredSize.Height - 24);
+            GuideLayer.Children.Add(nav);
         }
+
+        /// <summary>示例模块的横向起点：尽量落在高亮区右侧，避免压住高亮内容。</summary>
+        private double DemoX(Rect hole)
+        {
+            double W = ActualWidth > 10 ? ActualWidth : 1200;
+            if (hole.IsEmpty) return Math.Max(40, W * 0.28);
+            double x = hole.X + hole.Width + 40;
+            if (x + 240 <= W - 40) return x;
+            // 右侧放不下：贴右边缘留出 40 边距
+            return Math.Max(40, W - 280);
+        }
+
+        /// <summary>在遮罩里画一个“示例模块”，state：true=满足 false=不满足。</summary>
+        private void DrawDemoNode(Canvas layer, double x, double y, string title, string summary,
+            string glyph, Color accent, bool? state, bool showPort = true)
+        {
+            var card = new Border
+            {
+                Width = 228, Height = 70,
+                CornerRadius = new CornerRadius(11),
+                Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1B, 0x30)),
+                BorderBrush = new SolidColorBrush(state == true ? Color.FromRgb(0x41, 0xF0, 0xC0) : accent),
+                BorderThickness = new Thickness(state == true ? 2 : 1)
+            };
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(11, 0, 0, 11),
+                Background = new SolidColorBrush(Color.FromArgb(0xCC, accent.R, accent.G, accent.B))
+            });
+
+            var icon = new TextBlock
+            {
+                Text = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 15,
+                Foreground = new SolidColorBrush(accent), VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 0, 0, 0)
+            };
+            Grid.SetColumn(icon, 1); grid.Children.Add(icon);
+
+            var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(9, 0, 10, 0) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = title, FontSize = 12.5, FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xF2, 0xF5, 0xFF))
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = state == null ? summary
+                    : (state == true ? "● 满足 · " : "○ 不满足 · ") + summary,
+                FontSize = 10, Margin = new Thickness(0, 2, 0, 0), TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(state == true
+                    ? Color.FromRgb(0x6E, 0xF0, 0xC8)
+                    : state == false ? Color.FromRgb(0x7A, 0x8C, 0xB4) : Color.FromRgb(0x9F, 0xB4, 0xD4))
+            });
+            Grid.SetColumn(stack, 2); grid.Children.Add(stack);
+            card.Child = grid;
+
+            System.Windows.Controls.Canvas.SetLeft(card, x);
+            System.Windows.Controls.Canvas.SetTop(card, y);
+            layer.Children.Add(card);
+
+            if (showPort)
+            {
+                var port = new System.Windows.Shapes.Ellipse
+                {
+                    Width = 20, Height = 20,
+                    Fill = new SolidColorBrush(state == true ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0x65, 0x75, 0x91)),
+                    Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)), StrokeThickness = 2
+                };
+                System.Windows.Controls.Canvas.SetLeft(port, x + 114 - 10);
+                System.Windows.Controls.Canvas.SetTop(port, y + 70 - 10);
+                layer.Children.Add(port);
+            }
+        }
+
+        private void DrawDemoLink(Canvas layer, double x1, double y1, double x2, double y2, bool powered)
+        {
+            var path = new System.Windows.Shapes.Path
+            {
+                Data = new GeometryGroup
+                {
+                    Children =
+                    {
+                        new LineGeometry(new Point(x1, y1), new Point(x2, y2))
+                    }
+                },
+                Stroke = new SolidColorBrush(powered
+                    ? Color.FromArgb(0xEE, 0x41, 0xF0, 0xC0)
+                    : Color.FromArgb(0xAA, 0x65, 0x75, 0x91)),
+                StrokeThickness = powered ? 3 : 2
+            };
+            layer.Children.Add(path);
+        }
+
+        private List<GuideStep> BuildGuideSteps()
+        {
+            var cond = Color.FromRgb(0x4F, 0xE3, 0xFF);
+            var act = Color.FromRgb(0x6E, 0xF0, 0xC8);
+            var end = Color.FromRgb(0xFF, 0xB1, 0x4D);
+
+            var steps = new List<GuideStep>();
+
+            steps.Add(new GuideStep
+            {
+                Step = "第 1 步 / 共 6 步",
+                Title = "条件模块：判断“现在是什么状态”",
+                Lines =
+                {
+                    "条件模块只回答一个是非问题，不执行动作。",
+                    "「会话在线」看的是 Windows 登录会话是否还在。",
+                    "「BGI 是否运行」看的是 BetterGI 进程在不在。",
+                    "两者都叫“条件”，但看的东西完全不同 —— 选之前先想清楚要判断什么。"
+                },
+                Target = () => LibPanel,
+                Draw = (layer, hole) =>
+                {
+                    double x = DemoX(hole), y = Math.Max(60, hole.Y + 20);
+                    DrawDemoNode(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
+                    DrawDemoNode(layer, x, y + 120, "BGI 是否运行", "检查目标账号 BGI 进程状态", "\uE950", cond, false);
+                }
+            });
+
+            steps.Add(new GuideStep
+            {
+                Step = "第 2 步 / 共 6 步",
+                Title = "状态灯：绿＝满足，灰＝不满足",
+                Lines =
+                {
+                    "灯只看“此刻”，每秒刷新一次。",
+                    "绿色「● 满足」：现在这个条件成立。",
+                    "灰色「○ 不满足」：现在不成立。",
+                    "琥珀「⚠ 数据不可用」：读不到数据，不等于不满足。",
+                    "灯亮不代表已经执行过 —— 执行看的是动作节点。"
+                },
+                Target = () => Canvas,
+                Draw = (layer, hole) =>
+                {
+                    double x = DemoX(hole), y = Math.Max(60, hole.Y + 30);
+                    DrawDemoNode(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
+                    DrawDemoNode(layer, x, y + 110, "BGI 是否运行", "检查目标账号 BGI 进程状态", "\uE950", cond, false);
+                    DrawDemoNode(layer, x, y + 220, "进程检查", "严格检查目标用户，不会拿其它账号冒充", "\uE77B", cond, null);
+                }
+            });
+
+            steps.Add(new GuideStep
+            {
+                Step = "第 3 步 / 共 6 步",
+                Title = "连线：决定谁接谁",
+                Lines =
+                {
+                    "从模块下方的圆点拖到下一个模块。",
+                    "也可以先点起点模块，再点目标模块。",
+                    "一个出口连多个模块 = 并行执行，全部都会走到。",
+                    "连线上会亮起绿色，表示这一路当前是通的。"
+                },
+                Target = () => Canvas,
+                Draw = (layer, hole) =>
+                {
+                    double x = DemoX(hole), y = Math.Max(50, hole.Y + 30);
+                    DrawDemoNode(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
+                    DrawDemoNode(layer, x + 300, y + 130, "执行一条龙", "清场后启动指定一条龙", "\uE768", act, null);
+                    DrawDemoLink(layer, x + 114, y + 70, x + 300 + 114, y + 130, true);
+                }
+            });
+
+            steps.Add(new GuideStep
+            {
+                Step = "第 4 步 / 共 6 步",
+                Title = "动作模块：条件成立后“做什么”",
+                Lines =
+                {
+                    "「等待」只是计时，时间到了才继续往下走。",
+                    "「打开程序」会真的在目标会话里启动进程。",
+                    "动作提示“成功”只代表请求已被接受，不代表任务已经跑完。",
+                    "要等任务真正结束，请用「配置组状态」或日志条件去判断。"
+                },
+                Target = () => Canvas,
+                Draw = (layer, hole) =>
+                {
+                    double x = DemoX(hole), y = Math.Max(60, hole.Y + 20);
+                    DrawDemoNode(layer, x, y, "等待", "条件满足后开始等待，到时继续", "\uE823", act, true);
+                    DrawDemoNode(layer, x + 280, y + 120, "打开程序", "在目标会话启动程序；启动成功不代表持续运行", "\uE768", act, false);
+                    DrawDemoLink(layer, x + 114, y + 70, x + 280 + 114, y + 120, true);
+                }
+            });
+
+            steps.Add(new GuideStep
+            {
+                Step = "第 5 步 / 共 6 步",
+                Title = "「每天完成」决定今天还跑不跑",
+                Lines =
+                {
+                    "走到「每天完成」并完成后，本流程当天不再扫描。",
+                    "选中它，在右侧属性里设日界：00:00 或 04:00。",
+                    "想当天再跑一次：取消/勾选「今天运行这个流程」。",
+                    "没有这个节点的流程会循环执行，条件再次成立就会再跑。"
+                },
+                Target = () => PropPanel,
+                Draw = (layer, hole) =>
+                {
+                    double x = DemoX(hole), y = Math.Max(60, hole.Y + 20);
+                    DrawDemoNode(layer, x, y, "执行一条龙", "清场后启动指定一条龙", "\uE768", act, true);
+                    DrawDemoNode(layer, x + 280, y + 130, "每天完成", "到达后当天停止扫描；到日界自动重置", "\uE71A", end, true);
+                    DrawDemoLink(layer, x + 114, y + 70, x + 280 + 114, y + 130, true);
+                }
+            });
+
+            steps.Add(new GuideStep
+            {
+                Step = "第 6 步 / 共 6 步",
+                Title = "底部这行是实时自检",
+                Lines =
+                {
+                    "缺条件、缺动作、参数没填、连线成环，都会在这一行提示。",
+                    "点击提示可以直接跳到出问题的模块。",
+                    "后半句「今日……」告诉你今天还会不会跑。",
+                    "看到「✔ 可以运行」才说明流程结构是完整的。"
+                },
+                Target = () => ValidateHint,
+                Draw = (layer, hole) =>
+                {
+                    double y = Math.Max(60, hole.Y - 120);
+                    DrawDemoNode(layer, DemoX(hole), y, "打开程序", "在目标会话启动程序；启动成功不代表持续运行", "\uE768", act, false);
+                    DrawDemoNode(layer, DemoX(hole), y + 110, "每天完成", "到达后当天停止扫描；到日界自动重置", "\uE71A", end, null);
+
+                    var sample = new Border
+                    {
+                        CornerRadius = new CornerRadius(8),
+                        Padding = new Thickness(12, 8, 12, 8),
+                        Background = new SolidColorBrush(Color.FromArgb(0xF0, 0x12, 0x1B, 0x30)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0x9B, 0x9B)),
+                        BorderThickness = new Thickness(1)
+                    };
+                    sample.Child = new TextBlock
+                    {
+                        Text = "✕ 「打开程序」的「程序路径」没有填写（点击前往）　今日：今日会运行",
+                        FontSize = 11,
+                        Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x9B, 0x9B)),
+                        TextWrapping = TextWrapping.Wrap,
+                        MaxWidth = 520
+                    };
+                    System.Windows.Controls.Canvas.SetLeft(sample, DemoX(hole));
+                    System.Windows.Controls.Canvas.SetTop(sample, y + 230);
+                    layer.Children.Add(sample);
+                }
+            });
+
+            return steps;
+        }
+
+        private void EndGuide()
+        {
+            try
+            {
+                GuideLayer.Children.Clear();
+                GuideLayer.Visibility = Visibility.Collapsed;
+                ValidateHint.IsHitTestVisible = true;
+                RefreshValidateHint();
+                _ = RefreshConditionPreview();
+            }
+            catch { }
+            finally { _guideRunning = false; }
+        }
+
+        private void CloseGuide() => EndGuide();
 
         private void BuildHelp()
         {
@@ -1824,6 +2130,8 @@ namespace SoulLink.Views
         private async Task RefreshConditionPreview()
         {
             if (_previewBusy || !IsLoaded || !IsVisible) return;
+            // 引导演示期间不要用真实求值覆盖演示中的状态灯。
+            if (_guideRunning) return;
             _previewBusy = true;
             int version = ++_previewVersion;
             try
