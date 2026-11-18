@@ -62,6 +62,42 @@ namespace SoulLink.Services
             return result;
         }
 
+        /// <summary>
+        /// 仍**活着**的代理所在会话：以运行中的进程为准，而不是只看管道名。
+        /// ★ 管道名可能短暂残留（宿主刚断开、代理正在退出），只看管道会把已死的代理
+        ///   报成“通道就绪”，界面随后又跳回“未投送”，表现为状态乱跳。
+        /// </summary>
+        public static HashSet<int> DiscoverLiveAgentSessions()
+        {
+            var live = new HashSet<int>();
+            try
+            {
+                foreach (var raw in Directory.GetFiles(@"\\.\pipe\"))
+                {
+                    string name = Path.GetFileName(raw);
+                    if (!IsRelayPipeName(name)) continue;
+                    if (name.EndsWith(AppIdentity.RelayEventSuffix, StringComparison.OrdinalIgnoreCase)) continue;
+                    int marker = name.LastIndexOf("_Relay_", StringComparison.OrdinalIgnoreCase);
+                    if (marker < 0) continue;
+                    string rest = name.Substring(marker + "_Relay_".Length);
+                    int us = rest.IndexOf('_');
+                    if (us <= 0) continue;
+                    if (!int.TryParse(rest.Substring(0, us), out int sid) || sid <= 0) continue;
+                    // 只有真正还能连上的管道才算“代理活着”；
+                    // 残留的管道对象连不上，就不会再误报成通道就绪。
+                    try
+                    {
+                        using var probe = new System.IO.Pipes.NamedPipeClientStream(".", name, System.IO.Pipes.PipeDirection.InOut);
+                        probe.Connect(120);
+                        live.Add(sid);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return live;
+        }
+
         /// <summary>识别任意 SoulLink 版本的代理管道，不按当前版本身份过滤。</summary>
         internal static bool IsRelayPipeName(string name)
         {

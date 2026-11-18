@@ -176,7 +176,8 @@ namespace SoulLink.Views
                         foreach (var kv in BgiLogWatcher.Discover())
                             bgiTimes[kv.Key] = kv.Value.LastWrite;
 
-                    channelSessions = BgiLogWatcher.DiscoverChannelSessions();
+                    // 以“能连通活代理”为准，避免残留管道让状态反复跳动。
+                    channelSessions = BgiLogWatcher.DiscoverLiveAgentSessions();
                 }
                 catch
                 {
@@ -2291,8 +2292,20 @@ namespace SoulLink.Views
             => Session.IsConsoleSession ? System.Windows.Visibility.Collapsed
                                          : System.Windows.Visibility.Visible;
 
-        /// <summary>该会话是否已有注入通道（由外部按管道枚举结果填充）。</summary>
-        public bool HasChannel { get; set; }
+        private bool _hasChannel;
+        /// <summary>该会话是否已有可用注入通道（由外部按活代理探测结果填充）。</summary>
+        public bool HasChannel
+        {
+            get => _hasChannel;
+            set
+            {
+                if (_hasChannel == value) return;
+                _hasChannel = value;
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasChannel)));
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ChannelText)));
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ChannelBrush)));
+            }
+        }
 
         /// <summary>投送通道状态文字。</summary>
         public string ChannelText => HasChannel ? "通道就绪" : "通道未投送";

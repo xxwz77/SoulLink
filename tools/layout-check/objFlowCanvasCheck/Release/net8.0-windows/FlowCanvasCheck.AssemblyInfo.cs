@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("FlowCanvasCheck")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+dddfd9da43aa948e0129c91cd419097754956c2b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+91e155612831750ef97e97543b77ba4284289bfb")]
 [assembly: System.Reflection.AssemblyProductAttribute("FlowCanvasCheck")]
 [assembly: System.Reflection.AssemblyTitleAttribute("FlowCanvasCheck")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
