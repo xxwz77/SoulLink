@@ -86,11 +86,31 @@ namespace SoulLink.Models
         /// 面向用户的“今天还会不会跑”结论。所有界面共用同一套措辞，避免各处说法不一致。
         /// 只描述运行资格，不触发任何动作。
         /// </summary>
+        /// <summary>本流程是否只有「手动」触点（= 永远不会自己跑，必须点「立即运行一次」）。</summary>
+        [JsonIgnore]
+        public bool NeedsManualTrigger
+        {
+            get
+            {
+                EnsurePlcModel();
+                var contacts = Nodes.Where(n => n.IsContact).ToList();
+                return contacts.Count > 0 && contacts.All(n => n.Type == FlowNodeType.TrigManual);
+            }
+        }
+
         public (bool WillRun, string Text) TodayRunState(DateTime? now = null)
         {
             var time = now ?? DateTime.Now;
             if (!Enabled) return (false, "今日不会运行：流程未启用");
             if (Paused) return (false, "今日不会运行：流程已暂停" + (string.IsNullOrWhiteSpace(PauseReason) ? "" : "（" + PauseReason + "）"));
+
+            // ★ 2.17.22：只有「手动」触点的流程永远不会自己跑。
+            //   用户反馈"添加任务之后需要手动按一次开关才会自动执行"——
+            //   新建流程默认给的就是「手动」触点，而界面只说"今日会运行"，
+            //   完全没提示"它其实要你每轮点一下"，导致以为自动执行坏了。
+            if (NeedsManualTrigger)
+                return (true, "需要手动触发：只连了「手动」触点，点「立即运行一次」才执行");
+
             if (!HasEnd)
                 return (true, "今日会运行：无「每天完成」，条件满足即可重复执行");
             if (PlcLogic.IsDailyComplete(this, time))

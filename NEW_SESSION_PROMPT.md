@@ -4,7 +4,8 @@
 
 接手 SoulLink 项目。请按顺序读这几份，再动手：
 
-1. `docs/HANDOFF-2.17.21-20261120.md` ← **最新交接（模拟按键 SendInput 修复），必读**
+1. `docs/HANDOFF-2.17.22-20261120.md` ← **最新交接（状态灯/手动触发显示），必读**
+   然后 `docs/HANDOFF-2.17.21-20261120.md`（模拟按键 SendInput 修复）
    然后 `docs/HANDOFF-2.17.20-20261120.md`（手动运行锁存修复）、
    `docs/HANDOFF-2.17.19-20261120.md`（RDP 控件修复 / 定版轮）
    ★ 重点看第 2 节（根因）、第 3 节（A/B 证据）、第 7 节（恢复节点）
@@ -19,10 +20,10 @@
 
 | 项目 | 值 |
 |---|---|
-| 标准版 | **2.17.21.0（待定版）**，`dist/SoulLink.exe`（修「模拟按键根本没发出」） |
+| 标准版 | **2.17.22.0（待定版）**，`dist/SoulLink.exe`（状态灯/手动触发显示） |
 | 可信版本 | **2.17.19.0** · `dist/SoulLink-2.17.19.exe` · 归档 `v2.17.19-reliable` |
-| 大小 | 67,476,732 字节 |
-| SHA256 | `672A95264DEA67DC161FEE99E238366205E271FB635EC7FA04162CE668788BAB` |
+| 大小 | 67,476,872 字节 |
+| SHA256 | `6A24699E77933D66EA185DE3F1324A0758C845993219A604691F72C05C130EDE` |
 | **恢复节点** | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.19-reliable\`（source/docs/成品/VERSION.txt/SHA256.txt/restore.ps1） |
 | 回归版备份 | `dist/SoulLink-2.17.17-before-ocxfix.exe`（**坏版本，别用**） |
 | 挂机版 | `dist/stable/` 仍 **2.17.4.0**，**全程未改动** |

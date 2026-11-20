@@ -1718,16 +1718,31 @@ namespace SoulLink.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // 暂停灰 / END 琥珀 / 有触点成立青绿 / 全灭灰。
-            // ★ 被「仅管理挂机账号」排除的账号：状态灯属于运行数据，一律显示中性灰，
-            //   否则主用户会看到"青绿=正在跑"，与"该账号不是挂机目标"自相矛盾。
+            // 暂停灰 / END 琥珀 / 正在自动跑 = 青绿 / 未启用或从未跑 = 深灰。
+            //
+            // ★★ 2.17.22 修「执行的时候没用亮绿灯」★★
+            //
+            //   原来判定的是「触点实时值为真」（f.RuntimeStates 里的 contact 节点），
+            //   但这盏灯几乎永远是灭的，原因有两个：
+            //     ① TrigInterval 的脉冲只"亮"一瞬间：FlowRunner.ReadContactAsync 里
+            //        脉冲时刻记进 ContactPulseAt，2 秒内重复读取才算 true，之后就 false；
+            //        而界面每 3 秒才刷一次，采样几乎必然落在"假"的那一帧上。
+            //     ② 更致命：流程账号是主用户（lummy），而「仅管理挂机账号」开着时
+            //        excluded=true 直接返回中性灰 —— 无论跑没跑都不亮。
+            //        （用户实测：3 个流程 RunCount 已到几百，灯始终是灰的。）
+            //
+            //   现在按"这个流程此刻是否处于可自动执行状态"来着色：
+            //     暂停/未启用 → 灰蓝；今日已完成（有 END）→ 琥珀；
+            //     启用且今天还能跑 → 青绿（= 它会自己动，不需要手点）。
+            //   「仅管理挂机账号」不再影响这盏灯：它是**控制状态**，不是挂机目标的运行数据。
             bool excluded = !AccountScope.Allows(OwnerUserNameOf(f));
-            bool anyLit = !excluded
-                && f.RuntimeStates.Any(kv => kv.Value.Value && f.FindNode(kv.Key)?.IsContact == true);
-            Color dotColor = excluded ? Color.FromRgb(0x65,0x75,0x91)
-                : paused ? Color.FromRgb(0x8B,0x9C,0xC8)
+            var today = f.TodayRunState();
+            Color dotColor = paused ? Color.FromRgb(0x8B,0x9C,0xC8)
                 : f.IsDailyComplete ? Color.FromRgb(0xFF,0xB1,0x4D)
-                : anyLit ? Color.FromRgb(0x41,0xF0,0xC0) : Color.FromRgb(0x65,0x75,0x91);
+                // ★ 只连了「手动」触点 = 绝不会自己跑：青色不够，必须与"自动跑"区分开，
+                //   否则用户看到绿点却怎么等都不执行（正是本次反馈的现象）。
+                : f.NeedsManualTrigger ? Color.FromRgb(0x4F,0xE3,0xFF)
+                : today.WillRun ? Color.FromRgb(0x41,0xF0,0xC0) : Color.FromRgb(0x65,0x75,0x91);
 
             var dot = new Ellipse
             {
@@ -1895,11 +1910,18 @@ namespace SoulLink.Views
             int outs = f.Nodes.Count(n => n.Kind == FlowNodeKind.Action);
             string structure = contacts + " 个条件 · " + outs + " 个动作";
 
-            // 主用户（被全局排除）不显示运行数据
-            if (!AccountScope.Allows(OwnerUserNameOf(f))) return structure;
+            // ★ 2.17.22：这里必须显示「今日会不会自己跑」。
+            //   用户反馈"添加任务之后需要手动按一次开关才会自动执行"——
+            //   卡片上原来对主用户只显示结构，"要不要手点"完全看不出来。
+            //   这不是挂机目标的运行数据（触点满足数才是），而是控制状态，主用户也要显示。
+            string state = f.TodayRunState().Text;
+
+            // 主用户（被全局排除）不显示**运行数据**（触点满足数）
+            if (!AccountScope.Allows(OwnerUserNameOf(f)))
+                return structure + " · " + state;
 
             int lit = f.RuntimeStates.Count(kv => kv.Value.Value && f.FindNode(kv.Key)?.IsContact == true);
-            return contacts + " 个条件（满足 " + lit + "） · " + outs + " 个动作 · " + f.TodayRunState().Text;
+            return contacts + " 个条件（满足 " + lit + "） · " + outs + " 个动作 · " + state;
         }
 
         /// <summary>取流程所属账号的用户名（找不到返回空，视为不在管理范围内）。</summary>
