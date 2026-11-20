@@ -109,6 +109,27 @@ namespace SoulLink.Models
 
         /// <summary>每个间隔触点的上次脉冲时刻，避免重启或其它支路动作改变计时间隔。</summary>
         public Dictionary<string, DateTime> ContactPulseAt { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        // ── 定时·时刻的"递增延时 + 复位周期"（2.17.41）────────────────────
+        //
+        //   用户需求（原话）：
+        //     "定时时刻里应该增加一个 下次执行延时，然后还要一个复位周期，
+        //      多少天可用清空这个延时。比如 4:00 4:01 4:02 4:03...多少天后重置为 4:00。
+        //      时刻需要精确到秒"
+        //
+        //   语义：
+        //     · 每触发一次，下次时刻 = 基准时刻 + (已触发次数 × 延时步长)
+        //     · 累计次数达到"复位周期"后归零，重新从基准时刻开始
+        //     · 时刻精确到秒（HH:mm:ss）
+        //
+        //   为什么要持久化：重启程序后不能把"已经递增到第几次"忘掉，
+        //   否则重启就跳回 4:00，延迟策略失效。
+
+        /// <summary>定时触点已触发的累计次数（用于计算递增延时）。</summary>
+        public Dictionary<string, int> ScheduleFireCount { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>定时触点当前延时段所属的业务日（跨日时把次数清零重新开始）。</summary>
+        public Dictionary<string, string> ScheduleCycleDay { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>TON 等待线圈的截止时刻；输入断开后清除。</summary>
         public Dictionary<string, DateTime> DelayUntil { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>本轮已命中的日志/定时/手动等瞬时信号；等待其它条件时不设超时。</summary>
@@ -210,6 +231,8 @@ namespace SoulLink.Models
             PlcPower ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             ActionResults ??= new Dictionary<string, FlowActionResult>(StringComparer.OrdinalIgnoreCase);
             ContactPulseAt ??= new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            ScheduleFireCount ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            ScheduleCycleDay ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             DelayUntil ??= new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
             SatisfiedContacts ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             Latched ??= new List<string>();

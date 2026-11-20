@@ -66,8 +66,14 @@ namespace SoulLink.Models
 
         static FlowNodeCatalog()
         {
-            D(FlowNodeType.TrigSchedule,FlowNodeKind.Condition,"定时·时刻","到达设定时刻后，在补跑时间内满足条件","\uE823",
-                P("time","时刻","04:00",hint:"HH:mm"),P("catchUpHours","补跑窗口（小时）","12",FlowParamKind.Number,"0=不限窗口",false));
+            D(FlowNodeType.TrigSchedule, FlowNodeKind.Condition, "定时·时刻",
+                "到达设定时刻后满足；可设置每次递增延时与复位周期", "\uE823",
+                P("time", "时刻", "04:00:00", hint: "HH:mm:ss（精确到秒）"),
+                P("stepSeconds", "下次执行延时（秒）", "0", FlowParamKind.Number,
+                  "每触发一次，下次时刻往后推这么多秒；0=固定时刻", false),
+                P("resetAfter", "复位周期（次）", "0", FlowParamKind.Number,
+                  "递增多少次后回到初始时刻；0=永不复位", false),
+                P("catchUpHours", "补跑窗口（小时）", "12", FlowParamKind.Number, "0=不限窗口", false));
             D(FlowNodeType.TrigInterval,FlowNodeKind.Condition,"定时·间隔","每到间隔时满足一次，随后恢复不满足","\uE916",P("intervalSeconds","间隔秒","600",FlowParamKind.Number));
             D(FlowNodeType.TrigSessionOnline,FlowNodeKind.Condition,"会话在线","目标账号的会话当前在线","\uE7EE");
             D(FlowNodeType.TrigManual,FlowNodeKind.Condition,"手动","仅点击「立即运行」时满足","\uE768");

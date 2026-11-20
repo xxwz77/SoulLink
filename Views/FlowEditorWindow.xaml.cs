@@ -1089,6 +1089,11 @@ namespace SoulLink.Views
             if (node.Kind == FlowNodeKind.Terminate)
                 AddEndEditors(node);
 
+                // ★ 2.17.41：定时·时刻显示"当前第几次 / 下次什么时候"，
+                //   否则用户设了延时和复位周期却看不到运行中的效果。
+                if (node.Type == FlowNodeType.TrigSchedule)
+                    AddScheduleProgressHint(node);
+
             // 删除按钮
             var del = new Button
             {
@@ -1101,6 +1106,66 @@ namespace SoulLink.Views
             };
             del.Click += (_, __) => OnNodeDelete(node);
             PropPanel.Children.Add(del);
+        }
+
+        /// <summary>
+        /// 定时·时刻的运行进度提示：当前轮次 + 下次触发时刻 + 复位状态。
+        ///
+        /// ★ 用户设了"每次延时 60 秒、3 次复位"之后，最想知道的是
+        ///   "现在排到第几次了、下次几点"，所以直接算给他看。
+        /// </summary>
+        private void AddScheduleProgressHint(FlowNode node)
+        {
+            try
+            {
+                string tv = node.Get("time", "04:00:00");
+                var parts = tv.Trim().Split(':');
+                int hh = 4, mi = 0, ss = 0;
+                if (parts.Length >= 2)
+                {
+                    int.TryParse(parts[0], out hh);
+                    int.TryParse(parts[1], out mi);
+                    if (parts.Length >= 3) int.TryParse(parts[2], out ss);
+                }
+                int step = node.GetInt("stepSeconds", 0);
+                int reset = node.GetInt("resetAfter", 0);
+
+                int fireCount = 0;
+                string dayKey = PlcLogic.DayKey(DateTime.Now, _flow.DayBoundaryHour);
+                if (_flow.ScheduleCycleDay.TryGetValue(node.Id, out var cyc)
+                    && string.Equals(cyc, dayKey, StringComparison.Ordinal))
+                    fireCount = _flow.ScheduleFireCount.TryGetValue(node.Id, out var fc) ? fc : 0;
+
+                int used = (reset > 0 && fireCount >= reset) ? 0 : fireCount;
+                var baseAt = new TimeSpan(hh, mi, ss);
+                var next = DateTime.Now.Date.Add(baseAt).AddSeconds((double)used * step);
+                if (next < DateTime.Now && step == 0) next = next.AddDays(1);
+
+                string text;
+                if (step > 0)
+                {
+                    text = "本轮第 " + (used + 1) + " 次 · 本次时刻 " + next.ToString("HH:mm:ss");
+                    if (reset > 0)
+                        text += " · 递增 " + used + "/" + reset + " 次"
+                              + (used >= reset - 1 ? "，下次回到 " + baseAt.ToString(@"hh\:mm\:ss") : "");
+                    else
+                        text += " · 永不复位（会一直往后推）";
+                }
+                else
+                {
+                    text = "固定时刻 " + baseAt.ToString(@"hh\:mm\:ss") + "（未设延时）";
+                }
+
+                PropPanel.Children.Add(new TextBlock
+                {
+                    Text = text,
+                    FontSize = 10.5,
+                    Margin = new Thickness(0, 10, 0, 0),
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0x9D, 0xFF, 0xE0))
+                });
+            }
+            catch { }
         }
 
         private void AddParamEditor(FlowNode node, FlowParamDef p)

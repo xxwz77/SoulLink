@@ -51,7 +51,23 @@ namespace SoulLink.Services
                 if (n.Get("user").Length > 0 && cfg != null
                     && !cfg.Accounts.Any(a => string.Equals(a.UserName, SessionService.BareName(n.Get("user")), StringComparison.OrdinalIgnoreCase)))
                     Field(n,"user","「"+n.Title+"」的目标账号不存在；不会回退操作其它账号");
-                if (n.Type == FlowNodeType.TrigSchedule && !TimeSpan.TryParse(n.Get("time"),out _)) Error(n,"时刻必须是 HH:mm");
+                if (n.Type == FlowNodeType.TrigSchedule)
+                {
+                    // ★ 2.17.41：时刻精确到秒，格式 HH:mm:ss（也接受 HH:mm）
+                    string tv = n.Get("time", "04:00:00");
+                    var seg = tv.Trim().Split(':');
+                    bool okTime = (seg.Length == 2 || seg.Length == 3)
+                        && int.TryParse(seg[0], out int hh) && hh >= 0 && hh <= 23
+                        && int.TryParse(seg[1], out int mi) && mi >= 0 && mi <= 59
+                        && (seg.Length == 2
+                            || (int.TryParse(seg[2], out int ss) && ss >= 0 && ss <= 59));
+                    if (!okTime) Field(n, "time", "「" + n.Title + "」的时刻必须是 HH:mm:ss（0-23:0-59:0-59）");
+
+                    if (n.GetInt("stepSeconds", 0) < 0) Field(n, "stepSeconds", "「" + n.Title + "」的延时步长不能为负");
+                    if (n.GetInt("stepSeconds", 0) > 86400) Field(n, "stepSeconds", "「" + n.Title + "」的延时步长不能超过 1 天");
+                    if (n.GetInt("resetAfter", 0) < 0) Field(n, "resetAfter", "「" + n.Title + "」的复位周期不能为负");
+                    if (n.GetInt("resetAfter", 0) > 999) Field(n, "resetAfter", "「" + n.Title + "」的复位周期不能超过 999 次");
+                }
                 if (n.Type == FlowNodeType.CondTimeRange && (!TimeSpan.TryParse(n.Get("from"),out _) || !TimeSpan.TryParse(n.Get("to"),out _))) Error(n,"时间段必须是 HH:mm");
                 foreach (var p in def.Params.Where(p=>p.Kind==FlowParamKind.Number && n.Get(p.Key).Length>0))
                     if (!double.TryParse(n.Get(p.Key),out var v) || v<0) Error(n,"「"+n.Title+"」的「"+p.Label+"」必须是非负数字");

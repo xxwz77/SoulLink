@@ -229,11 +229,52 @@ namespace SoulLink.Services
             {
                 case FlowNodeType.TrigSchedule:
                 {
-                    if (!TimeSpan.TryParse(n.Get("time", "04:00"), out var at)) return false;
-                    var target = now.Date.Add(at);
+                    // ★★ 2.17.41：定时·时刻支持「递增延时 + 复位周期」★★
+                    //
+                    //   用户需求原话：
+                    //     "定时时刻里应该增加一个 下次执行延时，然后还要一个复位周期，
+                    //      多少天可用清空这个延时。比如 4:00 4:01 4:02 4:03...
+                    //      多少天后重置为 4:00。时刻需要精确到秒"
+                    //
+                    //   计算方式：
+                    //     第 N 次触发（N 从 0 开始）的时刻 = 基准时刻 + N × 延时步长
+                    //     N 达到「复位周期」后归零 → 回到基准时刻
+                    //   例：基准 04:00:00、延时 60 秒、复位周期 3 →
+                    //     第1次 04:00:00，第2次 04:01:00，第3次 04:02:00，
+                    //     第4次又回 04:00:00。
+                    //
+                    //   为什么用"次数"而不是"按天累加"：
+                    //     用户的真实诉求是"每次比上次晚一点，攒够一批就回到原点"，
+                    //     用次数最直观，也不受补跑/漏跑影响。
+                    if (!TryParseClock(n.Get("time", "04:00:00"), out var baseAt)) return false;
+
+                    int stepSeconds = Math.Max(0, n.GetInt("stepSeconds", 0));
+                    int resetAfter = Math.Max(0, n.GetInt("resetAfter", 0));
+
+                    // 当前轮次（同一业务日内有效；跨日归零）
+                    string dayKey = PlcLogic.DayKey(now, flow.DayBoundaryHour);
+                    int fireCount = 0;
+                    if (flow.ScheduleCycleDay.TryGetValue(n.Id, out var cycle)
+                        && string.Equals(cycle, dayKey, StringComparison.Ordinal))
+                        fireCount = flow.ScheduleFireCount.TryGetValue(n.Id, out var fc) ? fc : 0;
+
+                    // 复位周期到了就回到基准时刻
+                    if (resetAfter > 0 && fireCount >= resetAfter) fireCount = 0;
+
+                    var target = now.Date.Add(baseAt).AddSeconds((double)fireCount * stepSeconds);
                     if (now < target || (flow.CreatedAt.HasValue && target < flow.CreatedAt.Value)) return false;
+
                     int catchUp = n.GetInt("catchUpHours", 12);
                     if (catchUp > 0 && (now - target).TotalHours > catchUp) return false;
+
+                    // ★ 记录"这一轮已经触发了"，供下一轮计算延时用。
+                    //   只在真正满足条件时递增，避免不满足时也被计数。
+                    if (stepSeconds > 0)
+                    {
+                        flow.ScheduleCycleDay[n.Id] = dayKey;
+                        flow.ScheduleFireCount[n.Id] = fireCount + 1;
+                    }
+
                     // 电平持续亮，OUT 的上升沿负责只执行一次；END 负责整日锁存。
                     return true;
                 }
@@ -357,6 +398,29 @@ namespace SoulLink.Services
             int targetSid = TargetSessionId(n, flow.AccountId, sid, cfg);
             var (ok, message) = await RunActionAsync(n, account, targetSid, cfg, flow).ConfigureAwait(false);
             return new FlowActionResult { Ok = ok, Message = message };
+        }
+
+        /// <summary>
+        /// 解析"时刻"：支持 HH:mm:ss（精确到秒）、HH:mm、H:mm:ss。
+        ///
+        /// ★ 2.17.41：用户要求"时刻需要精确到秒"，所以不能再用 TimeSpan.TryParse
+        ///   的单一路径 —— 它接受 "4" 这种非法输入（解析成 4 天）。
+        ///   这里严格按 时:分[:秒] 解析，非法输入直接返回 false（流程校验会拦下）。
+        /// </summary>
+        private static bool TryParseClock(string text, out TimeSpan value)
+        {
+            value = TimeSpan.Zero;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var parts = text.Trim().Split(':');
+            if (parts.Length < 2 || parts.Length > 3) return false;
+
+            if (!int.TryParse(parts[0], out int hh) || hh < 0 || hh > 23) return false;
+            if (!int.TryParse(parts[1], out int mm) || mm < 0 || mm > 59) return false;
+            int ss = 0;
+            if (parts.Length == 3 && (!int.TryParse(parts[2], out ss) || ss < 0 || ss > 59)) return false;
+
+            value = new TimeSpan(hh, mm, ss);
+            return true;
         }
 
         private static bool TryParseTime(string s, out double minutes)
