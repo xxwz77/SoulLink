@@ -123,28 +123,58 @@
                                     </StackPanel>
                                 </StackPanel>
 
+                                <!-- ★★ 2.17.26：四个按钮必须各有各的样子 ★★
+                                     原来全是同一个灰色 IconButton + 30x30，
+                                     而「定时暂停/恢复」和「立即执行」用的都是 ▶/⏸，
+                                     肉眼完全分不清哪个是"定时计划"、哪个是"现在跑一次"。
+                                     现在按语义分三档：
+                                       · 定时开关 = 胶囊 + 文字（绿=定时生效 / 灰=定时已暂停）
+                                       · 立即执行 = 胶囊 + ⚡ + "执行"（一次性，中性色）
+                                       · 编辑/删除 = 小图标，中性色，删除 hover 变红 -->
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                     <Border CornerRadius="7" Padding="8,3" Background="{Binding BadgeBg}" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding KindText}" FontSize="10.5" Foreground="{Binding BadgeFg}" FontWeight="SemiBold" />
                                     </Border>
-                                    <!-- 暂停/恢复：只有配了定时的动作才显示 -->
-                                    <Button Style="{StaticResource IconButton}" Width="30" Height="30" Margin="6,0,0,0"
+
+                                    <!-- 定时开关：只有配了定时的动作才显示（胶囊，带文字） -->
+                                    <Button Style="{StaticResource PillButton}" Height="26" MinWidth="72"
+                                            Margin="6,0,0,0" Padding="9,0,9,0"
                                             Click="PauseSchedule_Click" Tag="{Binding}"
                                             ToolTip="{Binding PauseTip}"
+                                            Background="{Binding ScheduleToggleBg}"
+                                            BorderBrush="{Binding ScheduleToggleBorder}"
                                             Visibility="{Binding ScheduleVisibility}">
-                                        <TextBlock Text="{Binding PauseGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding PauseGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                                       VerticalAlignment="Center" Foreground="{Binding ScheduleToggleFg}" />
+                                            <TextBlock Text="{Binding ScheduleToggleText}" FontSize="10.5" Margin="5,0,0,0"
+                                                       VerticalAlignment="Center" Foreground="{Binding ScheduleToggleFg}" />
+                                        </StackPanel>
                                     </Button>
-                                    <Button Style="{StaticResource IconButton}" Width="30" Height="30" Margin="6,0,0,0"
-                                            Click="RunAction_Click" Tag="{Binding}" ToolTip="立即执行">
-                                        <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+
+                                    <!-- 立即执行：胶囊 + ⚡ + 文字（一次性，与定时开关无关） -->
+                                    <Button Style="{StaticResource PillButton}" Height="26" MinWidth="64"
+                                            Margin="6,0,0,0" Padding="9,0,9,0"
+                                            Click="RunAction_Click" Tag="{Binding}"
+                                            ToolTip="立即执行一次（不影响定时计划）"
+                                            Background="#1FFFFFFF" BorderBrush="#40FFFFFF">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE945;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                                       VerticalAlignment="Center" Foreground="#FFC8D6F0" />
+                                            <TextBlock Text="执行" FontSize="10.5" Margin="5,0,0,0"
+                                                       VerticalAlignment="Center" Foreground="#FFC8D6F0" />
+                                        </StackPanel>
                                     </Button>
-                                    <Button Style="{StaticResource IconButton}" Width="30" Height="30"
+
+                                    <Button Style="{StaticResource IconButton}" Width="30" Height="30" Margin="4,0,0,0"
                                             Click="EditAction_Click" Tag="{Binding}" ToolTip="编辑">
-                                        <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                                        <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                                   Foreground="#FF9FB0D0" />
                                     </Button>
-                                    <Button Style="{StaticResource IconButton}" Width="30" Height="30"
+                                    <Button Style="{StaticResource IconButton}" Width="30" Height="30" Margin="2,0,0,0"
                                             Click="DeleteAction_Click" Tag="{Binding}" ToolTip="删除">
-                                        <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                                        <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                                   Foreground="#FFD08AA0" />
                                     </Button>
                                 </StackPanel>
                             </Grid>

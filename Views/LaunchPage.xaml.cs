@@ -2265,6 +2265,33 @@ namespace SoulLink.Views
         /// <summary>暂停按钮提示。</summary>
         public string PauseTip => SchedulePaused ? "恢复定时执行" : "暂停定时执行";
 
+        // ── 2.17.26：把「定时开关」做成带文字和颜色的胶囊，和「立即执行」分开 ──
+        //
+        //   原来两者都是同一个灰色 IconButton，而且都用 ▶/⏸ 图标：
+        //   「暂停定时」显示 ⏸、「立即执行」显示 ▶，用户根本分不清
+        //   哪个管"定时计划"、哪个是"现在跑一次"。
+
+        /// <summary>定时开关上的文字。</summary>
+        public string ScheduleToggleText => SchedulePaused ? "定时已停" : "定时生效";
+
+        /// <summary>定时开关的文字颜色。</summary>
+        public System.Windows.Media.Brush ScheduleToggleFg => new System.Windows.Media.SolidColorBrush(
+            SchedulePaused
+                ? System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8)
+                : System.Windows.Media.Color.FromRgb(0x9D, 0xFF, 0xE0));
+
+        /// <summary>定时开关的底色：生效=青绿半透，已停=灰半透。</summary>
+        public System.Windows.Media.Brush ScheduleToggleBg => new System.Windows.Media.SolidColorBrush(
+            SchedulePaused
+                ? System.Windows.Media.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)
+                : System.Windows.Media.Color.FromArgb(0x30, 0x41, 0xF0, 0xC0));
+
+        /// <summary>定时开关的描边。</summary>
+        public System.Windows.Media.Brush ScheduleToggleBorder => new System.Windows.Media.SolidColorBrush(
+            SchedulePaused
+                ? System.Windows.Media.Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)
+                : System.Windows.Media.Color.FromArgb(0x90, 0x41, 0xF0, 0xC0));
+
         /// <summary>把时间格式化成"今天 04:00:00 / 明天 04:01:00 / 11-18 04:02:00"。</summary>
         private static string FormatNext(DateTime t)
         {
