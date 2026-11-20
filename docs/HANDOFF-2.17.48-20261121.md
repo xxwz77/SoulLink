@@ -191,3 +191,18 @@ dotnet publish -c Release -r win-x64 --self-contained true ^
 配置组读不到时只留一个「（未选择）」，用户只能来问"为什么读不到"。
 现在把三种原因（没选账号 / 没绑路径 / 目录是空的）分别写出来，
 **这一条本身就省掉一整轮答疑**。
+
+
+---
+
+## 6. 附：本轮的验证截图
+
+| 文件 | 说明 |
+|---|---|
+| `docs/fix-2.17.48-remote-admin.png` | 修后深色：三个字段都有字，按钮完整可见 |
+| `docs/fix-2.17.48-remote-admin-light.png` | 修后浅色：同一页在亮色主题下也正常 |
+| `docs/fix-2.17.48-textbox-probe.png` | 探针对照：第 1 个框（现状 27px）空白，第 2 个（去掉 Margin）出字 |
+| `docs/fix-2.17.48-group-unbound.png` | 未绑定账号时「配置组名」下方的橙色原因说明 |
+
+截图由 `tools/layout-check` 下的临时探针用 `RenderTargetBitmap` 直接渲染用户控件生成，
+不依赖屏幕截图，窗口被遮挡或最小化都不影响结果。
