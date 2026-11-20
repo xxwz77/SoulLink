@@ -42,6 +42,35 @@ public sealed class DreamScene
     private DrawingGroup? _dayBase;
     private double _baseWidth, _baseHeight;
 
+    // ★★ 2.17.46 性能缓存。★★
+    //   实测（2026-11-21，交接文档第 7 节）：用户 EffectTier=2（低档），
+    //   动态背景早已关闭，但 CPU 仍有 45–50%，且最小化后掉到 11.7%
+    //   —— 全部是 WPF 渲染（RenderRecursive 19.6% + PrecomputeRecursive）。
+    //
+    //   根因：低档每 1000ms 仍会 InvalidateVisual 一次（目的是刷窗口外沿那圈
+    //   没被内容覆盖的 8px，见 AuroraBackdrop 注释），而 OnRender 会把整个
+    //   场景**从零重建**：3 条贝塞尔曲线、3×24 层描边（每层一个
+    //   LinearGradientBrush + Pen）、76 颗粒子、轨道系统的 2 个 120 点椭圆、
+    //   56 条刻度线、EdgeShade 的渐变画刷、Grain 的 ImageBrush Clone……
+    //   低档下 _time 根本不推进，所以**重建出来的画面逐像素完全相同**，纯浪费。
+    //
+    //   现在：静止档把整帧烘焙成冻结的 DrawingGroup，重绘退化为一次
+    //   DrawDrawing；动效档则把「不随时间变化的几何/画刷」全部缓存，每帧只剩
+    //   若干 PushTransform + DrawDrawing。
+    private static readonly Palette NightPalette = new(false);
+    private static readonly Palette DayPalette = new(true);
+
+    /// <summary>丝带烘焙结果，按 (宽,高,亮/暗) 缓存。丝带几何只依赖尺寸，与时间无关。</summary>
+    private readonly Dictionary<(int, int, bool), DrawingGroup[]> _ribbonCache = new();
+    /// <summary>轨道月亮头部径向渐变，按颜色缓存（原来每帧 new 一个）。</summary>
+    private readonly Dictionary<Color, RadialGradientBrush> _orbitHeadCache = new();
+    private RadialGradientBrush? _shadeNight, _shadeDay;
+    private ImageBrush? _grainSoft, _grainStrong;
+
+    private DrawingGroup? _staticFrame;
+    private double _staticWidth, _staticHeight;
+    private bool _staticLight;
+
     private static Color C(string value) => (Color)ColorConverter.ConvertFromString("#" + value)!;
     private static byte Alpha(double value) => (byte)(Math.Clamp(value, 0, 1) * 255);
     private static Color A(Color color, double alpha) => Color.FromArgb(Alpha(alpha), color.R, color.G, color.B);
@@ -198,19 +227,59 @@ public sealed class DreamScene
         brush.Freeze(); return brush;
     }
 
-    private void Ribbon(DrawingContext dc, StreamGeometry curve, Palette p, double opacity, double width = 1)
+    /// <summary>
+    /// 把一条丝带烘焙成冻结的 DrawingGroup（24 层描边）。
+    ///
+    /// ★ 2.17.46：原来每帧都 new 24 个 LinearGradientBrush + 24 个 Pen 再逐层
+    ///   DrawGeometry，三条丝带 = 每帧 72 次画刷/画笔构造 + 72 次几何描边。
+    ///   丝带的形状和颜色都只依赖尺寸，与时间无关；时间只影响外层的
+    ///   TranslateTransform。所以烘焙一次、终身复用，每帧只剩 Push/Pop + DrawDrawing。
+    /// </summary>
+    private DrawingGroup BakeRibbon(StreamGeometry curve, Palette p, double opacity, double width = 1)
     {
-        // 24 层从外向内连续渐隐，不再用一条高亮细线充当丝带中心。
-        // 每层只增加很少的不透明度，叠加后成为均匀柔和的极光。
-        for(int i=0;i<24;i++)
+        var group = new DrawingGroup();
+        using (var dc = group.Open())
         {
-            double inner=i/23.0;
-            double thickness=(8+124*(1-inner))*width;
-            double alpha=opacity*(.0025+.0145*inner*inner);
-            var pen=new Pen(Linear(p.Blue,p.Lilac,p.Pink,alpha),thickness)
-            { StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round };
-            pen.Freeze();dc.DrawGeometry(null,pen,curve);
+            for(int i=0;i<24;i++)
+            {
+                double inner=i/23.0;
+                double thickness=(8+124*(1-inner))*width;
+                double alpha=opacity*(.0025+.0145*inner*inner);
+                var pen=new Pen(Linear(p.Blue,p.Lilac,p.Pink,alpha),thickness)
+                { StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round };
+                pen.Freeze();
+                // 外层几何缓存后不能再被冻结画刷以外的对象引用，这里直接复用同一份 curve。
+                dc.DrawGeometry(null,pen,curve);
+            }
         }
+        group.Freeze();
+        return group;
+    }
+
+    private DrawingGroup[] Ribbons(double w, double h, bool light, Palette p)
+    {
+        var key = ((int)Math.Round(w), (int)Math.Round(h), light);
+        if (_ribbonCache.TryGetValue(key, out var cached)) return cached;
+
+        DrawingGroup[] baked;
+        if (light)
+        {
+            var a=Curve(new[]{P(-.12,.77,w,h),P(.14,.47,w,h),P(.35,.82,w,h),P(.58,.61,w,h),P(.78,.40,w,h),P(.96,.48,w,h),P(1.13,.28,w,h)});
+            var b=Curve(new[]{P(-.08,.95,w,h),P(.22,.64,w,h),P(.44,.93,w,h),P(.71,.78,w,h),P(.92,.64,w,h),P(.98,.70,w,h),P(1.14,.60,w,h)});
+            baked = new[] { BakeRibbon(a,p,.35,.80), BakeRibbon(b,p,.26,.60) };
+        }
+        else
+        {
+            var a=Curve(new[]{P(-.14,.72,w,h),P(.15,.20,w,h),P(.30,.95,w,h),P(.58,.64,w,h),P(.79,.39,w,h),P(.89,.43,w,h),P(1.14,.19,w,h)});
+            var b=Curve(new[]{P(-.13,.89,w,h),P(.17,.59,w,h),P(.37,1.03,w,h),P(.67,.78,w,h),P(.89,.60,w,h),P(.96,.80,w,h),P(1.13,.53,w,h)});
+            var c=Curve(new[]{P(.37,-.13,w,h),P(.57,.20,w,h),P(.74,-.02,w,h),P(.90,.18,w,h),P(1.05,.37,w,h),P(1.02,.17,w,h),P(1.16,.38,w,h)});
+            baked = new[] { BakeRibbon(a,p,.96), BakeRibbon(b,p,.78), BakeRibbon(c,p,.50,.62) };
+        }
+
+        // 尺寸会随窗口拖拽变化，缓存不能无限增长。
+        if (_ribbonCache.Count > 6) _ribbonCache.Clear();
+        _ribbonCache[key] = baked;
+        return baked;
     }
 
     private DrawingGroup Base(double w, double h, Palette p, bool light)
@@ -322,7 +391,7 @@ public sealed class DreamScene
     }
 
     private static ImageBrush? _grain;
-    private static void Grain(DrawingContext dc, double w, double h, bool light)
+    private void Grain(DrawingContext dc, double w, double h, bool light)
     {
         if (_grain == null)
         {
@@ -340,14 +409,44 @@ public sealed class DreamScene
             _grain=new ImageBrush(bitmap){TileMode=TileMode.Tile,Viewport=new Rect(0,0,size,size),ViewportUnits=BrushMappingMode.Absolute,Stretch=Stretch.None};
             _grain.Freeze();
         }
-        var brush=_grain.Clone(); brush.Opacity=light?.25:.40; brush.Freeze();
-        dc.DrawRectangle(brush,null,new Rect(0,0,w,h));
+        // ★ 2.17.46：只在两个固定不透明度之间切换，Clone 一次缓存即可。
+        if (light)
+        {
+            _grainSoft ??= BuildGrain(.25);
+            dc.DrawRectangle(_grainSoft,null,new Rect(0,0,w,h));
+        }
+        else
+        {
+            _grainStrong ??= BuildGrain(.40);
+            dc.DrawRectangle(_grainStrong,null,new Rect(0,0,w,h));
+        }
     }
 
-    public void Render(DrawingContext dc, double width, double height, double time, bool light)
+    private static ImageBrush BuildGrain(double opacity)
     {
-        if(width<2||height<2)return;
-        var p=new Palette(light);
+        var brush=(ImageBrush)_grain!.Clone(); brush.Opacity=opacity; brush.Freeze(); return brush;
+    }
+
+    /// <summary>静止档：整帧只烘焙一次，之后重绘 = 一次 DrawDrawing。</summary>
+    public bool TryDrawStatic(DrawingContext dc, double width, double height, bool light)
+    {
+        if (width < 2 || height < 2) return false;
+        if (_staticFrame == null || _staticWidth != width || _staticHeight != height || _staticLight != light)
+        {
+            var p = light ? DayPalette : NightPalette;
+            var frame = new DrawingGroup();
+            using (var inner = frame.Open()) DrawScene(inner, width, height, 0, p, light);
+            frame.Freeze();
+            _staticFrame = frame; _staticWidth = width; _staticHeight = height; _staticLight = light;
+            // 基础层（_nightBase/_dayBase）的尺寸/主题失效由 DrawScene 自己处理，
+            // 这里不要额外清空 —— 那会把刚建好的缓存白扔掉。
+        }
+        dc.DrawDrawing(_staticFrame);
+        return true;
+    }
+
+    private void DrawScene(DrawingContext dc, double width, double height, double time, Palette p, bool light)
+    {
         if(_baseWidth!=width||_baseHeight!=height){_nightBase=null;_dayBase=null;_baseWidth=width;_baseHeight=height;}
         if(light){_dayBase??=Base(width,height,p,true);dc.DrawDrawing(_dayBase);}
         else{_nightBase??=Base(width,height,p,false);dc.DrawDrawing(_nightBase);}
@@ -356,16 +455,23 @@ public sealed class DreamScene
         EdgeShade(dc,width,height,p,light);
     }
 
+    public void Render(DrawingContext dc, double width, double height, double time, bool light)
+    {
+        if(width<2||height<2)return;
+        // ★ 2.17.46：Palette 原来是每帧 new 一个（含 10 个 Color 转换），
+        //   但它只由 light/dark 决定，跟时间无关 —— 改成两个静态实例。
+        DrawScene(dc, width, height, time, light ? DayPalette : NightPalette, light);
+    }
+
     private void RenderNight(DrawingContext dc, double w, double h, double t, Palette p)
     {
         double u=Math.Min(w,h);
         // Silk aurora crosses the scene at different depths.
-        var a=Curve(new[]{P(-.14,.72,w,h),P(.15,.20,w,h),P(.30,.95,w,h),P(.58,.64,w,h),P(.79,.39,w,h),P(.89,.43,w,h),P(1.14,.19,w,h)});
-        var b=Curve(new[]{P(-.13,.89,w,h),P(.17,.59,w,h),P(.37,1.03,w,h),P(.67,.78,w,h),P(.89,.60,w,h),P(.96,.80,w,h),P(1.13,.53,w,h)});
-        var c=Curve(new[]{P(.37,-.13,w,h),P(.57,.20,w,h),P(.74,-.02,w,h),P(.90,.18,w,h),P(1.05,.37,w,h),P(1.02,.17,w,h),P(1.16,.38,w,h)});
-        dc.PushTransform(new TranslateTransform(0,Wave(t,.22)*9)); Ribbon(dc,a,p,.96); dc.Pop();
-        dc.PushTransform(new TranslateTransform(0,Wave(t+.8,.19)*8)); Ribbon(dc,b,p,.78); dc.Pop();
-        dc.PushTransform(new TranslateTransform(Wave(t,.16)*5,0)); Ribbon(dc,c,p,.50,.62); dc.Pop();
+        // ★ 2.17.46：丝带已烘焙成冻结 DrawingGroup，每帧只推动变换。
+        var ribbons = Ribbons(w,h,false,p);
+        dc.PushTransform(new TranslateTransform(0,Wave(t,.22)*9)); dc.DrawDrawing(ribbons[0]); dc.Pop();
+        dc.PushTransform(new TranslateTransform(0,Wave(t+.8,.19)*8)); dc.DrawDrawing(ribbons[1]); dc.Pop();
+        dc.PushTransform(new TranslateTransform(Wave(t,.16)*5,0)); dc.DrawDrawing(ribbons[2]); dc.Pop();
 
         // Drifting, breathing motes.
         for(int i=0;i<76;i++)
@@ -479,7 +585,15 @@ public sealed class DreamScene
         }
         var head=PointAt(phase);
         Glow(dc,head.X,head.Y,r*4,color,.38);
-        dc.DrawEllipse(new RadialGradientBrush(p.White,color),null,head,r,r);
+        // ★ 2.17.46：原来每帧 new 一个 RadialGradientBrush（含 2 个 GradientStop）。
+        //   颜色只取决于 color，缓存后终身复用。
+        if (!_orbitHeadCache.TryGetValue(color, out var headBrush))
+        {
+            headBrush = new RadialGradientBrush(p.White, color);
+            headBrush.Freeze();
+            _orbitHeadCache[color] = headBrush;
+        }
+        dc.DrawEllipse(headBrush,null,head,r,r);
         Sparkle(dc,head.X,head.Y,r*.9,20,color,.75,p);
     }
 
@@ -508,10 +622,10 @@ public sealed class DreamScene
         PrismRays(dc,w,h,t,p);
 
         // Fine iridescent threads replace the night sky's bright aurora.
-        var a=Curve(new[]{P(-.12,.77,w,h),P(.14,.47,w,h),P(.35,.82,w,h),P(.58,.61,w,h),P(.78,.40,w,h),P(.96,.48,w,h),P(1.13,.28,w,h)});
-        var b=Curve(new[]{P(-.08,.95,w,h),P(.22,.64,w,h),P(.44,.93,w,h),P(.71,.78,w,h),P(.92,.64,w,h),P(.98,.70,w,h),P(1.14,.60,w,h)});
-        dc.PushTransform(new TranslateTransform(0,Wave(t,.17)*7));Ribbon(dc,a,p,.35,.80);dc.Pop();
-        dc.PushTransform(new TranslateTransform(0,Wave(t+1,.15)*6));Ribbon(dc,b,p,.26,.60);dc.Pop();
+        // ★ 2.17.46：同上，已烘焙复用。
+        var ribbons = Ribbons(w,h,true,p);
+        dc.PushTransform(new TranslateTransform(0,Wave(t,.17)*7));dc.DrawDrawing(ribbons[0]);dc.Pop();
+        dc.PushTransform(new TranslateTransform(0,Wave(t+1,.15)*6));dc.DrawDrawing(ribbons[1]);dc.Pop();
 
         // Bubbles and petals are exclusive to the light composition.
         for(int i=0;i<24;i++)
@@ -641,6 +755,21 @@ public sealed class DreamScene
 
     private void EdgeShade(DrawingContext dc,double w,double h,Palette p,bool light)
     {
+        // ★ 2.17.46：只依赖亮/暗两态，缓存成两个冻结画刷。
+        if (light)
+        {
+            _shadeDay ??= BuildShade(p, true);
+            dc.DrawRectangle(_shadeDay, null, new Rect(0,0,w,h));
+        }
+        else
+        {
+            _shadeNight ??= BuildShade(p, false);
+            dc.DrawRectangle(_shadeNight, null, new Rect(0,0,w,h));
+        }
+    }
+
+    private static RadialGradientBrush BuildShade(Palette p, bool light)
+    {
         var brush=new RadialGradientBrush
         {
             Center=new Point(.50,.43),GradientOrigin=new Point(.50,.43),RadiusX=.76,RadiusY=.76,
@@ -648,6 +777,6 @@ public sealed class DreamScene
             {
                 new(A(p.Shade,0),0),new(A(p.Shade,0),.59),new(A(p.Shade,light?.10:.37),1)
             }
-        };brush.Freeze();dc.DrawRectangle(brush,null,new Rect(0,0,w,h));
+        };brush.Freeze();return brush;
     }
 }

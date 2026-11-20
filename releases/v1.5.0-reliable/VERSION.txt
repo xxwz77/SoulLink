@@ -1,4 +1,0 @@
-版本: v1.5.0-reliable
-日期: 2026-11-16
-变更: 版本号统一到 1.5.0；csproj 单一版本来源（FileVersion/AssemblyVersion 自动派生）
-SoulLink.exe SHA256: FDE8A8EA8A840B3DC307F6A3BBCCAC9E190472F429C5C9283494A493EDEF7E9B

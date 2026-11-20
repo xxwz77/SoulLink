@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace SoulLink.Controls
 {
@@ -17,6 +18,42 @@ namespace SoulLink.Controls
         private double _time = 3.2;
         private bool _running;
         private Window? _window;
+
+        // ★★ 2.17.46：中/低档改用 DispatcherTimer，不再订阅 CompositionTarget.Rendering。★★
+        //
+        //   CompositionTarget.Rendering 是**每帧都回调**（60Hz → 每秒 60 次）。
+        //   原来中/低档在回调里只做一件事：比较两个 TimeSpan，攒够 500ms/1000ms
+        //   再 InvalidateVisual 一次 —— 也就是说 59/60 次回调纯属空转。
+        //   而它同时会把整个合成器维持在「每帧都在推进」的状态。
+        //   改用 DispatcherTimer（Background 优先级，不影响交互）后，
+        //   低档每秒只有 1 次唤醒，高档仍走 Rendering 保证帧率平滑。
+        private DispatcherTimer? _staticTimer;
+
+        /// <summary>静止档的重绘节奏。见 RepaintInterval 的说明。</summary>
+        private void StartStaticTimer(int tier)
+        {
+            var interval = RepaintInterval(tier);
+            if (_staticTimer == null)
+            {
+                _staticTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = interval };
+                _staticTimer.Tick += OnStaticTick;
+            }
+            else if (_staticTimer.Interval != interval) _staticTimer.Interval = interval;
+            if (!_staticTimer.IsEnabled) _staticTimer.Start();
+        }
+
+        private void StopStaticTimer()
+        {
+            if (_staticTimer == null || !_staticTimer.IsEnabled) return;
+            _staticTimer.Stop();
+        }
+
+        private void OnStaticTick(object? sender, EventArgs e)
+        {
+            if (!IsLoaded || !IsVisible) return;
+            if (_window != null && (!_window.IsVisible || _window.WindowState == WindowState.Minimized)) return;
+            InvalidateVisual();
+        }
 
         public AuroraBackdrop()
         {
@@ -58,7 +95,14 @@ namespace SoulLink.Controls
             _window = null;
         }
 
-        private void OnWindowActivityChanged(object? sender, EventArgs e) => SyncAnimation();
+        private void OnWindowActivityChanged(object? sender, EventArgs e)
+        {
+            // 高档在失焦时要降为慢速重绘（见 OnFrame），重绘节奏取决于焦点。
+            // SyncAnimation 只在 canRender 变化时才动驱动，焦点变化不会触发它，
+            // 所以这里显式刷新一次。
+            if (_running) InvalidateVisual();
+            SyncAnimation();
+        }
 
         private void OnWindowVisibilityChanged(object? sender, DependencyPropertyChangedEventArgs e) => SyncAnimation();
 
@@ -98,10 +142,38 @@ namespace SoulLink.Controls
             if (canRender)
             {
                 _last = _clock.Elapsed;
-                CompositionTarget.Rendering += OnFrame;
+                ApplyTierMode();
             }
-            else CompositionTarget.Rendering -= OnFrame;
+            else
+            {
+                CompositionTarget.Rendering -= OnFrame;
+                StopStaticTimer();
+            }
         }
+
+        /// <summary>
+        /// 按当前档位选择驱动方式：高 → CompositionTarget.Rendering（每帧推进）；
+        /// 中/低 → DispatcherTimer（慢速整窗重绘）。档位可能在运行中改变，所以要能来回切。
+        ///
+        /// ★ 2.17.46：原来中/低档也订阅 Rendering，每秒 60 次回调里 59 次是空转。
+        /// </summary>
+        private void ApplyTierMode()
+        {
+            int tier = SoulLink.App.Config?.Settings?.EffectTier ?? 1;
+            bool animated = Models.AppSettings.EffectTierLevel.Backdrop(tier);
+            if (animated)
+            {
+                StopStaticTimer();
+                if (!_renderingSubscribed) { CompositionTarget.Rendering += OnFrame; _renderingSubscribed = true; }
+            }
+            else
+            {
+                if (_renderingSubscribed) { CompositionTarget.Rendering -= OnFrame; _renderingSubscribed = false; }
+                StartStaticTimer(tier);
+            }
+        }
+
+        private bool _renderingSubscribed;
 
         /// <summary>
         /// 非「高」档位的整窗重绘间隔。
@@ -110,14 +182,32 @@ namespace SoulLink.Controls
         private static TimeSpan RepaintInterval(int tier)
             => TimeSpan.FromMilliseconds(tier >= Models.AppSettings.EffectTierLevel.Low ? 1000 : 500);
 
+        /// <summary>
+        /// 动画帧间隔。★ 2.17.46：原来写死 33ms（只服务「高」档），
+        /// 现在取自档位定义，中档 = 100ms（10fps），低档 = 0（不播放）。
+        /// </summary>
+        private static TimeSpan AnimationInterval(int tier)
+        {
+            int ms = Models.AppSettings.EffectTierLevel.BackdropFrameMs(tier);
+            return ms > 0 ? TimeSpan.FromMilliseconds(ms) : TimeSpan.FromMilliseconds(int.MaxValue);
+        }
+
         /// <summary>档位切换后由 ThemeManager 调用，重新判定是否播放。</summary>
-        public void RefreshAnimationState() => SyncAnimation();
+        public void RefreshAnimationState()
+        {
+            SyncAnimation();
+            // 档位从「高」切到「中/低」（或反向）时，驱动方式要跟着换。
+            if (_running) ApplyTierMode();
+            InvalidateVisual();
+        }
 
         private void Stop()
         {
             if (!_running) return;
             _running = false;
             CompositionTarget.Rendering -= OnFrame;
+            _renderingSubscribed = false;
+            StopStaticTimer();
         }
 
         protected override void OnRenderSizeChanged(SizeChangedInfo info)
@@ -135,20 +225,22 @@ namespace SoulLink.Controls
             bool animated = Models.AppSettings.EffectTierLevel.Backdrop(tier);
             bool active = _window == null || _window.IsActive;
 
-            // 「高」档且窗口在前台：33ms 推进动画时间，画面是动的。
+            // 有动画的档位（高 30fps / 中 10fps）且窗口在前台：按档位节奏推进时间。
             // 失焦时降为低频重绘（挂机场景不烧 CPU）。
             if (animated && active)
             {
-                if (now - _last < TimeSpan.FromMilliseconds(33)) return;
+                if (now - _last < AnimationInterval(tier)) return;
                 _time += Math.Min((now - _last).TotalSeconds, .08);
                 _last = now;
                 InvalidateVisual();
                 return;
             }
 
-            // 「中/低」档：不推进 _time（画面静止），只按慢速节奏整窗重绘一次，
-            // 把窗口外沿那圈没被覆盖的区域刷成内容色。
-            // 失焦时同样要刷 —— 那圈区域正是在失焦态最明显。
+            // ★ 只有「高档且窗口在前台」时 OnFrame 才会被订阅（见 ApplyTierMode），
+            //   所以走到这里说明是「高档但窗口刚失焦」的过渡帧。
+            //   ⚠ 不能在这里按 33ms 继续推进 —— 挂机时窗口正是失焦态，
+            //     那会让最该省电的场景变成每秒 30 次全窗重绘。
+            //   降为慢速重绘，只负责把窗口外沿那圈刷成内容色，等重新聚焦再恢复动画。
             if (now - _last < RepaintInterval(tier)) return;
             _last = now;
             InvalidateVisual();
@@ -158,7 +250,18 @@ namespace SoulLink.Controls
         {
             double w = ActualWidth, h = ActualHeight;
             if (w < 2 || h < 2) return;
-            _scene.Render(dc, w, h, _time, !Services.ThemeManager.IsDark);
+
+            // ★★ 2.17.46：静止档直接画预烘焙的整帧，跳过一切重建。★★
+            //   实测依据（交接文档第 7 节）：用户 EffectTier=2（低档），
+            //   动态背景早已关闭，CPU 却仍有 45–50%，最小化后掉到 11.7%
+            //   —— 全是 WPF 渲染，且每次重绘都在把同一幅静止画面从零重建。
+            int tier = SoulLink.App.Config?.Settings?.EffectTier ?? 1;
+            bool light = !Services.ThemeManager.IsDark;
+            if (!Models.AppSettings.EffectTierLevel.Backdrop(tier))
+            {
+                if (_scene.TryDrawStatic(dc, w, h, light)) return;
+            }
+            _scene.Render(dc, w, h, _time, light);
         }
     }
 }

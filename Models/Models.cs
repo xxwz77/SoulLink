@@ -444,8 +444,11 @@ namespace SoulLink.Models
         ///   · 呼吸灯（GlowDot）单独约占 27 个单核百分点
         ///     —— 每 60ms InvalidateVisual，且旧实现每次都新建渐变画刷。
         ///
-        ///   三档含义见 <see cref="EffectTierLevel"/>。
-        ///   默认「中」：保留呼吸灯、关掉动态背景，视觉损失小、收益大。
+        /// ★ 2.17.46 复核：同一场景重新分帧计时，旧渲染 1.08 ms/帧 → 新 0.29 ms/帧
+        ///   （丝带烘焙、画刷/几何全缓存、静止档整帧烘焙）。
+        ///   因此三档重新划分：高 30fps / 中 10fps / 低静止。
+        ///
+        ///   默认「中」：10fps 背景 + 呼吸灯，约 3 个单核百分点。
         ///   另外动画在**窗口失焦时一律暂停**，所以挂机场景即使选「高」也会自动降下来。
         /// </summary>
         public int EffectTier { get; set; } = 1;
@@ -460,13 +463,30 @@ namespace SoulLink.Models
         {
             /// <summary>高：全部保留。</summary>
             public const int High = 0;
-            /// <summary>中：关动态背景，保留呼吸灯（默认，推荐）。</summary>
+            /// <summary>中：动态背景降到 10fps，保留呼吸灯（默认，推荐）。</summary>
             public const int Medium = 1;
             /// <summary>低：全部静止。</summary>
             public const int Low = 2;
 
-            /// <summary>是否播放动态背景。</summary>
-            public static bool Backdrop(int tier) => tier <= High;
+            /// <summary>
+            /// 动态背景的帧间隔（毫秒）。0 = 不播放（静止画面）。
+            ///
+            /// ★ 2.17.46：原来「中」档直接关掉背景动画（Backdrop(tier) => tier &lt;= High），
+            ///   等于中档和低档只差一个呼吸灯，档位断层。用户反馈「中画质应该还会动」。
+            ///
+            ///   之所以当初只能做成"关"，是因为旧渲染每帧 1.0 ms（2560×1368 实测），
+            ///   30fps 就要吃掉 60% 单核。2.17.46 把每帧压到 0.29 ms（丝带/画刷/几何
+            ///   全部缓存），10fps 只要 ~3% 单核 —— 中档终于放得下动画了。
+            /// </summary>
+            public static int BackdropFrameMs(int tier) => tier switch
+            {
+                High => 33,     // 30fps
+                Medium => 100,  // 10fps：还在动，但成本是三十分之一的量级
+                _ => 0,         // 低档：完全静止
+            };
+
+            /// <summary>是否播放动态背景（中/高都播，低档静止）。</summary>
+            public static bool Backdrop(int tier) => BackdropFrameMs(tier) > 0;
 
             /// <summary>呼吸灯是否脉冲（低档时保持静态点亮）。</summary>
             public static bool GlowPulse(int tier) => tier <= Medium;
