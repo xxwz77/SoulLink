@@ -102,10 +102,39 @@ namespace SoulLink.Relay
             public IntPtr dwExtraInfo;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MOUSEINPUT
+        {
+            public int dx;
+            public int dy;
+            public uint mouseData;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct HARDWAREINPUT
+        {
+            public uint uMsg;
+            public ushort wParamL;
+            public ushort wParamH;
+        }
+
+        // ★★ 联合体必须含 MOUSEINPUT —— 它是三个成员里最大的。
+        //
+        //   Windows 的 sizeof(INPUT) 是 40（x64），它按联合体里**最大**的成员算。
+        //   原来这里只有 KEYBDINPUT（24），Marshal.SizeOf 得出 32，
+        //   于是 SendInput 收到 cbSize=32 ≠ 40，直接返回 0 并置
+        //   ERROR_INVALID_PARAMETER(87)，**一个键都不会被注入**。
+        //   更糟的是调用方从不检查返回值 —— 代理照样回「按键完成」，
+        //   用户看到"成功"而目标窗口什么都没收到（2026-11-20 实测坐实）。
         [StructLayout(LayoutKind.Explicit)]
         private struct INPUTUNION
         {
+            [FieldOffset(0)] public MOUSEINPUT mi;
             [FieldOffset(0)] public KEYBDINPUT ki;
+            [FieldOffset(0)] public HARDWAREINPUT hi;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -122,30 +151,34 @@ namespace SoulLink.Relay
         private const uint KEYEVENTF_KEYUP = 0x0002;
 
         /// <summary>发送 "F12" / "Ctrl+A" / "Alt+F4" 这类按键组合。</summary>
-        private static bool SendKeyCombo(string spec)
+        private static bool SendKeyCombo(string spec, out string error)
         {
+            error = "";
             try
             {
                 var parts = spec.Split('+', StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 0) return false;
+                if (parts.Length == 0) { error = "没有按键"; return false; }
 
                 var vks = new List<ushort>();
                 foreach (var raw in parts)
                 {
                     ushort vk = ParseVk(raw.Trim());
-                    if (vk == 0) return false;
+                    if (vk == 0) { error = "无法解析按键名：" + raw.Trim(); return false; }
                     vks.Add(vk);
                 }
 
-                foreach (var vk in vks) SendVk(vk, false);
+                foreach (var vk in vks)
+                    if (!SendVk(vk, false)) { error = "按下 " + spec + " 失败（SendInput 被系统拒绝）"; return false; }
                 Thread.Sleep(20);
-                for (int i = vks.Count - 1; i >= 0; i--) SendVk(vks[i], true);
+                for (int i = vks.Count - 1; i >= 0; i--)
+                    if (!SendVk(vks[i], true)) { error = "抬起 " + spec + " 失败（SendInput 被系统拒绝）"; return false; }
                 return true;
             }
-            catch { return false; }
+            catch (Exception ex) { error = ex.Message; return false; }
         }
 
-        private static void SendVk(ushort vk, bool up)
+        /// <summary>发送一个虚拟键；返回是否真的被系统接受。</summary>
+        private static bool SendVk(ushort vk, bool up)
         {
             var input = new KEYINPUT
             {
@@ -160,7 +193,14 @@ namespace SoulLink.Relay
                     }
                 }
             };
-            SendInput(1, new[] { input }, Marshal.SizeOf<KEYINPUT>());
+            // ★ 必须检查返回值：0 表示一个事件都没注入（cbSize 不符、UIPI 拦截、
+            //   桌面不可交互等），而不是"发送成功"。
+            uint sent = SendInput(1, new[] { input }, Marshal.SizeOf<KEYINPUT>());
+            if (sent == 1) return true;
+            int err = Marshal.GetLastWin32Error();
+            Log("SendInput 失败 vk=0x" + vk.ToString("X2") + " up=" + up
+                + " cbSize=" + Marshal.SizeOf<KEYINPUT>() + " err=" + err);
+            return false;
         }
 
         /// <summary>按键名 → 虚拟键码。</summary>
@@ -624,7 +664,7 @@ namespace SoulLink.Relay
                         int times = Math.Max(1, Math.Min(req.Count <= 0 ? 1 : req.Count, 10));
                         for (int i = 0; i < times; i++)
                         {
-                            if (!SendKeyCombo(spec)) return Fail("无法解析按键：" + spec);
+                            if (!SendKeyCombo(spec, out string keyError)) return Fail(keyError);
                             if (i + 1 < times) Thread.Sleep(80);
                         }
                         return new Response { Ok = true, Message = "按键 " + spec + " x" + times };

@@ -1,6 +1,19 @@
 # SoulLink 版本管理与回退
 
-> **2026-11-20 16:10 新版本 2.17.20（待定版）：修「手动运行只能跑一次 / 模拟按键发不出去」。**
+> **2026-11-20 16:25 新版本 2.17.21（待定版）：修「模拟按键根本没发出去」（SendInput 结构体尺寸错误）。**
+> 交接文档：`docs/HANDOFF-2.17.21-20261120.md`
+> 当前 `dist/SoulLink.exe` = **2.17.21.0** · 67,476,732 字节
+> · SHA256 `672A95264DEA67DC161FEE99E238366205E271FB635EC7FA04162CE668788BAB`
+> 根因：`RelayAgent` 的 `INPUT` 联合体只有 `KEYBDINPUT`（24），算出 cbSize=32，
+> 而 Windows 的 `sizeof(INPUT)`=40（联合体按最大成员 `MOUSEINPUT` 算）→
+> `SendInput` 返回 0 / ERROR_INVALID_PARAMETER(87)，**一个键都没注入**；
+> 且调用方丢弃返回值，代理照样回「按键完成」。
+> 修法：补齐联合体成员 + 检查 SendInput 返回值 + 失败原因冒到弹窗。
+> **★ 注意：注入代理是独立安装的 `C:\Program Files\SoulLinkDev\SoulLink.Agent.exe`，
+> 只换 `dist\SoulLink.exe` 不会更新它，必须同步更新并重启 Broker 服务。**
+> 上一版 2.17.20 已内置手动锁存修复，见 `docs/HANDOFF-2.17.20-20261120.md`。
+
+> **2026-11-20 16:10 版本 2.17.20（待定版）：修「手动运行只能跑一次」。**
 > 交接文档：`docs/HANDOFF-2.17.20-20261120.md`
 > 当前 `dist/SoulLink.exe` = **2.17.20.0** · 67,476,450 字节
 > · SHA256 `B8FF54A1D1BD8E3AACF38D2A99974026502F5799005A81FA64ACB9B0DF0230A0`
