@@ -12,6 +12,14 @@ namespace SoulLink.Services
     public static class FlowRunner
     {
         public static event Action<AutomationFlow>? Scanned;
+
+        /// <summary>
+        /// 正在等待注入通道（动作标题, 提示文字）。提示文字为空 = 等待结束。
+        ///
+        /// ★ 用户要求"标黄灯，保持提示"：等待期间灯要显示为黄（等待中），
+        ///   而不是红色失败。界面订阅这个事件更新流程的等待态。
+        /// </summary>
+        public static event Action<string, string>? ReportChannelWait;
         public static DateTime? LastScanAt { get; private set; }
         private static readonly HashSet<string> Running = new(StringComparer.OrdinalIgnoreCase);
         private static readonly object Sync = new();
@@ -211,7 +219,7 @@ namespace SoulLink.Services
         {
             string account = TargetAccountId(n, flow.AccountId, cfg);
             int targetSid = TargetSessionId(n, flow.AccountId, sid, cfg);
-            var (ok, message) = await RunActionAsync(n, account, targetSid, cfg).ConfigureAwait(false);
+            var (ok, message) = await RunActionAsync(n, account, targetSid, cfg, flow).ConfigureAwait(false);
             return new FlowActionResult { Ok = ok, Message = message };
         }
 
@@ -225,7 +233,7 @@ namespace SoulLink.Services
 
         // ── 执行器 ──────────────────────────────────────────────────
 
-        private static async Task<(bool ok, string msg)> RunActionAsync(FlowNode a, string accountId, int sessionId, AppConfig cfg)
+        private static async Task<(bool ok, string msg)> RunActionAsync(FlowNode a, string accountId, int sessionId, AppConfig cfg, AutomationFlow? flow = null)
         {
             try
             {
@@ -284,7 +292,7 @@ namespace SoulLink.Services
                     case FlowNodeType.ActMouseClick:
                     case FlowNodeType.ActMouseMove:
                     case FlowNodeType.ActMouseWheel:
-                    case FlowNodeType.ActKeyPress: return await RunInputAsync(a, sessionId).ConfigureAwait(false);
+                    case FlowNodeType.ActKeyPress: return await RunInputAsync(a, sessionId, flow).ConfigureAwait(false);
                     case FlowNodeType.ActJoinRoom:
                     {
                         string code = a.Get("code").Trim(), userName = UserOf(accountId, cfg);
@@ -348,11 +356,61 @@ namespace SoulLink.Services
             return copy;
         }
 
-        private static async Task<(bool ok, string msg)> RunInputAsync(FlowNode a, int sid)
+        /// <summary>
+        /// 等待注入通道就绪的最长时间（毫秒）。
+        ///
+        /// ★ 用户要求："执行要加个判断，需要等待通道建立，标黄灯，保持提示，
+        ///   等到通道真正建立。"
+        ///   RDP 刚连上时注入代理还在投送中（投送 + 连管道通常 1~5 秒，
+        ///   Broker 模式还要等服务起进程），这段时间通道 `IsConnected=false`。
+        ///   原来直接 return(false) → 动作判失败 → 灯变红 → 用户以为坏了。
+        ///   现在改成"等待"：在窗口内轮询，通道一就绪立刻继续执行。
+        /// </summary>
+        internal const int ChannelWaitMs = 20000;
+
+        /// <summary>
+        /// 在 ChannelWaitMs 内等目标会话的注入通道就绪。
+        /// 返回 null = 就绪；非 null = 等待超时的原因。
+        /// </summary>
+        private static async Task<string?> WaitForChannelAsync(int sid, string actionTitle, AutomationFlow? flow = null)
+        {
+            var relay = RelayClient.FindBySession(sid);
+            if (relay != null && relay.IsConnected) return null;
+
+            if (flow != null) flow.WaitingChannel = "等待注入通道建立（会话 " + sid + "）…";
+            FlowRunner.ReportChannelWait?.Invoke(actionTitle, "等待注入通道建立…");
+            LogBus.Info("等待注入通道", "会话 " + sid + " · 动作「" + actionTitle + "」排队等待通道就绪");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < ChannelWaitMs)
+            {
+                if (ScheduleRunnerHost.IsShuttingDown) return "应用正在退出，已取消等待通道";
+                await Task.Delay(250).ConfigureAwait(false);
+                relay = RelayClient.FindBySession(sid);
+                if (relay != null && relay.IsConnected)
+                {
+                    if (flow != null) flow.WaitingChannel = "";
+                    FlowRunner.ReportChannelWait?.Invoke(actionTitle, "");
+                    LogBus.Info("通道已就绪", "会话 " + sid + " · 等待 " + sw.ElapsedMilliseconds + "ms 后继续执行「" + actionTitle + "」");
+                    return null;
+                }
+            }
+
+            if (flow != null) flow.WaitingChannel = "";
+            FlowRunner.ReportChannelWait?.Invoke(actionTitle, "");
+            return "等待注入通道超时（" + (ChannelWaitMs / 1000) + " 秒）：该会话仍未建立通道，请检查投送状态后重试";
+        }
+
+        private static async Task<(bool ok, string msg)> RunInputAsync(FlowNode a, int sid, AutomationFlow? flow = null)
         {
             try
             {
                 if (sid <= 0) return (false, "目标账号没有会话");
+
+                // ★ 先等通道就绪（黄灯 + 提示），而不是立刻判失败。
+                string? waitError = await WaitForChannelAsync(sid, a.Title, flow).ConfigureAwait(false);
+                if (waitError != null) return (false, waitError);
+
                 var relay = RelayClient.FindBySession(sid);
                 if (relay == null || !relay.IsConnected) return (false, "该会话没有已连接的注入通道（请先投送）");
                 switch (a.Type)

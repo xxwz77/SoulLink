@@ -36,6 +36,15 @@ namespace SoulLink.Models
         /// <summary>最近一次动作执行时刻（与 LastRunAt 区分：后者只在整轮收尾时更新）。</summary>
         public DateTime? LastActionResultAt { get; set; }
 
+        /// <summary>
+        /// 正在等待注入通道时的提示（空 = 不在等待）。
+        ///
+        /// ★ 2.17.30：用户要求"执行要加个判断，需要等待通道建立，标黄灯，保持提示"。
+        ///   等待期间灯显示黄色、摘要显示这句话；通道就绪后清空并继续执行。
+        ///   [JsonIgnore]：这是瞬时运行态，不该写进配置。
+        /// </summary>
+        [JsonIgnore] public string WaitingChannel { get; set; } = "";
+
         /// <summary>2 = 单出口 PLC 扫描模型；旧配置在加载/打开时迁移。</summary>
         public int EngineVersion { get; set; } = 1;
         /// <summary>本轮运行状态格式；1=按业务日持久化，0=需要保守迁移。</summary>

@@ -1809,8 +1809,13 @@ namespace SoulLink.Views
             bool resultFresh = f.LastActionResultAt.HasValue
                 && (DateTime.Now - f.LastActionResultAt.Value).TotalMilliseconds <= LastResultHoldMs;
             bool doneToday = f.IsDailyComplete;
+            // ★ 2.17.30：正在等注入通道 → 黄灯（等待中），并且保持提示不消失。
+            //   用户要求："执行要加个判断，需要等待通道建立，标黄灯，保持提示，
+            //   等到通道真正建立。" 等待期间绝不能显示成红色失败。
+            bool waitingChannel = !string.IsNullOrEmpty(f.WaitingChannel);
             Color dotColor =
                 paused ? Color.FromRgb(0xFF, 0xC4, 0x6B)                            // 黄 = 暂停 / 未启用
+                : waitingChannel ? Color.FromRgb(0xFF, 0xC4, 0x6B)                    // 黄 = 等待通道建立
                 : doneToday ? Color.FromRgb(0xFF, 0x9F, 0x43)                        // 橙 = 今日完成（END 已锁存）
                 : (resultFresh && f.LastRunOk == false) ? Color.FromRgb(0xFF, 0x6B, 0x8B)  // 红 = 刚失败
                 : (resultFresh && f.LastRunOk == true) ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 绿 = 刚成功
@@ -2082,6 +2087,10 @@ namespace SoulLink.Views
         /// </summary>
         private static string DescribeLastRun(AutomationFlow f)
         {
+            // ★ 2.17.30：等待通道的提示优先级最高 —— 用户要求"保持提示"，
+            //   否则这条信息会被"执行成功/等待下一次"盖掉。
+            if (!string.IsNullOrEmpty(f.WaitingChannel)) return f.WaitingChannel;
+
             if (f.Paused) return "暂停中" + (string.IsNullOrWhiteSpace(f.PauseReason) ? "" : "（" + f.PauseReason + "）");
             if (!f.Enabled) return "暂停：流程未启用";
 
