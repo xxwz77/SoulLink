@@ -170,8 +170,16 @@ namespace SoulLink.Services
                 var list = sessions;
                 if (list == null)
                 {
-                    try { list = SessionService.QueryAsync().GetAwaiter().GetResult(); }
-                    catch { list = null; }
+                    // ★ 这里曾经同步等 qwinsta 子进程。调用方 BgiUpdatePage 在 UI 线程上
+                    //   直接调 ResolveMany，打开更新页会卡一下。
+                    //   状态中心每个周期都在后台刷新同一份会话列表，先读快照；
+                    //   只有快照还没生成（程序刚启动）才回退到同步查询。
+                    try { list = SoulLink.Services.AccountStateCenter.Sessions; } catch { }
+                    if (list == null || list.Count == 0)
+                    {
+                        try { list = SessionService.QueryAsync().GetAwaiter().GetResult(); }
+                        catch { list = null; }
+                    }
                 }
 
                 SessionInfo? sess = null;
@@ -279,8 +287,16 @@ namespace SoulLink.Services
                 var list = sessions;
                 if (list == null)
                 {
-                    try { list = SessionService.QueryAsync().GetAwaiter().GetResult(); }
-                    catch { list = null; }
+                    // ★ 这里曾经同步等 qwinsta 子进程。调用方 BgiUpdatePage 在 UI 线程上
+                    //   直接调 ResolveMany，打开更新页会卡一下。
+                    //   状态中心每个周期都在后台刷新同一份会话列表，先读快照；
+                    //   只有快照还没生成（程序刚启动）才回退到同步查询。
+                    try { list = SoulLink.Services.AccountStateCenter.Sessions; } catch { }
+                    if (list == null || list.Count == 0)
+                    {
+                        try { list = SessionService.QueryAsync().GetAwaiter().GetResult(); }
+                        catch { list = null; }
+                    }
                 }
                 foreach (var u in userNames ?? Enumerable.Empty<string>())
                 {

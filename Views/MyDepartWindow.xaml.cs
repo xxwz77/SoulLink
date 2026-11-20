@@ -55,7 +55,10 @@ namespace SoulLink.Views
 
             try
             {
-                var sessions = SessionService.QueryAsync().GetAwaiter().GetResult();
+                // ★ 同 JoinRoomWindow：优先用状态中心的后台快照，避免在窗口构造里
+                //   同步起 qwinsta 子进程卡住 UI。快照为空（中心还没跑过一轮）才回退。
+                var sessions = SoulLink.Services.AccountStateCenter.Sessions;
+                if (sessions.Count == 0) sessions = SessionService.QueryAsync().GetAwaiter().GetResult();
                 foreach (var s in sessions)
                     if (!string.IsNullOrWhiteSpace(s.UserName))
                         names.Add(s.UserName);

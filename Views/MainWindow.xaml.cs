@@ -36,6 +36,10 @@ namespace SoulLink.Views
         private SoulLink.Services.OwnedOverlayWindow? _navOverlayWindow;
         private bool _navDockedInOverlay;
         private DispatcherTimer? _navAnimationSync;
+
+        /// <summary>浮层上一次同步过的尺寸。用于判定"动画已停"，停掉 16ms 定时器。</summary>
+        private double _navLastSyncedWidth = -1;
+        private double _navLastSyncedHeight = -1;
         private DateTime _navRailExpandStartedAt;
         private bool _navOverlayHidePending;
         private int _navTransitionVersion;
@@ -767,16 +771,29 @@ namespace SoulLink.Views
                     _navOverlayWindow?.UpdateOverlaySize(NavRail.ActualWidth, SideNavHost.ActualHeight);
                     _navOverlayWindow?.BringToFront();
                     if (_navRailExpandStartedAt == DateTime.MinValue) _navRailExpandStartedAt = DateTime.UtcNow;
-                    if ((DateTime.UtcNow - _navRailExpandStartedAt).TotalMilliseconds > 450)
+
+                    // ★ 稳定即停表：动画跑完、浮层尺寸不再变化之后继续按 16ms 唤醒
+                    //   只是在空转（每帧 EnsureNavOverlayWindow + BringToFront），
+                    //   而这个 UI 线程同时还要喂 RDP 控制台的焦点/热键路径。
+                    //   停表后只要尺寸真变了，SizeChanged / 失活 / 重排会重新起来。
+                    double w = NavRail.ActualWidth;
+                    double h = SideNavHost.ActualHeight;
+                    bool sized = Math.Abs(w - _navLastSyncedWidth) < 0.5 && Math.Abs(h - _navLastSyncedHeight) < 0.5;
+                    bool animationSettled = (DateTime.UtcNow - _navRailExpandStartedAt).TotalMilliseconds > 450;
+                    if (animationSettled && sized)
                     {
                         _navAnimationSync?.Stop();
                         _navRailExpandStartedAt = DateTime.MinValue;
                         // 清除动画的 hold 值，避免下一轮展开继承上一次中间帧宽度。
-                        double finalWidth = NavRail.ActualWidth;
                         NavRail.BeginAnimation(FrameworkElement.WidthProperty, null);
-                        NavRail.Width = finalWidth;
-                        _navOverlayWindow?.UpdateOverlaySize(finalWidth, SideNavHost.ActualHeight);
+                        NavRail.Width = w;
+                        _navOverlayWindow?.UpdateOverlaySize(w, h);
+                        _navLastSyncedWidth = w;
+                        _navLastSyncedHeight = h;
+                        return;
                     }
+                    _navLastSyncedWidth = w;
+                    _navLastSyncedHeight = h;
                 };
             }
             _navOverlayHidePending = false;
@@ -799,7 +816,22 @@ namespace SoulLink.Views
         internal void BringNavigationToFront()
         {
             if (!_navCollapsed && _navDockedInOverlay)
+            {
                 _navOverlayWindow?.BringToFront();
+                // ★ 定时器现在会在稳定后自停，重排时必须显式再拉起来，
+                //   否则浮层尺寸会停在旧值上（视觉上是"侧栏压住内容"）。
+                RestartNavOverlaySync();
+            }
+        }
+
+        /// <summary>按需重新启动浮层同步（已停才启动；正在跑就让它自己跑完）。</summary>
+        private void RestartNavOverlaySync()
+        {
+            if (_navAnimationSync == null) return;
+            if (_navCollapsed) return;
+            if (_navAnimationSync.IsEnabled) return;
+            _navRailExpandStartedAt = DateTime.MinValue;
+            _navAnimationSync.Start();
         }
 
         private void SetNavCollapsed(bool collapsed, string reason)

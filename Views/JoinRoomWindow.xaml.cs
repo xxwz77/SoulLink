@@ -86,8 +86,12 @@ namespace SoulLink.Views
 
             try
             {
-                // 再加系统里实际存在的会话用户
-                var sessions = SessionService.QueryAsync().GetAwaiter().GetResult();
+                // 再加系统里实际存在的会话用户。
+                // ★ 原先在这里 QueryAsync().GetAwaiter().GetResult()：那要起 qwinsta
+                //   子进程（~30ms，异常路径更久），而这行在窗口构造里 —— 打开窗口
+                //   瞬间卡一下。状态中心每个周期都在后台查同一份数据，直接读快照即可。
+                var sessions = SoulLink.Services.AccountStateCenter.Sessions;
+                if (sessions.Count == 0) sessions = SessionService.QueryAsync().GetAwaiter().GetResult();
                 foreach (var s in sessions)
                     if (!string.IsNullOrWhiteSpace(s.UserName))
                         names.Add(s.UserName);
