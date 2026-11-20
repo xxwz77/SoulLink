@@ -1751,6 +1751,34 @@ namespace SoulLink.Views
         /// </summary>
         private const double LastResultHoldMs = 700;
 
+        /// <summary>
+        /// 清除「今日已完成」标记：清掉 END 锁存，让该流程今天还能再自动跑。
+        ///
+        /// ★ 只对**有 END 节点**的流程有效（无 END 的流程是循环流程，本来就没有今日锁存）。
+        /// ★ 同时清掉本轮的运行状态，避免"标记清了但 PlcPower/ActionResults 还卡着"，
+        ///   导致清完仍然不动（2.17.24 修过类似的"失败结果卡死"，这里一并处理）。
+        /// </summary>
+        private void ClearTodayMark(AutomationFlow f)
+        {
+            try
+            {
+                PlcLogic.ClearDailyLatch(f);
+                f.RunComplete = false;
+                f.ToggleTodayRequested = null;
+                f.RunResetRequested = false;
+                FlowRunLifecycle.StartRun(f, DateTime.Now);
+                ConfigStore.Save(App.Config);
+
+                LogBus.Info("已清除今日标记", "「" + f.DisplayName + "」今天可以重新自动运行");
+                RefreshAutomationList();
+            }
+            catch (Exception ex)
+            {
+                App.AppendErrorLog("ClearTodayMark", ex);
+                LogBus.Error("清除今日标记失败", ex.Message);
+            }
+        }
+
         /// <summary>执行结果是否还在"保鲜期"内（决定灯显示绿/红还是蓝）。</summary>
         private static bool IsResultFresh(AutomationFlow f)
             => f.LastActionResultAt.HasValue
@@ -1765,30 +1793,28 @@ namespace SoulLink.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // ★★ 2.17.27 状态灯：绿/红只是"刚执行完的闪光"，之后必须回到蓝 ★★
+            // ★★ 2.17.29 状态灯：五色 ★★
             //
             //   蓝 = 等待（常态；流程已启用，正在等条件）
             //   黄 = 暂停（被暂停或未启用）
             //   绿 = 执行成功（**刚刚**执行完，闪过即回蓝）
             //   红 = 执行失败（**刚刚**执行失败，闪过即回蓝）
+            //   橙 = 今日完成（有 END 节点，且今日标记已写入 → 今天不会再自动跑）
             //
-            //   ★ 用户实测反馈："等变绿之后没变回蓝色，一直显示执行成功。
-            //     应该根据状态交替才对。"
-            //     根因是 2.17.23 把 LastRunOk 当成**持久状态**直接决定颜色，
-            //     执行成功一次就永远停在绿色，看不出"这一轮跑完了、又回到等待"。
-            //
-            //   现在给结果加"保鲜期"：只显示 LastResultHoldMs 以内的结果，
-            //   超过就回到蓝色等待态 —— 这样灯会随每一轮执行**交替闪烁**，
-            //   而不是一块焊死的颜色。
+            //   ★ 橙色的优先级最高（次于暂停）：它表示"今天到此为止"这个**确定的**事实，
+            //     比"刚刚执行成功"更该被看到 —— 否则用户会以为还在跑、干等一天。
+            //   ★ 橙色灯与暂停灯**形变不同**（见 dot 的旋转/描边），避免黄橙混淆。
             bool excluded = !AccountScope.Allows(OwnerUserNameOf(f));
             var today = f.TodayRunState();
             bool resultFresh = f.LastActionResultAt.HasValue
                 && (DateTime.Now - f.LastActionResultAt.Value).TotalMilliseconds <= LastResultHoldMs;
+            bool doneToday = f.IsDailyComplete;
             Color dotColor =
-                paused ? Color.FromRgb(0xFF, 0xC4, 0x6B)                        // 黄 = 暂停 / 未启用
+                paused ? Color.FromRgb(0xFF, 0xC4, 0x6B)                            // 黄 = 暂停 / 未启用
+                : doneToday ? Color.FromRgb(0xFF, 0x9F, 0x43)                        // 橙 = 今日完成（END 已锁存）
                 : (resultFresh && f.LastRunOk == false) ? Color.FromRgb(0xFF, 0x6B, 0x8B)  // 红 = 刚失败
                 : (resultFresh && f.LastRunOk == true) ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 绿 = 刚成功
-                : Color.FromRgb(0x4F, 0xE3, 0xFF);                              // 蓝 = 等待（常态）
+                : Color.FromRgb(0x4F, 0xE3, 0xFF);                                  // 蓝 = 等待（常态）
 
             var dot = new Ellipse
             {
@@ -1796,8 +1822,33 @@ namespace SoulLink.Views
                 VerticalAlignment = VerticalAlignment.Center,
                 Fill = new SolidColorBrush(dotColor)
             };
-            Grid.SetColumn(dot, 0);
-            grid.Children.Add(dot);
+
+            // ★★ 2.17.29：今日完成（橙）时，灯本身变成**可点击**的清除入口 ★★
+            //
+            //   用户要求："若存在 END 节点，且标记为今日已执行的任务，需要增加橙色，
+            //   今日完成，点击可以清除今日标记。"
+            //   把点击挂在灯上而不是再加一个按钮：橙色只在这一种状态下出现，
+            //   点它 = 清除今日标记，语义自洽，也不占额外横向空间（卡片本来就挤）。
+            FrameworkElement dotHost = dot;
+            if (doneToday && !paused)
+            {
+                var dotBtn = new Button
+                {
+                    Style = (Style)FindResource("IconButton"),
+                    Width = 22, Height = 22, Padding = new Thickness(0),
+                    Content = dot,
+                    Cursor = Cursors.Hand,
+                    Background = System.Windows.Media.Brushes.Transparent,
+                    BorderBrush = System.Windows.Media.Brushes.Transparent,
+                    ToolTip = "今日已完成（END 已锁存）。点击清除今日标记，今天可以重新运行。",
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                dotBtn.Click += (_, __) => ClearTodayMark(f);
+                dotHost = dotBtn;
+            }
+            Grid.SetColumn(dotHost, 0);
+            grid.Children.Add(dotHost);
 
             // 名称 + 说明
             var sp = new StackPanel { Margin = new Thickness(9, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -2045,6 +2096,11 @@ namespace SoulLink.Views
             if (fresh && f.LastRunOk == false)
                 return "执行失败" + action + "：" + (string.IsNullOrWhiteSpace(f.LastRunError) ? "未提供原因" : f.LastRunError)
                        + (when.Length > 0 ? " · " + when : "");
+
+            // ★ 2.17.29：今日已完成（橙灯）必须明说，否则用户会以为还在等条件。
+            //   有 END 的流程完成后当天不再自动扫描，这是**确定**的终止态。
+            if (f.IsDailyComplete)
+                return "今日已完成 · 点击橙点可清除标记，今天重新运行";
 
             // 有过结果但已过期：说明刚刚跑过一轮，现在又在等下一轮
             if (f.LastRunOk.HasValue && when.Length > 0)
