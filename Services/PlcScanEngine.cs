@@ -203,7 +203,25 @@ namespace SoulLink.Services
             bool complete = selectedTerminals.Count > 0
                 && FlowRunLifecycle.AllActivePathsComplete(flow, flow.ActionResults,
                     new HashSet<string>(selectedTerminals.Select(n => n!.Id), StringComparer.OrdinalIgnoreCase), time);
-            if (complete && !failed)
+            // ★★ 2.17.32：动作**失败**时绝不写「今日已完成」标记 ★★
+            //
+            //   实测事故（2026-11-20 17:07，用户新建的「今日执行一次」流程）：
+            //   流程 = 间隔5秒 → 模拟按键 → END。动作因为"目标账号没有会话"失败了，
+            //   但 complete && !failed 竟然为 true，于是：
+            //     · 写入 DailyLatchKey=2026-11-20（今日标记）
+            //     · 灯变成"今日完成"，从此当天不再重试
+            //     · 用户看到"失败 1 次"却再也不会自动重试
+            //
+            //   根因：AllActivePathsComplete 对动作节点只检查
+            //   results.TryGetValue(id, out r) && r.Ok，而失败的结果同样在
+            //   ActionResults 里、selectedTerminals 又只含 END 节点，
+            //   于是"有结果就算走完"→ complete=true；而 failed 的判定依赖
+            //   flow.WaitingActions，那一轮动作已不在 WaitingActions 中，failed 也为 false。
+            //   两个条件同时失守。
+            //
+            //   现在直接以"实际执行结果"为准：本轮只要有动作失败，就不封盘。
+            bool anyActionFailed = flow.ActionResults.Any(kv => !kv.Value.Ok);
+            if (complete && !failed && !anyActionFailed)
             {
                 if (checkpoint != null) await checkpoint(new FlowActionResult { Ok = true, Message = "准备收尾" }).ConfigureAwait(false);
                 // 用户刚恢复今天运行时，本次执行不再立刻重新锁死；下次条件满足才结束今天。

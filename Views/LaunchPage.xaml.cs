@@ -1834,24 +1834,11 @@ namespace SoulLink.Views
             //   今日完成，点击可以清除今日标记。"
             //   把点击挂在灯上而不是再加一个按钮：橙色只在这一种状态下出现，
             //   点它 = 清除今日标记，语义自洽，也不占额外横向空间（卡片本来就挤）。
+            // ★★ 2.17.32：2.17.29 把清除入口做成了"点那个 8px 的橙点"，
+            //   实测用户完全没发现它可以点（截图里橙点只是个小圆点）。
+            //   现在改成名称行后面一个**显式的胶囊按钮**「今日完成」，
+            //   点它清除今日标记 —— 与"自动运行/运行一次"同级可见。
             FrameworkElement dotHost = dot;
-            if (doneToday && !paused)
-            {
-                var dotBtn = new Button
-                {
-                    Style = (Style)FindResource("IconButton"),
-                    Width = 22, Height = 22, Padding = new Thickness(0),
-                    Content = dot,
-                    Cursor = Cursors.Hand,
-                    Background = System.Windows.Media.Brushes.Transparent,
-                    BorderBrush = System.Windows.Media.Brushes.Transparent,
-                    ToolTip = "今日已完成（END 已锁存）。点击清除今日标记，今天可以重新运行。",
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                dotBtn.Click += (_, __) => ClearTodayMark(f);
-                dotHost = dotBtn;
-            }
             Grid.SetColumn(dotHost, 0);
             grid.Children.Add(dotHost);
 
@@ -1906,6 +1893,42 @@ namespace SoulLink.Views
 
             // 按钮组
             var btns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+
+            // ★★ 2.17.32：「今日完成」显式按钮（仅 END 流程且今日已锁存时出现）★★
+            //
+            //   用户原话（2.17.29 那版）："我添加了一个今日执行一次的，没出现今日完成按钮"
+            //   —— 因为那版把清除入口藏在 8px 的橙点里，既没有文字也没有按钮外观。
+            //   现在做成胶囊按钮：橙色描边 + 文字「今日完成」，点一下清除标记。
+            if (doneToday)
+            {
+                var btnToday = new Button
+                {
+                    Style = (Style)FindResource("PillButton"),
+                    Height = 26, MinWidth = 86, Padding = new Thickness(9, 0, 9, 0),
+                    Margin = new Thickness(0, 0, 6, 0),
+                    Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0x9F, 0x43)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(0xC0, 0xFF, 0x9F, 0x43)),
+                    ToolTip = "今日已完成（END 已锁存），今天不会再自动执行。点击清除今日标记，今天可以重新运行。",
+                    Tag = f
+                };
+                var todaySp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                todaySp.Children.Add(new TextBlock
+                {
+                    Text = "\uE73E",   // CheckMark
+                    FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xC1, 0x7A)),
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                todaySp.Children.Add(new TextBlock
+                {
+                    Text = "今日完成", FontSize = 10.5, Margin = new Thickness(5, 0, 0, 0),
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xC1, 0x7A)),
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                btnToday.Content = todaySp;
+                btnToday.Click += (_, __) => ClearTodayMark(f);
+                btns.Children.Add(btnToday);
+            }
 
             // ★★ 2.17.25：「自动运行」开关与「手动触发」按钮必须一眼分开 ★★
             //
