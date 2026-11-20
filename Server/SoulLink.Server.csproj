@@ -9,7 +9,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
 
     <!-- 版本号跟随客户端 -->
-    <Version>1.11.1</Version>
+    <Version>1.12.0</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 联机大厅服务端</AssemblyTitle>
