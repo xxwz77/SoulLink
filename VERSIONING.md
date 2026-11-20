@@ -1,5 +1,17 @@
 # SoulLink 版本管理与回退
 
+> **2026-11-20 20:35 定版：2.17.39 为当前可信版本 / 恢复节点（源码 + 成品）。**
+> **固定归档：`E:\SoulLink-SOURCE-ARCHIVE\v2.17.39-reliable\`**
+> · source\（170 文件，客户端可编译子集，与仓库逐字节一致）
+> · docs\（41 文档快照，含 HANDOFF-2.17.19 ~ 2.17.39）
+> · 成品 SoulLink-2.17.39.exe（67,486,930 字节）
+> · 配套 7za / sl-rescue / broker 脚本 / tools\SoulLink.BrokerSetup.exe
+> · restore.ps1 / TAG.txt / VERSION.txt / SHA256.txt（222 条全通过）
+> · git 标签 `v2.17.39-reliable` → 提交 `055520d`
+> 当前 `dist/SoulLink.exe` = **2.17.39.0**
+> · SHA256 `C381242CA223594D102CE968DF04B2D11FF7C292A0456BF6063700E6733FC6C2`
+> ★ 还原源码：`git checkout v2.17.39-reliable`，或复制归档 source\ 重新编译。
+
 > **2026-11-20 20:20 2.17.39 已出更新包（用户认可"信任此版本"）。**
 > 更新包：`releases\SoulLink-v2.17.39-Update.zip`（117 MB，含 7za / BrokerSetup / broker 脚本 / sl-rescue）
 > · zip SHA256 `6898CC7CD636571937769D04B0D92F5E30872A96381806B36642595A93CF78DC`
