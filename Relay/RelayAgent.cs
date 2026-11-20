@@ -230,6 +230,22 @@ namespace SoulLink.Relay
                 case "DOWN": return 0x28;
                 case "LEFT": return 0x25;
                 case "RIGHT": return 0x27;
+
+                // ★ 2.17.34：符号键。编辑器里的按键捕获会产出这些**字符**，
+                //   原来这里一个都没有 → 录了 "-" 或 "/" 会静默返回 0，
+                //   表现为"录进去了但按下去没反应"（最坑的失败形态）。
+                //   用 OemKey 的虚拟键码，与英文键盘布局一致。
+                case "-": return 0xBD;   // VK_OEM_MINUS
+                case "=": return 0xBB;   // VK_OEM_PLUS
+                case ",": return 0xBC;   // VK_OEM_COMMA
+                case ".": return 0xBE;   // VK_OEM_PERIOD
+                case "/": return 0xBF;   // VK_OEM_2
+                case ";": return 0xBA;   // VK_OEM_1
+                case "'": return 0xDE;   // VK_OEM_7
+                case "[": return 0xDB;   // VK_OEM_4
+                case "]": return 0xDD;   // VK_OEM_6
+                case "\\": return 0xDC;  // VK_OEM_5
+                case "`": return 0xC0;   // VK_OEM_3
             }
 
             if (u.Length >= 2 && u[0] == 'F' && int.TryParse(u.Substring(1), out int fn)

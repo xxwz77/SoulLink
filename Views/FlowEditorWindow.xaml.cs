@@ -1134,6 +1134,124 @@ namespace SoulLink.Views
                     break;
                 }
 
+                case FlowParamKind.KeyCapture:
+                {
+                    // ★★ 2.17.34：按键**捕获**，不是文本输入 ★★
+                    //
+                    //   用户原话："按键录入不应该是文本框，用户按什么键就是什么键，
+                    //   也可以组合键录入，这样才对。"
+                    //
+                    //   做法：一个只读样式的框（显示已录的按键），点它进入"监听"状态，
+                    //   期间吞掉按键事件、把按下的修饰键 + 主键拼成 "CTRL+A" / "F12"，
+                    //   抬起主键后结束并写回节点参数。Esc 取消，Backspace 清空。
+                    var keyBox = new Border
+                    {
+                        MinHeight = 34, CornerRadius = new CornerRadius(8),
+                        Margin = new Thickness(0, 6, 0, 0),
+                        Background = new SolidColorBrush(Color.FromArgb(0x26, 0x00, 0x00, 0x00)),
+                        BorderThickness = new Thickness(1),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+                        Cursor = Cursors.Hand,
+                        Focusable = true,
+                        Padding = new Thickness(10, 0, 10, 0)
+                    };
+                    var keyText = new TextBlock
+                    {
+                        FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = (Brush)FindResource("TextPrimary")
+                    };
+                    keyBox.Child = keyText;
+
+                    bool listening = false;
+                    var pressedMods = new List<Key>();
+
+                    void Render()
+                    {
+                        string cur = node.Get(p.Key, p.Default);
+                        if (listening)
+                        {
+                            keyText.Text = "请按下要发送的按键…（Esc 取消）";
+                            keyText.Foreground = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
+                            keyBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
+                        }
+                        else if (string.IsNullOrEmpty(cur))
+                        {
+                            keyText.Text = "点击这里，然后按下按键（可组合键）";
+                            keyText.Foreground = (Brush)FindResource("TextMuted");
+                            keyBox.BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
+                        }
+                        else
+                        {
+                            keyText.Text = cur;
+                            keyText.Foreground = (Brush)FindResource("TextPrimary");
+                            keyBox.BorderBrush = new SolidColorBrush(Color.FromArgb(0x50, 0x41, 0xF0, 0xC0));
+                        }
+                    }
+
+                    string ModName(Key k) => k switch
+                    {
+                        Key.LeftCtrl or Key.RightCtrl => "CTRL",
+                        Key.LeftAlt or Key.RightAlt => "ALT",
+                        Key.LeftShift or Key.RightShift => "SHIFT",
+                        Key.LWin or Key.RWin => "WIN",
+                        _ => ""
+                    };
+
+                    void StopListen()
+                    {
+                        listening = false;
+                        pressedMods.Clear();
+                        Render();
+                    }
+
+                    keyBox.MouseLeftButtonDown += (_, __) =>
+                    {
+                        listening = true;
+                        pressedMods.Clear();
+                        keyBox.Focus();
+                        Render();
+                    };
+                    keyBox.LostKeyboardFocus += (_, __) => { if (listening) StopListen(); };
+
+                    keyBox.PreviewKeyDown += (_, ev) =>
+                    {
+                        if (!listening) { ev.Handled = true; return; }   // 未在监听：吞掉，别让画布响应
+                        ev.Handled = true;
+
+                        if (ev.Key == Key.Escape) { StopListen(); return; }
+
+                        // 退格 = 清空已录按键
+                        if (ev.Key == Key.Back)
+                        {
+                            node.Set(p.Key, ""); MarkDirty(); StopListen(); return;
+                        }
+
+                        string mod = ModName(ev.Key);
+                        if (mod.Length > 0)
+                        {
+                            if (!pressedMods.Contains(ev.Key)) pressedMods.Add(ev.Key);
+                            // 只按了修饰键：实时预览 "CTRL +"
+                            keyText.Text = "请按下要发送的按键…（当前 " + string.Join("+", pressedMods.Select(ModName)) + "）";
+                            return;
+                        }
+
+                        // 主键：拼成 CTRL+ALT+X 这类串，交给 RelayAgent.ParseVk 解析
+                        var parts = new List<string>();
+                        foreach (var k in pressedMods) parts.Add(ModName(k));
+                        parts.Add(KeyNameOf(ev.Key, ev));
+                        string spec = string.Join("+", parts.Where(s => !string.IsNullOrEmpty(s)));
+                        if (spec.Length == 0) return;
+                        node.Set(p.Key, spec);
+                        MarkDirty();
+                        StopListen();
+                    };
+
+                    Render();
+                    block.Children.Add(keyBox);
+                    _propUi.Add(keyBox);
+                    break;
+                }
+
                 case FlowParamKind.FilePath:
                 {
                     // 程序路径：可直接输入，也可用「浏览…」从磁盘选择
@@ -1842,6 +1960,53 @@ namespace SoulLink.Views
             _dirty = true;
             RefreshDailyState();
             RefreshValidateHint();
+        }
+
+        /// <summary>
+        /// 把 WPF 的 Key 转成 RelayAgent.ParseVk 认识的名字。
+        ///
+        /// ★ 必须和 ParseVk 保持同一套词表，否则界面录进去了、发送端解析不出来，
+        ///   表现为"录了 F12 但按下去没反应"（这种静默失败最难查）。
+        /// </summary>
+        private static string KeyNameOf(Key key, KeyEventArgs ev)
+        {
+            // 字母 / 数字：优先用**实际字符**，这样 Shift+1 录成 "!"、
+            // 小键盘/输入法布局也按用户真按的字符走。
+            if (key >= Key.A && key <= Key.Z) return key.ToString();
+            if (key >= Key.D0 && key <= Key.D9) return ((char)('0' + (key - Key.D0))).ToString();
+            if (key >= Key.NumPad0 && key <= Key.NumPad9) return "NUMPAD" + (key - Key.NumPad0);
+            if (key >= Key.F1 && key <= Key.F24) return "F" + (key - Key.F1 + 1);
+
+            return key switch
+            {
+                Key.Return => "ENTER",
+                Key.Escape => "ESC",
+                Key.Space => "SPACE",
+                Key.Tab => "TAB",
+                Key.Back => "BACKSPACE",
+                Key.Delete => "DELETE",
+                Key.Insert => "INSERT",
+                Key.Home => "HOME",
+                Key.End => "END",
+                Key.PageUp => "PAGEUP",
+                Key.PageDown => "PAGEDOWN",
+                Key.Up => "UP",
+                Key.Down => "DOWN",
+                Key.Left => "LEFT",
+                Key.Right => "RIGHT",
+                Key.OemMinus => "-",
+                Key.OemPlus => "=",
+                Key.OemComma => ",",
+                Key.OemPeriod => ".",
+                Key.OemQuestion => "/",
+                Key.OemSemicolon => ";",
+                Key.OemQuotes => "'",
+                Key.OemOpenBrackets => "[",
+                Key.OemCloseBrackets => "]",
+                Key.OemPipe => "\\",
+                Key.OemTilde => "`",
+                _ => ""
+            };
         }
 
         /// <summary>把下拉框选中到指定 Tag 值；找不到则选第一项。</summary>

@@ -13,7 +13,21 @@ namespace SoulLink.Models
         public string Glyph { get; init; } = "\uE8B7";
         public List<FlowParamDef> Params { get; init; } = new();
     }
-    public enum FlowParamKind { Text=0, Number=1, Bool=2, ActionPicker=3, UserPicker=4, OneDragonPicker=5, ScriptGroupPicker=6, Select=7, FilePath=8, ProcessName=9 }
+    public enum FlowParamKind
+    {
+        Text = 0, Number = 1, Bool = 2, ActionPicker = 3, UserPicker = 4,
+        OneDragonPicker = 5, ScriptGroupPicker = 6, Select = 7, FilePath = 8, ProcessName = 9,
+        /// <summary>
+        /// 按键捕获：不是让用户**手打** "Ctrl+A" 这种字面量，
+        /// 而是直接**按下真实按键**，把组合键录进来。
+        ///
+        /// ★ 2.17.34：用户原话"按键录入不应该是文本框，用户按什么键就是什么键，
+        ///   也可以组合键录入，这样才对"。
+        ///   原来是个普通 TextBox，用户必须知道格式（F12 / CTRL+A）才能用，
+        ///   拼错一个字母就静默失败 —— 根本不能算"录入"。
+        /// </summary>
+        KeyCapture = 10
+    }
     public sealed class FlowParamDef
     {
         public string Key { get; init; } = ""; public string Label { get; init; } = "";
@@ -90,7 +104,9 @@ namespace SoulLink.Models
             D(FlowNodeType.ActCloseGenshin,FlowNodeKind.Action,"关闭原神","关闭目标会话的 YuanShen.exe","\uE711");
             D(FlowNodeType.ActMouseClick,FlowNodeKind.Action,"鼠标点击","先移动成功再点击；失败返回真实错误","\uE8B0",P("x","X","960",FlowParamKind.Number),P("y","Y","540",FlowParamKind.Number),P("button","按键","left",FlowParamKind.Select,"",true,"左键|left","右键|right","中键|middle"),P("count","点击次数","1",FlowParamKind.Number));
             D(FlowNodeType.ActMouseMove,FlowNodeKind.Action,"鼠标移动","通过目标账号投送通道移动鼠标","\uE8B0",P("x","X","960",FlowParamKind.Number),P("y","Y","540",FlowParamKind.Number));
-            D(FlowNodeType.ActKeyPress,FlowNodeKind.Action,"模拟按键","支持 F12、Ctrl+A 等组合","\uE765",P("keys","按键"),P("times","次数","1",FlowParamKind.Number));
+            D(FlowNodeType.ActKeyPress, FlowNodeKind.Action, "模拟按键", "点一下输入框，然后直接按下要发送的按键（支持组合键）", "\uE765",
+                P("keys", "按键", "", FlowParamKind.KeyCapture, "点一下输入框再按键；组合键直接一起按"),
+                P("times", "次数", "1", FlowParamKind.Number));
             D(FlowNodeType.ActMouseWheel,FlowNodeKind.Action,"鼠标滚轮","正数上滚，负数下滚","\uE8B0",P("delta","滚动量","120",FlowParamKind.Number));
             D(FlowNodeType.ActLaunchProcess,FlowNodeKind.Action,"打开程序","在目标会话启动程序；启动成功不代表进程持续运行","\uE768",P("path","程序路径","",FlowParamKind.FilePath),P("args","启动参数","",required:false));
             D(FlowNodeType.ActKillProcess,FlowNodeKind.Action,"关闭进程","只操作目标账号；不存在目标进程属于幂等成功","\uE711",P("process","进程名","",FlowParamKind.ProcessName),P("force","强制结束","true",FlowParamKind.Bool));
