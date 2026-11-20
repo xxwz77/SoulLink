@@ -4,7 +4,7 @@
         xmlns:ctl="clr-namespace:SoulLink.Controls"
         Title="新建用户" Width="520" SizeToContent="Height"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource DialogSurface}"
         FontFamily="{StaticResource UiFont}">
 
     <Border CornerRadius="16" Background="{DynamicResource DialogSurface}"

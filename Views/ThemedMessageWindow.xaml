@@ -4,7 +4,7 @@
         xmlns:ctl="clr-namespace:SoulLink.Controls"
         Title="SoulLink" Width="480" SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource DialogSurface}"
         ShowInTaskbar="False" FontFamily="{StaticResource UiFont}"
         ResizeMode="NoResize">
 

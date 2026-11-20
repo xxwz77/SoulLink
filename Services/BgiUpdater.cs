@@ -388,16 +388,44 @@ namespace SoulLink.Services
         /// ★ 路线更新器（RouteUpdater）复用这一个实现，不要另写一份。</summary>
         internal static string Find7za()
         {
-            string baseDir = AppContext.BaseDirectory;
-            var candidates = new[]
+            // ★★ 2.17.47 修复：单文件发布下 AppContext.BaseDirectory 是错的。★★
+            //
+            //   现象：dist 里明明有 7za.exe（1.2 MB），更新却报
+            //   「找不到 7za.exe（应随程序一起分发）」。
+            //
+            //   根因：PublishSingleFile 会把运行时解压到
+            //     %TEMP%\.net\SoulLink\<随机>\
+            //   而 AppContext.BaseDirectory 指向那个临时目录，不是 exe 所在目录。
+            //   7za.exe 是 AfterPublish 复制到 dist\ 的，所以在临时目录里找不到。
+            //
+            //   修法：优先用**进程主模块所在目录**（= exe 真实位置），
+            //   再回退到 AppContext.BaseDirectory（非单文件发布时两者相同）。
+            var dirs = new List<string>();
+            try
             {
-                Path.Combine(baseDir, "7za.exe"),
-                Path.Combine(baseDir, "7z", "7za.exe"),
-                Path.Combine(baseDir, "tools", "7za.exe"),
-            };
+                string exePath = Environment.ProcessPath ?? "";
+                if (exePath.Length > 0)
+                {
+                    string exeDir = Path.GetDirectoryName(exePath) ?? "";
+                    if (exeDir.Length > 0 && !dirs.Contains(exeDir, StringComparer.OrdinalIgnoreCase))
+                        dirs.Add(exeDir);
+                }
+            }
+            catch { }
+            string baseDir = AppContext.BaseDirectory;
+            if (!dirs.Contains(baseDir, StringComparer.OrdinalIgnoreCase)) dirs.Add(baseDir);
 
-            foreach (var p in candidates)
-                if (File.Exists(p)) return p;
+            foreach (var dir in dirs)
+            {
+                var candidates = new[]
+                {
+                    Path.Combine(dir, "7za.exe"),
+                    Path.Combine(dir, "7z", "7za.exe"),
+                    Path.Combine(dir, "tools", "7za.exe"),
+                };
+                foreach (var p in candidates)
+                    if (File.Exists(p)) return p;
+            }
 
             return "";
         }
