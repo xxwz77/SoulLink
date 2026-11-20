@@ -170,7 +170,10 @@ namespace SoulLink.Services
         public static async Task<ExecResult> ExecuteAsync(ActionItem action, AppConfig cfg, CancellationToken ct = default)
         {
             var account = cfg.Accounts.FirstOrDefault(a => a.Id == action.AccountId);
-            if (account != null && !AccountScope.IsAllowed(account,cfg)) return ExecResult.Fail("主用户已被全局挂机账号模式排除");
+            // ★ 不按 AccountScope 拦截快捷动作。
+            //   「仅管理挂机账号」只是界面显示策略 + 不把主用户当投送目标，
+            //   不是禁止用户在自己的主控桌面上执行动作。
+            //   用户原话：「不能停啊，它是主控」。
             if (account == null) return ExecResult.Fail("动作「" + action.Name + "」绑定的账号不存在。");
 
             if (action.DelaySeconds > 0)

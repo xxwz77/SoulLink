@@ -1,75 +1,122 @@
-# 新会话开场白（直接复制）
+# SoulLink 新会话开场白（直接复制到新会话）
 
-如果你是接手这个项目的新会话，请先完整阅读：
+---
 
-1. E:\Documents\deepseek-harness\SoulLink\HANDOVER.md
-2. E:\Documents\deepseek-harness\SoulLink\releases\RDP-WINDOWING-RESEARCH-SUMMARY-20261117.md
-3. E:\Documents\deepseek-harness\SoulLink\releases\RDP-SPLIT-INCIDENT-20261117.md
+接手 SoulLink 项目。请按顺序读这几份，再动手：
 
-如需多窗口背景，再读：
-- releases/1REMOTE-WINDOWING-RESEARCH-20261117.md
-- releases/SIMPLEREMOTE-TABBED-RDP-RESEARCH-20261117.md
-- releases/MOBAXTERM-RDP-ARCHITECTURE-RESEARCH-20261117.md
+1. `docs/HANDOFF-2.17.19-20261120.md` ← **最新交接（定版轮），必读**
+   ★ 重点看第 2 节（根因）、第 3 节（A/B 证据）、第 7 节（恢复节点）
+2. `docs/HANDOFF-2.17.18-20261120.md` ← 上一轮，**第 4 节是仍未解决的白带问题**
+3. `VERSIONING.md` ← 版本固定与回退规则（当前定版 2.17.19）
+4. `HANDOVER.md` ← 项目结构、测试红线、历史事故
+5. `HANDOFF.md` ← RDP / 代理技术结论
 
-## 当前基线
+---
 
-- 当前正式开发版本：v1.13.2，另有提交 0d12968（连接/注销动画不遮展开导航）。
-- dist/ 是开发发布目录，不包含分屏实验；当前 exe 还含 0d12968 动画层级小修复，与 v1.13.2 标签归档哈希不同。
-- dist/stable/ 是生产挂机版，正在运行，绝对不要修改或回退。
-- 分屏、Canvas 内部窗口、独立顶级窗口、1:1 分屏实验源码均已撤回。
-- 撤回后的主工程 Release 构建通过；未因此启动应用或 RDP。
+## 当前基线（2026-11-20 16:00 定版）
 
-## 已验证 / 未验证
+| 项目 | 值 |
+|---|---|
+| 标准版 | **2.17.19.0（可信版本 / 恢复节点）**，`dist/SoulLink.exe` |
+| 大小 | 67,476,425 字节 |
+| SHA256 | `6BBEB9E1BB2FBCAFFFC61D8A10DB19CABA36515864999746E78AD4EB929DB723` |
+| **恢复节点** | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.19-reliable\`（source/docs/成品/VERSION.txt/SHA256.txt/restore.ps1） |
+| 回归版备份 | `dist/SoulLink-2.17.17-before-ocxfix.exe`（**坏版本，别用**） |
+| 挂机版 | `dist/stable/` 仍 **2.17.4.0**，**全程未改动** |
+| 项目路径 | `E:\Documents\deepseek-harness\SoulLink` |
 
-已验证或有用户可用反馈：
-- BGI 更新：4 账号 exe 哈希一致。
-- BGI 脚本：A1 单人模式跑通 5 条路线。
-- RDP 侧栏原生浮层基础交互。
-- RDP 首次点击 Down/Up 消费、后台重连保护曾实测可用。
+⚠ 只改 `dist/SoulLink.exe`；`dist/stable/` 未经用户授权不要动。
 
-未完整验收：
-- RDP 注销后重开保护层的最后修复。
-- 连接/注销动画与导航层级修复的完整归档验收。
-- BGI 2/3/4 人组队和拾取效果。
+---
 
-没有可交付实现：
-- 同屏分屏、内部可拖动窗口、分屏 1:1、布局记忆。
-这些实验代码已撤回，不要从旧测试目录恢复。
+## 本版（2.17.19）修的什么 —— 一条根因，别读错
 
-## 严重事故与禁令
+**现象**：控制台页 RDP 区域全黑 + 红字「无法创建 RDP 控件。系统可能缺少远程桌面
+ActiveX 组件。控件创建后 OCX 为空（{A0C63C30…}）」，每 2 秒重试一次。
 
-2026-11-17 分屏验证后发生 Windows Bugcheck 0x119
-VIDEO_SCHEDULER_INTERNAL_ERROR，电脑死机重启。
-NVIDIA nvlddmkm Event 153；转储：
-C:\Windows\Minidump\111726-18203-01.dmp
+**根因**：2.17.17 的「延迟挂载」让 `WindowsFormsHost` 在创建控件时仍是
+`Visibility=Collapsed` 且没有父窗口，而 WinForms 的 `Control.CreateControl()`
+对**不可见**控件是空操作 → AxHost 窗口不创建 → `AttachInterfaces()` 不被调用
+→ `GetOcx()` 恒为 null。**全程不抛异常**，所以日志只有那句「OCX 为空」。
 
-尚未完成内核栈分析，只能确认时间相关和高风险触发组合，不能声称某一行代码是直接根因。
+**修法**：`Controls/RdpConsole.cs` 的 `EnsureHost()` ——
+先 `MountHostForCreation()`（挂视觉树 + Visible + UpdateLayout），
+再 `_host.Child = ax`，最后 `EnsureCreated()`。
 
-绝对禁止：
-1. 修改/回退 dist/stable/，除非用户重新明确授权。
-2. 操作 A1/A4；测试只用 A2/A3，真实 RDP 验证必须得到用户授权。
-3. 不按 SessionId 过滤就操作任何进程；relay 与主窗口严格区分。
-4. 启动 tools/rdp-layout-validation、tools/rdp-process-windowing 中的旧验证程序。
-5. 在当前机器恢复同进程多 ActiveX 分屏、Canvas 内部窗口或独立顶级窗口原型。
-6. 为验证“是否已经好了”再次复现 0x119。
+**系统侧从来没问题**：v9/v10/v11 三个 CLSID 一直已注册，`mstscax.dll` 存在；
+独立进程直接 `CreateInstance` 三个 CLSID 全部成功。**不要再往"缺组件/重装 RDP"方向排查。**
 
-## 多窗口研究结论
+---
 
-- 1Remote：同进程 Host + 顶级 Dragablz 标签窗口，可拆出/全屏；不是主窗口内多视口分屏。
-- SimpleRemote：单窗口多标签，标签切换不断连、不重建 ActiveX；不支持同屏自由分屏。
-- MobaXterm：主控 + MobaRTE 子进程，证据指向 RDP 子窗口嵌入主控原生面板；既有进程隔离，也受主应用约束。
+## 必读教训（本会话新增）
 
-如果继续做功能：
-- 优先稳定单窗口多标签保活（SimpleRemote 模型）。
-- 若未来仍研究分屏，先分析 0x119 转储，再单独评估 MobaXterm 式“子进程内嵌子窗口”。
-- 不要直接照搬第三方项目的多 ActiveX 实现，也不要把“别人能用”当作当前驱动环境安全证明。
+1. **WinForms `CreateControl()` 对不可见控件是空操作**，不抛异常、不留日志。
+   见到「创建后 XX 为空」先查「控件当时是否可见、是否有父窗口」。
+2. **多候选回退逻辑必须把每条失败都带出来**（CLSID + HRESULT）；
+   只留最后一条会掩盖真实原因（v9/v10 的错误被 v11 的"OCX 为空"覆盖）。
+3. **先做时间线对账**：本次靠「12:36 改代码 / 12:48 正常 / 14:54 起报错」
+   直接锁定回归来源，比通读代码快得多。
+4. **用真实类做对照探针**（反射调用私有方法、控制变量 A/B）比读文档猜快得多。
 
-## 建议下一步
+---
 
-先让我确认你的目标：
-A. 只读分析 0x119 转储和驱动风险；
-B. 稳定现有单窗口多标签与保护层；
-C. 回到 BGI 组队/拾取验证；
-D. 其他你明确指定的任务。
+## 仍未解决的问题（别当成已修好）
 
-未经我明确授权，不启动任何 RDP 验证、不操作账号、不修改 dist/ 或 dist/stable/。
+1. **窗口内侧 8px 灰/白粗框**（2.17.18 遗留，本版未碰）
+   已压住但根因未坐实。`PrintWindow(PW_CLIENTONLY)` 能复现、
+   `PW_RENDERFULLCONTENT` 复现不出来 → 是客户区内未覆盖的残留色。
+   下一步最小排查点：读 `HwndSource.RootVisual` 的实际 `RenderSize`、
+   `HwndTarget` 客户矩形与 `WS_THICKFRAME` 有效区域的区别。
+   **不要再用更多定时/焦点重绘当根除方案。**
+2. `tools/SoulLink.BrokerSetup.exe` 仍是 2.8.8 时代版本（FileVersion 1.0.0.0），
+   与 2.17.19 的兼容性未验证。
+3. RDP Wrapper「停 UmRdpService → 停 TermService → 启动」的重启顺序仍无真机端到端验证。
+
+---
+
+## 必须知道的操作陷阱
+
+1. **`MainWindowHandle` 返回的是屏幕外热键辅助窗**（237x39 @ -32000），不是主窗口。
+   正确做法：枚举该进程所有 `HwndWrapper` 窗口，取可见且面积最大的
+   （排除 `r.L > -10000`）。
+2. **单实例互斥体**（`Global\<身份>.SingleInstance.v1`）会静默杀掉第二个实例。
+   要做对照实例：用不同**文件名**（身份由文件名派生）或 `--identity=名字` 完全隔离。
+3. **主窗口会收进托盘**：截图脚本找不到窗口报 "NO MAIN WINDOW"，先 `ShowWindow(h, 9)`。
+4. **`SetForegroundWindow` 可能失败**（前台锁），脚本要打 `fg=True/False` 核实。
+5. **"问题消失"要先确认不是被盖住了**（上一轮有过白带被 10px 粗边框压住的假象）。
+6. **PowerShell 的 `$Pid` 是只读自动变量**，参数别叫 `-Pid`。
+7. **PS 5.1 的 `Add-Type` 引 `System.Drawing` 会编译失败**，用 `[Bitmap]::new()`。
+8. **`build.bat` 里有 `rmdir /s /q dist`**，会把 `dist` 下所有历史 exe 一起删掉
+   （含 `SoulLink-2.17.17-before-ocxfix.exe` 这类备份）。
+   要发布请按 `VERSIONING.md` 里的命令 publish 到临时目录，再替换单文件。
+9. **不要自己另开实验** —— 用户明确说过：
+   > "你按我的步骤来，听我指挥，你的实验麻烦而且无效。"
+   > 先问、再做；用户给了方向就严格照做。
+
+---
+
+## 纪律
+
+1. 不修改/回退 `dist/stable/`，除非用户明确授权
+2. 不操作 A1/A4；测试用 A2/A3
+3. 按 PID + SessionId + 完整路径核对后才操作任何进程
+4. 不往 RDP 画面上盖任何 WPF 浮层（会让画面整块黑）
+5. 不给 `WindowsFormsHost` 设固定尺寸
+6. 大文件用 `edit` 精确改，不要整文件 `write` 覆盖
+7. **改完必须跑起来看日志/截图验证**，不能只看编译通过
+8. **实验前备份配置，实验后恢复**
+9. 动 `Controls/RdpConsole.cs` 的 `EnsureHost()` 时，**"先可见再创建"这条顺序不能改**
+
+---
+
+## 建议的起手动作
+
+1. 先确认运行的是 2.17.19：标题栏 `v2.17.19`，或
+   `(Get-Item dist\SoulLink.exe).VersionInfo.ProductVersion`。
+2. 问用户这轮要做什么。若继续白带问题 → 按上面"仍未解决"第 1 条的最小排查点走。
+3. 若只是想回退到已验证的 2.17.19 →
+   运行 `E:\SoulLink-SOURCE-ARCHIVE\v2.17.19-reliable\restore.ps1`。
+
+另外用户提过想「取消画质档位」，但当时改成了"先不回退"。
+**注意：档位是 2.17.17 的 CPU 修复带来的，摘掉会让单核占用回到 ~100%。**
+要动之前必须先跟用户确认这个代价。

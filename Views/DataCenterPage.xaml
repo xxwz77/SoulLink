@@ -18,9 +18,9 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="数据中心" FontSize="15" FontWeight="Bold"
-                           Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
+                           Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
                 <TextBlock x:Name="SubTitle" Text="" FontSize="10.5" Margin="10,0,0,0"
-                           VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button x:Name="BtnRefresh" Style="{StaticResource GhostButton}" Padding="10,5"
@@ -43,7 +43,7 @@
         <Border Grid.Row="2" Margin="0,10,0,0" CornerRadius="10" Background="#10FFFFFF"
                 BorderBrush="#20FFFFFF" BorderThickness="1" Padding="12,8">
             <TextBlock x:Name="FootNote" FontSize="10.5" TextWrapping="Wrap" LineHeight="17"
-                       Foreground="{StaticResource TextSecondary}" />
+                       Foreground="{DynamicResource TextSecondary}" />
         </Border>
     </Grid>
 </UserControl>

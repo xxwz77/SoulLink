@@ -10,8 +10,9 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- ═══ 顶部标签卡：配置页 + 各用户画面 ═══ -->
-        <Border Grid.Row="0" Style="{StaticResource GlassCard}" Padding="8,6" Margin="0,0,0,10">
+        <!-- ═══ 顶部标签卡：配置页 + 各用户画面 ═══
+             ★ 全屏时整条隐藏（代码里切 Visibility），把空间全部让给画面。 -->
+        <Border x:Name="TopBar" Grid.Row="0" Style="{StaticResource GlassCard}" Padding="8,6" Margin="0,0,0,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -62,7 +63,7 @@
                                 <Ellipse x:Name="ModeDot" Width="7" Height="7" VerticalAlignment="Center"
                                          Margin="0,0,6,0" Fill="#FF6B7C9C" />
                                 <TextBlock x:Name="ModeLabel" Text="指针模式" FontSize="11" VerticalAlignment="Center"
-                                           Foreground="{StaticResource TextSecondary}" />
+                                           Foreground="{DynamicResource TextSecondary}" />
                             </StackPanel>
                         </Border>
                         <Button x:Name="BtnSens" Style="{StaticResource GhostButton}" Padding="8,5"
@@ -72,6 +73,12 @@
                         <Button x:Name="BtnReconnect" Style="{StaticResource GhostButton}" Padding="8,5"
                                 Margin="6,0,0,0" Click="BtnReconnect_Click" ToolTip="重新连接">
                             <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11.5" />
+                        </Button>
+                        <!-- 全屏：只显示当前 RDP 画面，顶部浮出退出菜单 -->
+                        <Button x:Name="BtnFullScreen" Style="{StaticResource GhostButton}" Padding="8,5"
+                                Margin="6,0,0,0" Click="BtnFullScreen_Click"
+                                ToolTip="全屏（F11 切换，Esc 退出）">
+                            <TextBlock Text="&#xE740;" FontFamily="Segoe MDL2 Assets" FontSize="11.5" />
                         </Button>
                         <Button x:Name="BtnDisconnect" Style="{StaticResource GhostButton}" Padding="8,5"
                                 Margin="6,0,0,0" Click="BtnDisconnect_Click" ToolTip="只断开画面，会话继续挂机">
@@ -91,7 +98,7 @@
                                          Margin="0,0,6,0" Fill="#FF6B7C9C" />
                                 <TextBlock x:Name="InputLabel" Text="未接管" FontSize="11"
                                            VerticalAlignment="Center"
-                                           Foreground="{StaticResource TextSecondary}" />
+                                           Foreground="{DynamicResource TextSecondary}" />
                             </StackPanel>
                         </Border>
                         <Button x:Name="BtnLogoff" Style="{StaticResource DangerButton}" Padding="10,5"
@@ -177,10 +184,10 @@
                                            HorizontalAlignment="Center" Foreground="#33FFFFFF" />
                                 <TextBlock Text="从左侧选一个用户进行配置" FontSize="13"
                                            HorizontalAlignment="Center" Margin="0,12,0,0"
-                                           Foreground="{StaticResource TextSecondary}" />
+                                           Foreground="{DynamicResource TextSecondary}" />
                                 <TextBlock Text="双击用户可直接打开画面" FontSize="11"
                                            HorizontalAlignment="Center" Margin="0,6,0,0"
-                                           Foreground="{StaticResource TextMuted}" />
+                                           Foreground="{DynamicResource TextMuted}" />
                             </StackPanel>
                         </Grid>
 
@@ -194,9 +201,9 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0">
                                         <TextBlock x:Name="CfgTitle" Text="用户" FontSize="16" FontWeight="Bold"
-                                                   Foreground="{StaticResource TextPrimary}" />
+                                                   Foreground="{DynamicResource TextPrimary}" />
                                         <TextBlock x:Name="CfgSub" Text="" FontSize="11"
-                                                   Foreground="{StaticResource TextMuted}" Margin="0,4,0,0" />
+                                                   Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" />
                                     </StackPanel>
                                     <Button Grid.Column="1" x:Name="BtnOpenView" Style="{StaticResource PrimaryButton}"
                                             Padding="16,8" Click="BtnOpenView_Click" VerticalAlignment="Top">
@@ -256,17 +263,17 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,6,0">
-                                        <TextBlock Text="宽" FontSize="10" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock Text="宽" FontSize="10" Foreground="{DynamicResource TextMuted}" />
                                         <TextBox x:Name="WidthBox" Style="{StaticResource GlassTextBox}" Margin="0,4,0,0"
                                                  FontFamily="{StaticResource MonoFont}" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="6,0,6,0">
-                                        <TextBlock Text="高" FontSize="10" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock Text="高" FontSize="10" Foreground="{DynamicResource TextMuted}" />
                                         <TextBox x:Name="HeightBox" Style="{StaticResource GlassTextBox}" Margin="0,4,0,0"
                                                  FontFamily="{StaticResource MonoFont}" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
-                                        <TextBlock Text="色深" FontSize="10" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock Text="色深" FontSize="10" Foreground="{DynamicResource TextMuted}" />
                                         <ComboBox x:Name="DepthCombo" Margin="0,4,0,0">
                                             <ComboBoxItem Content="32 位" Tag="32" />
                                             <ComboBoxItem Content="16 位" Tag="16" />
@@ -368,9 +375,59 @@
 
             <!-- ② 用户画面页：固定 Tile 容器，标签/双列/网格只改摆放，不加删控件 -->
             <Grid x:Name="ViewPage" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <!-- 全屏菜单：**占真实空间**，不是浮层。
+                         ★ 不能用浮层：RDP 是 DirectComposition 表面，
+                           任何分层窗口压上去都会让那块区域退出硬件合成 → 变黑
+                           （这正是本轮修复的核心结论，别再踩）。
+                         高度由代码在"显示/隐藏"之间切换：显示=46，隐藏=0。 -->
+                    <RowDefinition x:Name="FullScreenMenuRow" Height="0" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ 全屏菜单条（方案 B：鼠标移到顶部才出现）═══
+                     平时高度为 0（完全不影响画面），鼠标进入顶部热区后
+                     把这一行撑到 46px，RDP 同步下移让出空间。 -->
+                <Border x:Name="FullScreenMenuBar" Grid.Row="0" Visibility="Collapsed"
+                        Background="#F2101420" BorderBrush="#33FFFFFF" BorderThickness="0,0,0,1"
+                        Padding="12,6" ClipToBounds="True">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- 左：切换画面（下拉） -->
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="BtnFullScreenSwitch" Style="{StaticResource GhostButton}"
+                                    Padding="12,5" Click="BtnFullScreenSwitch_Click"
+                                    ToolTip="切换到其它 RDP 画面">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets"
+                                               FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock x:Name="FullScreenTitle" Text="全屏" FontSize="11.5"
+                                               VerticalAlignment="Center" Margin="0,0,4,0" />
+                                    <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="8"
+                                               VerticalAlignment="Center" Foreground="#77FFFFFF" />
+                                </StackPanel>
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="FullScreenSwitchMenu" />
+                                </Button.ContextMenu>
+                            </Button>
+                        </StackPanel>
+
+                        <!-- 右：退出全屏 -->
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button x:Name="BtnExitFullScreen" Content="退出全屏"
+                                    Style="{StaticResource PrimaryButton}" Padding="16,6"
+                                    Click="BtnExitFullScreen_Click" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
                 <!-- ★ 不要黑色背景：画布留空的地方应当露出主题动画底图。
                      只有画面格子本身（RDP 内容 / 未连接时的暗色底）是深色。 -->
-                <Border CornerRadius="16" ClipToBounds="True"
+                <Border Grid.Row="1" CornerRadius="16" ClipToBounds="True"
                         BorderBrush="#26FFFFFF" BorderThickness="1">
                     <Grid>
                         <!-- ★ 这个 Grid 只给保护层 / 连接动画当锚点：
@@ -403,7 +460,7 @@
                         Margin="0,10,10,0" Style="{StaticResource GlassCard}" Padding="14,10">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="灵敏度" FontSize="10.5" VerticalAlignment="Center"
-                                   Foreground="{StaticResource TextMuted}" Margin="0,0,6,0" />
+                                   Foreground="{DynamicResource TextMuted}" Margin="0,0,6,0" />
                         <Slider x:Name="SensSlider" Width="100" Minimum="1" Maximum="12" Value="4"
                                 IsSnapToTickEnabled="True" TickFrequency="0.5" SmallChange="0.5"
                                 VerticalAlignment="Center" ValueChanged="SensSlider_ValueChanged" />
@@ -411,7 +468,7 @@
                                    Foreground="{StaticResource CyanBrush}" Margin="6,0,14,0" Width="34" />
                         <Border Width="1" Background="#28FFFFFF" Margin="0,2" />
                         <TextBlock Text="锁定热键" FontSize="10.5" VerticalAlignment="Center"
-                                   Foreground="{StaticResource TextMuted}" Margin="14,0,6,0" />
+                                   Foreground="{DynamicResource TextMuted}" Margin="14,0,6,0" />
                         <ctl:HotkeyRecorder x:Name="HotkeyBtn" Width="140" Height="28"
                                             Style="{StaticResource GhostButton}" FontSize="10.5" />
                     </StackPanel>

@@ -42,6 +42,39 @@ namespace SoulLink
 
         protected override async void OnStartup(StartupEventArgs e)
         {
+            // ★ 名字叫 SoulLink.Agent.exe 的副本是"手动代理"，双击即用：
+            //   没有显式参数时自动进入 --agent，用户不需要记参数。
+            //   （Broker 安装时会把 SoulLink.exe 复制一份改名为 SoulLink.Agent.exe 并改写清单为 asInvoker）
+            if ((e.Args == null || e.Args.Length == 0)
+                && Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "")
+                    .Equals("SoulLink.Agent", StringComparison.OrdinalIgnoreCase))
+            {
+                int agentCode = 1;
+                try { agentCode = ManualAgent.Run(Array.Empty<string>()); }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        File.WriteAllText(
+                            Path.Combine(Path.GetTempPath(), "soullink-agent-crash.log"),
+                            ex.ToString());
+                    }
+                    catch { }
+                }
+                Shutdown(agentCode);
+                return;
+            }
+
+            if (e.Args.Length > 0 && e.Args[0].Equals("--broker-setup", StringComparison.OrdinalIgnoreCase))
+            {
+                new BrokerWindow().Show(); return;
+            }
+            if (e.Args.Length > 0 && e.Args[0].Equals("--broker", StringComparison.OrdinalIgnoreCase))
+            {
+                try { await BrokerService.RunAsync(_cts.Token); }
+                catch (Exception ex) { BrokerService.Trace("FATAL", ex.ToString()); }
+                return;
+            }
             // ★ 先分流 relay 模式：目标会话里的注入代理是纯后台进程，
             //   不建托盘、不建窗口、不碰配置，直接把线程交给管道循环。
             //   放在 base.OnStartup 之前，确保没有任何 UI 动作先跑起来。
@@ -59,6 +92,28 @@ namespace SoulLink
                     {
                         File.WriteAllText(
                             Path.Combine(Path.GetTempPath(), "soullink-sysrun-crash.log"),
+                            ex.ToString());
+                    }
+                    catch { }
+                }
+                Shutdown(code);
+                return;
+            }
+
+            // ★ 手动代理：用户在目标会话里双击启动，自动寻找宿主管道。
+            //   与自动投送并存，互不影响；它不走提权、不走服务、不走计划任务。
+            if (e.Args != null
+                && e.Args.Length >= 1
+                && e.Args[0].Equals("--agent", StringComparison.OrdinalIgnoreCase))
+            {
+                int code = 1;
+                try { code = ManualAgent.Run(e.Args); }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        File.WriteAllText(
+                            Path.Combine(Path.GetTempPath(), "soullink-agent-crash.log"),
                             ex.ToString());
                     }
                     catch { }
@@ -98,6 +153,7 @@ namespace SoulLink
             {
                 try { Services.AccountStateCenter.Stop(); } catch { }
                 try { Services.ScheduleRunnerHost.Shutdown(); } catch { }
+                try { Services.RouteUpdateSchedulerHost.Shutdown(); } catch { }
             };
 
             DispatcherUnhandledException += (_, args) =>
@@ -118,7 +174,12 @@ namespace SoulLink
                 args.SetObserved();
             };
 
-            Breadcrumb("OnStartup begin");
+            // 后创建的窗口、原生浮层和菜单统一绑定当前主题；不改系统文件选择器与 RDP 内容。
+            EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
+                new RoutedEventHandler((_, args) =>
+                {
+                    if (args.Source is Window window) ThemeManager.ApplyWindow(window);
+                }));
 
             // ★ 自检：把模块目录的实际内容写进 boot.log。
             //   之前多次出现"源码里有、界面没有"，靠猜排查浪费太多时间，
@@ -170,7 +231,11 @@ namespace SoulLink
                           parsed.Options.Keys.All(k =>
                               k.Equals("page", StringComparison.OrdinalIgnoreCase) ||
                               k.Equals("show", StringComparison.OrdinalIgnoreCase) ||
-                              k.Equals("quiet", StringComparison.OrdinalIgnoreCase));
+                              k.Equals("quiet", StringComparison.OrdinalIgnoreCase) ||
+                              // ★ 纯诊断开关：--verbose-log 只影响日志级别，
+                              //   必须仍然启动界面。以前它被当成业务选项，
+                              //   进程走命令模式执行完就退出，等于"文档里的开关根本不能用"。
+                              k.Equals("verbose-log", StringComparison.OrdinalIgnoreCase));
 
             if (uiOnly)
             {
@@ -241,6 +306,23 @@ namespace SoulLink
                         LogBus.Warn("缺少管理员权限", "跨会话投送需要「以管理员身份运行」");
                 }
                 catch { }
+            });
+
+            // ★ 启动时检查手动代理模式：开着就直接进入等待，不投送任何代理。
+            //   这样用户设一次开关，之后每次启动都保持同样的行为。
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (!ManualAgentMode.Enabled) return;
+                    LogBus.Info("手动代理模式已开启", "不会自动投送；等待用户在目标会话启动代理");
+                    int cleaned = ManualAgentMode.CleanAutoAgents();
+                    if (cleaned > 0) LogBus.Info("已清理自动代理", cleaned + " 个");
+                    var started = await ManualAgentMode.StartForOnlineAccountsAsync().ConfigureAwait(false);
+                    if (started.Count > 0)
+                        LogBus.Info("已准备等待管道", "会话 " + string.Join("、", started));
+                }
+                catch (Exception ex) { LogBus.Warn("初始化手动代理模式失败", ex.Message); }
             });
 
             if (_startupRequest != null)
@@ -416,6 +498,16 @@ namespace SoulLink
                 catch (Exception ex)
                 {
                     LogBus.Error("启动定时调度失败：" + ex.Message);
+                }
+
+                // 启动路线更新的定时调度器（与动作调度互不影响）
+                try
+                {
+                    RouteUpdateSchedulerHost.StartOnce();
+                }
+                catch (Exception ex)
+                {
+                    LogBus.Error("启动路线更新定时失败：" + ex.Message);
                 }
             }
 

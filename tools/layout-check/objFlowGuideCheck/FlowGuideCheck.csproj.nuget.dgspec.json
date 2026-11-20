@@ -5,7 +5,7 @@
   },
   "projects": {
     "E:\\Documents\\deepseek-harness\\SoulLink\\SoulLink.csproj": {
-      "version": "2.6.1",
+      "version": "2.6.3",
       "restore": {
         "projectUniqueName": "E:\\Documents\\deepseek-harness\\SoulLink\\SoulLink.csproj",
         "projectName": "SoulLink",
@@ -45,6 +45,12 @@
         "net8.0-windows": {
           "framework": "net8.0-windows7.0",
           "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "Microsoft.Extensions.Hosting.WindowsServices": {
+              "target": "Package",
+              "version": "[8.0.1, )"
+            }
+          },
           "imports": [
             "net461",
             "net462",

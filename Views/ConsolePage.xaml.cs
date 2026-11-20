@@ -50,8 +50,12 @@ namespace SoulLink.Views
         private IntPtr _shieldWatchedHandle;
         private DateTime _lastShieldRecoveryLog = DateTime.MinValue;
         private UserRow? _shieldPendingNewTab;
-        private OwnedOverlayWindow? _shieldOverlayWindow;
-        private Border? _shieldOverlayContent;
+
+        /// <summary>最近一次"用户点击接管"的时间，用于抑制紧随其后的焦点跟随。</summary>
+        private DateTime _lastTakeoverAt = DateTime.MinValue;
+
+        /// <summary>当前是否处于全屏模式。</summary>
+        private bool _isFullScreen;
 
         public MainWindow? MainWindowRef { get; set; }
         public event Action? AddRequested;
@@ -151,7 +155,6 @@ namespace SoulLink.Views
                 {
                     if (IsVisible)
                     {
-                        _shieldOverlayWindow?.HideOverlay();
 
                         // ★ 恢复必须与隐藏**完全对称**。
                         //   原来这里加了 "if (_viewing?.Console != null && IsConnected)" 的前置条件，
@@ -162,6 +165,23 @@ namespace SoulLink.Views
                         SetHiddenForPageSwitch(false);
                         ApplyLayout();
                         _viewing?.Console?.OnShown();
+
+                        // ★ 页面重新可见时必须**显式**恢复当前画面的前台资格。
+                        //
+                        //   原来这里只恢复了 RDP 原生窗口的显示，没管 _activeState：
+                        //   切页/关弹窗后 Console 变回可见，可 _activeState 还停在 1，
+                        //   于是 HotkeyArmed=False，按侧键全被拒绝
+                        //   （热键日志表现为"事件到了却丢弃"）。
+                        //
+                        //   前台资格的唯一权威是这里：只有 ConsolePage 知道
+                        //   "当前该由哪一行接管输入"（_viewing）。
+                        try
+                        {
+                            InputTrace.Write("PAGE_VISIBLE", "页面重新可见 → 恢复当前画面前台资格："
+                                + (_viewing?.Account.Caption ?? "null"));
+                            _viewing?.Console?.SetForegroundActive(true);
+                        }
+                        catch (Exception ex) { Debug("恢复前台资格失败：" + ex.Message); }
                     }
                     else
                     {
@@ -173,7 +193,6 @@ namespace SoulLink.Views
                         SetHiddenForPageSwitch(true);
                         _busyOverlayWindow?.HideForOwnerState();
                         SetShieldReleased(false);
-                        _shieldOverlayWindow?.HideOverlay();
                     }
                 }
                 catch { }
@@ -284,8 +303,8 @@ namespace SoulLink.Views
                     + " pageVisible=" + IsVisible
                     + " ownerActive=" + (owner?.IsActive == true)
                     + " anchor=" + ViewportHost.ActualWidth.ToString("0") + "x" + ViewportHost.ActualHeight.ToString("0")
-                    + " requested=" + (_shieldOverlayWindow?.IsRequested == true)
-                    + " visible=" + (_shieldOverlayWindow?.NativeVisible == true);
+                    + " locked=" + (console?.ShieldLocked == true)
+                    + " enforced=" + (console?.ShieldEnforced == true);
                 System.IO.Directory.CreateDirectory(ConfigStore.ConfigDir);
                 System.IO.File.AppendAllText(System.IO.Path.Combine(ConfigStore.ConfigDir, "shield-trace.log"), text + Environment.NewLine);
             }
@@ -307,7 +326,6 @@ namespace SoulLink.Views
                         _shieldWatchedConsole = null;
                         _shieldWatchedGeneration = -1;
                         _shieldWatchedHandle = IntPtr.Zero;
-                        _shieldOverlayWindow?.HideForOwnerState();
                         return;
                     }
 
@@ -321,29 +339,60 @@ namespace SoulLink.Views
                         || _shieldWatchedGeneration != console.ConnectionGeneration
                         || _shieldWatchedHandle != nativeHandle))
                     {
+                        // ★★ 判断顺序很关键：先比对，再更新快照 ★★
                         bool hadIdentity = ReferenceEquals(_shieldWatchedConsole, console);
+                        bool generationChanged = _shieldWatchedGeneration != console.ConnectionGeneration;
+                        bool handleChanged = _shieldWatchedHandle != nativeHandle;
+
                         _shieldWatchedConsole = console;
                         _shieldWatchedGeneration = console.ConnectionGeneration;
                         _shieldWatchedHandle = nativeHandle;
-                        SetShieldReleased(false);
-                        console.ReleasePointerForRearm();
-                        Debug(hadIdentity ? "检测到 RDP 原生画面变化 → 立即重新保护" : "检测到当前 RDP 原生画面 → 自动保护");
-                        // 新画面身份在同一个 Tick 内显示，不再等下一轮。
-                        UpdateShield();
+
+                        // ★★ 用户已接管时，单纯的 A/B 切换画面不该重新上锁 ★★
+                        //
+                        //   事故（用户实测）：解锁后点 B 切焦点，立刻又被锁回。
+                        //   原因：这里的"身份"用 _viewing?.Console 判定，
+                        //   而切焦点必然改 _viewing → 身份"变了" → 无条件重新上锁。
+                        //
+                        //   真正需要重新保护的只有两种情况：
+                        //     · 重连（ConnectionGeneration 变）
+                        //     · 原生句柄变了（ActiveX 重建）
+                        //   单纯换焦点不算，用户已经在操作了。
+                        bool mustReprotect = !hadIdentity || generationChanged || handleChanged;
+
+                        if (mustReprotect && !_shieldReleased)
+                        {
+                            SetShieldReleased(false);
+                            console.ReleasePointerForRearm();
+                            Debug(hadIdentity ? "检测到 RDP 原生画面变化 → 立即重新保护" : "检测到当前 RDP 原生画面 → 自动保护");
+                            UpdateShield();
+                        }
                     }
 
-                    // 持续满足保护条件就保持显示，不依赖连接/动画的某次回调。
-                    // 用户已主动点击解锁时不抢回鼠标。
-                    if (!_shieldReleased && _shieldOverlayWindow?.NativeVisible != true)
+                    // ★ 自愈：确认"该锁的时候宿主窗口真的被禁用了"。
+                    //   保护层是"拦截"能力，失效必须能自愈，不能指望某次回调。
+                    console.EnsureShieldEnforced();
+
+                    // 鼠标离开画布 / 窗口失活 → 重新上锁（全屏时不锁）。
+                    if (!_isFullScreen && _shieldReleased && ShouldRelockByPointer(Window.GetWindow(this)))
+                    {
+                        Debug("鼠标离开画布或窗口失活 → 重新上锁");
+                        RearmShield(force: true);
+                    }
+
+                    // 只有解锁态才跟随 RDP 焦点（锁定态焦点会残留原处）。
+                    if (_shieldReleased && !IsShieldLockedNow()) FollowRdpFocus();
+
+                    // 持续满足保护条件就保持锁定，不依赖连接/动画的某次回调。
+                    if (!_shieldReleased && !console.ShieldLocked)
                     {
                         UpdateShield();
                         if ((DateTime.UtcNow - _lastShieldRecoveryLog).TotalSeconds > 5)
                         {
                             _lastShieldRecoveryLog = DateTime.UtcNow;
-                            Debug("保护层看门狗恢复显示（无需切页）");
+                            Debug("保护层看门狗恢复锁定（无需切页）");
                         }
                     }
-                    else if (_shieldReleased) _shieldOverlayWindow?.HideForOwnerState();
                     RefreshInputIndicator();
                 }
                 catch (Exception ex) { App.AppendErrorLog("保护层看门狗", ex); }
@@ -362,44 +411,21 @@ namespace SoulLink.Views
             _shieldPendingNewTab = null;
             _shieldPendingAfterBusy = false;
             SetShieldReleased(false);
-            var old = _shieldOverlayWindow;
-            _shieldOverlayWindow = null;
-            _shieldOverlayContent = null;
-            if (old != null) { try { old.HideOverlay(); old.Close(); } catch { } }
-            EnsureShieldOverlayWindow();
+            // 保护层没有 HWND 了，注销时只需解掉禁用状态，
+            // 否则新会话的宿主窗口会一上来就是禁用的。
+            try { _viewing?.Console?.UnlockShield("注销后复位"); } catch { }
             EnsureShieldWatch();
         }
 
+        // ★ 保护层不再有原生浮层窗口。
+        //
+        //   历史：半透明浮层 = 分层窗口(WS_EX_LAYERED)，压到 mstscax 的
+        //   DirectComposition 表面上会把那块区域踢出硬件合成 → 整块黑屏。
+        //   现在改为禁用 RDP 宿主窗口（见 RdpConsole.LockShield），
+        //   不新建任何窗口，也就不会再黑屏，也不碰 0x119 的高风险组合。
         private void EnsureShieldOverlayWindow()
         {
-            if (_shieldOverlayWindow != null) return;
-            var owner = Window.GetWindow(this);
-            if (owner == null) return;
-            _shieldOverlayContent = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(1, 255, 255, 255)),
-                Cursor = Cursors.Arrow,
-                Focusable = false,
-                Child = new TextBlock
-                {
-                    Text = "点击此处接管键鼠",
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    FontSize = 12,
-                    Foreground = new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)),
-                    IsHitTestVisible = false
-                }
-            };
-            // 捕获 MouseDown 是为了可靠地吞掉第一次点击。MouseUp 才解锁，
-            // 所以“用于解锁的那一次点击”不会继续进入 RDP 或远端游戏。
-            _shieldOverlayContent.MouseLeftButtonDown += ShieldOverlay_MouseDown;
-            _shieldOverlayContent.MouseLeftButtonUp += ShieldOverlay_MouseUp;
-            // ★ 保护层锚定的是**固定的画布层**，与 RDP 窗口、与焦点格子彻底解绑。
-            //   原因（实测）：锚点一旦跟着焦点格子走，切到第二个标签时
-            //   浮层的坐标基准就换成了另一块区域，表现为"第一个正常、第二个跑偏"。
-            //   画布层是布局过程中位置/尺寸都不变的元素，永远不会漂。
-            _shieldOverlayWindow = new OwnedOverlayWindow(
-                owner, OverlayAnchor, _shieldOverlayContent, "RDP 保护层", allowInactiveOwner: true);
+            // 保留方法名是为了不动其它调用点；这里不再创建任何东西。
             UpdateShield();
         }
 
@@ -408,15 +434,22 @@ namespace SoulLink.Views
         /// ★ 只反映"当前是否已接管"，不再弹一次性文字：
         ///   原来用 TextBlock 显示消息，会被后续状态直接覆盖，反而看不出当前状态。
         /// </summary>
-        private void UpdateInputIndicator(bool taken)
+        private void UpdateInputIndicator(bool taken, bool locked = false)
         {
             try
             {
-                if (InputLabel != null) InputLabel.Text = taken ? "已接管" : "未接管";
+                // 三态：
+                //   已接管（taken）      → 亮青
+                //   锁定中（locked）     → 琥珀『点击画面接管』
+                //   未连接/不可用        → 灰『未接管』
+                if (InputLabel != null)
+                    InputLabel.Text = taken ? "已接管" : (locked ? "点击画面接管" : "未接管");
                 if (InputDot != null)
                     InputDot.Fill = new SolidColorBrush(taken
-                        ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 亮青 = 已接管（保护状态亮灯）
-                        : Color.FromRgb(0x6B, 0x7C, 0x9C)); // 灰 = 未接管
+                        ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 亮青 = 已接管
+                        : (locked
+                            ? Color.FromRgb(0xF0, 0xC0, 0x41) // 琥珀 = 等待点击接管
+                            : Color.FromRgb(0x6B, 0x7C, 0x9C))); // 灰 = 未接管
                 if (InputIndicator != null)
                 {
                     InputIndicator.Background = new SolidColorBrush(taken
@@ -447,12 +480,17 @@ namespace SoulLink.Views
                                    && ViewPage.Visibility == Visibility.Visible
                                    && ConfigPage.Visibility != Visibility.Visible;
 
-                bool needShield = App.Config.Settings.RdpCaptureOnClick
-                                  && connected
-                                  && !(_viewing?.Console?.IsLooking ?? false)
-                                  && !_shieldReleased
-                                  && pageVisible;
-                UpdateInputIndicator(connected && pageVisible && !needShield);
+                // ★ 读**真实**锁定态，不再自己按 _shieldReleased 推一遍。
+                //
+                //   原实现用 needShield = ... && !_shieldReleased 反推，
+                //   于是锁定态永远显示"未接管"，用户根本看不出保护层在工作
+                //   （实测：解锁后也一直显示未接管）。
+                //   唯一真源是 console.ShieldLocked —— 宿主窗口是否真被禁用。
+                var console = _viewing?.Console;
+                bool locked = console?.ShieldLocked == true;
+                bool armed = locked && !_shieldReleased;
+
+                UpdateInputIndicator(connected && pageVisible && !armed, armed);
             }
             catch { }
         }
@@ -461,8 +499,12 @@ namespace SoulLink.Views
         /// 修改保护层锁存状态的唯一入口。
         /// ★ 所有"重新上锁 / 解锁"都必须走这里，否则指示灯会和实际状态脱节。
         /// </summary>
-        private void SetShieldReleased(bool released)
+        private void SetShieldReleased(bool released,
+            [System.Runtime.CompilerServices.CallerMemberName] string from = "")
         {
+            if (RdpConsole.VerboseLog && _shieldReleased != released)
+                Debug("锁存 " + (_shieldReleased ? "已接管" : "锁定") + " → "
+                      + (released ? "已接管" : "锁定") + "  caller=" + from);
             _shieldReleased = released;
             RefreshInputIndicator();
         }
@@ -475,64 +517,141 @@ namespace SoulLink.Views
         /// 条件：勾选「点击画面才捕获」+ 已连接 + 非自由视角 + 未点掉 + 主窗口在前台。
         /// 真实 Win32 Owner 保证浮层不会越过主窗口；失活时同步隐藏并重新锁定。
         /// </summary>
+        /// <summary>
+        /// 同步保护层状态：锁定全部可见画面（禁用其 RDP 宿主窗口）。
+        ///
+        /// ★ 保护层现在是"禁用 RDP 原生宿主窗口"，不是半透明浮层：
+        ///   浮层是分层窗口，压在 mstscax 的 DirectComposition 表面上会让
+        ///   那块区域退出硬件合成 → 整块黑（2026-11-19 定论）。
+        /// ★ 全屏时不启用保护层（用户全屏就是为了打游戏）。
+        /// </summary>
         private void UpdateShield()
         {
             try
             {
-                // ★ 指示灯先算，且不依赖保护层窗口是否已创建。
-                //   原来放在后面，保护层窗口尚未创建时会直接 return，
-                //   导致"亮灯后再也不会熄灭"（用户实测）。
-                //   判据与保护层完全一致：需要保护 = 未接管；不需要保护 = 已接管。
-                bool connected = _viewing?.Console?.IsConnected == true;
-                bool wantShield = App.Config.Settings.RdpCaptureOnClick
-                                  && _viewing?.Console != null
-                                  && !_viewing.Console.IsLooking
-                                  && !_shieldReleased
-                                  && ViewPage.Visibility == Visibility.Visible
-                                  && ConfigPage.Visibility != Visibility.Visible
-                                  && Window.GetWindow(this) is Window w0 && w0.IsVisible
-                                  && w0.WindowState != WindowState.Minimized;
-                UpdateInputIndicator(connected && !wantShield);
-
-                EnsureShieldOverlayWindow();
-                if (_shieldOverlayWindow == null) return;
-
-                // ★ 锚点固定为画布层，这里不再做任何按焦点重锚的处理。
+                var console = _viewing?.Console;
+                bool connected = console?.IsConnected == true;
                 var win = Window.GetWindow(this);
                 bool visible = win != null && win.IsVisible && win.WindowState != WindowState.Minimized;
 
-                // 中控台处在任意 RDP 标签（不是“配置”）就保护。
-                // 新建/重连/注销后重开都不依赖 Connected、标签创建回调或 IsActive。
-                // Owner + 非 Topmost 保证层级；用户点击解锁或切回配置页才解除。
-                bool want = App.Config.Settings.RdpCaptureOnClick
-                            && _viewing?.Console != null
-                            && !_viewing.Console.IsLooking
+                // 需要锁定 = 勾选了点击捕获 + 有画面 + 非自由视角 + 用户未接管 + 页面可见 + 非全屏
+                bool want = !_isFullScreen
+                            && App.Config.Settings.RdpCaptureOnClick
+                            && console != null
+                            && !console.IsLooking
                             && !_shieldReleased
                             && ViewPage.Visibility == Visibility.Visible
                             && ConfigPage.Visibility != Visibility.Visible
                             && visible;
-                ShieldTrace(want ? "show" : "suppress", _viewing);
-                if (want)
-                {
-                    SyncShieldSize();
-                    _shieldOverlayWindow.ShowOverlay(OverlayAnchorWidth(), OverlayAnchorHeight());
-                }
-                else _shieldOverlayWindow.HideForOwnerState();
+
+                UpdateInputIndicator(connected && !want);
+                ShieldTrace(want ? "lock" : "unlock", _viewing);
+
+                // ★★ 锁**全部**可见画面，不能只锁焦点那个 ★★
+                //   保护层的语义是"整个画面区都还没接管"。
+                ApplyShieldToAllTiles(want);
             }
             catch (Exception ex) { App.AppendErrorLog("UpdateShield", ex); }
         }
 
-        private void SyncShieldSize()
+        /// <summary>
+        /// 把锁定态应用到所有应当被保护的画面。
+        ///
+        /// ★ 只处理"当前真正显示着 RDP"的格子：未连接/折叠的没有可交互画面，
+        ///   锁它没有意义，还会在它们连上时留下"一上来就被禁用"的怪状态。
+        /// </summary>
+        private void ApplyShieldToAllTiles(bool want)
+        {
+            foreach (var t in _tiles)
+            {
+                var c = t.Console;
+                if (c == null) continue;
+
+                bool reachable = t.Chrome != null
+                                 && t.Chrome.Visibility == Visibility.Visible
+                                 && c.IsConnected;
+                try
+                {
+                    if (want && reachable)
+                    {
+                        if (!c.ShieldLocked) c.LockShield("UpdateShield");
+                        else c.EnsureShieldEnforced();
+                    }
+                    else if (c.ShieldLocked)
+                    {
+                        c.UnlockShield("UpdateShield");
+                    }
+                }
+                catch (Exception ex) { App.AppendErrorLog("ApplyShieldToAllTiles", ex); }
+            }
+
+            // ★ 锁定态变化后必须重画边框，否则保护层框不会出现/消失。
+            //   原来这里没有这一步，用户看到的是"锁着但没有框"。
+            try { UpdateTileChrome(); } catch { }
+        }
+
+        /// <summary>当前是否处于锁定态（任一格子锁着即算）。</summary>
+        private bool IsShieldLockedNow()
+        {
+            try { return _tiles.Any(t => t.Console?.ShieldLocked == true); }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// 解锁态下，把焦点切到"真正持有键盘焦点的那个 RDP 画面"。
+        ///
+        /// ★ 解锁后宿主窗口恢复启用，点击会被 RDP 吞掉，WPF 收不到 MouseLeftButtonUp，
+        ///   只能靠系统焦点状态反推用户点了哪一格。
+        /// </summary>
+        private void FollowRdpFocus()
         {
             try
             {
-                double w = ViewportHost.ActualWidth;
-                double h = ViewportHost.ActualHeight;
-                if (w <= 0 || h <= 0) return;
-                if (_shieldOverlayContent != null) { _shieldOverlayContent.Width = w; _shieldOverlayContent.Height = h; }
-                if (_shieldOverlayWindow?.IsRequested == true) _shieldOverlayWindow.UpdateOverlaySize(w, h);
+                if (CurrentLayoutMode == ConsoleLayoutMode.Single) return;
+                // 用户刚点完，那一拍系统焦点可能还没沉降，跟随会把焦点拉回去。
+                if (DateTime.UtcNow - _lastTakeoverAt < TimeSpan.FromMilliseconds(600)) return;
+
+                Tile? owner = null;
+                foreach (var t in _tiles)
+                {
+                    if (t.Console?.HasKeyboardFocus == true) { owner = t; break; }
+                }
+                if (owner == null) return;
+                if (ReferenceEquals(owner, _focusTile)) return;
+
+                SetFocusFromShield(owner);
+                Debug("跟随 RDP 焦点 → " + owner.Row.Account.Caption);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// 解锁态下是否该重新上锁：鼠标移出画布，或主窗口不在前台。
+        /// ★ 用画布矩形而不是单格：多画面在格子间移动不该重新上锁。
+        /// </summary>
+        private bool ShouldRelockByPointer(Window? win)
+        {
+            try
+            {
+                if (win == null) return true;
+                if (!win.IsActive) return true;
+                if (win.WindowState == WindowState.Minimized) return true;
+
+                var rect = CanvasScreenRect();
+                if (rect == null) return true;
+
+                var cursor = System.Windows.Forms.Cursor.Position;
+                bool inside = cursor.X >= rect.Value.left && cursor.X < rect.Value.left + rect.Value.width
+                           && cursor.Y >= rect.Value.top && cursor.Y < rect.Value.top + rect.Value.height;
+                return !inside;
+            }
+            catch { return false; }
+        }
+
+
+        private void SyncShieldSize()
+        {
+            // 保护层没有浮层窗口了，不需要同步几何；保留空方法避免动调用点。
         }
 
         /// <summary>当前鼠标位置落在哪个格子（多画面用）。</summary>
@@ -589,7 +708,6 @@ namespace SoulLink.Views
             }
 
             SetShieldReleased(true);
-            _shieldOverlayWindow?.HideOverlay();
             try { _viewing?.Console?.OnShieldReleased(); } catch { }
             UpdateInputIndicator(true);
             Debug("保护层已解除（完整消费首次 Down/Up 后解锁）");
@@ -610,7 +728,6 @@ namespace SoulLink.Views
                 if (!_tiles.Any(t => ReferenceEquals(t.Row, row))) return;
                 UpdateShield();
                 SyncShieldSize();
-                _shieldOverlayWindow?.SyncToAnchor();
             }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
@@ -644,6 +761,62 @@ namespace SoulLink.Views
                 //   监控已经覆盖"启动即连接 + 晚登录账号"两种场景，无需旧路径。
                 StartSessionWatch();
             }
+
+            // ★ Broker 服务被安装 / 更新后，立刻重置投送状态并重试。
+            //
+            //   用户实测：「安装服务后没有自动更新并启用投送」。
+            //   原因：安装器把服务换成新版后，中控台完全不知道；
+            //   那些账号早被记进 _deployHandled（之前投送"成功"过），
+            //   于是每轮扫描都跳过，必须重启程序才会重投。
+            BrokerProtocol.ServiceUpdated += OnBrokerServiceUpdated;
+        }
+
+        /// <summary>Broker 服务更新后：清投送记录 + 清版本缓存 + 立刻重扫。</summary>
+        private void OnBrokerServiceUpdated()
+        {
+            try
+            {
+                if (Dispatcher.HasShutdownStarted) return;
+                Dispatcher.BeginInvoke(new Action(async () =>
+                {
+                    try
+                    {
+                        Debug("Broker 服务已更新 → 重置投送状态并重新投送");
+
+                        // ① 清掉"已投送"记录与稳定期计时，让每个账号重新走一遍投送
+                        _deployHandled.Clear();
+                        _sessionSeen.Clear();
+
+                        // ② 让旧代理连接失效（它们指向的是旧服务的登记表）
+                        //
+                        //   ★★ 这里**绝对不能**再调 SetForegroundActive(false)。★★
+                        //
+                        //   实测（input-trace，2026-11-20 03:12）：
+                        //     03:12:16 broker STOPPED（用户更新了服务）
+                        //     03:12:23 SET_ACTIVE active=False 调用方=<OnBrokerServiceUpdated>b__90_0
+                        //     03:12:38 HOTKEY_DENY 原因=HotkeyArmed=False IsConnected=True
+                        //   之后每次按侧键都被拒，直到用户手动切了一次画面
+                        //   （03:19:19 ARMED False → True 由 ShowViewPageAsync 恢复）才好。
+                        //
+                        //   原因：SetForegroundActive 是**双职责**的 ——
+                        //   它既停键鼠注入（_activeState），又会关掉 HotkeyArmed、
+                        //   释放捕获、卸载钩子。而这里真正想要的只是"旧连接失效"，
+                        //   前台资格与代理连接无关，不该被牵连。
+                        //
+                        //   改用 StopInputAsync()：它只处置通道、递增 generation，
+                        //   完全不碰 _activeState / HotkeyArmed / 捕获状态。
+                        foreach (var t in _tiles)
+                        {
+                            try { t.Console?.InvalidateAgentConnection(); } catch { }
+                        }
+
+                        // ③ 立刻扫一次，不等下一个 2 秒 tick
+                        await ScanAndDeployAsync();
+                    }
+                    catch (Exception ex) { App.AppendErrorLog("OnBrokerServiceUpdated", ex); }
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }
+            catch { }
         }
 
         private bool _autoConnectTried;
@@ -704,10 +877,104 @@ namespace SoulLink.Views
         private readonly System.Threading.SemaphoreSlim _autoConnectGate
             = new System.Threading.SemaphoreSlim(1, 1);
 
+        /// <summary>手动模式提示只记一次，避免每轮扫描刷日志。</summary>
+        private bool _manualModeNoticeShown;
+
+        /// <summary>上次"死代理检测"的时刻（节流用，避免每 2 秒枚举全进程）。</summary>
+        private DateTime _lastDeadAgentCheck = DateTime.MinValue;
+
         private async Task ScanAndDeployAsync()
         {
             try
             {
+                // ★★ 手动代理模式下绝不自动投送。★★
+                //
+                //   用户实测：「关闭手动后好像没恢复自动」。
+                //   反过来查才发现这条路径**从来没有检查过这个开关** ——
+                //   ManualAgentMode.Enabled 只在 App 启动时用过一次，
+                //   所以手动模式下照样会自动投送，把用户的手动代理顶掉。
+                //
+                //   注意：这里直接 return 不等于"什么都不做"，
+                //   手动模式自己的等待逻辑在 ManualAgentMode 里，与本方法互不影响。
+                if (ManualAgentMode.Enabled)
+                {
+                    if (!_manualModeNoticeShown)
+                    {
+                        _manualModeNoticeShown = true;
+                        Debug("手动代理模式已开启 → 跳过自动投送");
+
+                        // ★ 关键：进入手动模式时清空"已处理"记录。
+                        //   否则手动期间代理被停掉，切回自动后这些账号仍在
+                        //   _deployHandled 里，会被永远跳过 ——
+                        //   表现为「切回自动后完全没有投送日志」（用户实测）。
+                        //   同时清掉稳定期计时，让切回自动后重新走"等满稳定期"的流程。
+                        _deployHandled.Clear();
+                        _sessionSeen.Clear();
+                        Debug("手动代理模式：已清空投送记录，切回自动后会重新投送");
+                    }
+                    return;
+                }
+
+                if (_manualModeNoticeShown)
+                {
+                    // 刚从手动模式切回自动：再清一次，确保没有残留
+                    _manualModeNoticeShown = false;
+                    _deployHandled.Clear();
+                    _sessionSeen.Clear();
+                    Debug("已退出手动代理模式 → 清空投送记录，恢复自动投送");
+                }
+
+                // ★★ 已投送但代理已经死了 → 必须重投。★★
+                //
+                //   用户实测：02:10:28 两条"通道投送成功"，之后代理进程消失、
+                //   relay 管道也没了，但日志再没有任何投送记录 ——
+                //   因为 _deployHandled 里记着"已处理"，监控从此永久跳过。
+                //
+                //   标记只代表"曾经发起过"，不代表"现在还有效"。
+                //   这里每轮扫一遍仍标记为已处理的账号，确认代理还活着；
+                //   死了就把标记清掉，让它重新走投送流程。
+                // ★ 节流：死代理检测最多每 10 秒做一次。
+                //   DiscoverLiveAgentSessions 要枚举全部进程 + 全部命名管道，
+                //   每 2 秒跑一次会明显占用 UI 线程（实测出现过日志停摆）。
+                bool checkDead = _deployHandled.Count > 0
+                    && (DateTime.UtcNow - _lastDeadAgentCheck).TotalSeconds >= 10;
+                if (checkDead)
+                {
+                    _lastDeadAgentCheck = DateTime.UtcNow;
+                    var live = BgiLogWatcher.DiscoverLiveAgentSessions();
+
+                    // ★★ 会话列表只查**一次**。★★
+                    //   原来在 foreach 里对每个已处理账号各调一次 QueryAsync，
+                    //   而 QueryAsync 每次都起一个 query.exe 子进程（~28ms），
+                    //   本方法又每 2 秒被调用一次 → UI 线程被持续占满，
+                    //   表现为日志停摆、界面卡顿（实测：单线程烧了 3 分钟 CPU）。
+                    var sessionsForCheck = await SessionService.QueryAsync().ConfigureAwait(true);
+
+                    var dead = new List<string>();
+                    foreach (var handledId in _deployHandled)
+                    {
+                        // 找到该账号当前会话，判断该会话还有没有活代理
+                        UserRow? hit = null;
+                        foreach (var r0 in _rows)
+                            if (string.Equals(r0.Account.Id, handledId, StringComparison.Ordinal)) { hit = r0; break; }
+                        if (hit == null) continue;
+
+                        var s0 = SessionService.Find(sessionsForCheck, hit.Account.UserName);
+                        if (s0 == null || s0.Id <= 0) continue;      // 没会话，交给下面的逻辑处理
+                        if (!live.Contains(s0.Id)) dead.Add(handledId);
+                    }
+
+                    if (dead.Count > 0)
+                    {
+                        foreach (var d in dead)
+                        {
+                            _deployHandled.Remove(d);
+                            _sessionSeen.Remove(d);
+                        }
+                        Debug("检测到 " + dead.Count + " 个账号的注入代理已失效 → 清除标记，准备重投");
+                    }
+                }
+
                 var ids = App.Config.Settings.AutoConnectAccountIds;
                 if (ids == null || ids.Count == 0) return;
 
@@ -843,7 +1110,13 @@ namespace SoulLink.Views
                         {
                             if (row.Console == null)
                                 await Dispatcher.InvokeAsync(() => InitializeConsole(row));
-                            row.Console?.SetForegroundActive(false);
+                            InputTrace.Write("SCAN_SETACTIVE", "监控投送前置为后台：" + caption
+                                + " 会话=" + row.Console?.CurrentSessionId
+                                + " 当前_viewing=" + (_viewing?.Account.Caption ?? "null")
+                                + " 是否同一行=" + ReferenceEquals(row, _viewing));
+                            // ★ 同上：只降级"不是当前画面"的那个。
+                            if (!ReferenceEquals(row, _viewing))
+                                row.Console?.SetForegroundActive(false);
 
                             var console = await Dispatcher.InvokeAsync(() => row.Console);
                             if (console == null) return;
@@ -938,7 +1211,16 @@ namespace SoulLink.Views
                         {
                             _openedIds.Add(row.Account.Id);
                             if (row.Console == null) InitializeConsole(row);
-                            row.Console?.SetForegroundActive(false);
+                            InputTrace.Write("BG_DEPLOY_SETACTIVE", "后台投送前置为后台：" + caption
+                                + " 会话=" + row.Console?.CurrentSessionId
+                                + " 当前_viewing=" + (_viewing?.Account.Caption ?? "null")
+                                + " 是否同一行=" + ReferenceEquals(row, _viewing));
+                            // ★ 只给"不是当前画面"的那个降级。
+                            //   原来是无条件 false —— 万一这里遍历到的正是 _viewing，
+                            //   就会把用户正在看的画面降成后台，热键随即失效
+                            //   （与 OnBrokerServiceUpdated 同一个坑）。
+                            if (!ReferenceEquals(row, _viewing))
+                                row.Console?.SetForegroundActive(false);
                         });
 
                         var console = await Dispatcher.InvokeAsync(() => row.Console);
@@ -1062,7 +1344,6 @@ namespace SoulLink.Views
                 row.Console?.SetForegroundActive(false);
             _viewing = null;
             SetShieldReleased(false);
-            _shieldOverlayWindow?.HideOverlay();
             ConfigPage.Visibility = Visibility.Visible;
             SetBusyVisible(false);
             ViewPage.Visibility = Visibility.Collapsed;
@@ -1085,6 +1366,8 @@ namespace SoulLink.Views
 
         private async Task ShowViewPageAsync(UserRow row)
         {
+            InputTrace.Write("SHOW_VIEW", "打开画面：" + row.Account.Caption + " 会话=" + row.Console?.CurrentSessionId
+                + " 已有Console=" + (row.Console != null));
             foreach (var item in _rows)
                 item.Console?.SetForegroundActive(ReferenceEquals(item, row));
             _viewing = row;
@@ -1103,6 +1386,11 @@ namespace SoulLink.Views
             UpdateTileChrome();
             ApplyLayout();
 
+            // ★ 这里原来在下面 alreadyConnected 分支里又调了一次 ApplyLayout()，
+            //   两次测量可能读到不同的视口宽度（滚动条/布局尚未收敛），
+            //   导致画面宽度在两个值之间跳一下 —— 用户看到的就是"切标签时左右晃"。
+            //   已改为：需要时就地重排一次，且测量前保证布局已收敛。
+
             // ★ 关键：RDP 控件是 WindowsFormsHost（独立 HWND），
             //   一旦可见就会立刻显示它的"启动画面"（黑底 + 转圈动画），
             //   而且这个原生子窗口会**盖住所有 WPF 元素**（含左侧导航、顶栏）。
@@ -1113,10 +1401,15 @@ namespace SoulLink.Views
             bool alreadyConnected = row.Console.IsConnected;
             if (alreadyConnected)
             {
-                var tile = EnsureTile(row);
-                _focusTile = tile;
-                ApplyLayout();
+                // 已连接：格子只可能在上面 ApplyLayout 时才第一次可见，
+                // 这里把布局更新推到布局阶段之后，避免同一拍内重复测量。
                 row.Console.OnShown();
+
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (!ReferenceEquals(row, _viewing)) return;
+                    ApplyLayout();
+                }), System.Windows.Threading.DispatcherPriority.Loaded);
             }
 
             row.Console.SetForegroundActive(true);
@@ -1142,7 +1435,6 @@ namespace SoulLink.Views
                         SetShieldReleased(false);
                         ShieldTrace("native-mounted", row);
                         UpdateShield();
-                        _shieldOverlayWindow?.SyncToAnchor();
                     }
                     SetBusyVisible(false);
                     RefreshShieldAfterLayout(row);
@@ -1988,6 +2280,56 @@ namespace SoulLink.Views
                 });
             c.InputModeChanged += (_, m) =>
                 Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) ApplyModeUi(m); });
+            // ★★ 用户点了这个 RDP 画面 → 当拍切焦点。★★
+            //
+            //   RdpConsole 在 WM_MOUSEACTIVATE 里抛 ShieldClicked，这是"点击落到画面里"
+            //   的唯一可靠通知：原生窗口会吞掉鼠标消息，WPF 的格子 Border 收不到点击。
+            //
+            //   原代码**从未订阅过这个事件**，于是：
+            //     · 开启保护层时：靠 EnterTakeover → _shieldReleased=true → FollowRdpFocus
+            //       轮询补救，所以看起来正常；
+            //     · 未开启保护层时：ShieldActive=false，_shieldReleased 永远是 false，
+            //       FollowRdpFocus 那条补救路径根本不执行 ——
+            //       表现就是「双列模式下点画面，焦点框不跟着切」（用户实测）。
+            //
+            //   这里直接订阅，两种状态都走同一条路径，不再依赖保护层是否开启。
+            c.ShieldClicked += _ =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    try
+                    {
+                        // ★★ 这里**不能**用 "row 是不是 _viewing" 来过滤。★★
+                        //
+                        //   row 是这个 RdpConsole 所属的账号；用户点"另一个"画面时，
+                        //   row 是新画面而 _viewing 还是旧的 —— 那条判断会把
+                        //   "切到另一个画面"这种**最需要处理**的情况直接挡掉，
+                        //   于是 _focusTile 永远不变、紫框永远不动。
+                        //   这是 2.17.5 里"点画面切不了焦点"的真实根因。
+                        //
+                        //   正确的过滤是「本页是否可见」，而不是比对账号身份。
+
+                        // 单画面下点击画面不需要切焦点（本来就只有它一个）
+                        if (CurrentLayoutMode == ConsoleLayoutMode.Single) return;
+
+                        // 页面不可见时（切到别的导航页）不抢焦点
+                        if (!IsVisible) return;
+
+                        // ★ 锁定态点击不在这里切焦点。
+                        //   Tile 的 MouseLeftButtonUp → EnterTakeover 已完成
+                        //   「置锁存 → 解锁全部 → 切焦点」，顺序经实测固定，
+                        //   这里再切一次会和它打架（Tiles.cs 第 140 行的老坑）。
+                        //   本订阅只负责"保护层未启用"的情况。
+                        if (c.ShieldLocked) return;
+
+                        // 已经是焦点格：不用动
+                        var tile = _tiles.FirstOrDefault(t => ReferenceEquals(t.Row, row));
+                        if (tile != null && ReferenceEquals(tile, _focusTile)) return;
+
+                        SetFocus(row, reason: "native-click");
+                    }
+                    catch (Exception ex) { App.AppendErrorLog("ShieldClicked", ex); }
+                });
+
             // 光标移出画面 → 重新挂保护层
             c.ShieldRearmRequested += _ =>
                 Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) RearmShield(); });
@@ -1998,7 +2340,6 @@ namespace SoulLink.Views
                     if (!ReferenceEquals(row, _viewing)) return;
                     if (!visible)
                     {
-                        _shieldOverlayWindow?.HideOverlay();
                         return;
                     }
                     // 退出自由视角：视为"操作完毕"，重新进入需点击状态
@@ -2311,6 +2652,241 @@ namespace SoulLink.Views
             }
             _tiles.Clear();
             _focusTile = null;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // 全屏模式（方案 B：顶部菜单自动出现，占真实行高，不是浮层）
+        //
+        // ★ 设计要点（都是实测约束）：
+        //   ① 全屏不启用保护层 —— 用户全屏就是为了打游戏。
+        //   ② 菜单**不能是浮层**：RDP 是 DirectComposition 表面，
+        //      任何分层窗口压上去都会让那块区域退出硬件合成 → 变黑。
+        //      所以菜单占真实 Grid 行，RDP 同步缩小。
+        //   ③ 平时菜单高度为 0（画面满屏），鼠标移到顶部才撑开。
+        //   ④ 切到别的应用**不退出全屏**（用户明确要求）。
+        //   ⑤ 不用快捷键退出 —— 按键会被 RDP 吞掉，只能点菜单。
+        // ══════════════════════════════════════════════════════════════════
+
+        /// <summary>菜单条高度（DIP）。</summary>
+        private const double FullScreenMenuHeight = 46;
+
+        /// <summary>鼠标距顶部多少像素以内算"想用菜单"。</summary>
+        private const double FullScreenHotZone = 6;
+
+        private System.Windows.Threading.DispatcherTimer? _fullScreenMenuWatch;
+        private DateTime _fullScreenMenuHideAt = DateTime.MinValue;
+        private bool _fullScreenMenuVisible;
+        private WindowState _preFullScreenState = WindowState.Normal;
+        private WindowStyle _preFullScreenStyle = WindowStyle.None;
+        private ResizeMode _preFullScreenResize = ResizeMode.CanResize;
+        private Thickness _preFullScreenMargin;
+
+        private void BtnFullScreen_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isFullScreen) ExitFullScreen();
+            else EnterFullScreen();
+        }
+
+        private void EnterFullScreen()
+        {
+            try
+            {
+                var win = Window.GetWindow(this);
+                if (win == null || _viewing?.Console == null) return;
+
+                _preFullScreenState = win.WindowState;
+                _preFullScreenStyle = win.WindowStyle;
+                _preFullScreenResize = win.ResizeMode;
+                if (win.Content is FrameworkElement root) _preFullScreenMargin = root.Margin;
+
+                _isFullScreen = true;
+
+                // 全屏不保护：直接解锁。
+                try { _viewing.Console.UnlockShield("进入全屏"); } catch { }
+                SetShieldReleased(true);
+
+                win.WindowStyle = WindowStyle.None;
+                win.ResizeMode = ResizeMode.NoResize;
+                if (win.Content is FrameworkElement r) r.Margin = new Thickness(0);
+                win.WindowState = WindowState.Normal;
+                win.Left = SystemParameters.VirtualScreenLeft;
+                win.Top = SystemParameters.VirtualScreenTop;
+                win.Width = SystemParameters.VirtualScreenWidth;
+                win.Height = SystemParameters.VirtualScreenHeight;
+
+                // 顶部标签条让位给画面
+                if (TopBar != null) TopBar.Visibility = Visibility.Collapsed;
+
+                // 先露出菜单 3 秒，让用户知道入口在哪。
+                SetFullScreenMenuVisible(true);
+                _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(3);
+                EnsureFullScreenMenuWatch(true);
+
+                ApplyLayout();
+                Dispatcher.BeginInvoke(new Action(ApplyLayout),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+
+                Debug("进入全屏");
+            }
+            catch (Exception ex) { App.AppendErrorLog("EnterFullScreen", ex); }
+        }
+
+        private void BtnExitFullScreen_Click(object sender, RoutedEventArgs e) => ExitFullScreen();
+
+        private void ExitFullScreen()
+        {
+            try
+            {
+                if (!_isFullScreen) return;
+                _isFullScreen = false;
+
+                EnsureFullScreenMenuWatch(false);
+                SetFullScreenMenuVisible(false);
+
+                var win = Window.GetWindow(this);
+                if (win != null)
+                {
+                    win.WindowStyle = _preFullScreenStyle;
+                    win.ResizeMode = _preFullScreenResize;
+                    win.WindowState = WindowState.Normal;
+                    if (win.Content is FrameworkElement r) r.Margin = _preFullScreenMargin;
+                    win.WindowState = _preFullScreenState;
+                }
+
+                if (TopBar != null) TopBar.Visibility = Visibility.Visible;
+
+                ApplyLayout();
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    ApplyLayout();
+                    UpdateShield();
+                }), System.Windows.Threading.DispatcherPriority.Loaded);
+
+                Debug("退出全屏");
+            }
+            catch (Exception ex) { App.AppendErrorLog("ExitFullScreen", ex); }
+        }
+
+        private void EnsureFullScreenMenuWatch(bool on)
+        {
+            try
+            {
+                if (!on)
+                {
+                    _fullScreenMenuWatch?.Stop();
+                    _fullScreenMenuWatch = null;
+                    return;
+                }
+                _fullScreenMenuWatch ??= new System.Windows.Threading.DispatcherTimer
+                { Interval = TimeSpan.FromMilliseconds(120) };
+                _fullScreenMenuWatch.Tick -= OnFullScreenMenuTick;
+                _fullScreenMenuWatch.Tick += OnFullScreenMenuTick;
+                _fullScreenMenuWatch.Start();
+            }
+            catch (Exception ex) { App.AppendErrorLog("EnsureFullScreenMenuWatch", ex); }
+        }
+
+        private void OnFullScreenMenuTick(object? sender, EventArgs e)
+        {
+            try
+            {
+                if (!_isFullScreen) { EnsureFullScreenMenuWatch(false); return; }
+                var win = Window.GetWindow(this);
+                if (win == null || !win.IsActive) return;
+
+                var cursor = System.Windows.Forms.Cursor.Position;
+                var topLeft = PointToScreen(new Point(0, 0));
+                double y = cursor.Y - topLeft.Y;
+
+                bool inHotZone = y >= -FullScreenHotZone && y <= FullScreenHotZone;
+                if (inHotZone)
+                {
+                    SetFullScreenMenuVisible(true);
+                    _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(2);
+                    return;
+                }
+
+                // 菜单显示中且鼠标停在菜单上 → 保持
+                if (_fullScreenMenuVisible && y >= 0 && y <= FullScreenMenuHeight)
+                {
+                    _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(2);
+                    return;
+                }
+
+                if (_fullScreenMenuVisible && DateTime.UtcNow >= _fullScreenMenuHideAt)
+                    SetFullScreenMenuVisible(false);
+            }
+            catch { }
+        }
+
+        /// <summary>显示/收起菜单条：改行高，RDP 会跟着缩放（不是浮层遮挡）。</summary>
+        private void SetFullScreenMenuVisible(bool visible)
+        {
+            try
+            {
+                if (_fullScreenMenuVisible == visible) return;
+                _fullScreenMenuVisible = visible;
+
+                if (FullScreenMenuBar != null)
+                    FullScreenMenuBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+                if (FullScreenMenuRow != null)
+                    FullScreenMenuRow.Height = visible
+                        ? new GridLength(FullScreenMenuHeight)
+                        : new GridLength(0);
+
+                ApplyLayout();   // RDP 宿主尺寸变了，立刻重排
+            }
+            catch (Exception ex) { App.AppendErrorLog("SetFullScreenMenuVisible", ex); }
+        }
+
+        private void BtnFullScreenSwitch_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                RebuildFullScreenSwitchMenu();
+                if (FullScreenSwitchMenu == null) return;
+                FullScreenSwitchMenu.PlacementTarget = BtnFullScreenSwitch;
+                FullScreenSwitchMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+                FullScreenSwitchMenu.IsOpen = true;
+            }
+            catch (Exception ex) { App.AppendErrorLog("BtnFullScreenSwitch_Click", ex); }
+        }
+
+        private void RebuildFullScreenSwitchMenu()
+        {
+            try
+            {
+                if (FullScreenSwitchMenu == null) return;
+                FullScreenSwitchMenu.Items.Clear();
+
+                foreach (var t in _tiles)
+                {
+                    if (t.Console?.IsConnected != true) continue;
+                    var mi = new MenuItem
+                    {
+                        Header = t.Row.Account.Caption,
+                        IsCheckable = true,
+                        IsChecked = ReferenceEquals(t, _focusTile),
+                    };
+                    var tile = t;
+                    mi.Click += (_, __) =>
+                    {
+                        SetFocus(tile.Row, reason: "fullscreen-switch");
+                        ApplyLayout();
+                        FullScreenTitle.Text = tile.Row.Account.Caption;
+                    };
+                    FullScreenSwitchMenu.Items.Add(mi);
+                }
+
+                if (FullScreenSwitchMenu.Items.Count > 0)
+                    FullScreenSwitchMenu.Items.Add(new Separator());
+                var exitItem = new MenuItem { Header = "退出全屏" };
+                exitItem.Click += (_, __) => ExitFullScreen();
+                FullScreenSwitchMenu.Items.Add(exitItem);
+
+                FullScreenTitle.Text = _viewing?.Account.Caption ?? "全屏";
+            }
+            catch (Exception ex) { App.AppendErrorLog("RebuildFullScreenSwitchMenu", ex); }
         }
     }
 }

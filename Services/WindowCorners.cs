@@ -147,7 +147,15 @@ namespace SoulLink.Services
             catch { return false; }
         }
 
-        /// <summary>恢复系统原生边框颜色（未激活时用这个，跟原生窗口完全一致）。</summary>
-        public static bool ResetBorderColor(IntPtr hwnd) => SetBorderColor(hwnd, ColorDefault);
+        /// <summary>
+        /// 未激活时**完全不画** DWM 边框。
+        ///
+        /// ★ 原来用的是 ColorDefault（恢复系统原生边框），
+        ///   而系统原生未激活边框是白色的 —— 在深色主题下，
+        ///   窗口内侧会露出一条明显的白边（实测 #f4f7fc，厚 8px，
+        ///   且因为 DWM 只画在有内容的地方，表现为"上左完整、下右残缺"）。
+        ///   改画 ColorNone 后该边完全消失，与原生深色应用表现一致。
+        /// </summary>
+        public static bool ResetBorderColor(IntPtr hwnd) => SetBorderColor(hwnd, ColorNone);
     }
 }

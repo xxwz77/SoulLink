@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media.Effects;
 using Microsoft.Win32;
 using SoulLink.Services;
 
@@ -14,6 +17,38 @@ namespace SoulLink.Services
         public static bool IsDark { get; private set; } = true;
         private static readonly Dictionary<string, SolidColorBrush> _previous = new(StringComparer.Ordinal);
         private static bool _stylesConverted;
+
+        /// <summary>档位切换后让所有背景元素重新计算动画开关（无需重启程序）。</summary>
+        public static void RefreshEffects()
+        {
+            try
+            {
+                if (System.Windows.Application.Current == null) return;
+                foreach (System.Windows.Window w in System.Windows.Application.Current.Windows)
+                {
+                    if (w == null) continue;
+                    // ★ 档位切换会让焦点短暂移出主窗口（点 ComboBox 时），
+                    //   而失焦会把 DWM 边框色恢复成系统默认灰边，看起来像"多了一圈灰框"。
+                    //   这里显式重设一次，避免用户以为档位改变了窗口外观。
+                    try { SoulLink.Views.MainWindow.RefreshWindowBorder(); } catch { }
+                    if (w.Content is not System.Windows.DependencyObject root) continue;
+                    RefreshEffectsIn(root);
+                }
+            }
+            catch { }
+        }
+
+        private static void RefreshEffectsIn(System.Windows.DependencyObject node)
+        {
+            try
+            {
+                if (node is SoulLink.Controls.AuroraBackdrop bd) bd.RefreshAnimationState();
+                int n = System.Windows.Media.VisualTreeHelper.GetChildrenCount(node);
+                for (int i = 0; i < n; i++)
+                    RefreshEffectsIn(System.Windows.Media.VisualTreeHelper.GetChild(node, i));
+            }
+            catch { }
+        }
 
         public static void Apply()
         {
@@ -36,7 +71,7 @@ namespace SoulLink.Services
 
             SetBrush(styles, "TextPrimary", IsDark ? Color.FromRgb(242, 245, 255) : Color.FromRgb(48, 37, 76));
             SetBrush(styles, "TextSecondary", IsDark ? Color.FromArgb(180, 194, 232, 255) : Color.FromRgb(57, 43, 86));
-            SetBrush(styles, "TextMuted", IsDark ? Color.FromArgb(122, 140, 180, 224) : Color.FromRgb(74, 59, 102));
+            SetBrush(styles, "TextMuted", IsDark ? Color.FromRgb(165, 171, 205) : Color.FromRgb(92, 76, 120));
             SetBrush(styles, "StrokeSoft", IsDark ? Color.FromArgb(36, 255, 255, 255) : Color.FromArgb(42, 102, 66, 139));
             SetBrush(styles, "StrokeMid", IsDark ? Color.FromArgb(60, 255, 255, 255) : Color.FromArgb(64, 102, 66, 139));
             SetBrush(styles, "CyanBrush", (Color)resources["Cyan"]);
@@ -45,10 +80,44 @@ namespace SoulLink.Services
             SetBrush(styles, "AmberBrush", (Color)resources["Amber"]);
             SetBrush(styles, "RoseBrush", (Color)resources["Rose"]);
             SetBrush(styles, "MagentaBrush", (Color)resources["Magenta"]);
-            SetBrush(styles, "NavBackground", IsDark ? Color.FromArgb(242, 10, 16, 32) : Color.FromArgb(248, 249, 241, 255));
-            SetBrush(styles, "PanelBackground", IsDark ? Color.FromArgb(24, 255, 255, 255) : Color.FromArgb(115, 255, 255, 255));
-            SetBrush(styles, "FieldBackground", IsDark ? Color.FromArgb(38, 10, 18, 38) : Color.FromArgb(160, 255, 255, 255));
-            SetBrush(styles, "WindowBackground", IsDark ? Color.FromRgb(7, 10, 22) : Color.FromRgb(249, 242, 253));
+            // 月莓星轨使用近黑玻璃；云端棱镜使用乳白磨砂，不用反色滤镜。
+            SetBrush(styles, "NavBackground", IsDark ? Color.FromArgb(226, 13, 15, 35) : Color.FromArgb(230, 255, 251, 255));
+            SetBrush(styles, "PanelBackground", IsDark ? Color.FromArgb(38, 27, 25, 57) : Color.FromArgb(158, 255, 255, 255));
+            SetBrush(styles, "FieldBackground", IsDark ? Color.FromArgb(118, 10, 12, 33) : Color.FromArgb(205, 255, 255, 255));
+            SetBrush(styles, "WindowBackground", IsDark ? Color.FromRgb(9, 9, 25) : Color.FromRgb(251, 247, 254));
+            SetBrush(styles, "DialogSurface", IsDark ? Color.FromRgb(17, 17, 41) : Color.FromRgb(251, 247, 255));
+            SetBrush(styles, "PopupBackground", IsDark ? Color.FromArgb(250, 27, 25, 53) : Color.FromArgb(252, 255, 252, 255));
+            SetBrush(styles, "HoverFill", IsDark ? Color.FromArgb(36, 255, 255, 255) : Color.FromArgb(32, 123, 91, 175));
+            SetBrush(styles, "PressedFill", IsDark ? Color.FromArgb(58, 255, 255, 255) : Color.FromArgb(45, 119, 87, 167));
+            SetBrush(styles, "SelectedFill", IsDark ? Color.FromArgb(56, 201, 183, 244) : Color.FromArgb(45, 157, 122, 204));
+            SetBrush(styles, "ButtonBackground", IsDark ? Color.FromArgb(22, 255, 255, 255) : Color.FromArgb(176, 255, 255, 255));
+            SetBrush(styles, "ButtonBorder", IsDark ? Color.FromArgb(42, 255, 255, 255) : Color.FromArgb(60, 119, 88, 159));
+            SetBrush(styles, "ControlAccentText", Colors.White);
+            SetBrush(styles, "SubtleSurface", IsDark ? Color.FromArgb(16, 255, 255, 255) : Color.FromArgb(20, 106, 81, 153));
+            SetBrush(styles, "ScrollThumb", IsDark ? Color.FromArgb(85, 207, 195, 239) : Color.FromArgb(100, 128, 103, 167));
+            // ResourceDictionary 中的画刷与 Effect 默认冻结；必须替换实例，不可原地改色。
+            styles["GlassFill"] = Gradient(new Point(.0,.0),new Point(.7,1),
+                (IsDark?Color.FromArgb(53,41,36,76):Color.FromArgb(188,255,255,255),0),
+                (IsDark?Color.FromArgb(27,23,27,57):Color.FromArgb(133,255,255,255),.35),
+                (IsDark?Color.FromArgb(22,29,38,65):Color.FromArgb(108,240,235,255),1));
+            styles["GlassFillStrong"] = Gradient(new Point(.0,.0),new Point(.7,1),
+                (IsDark?Color.FromArgb(74,34,30,67):Color.FromArgb(216,255,255,255),0),
+                (IsDark?Color.FromArgb(48,23,27,55):Color.FromArgb(173,255,255,255),.4),
+                (IsDark?Color.FromArgb(33,29,36,66):Color.FromArgb(153,242,237,255),1));
+            styles["GlassStroke"] = Gradient(new Point(0,0),new Point(1,1),
+                (IsDark?Color.FromArgb(102,231,213,255):Color.FromArgb(140,155,122,191),0),
+                (IsDark?Color.FromArgb(36,255,255,255):Color.FromArgb(65,133,108,176),.45),
+                (IsDark?Color.FromArgb(18,255,255,255):Color.FromArgb(50,128,161,188),1));
+            styles["CardShadow"] = new DropShadowEffect
+            {
+                Color=IsDark?Color.FromRgb(2,4,10):Color.FromRgb(102,80,140),
+                Opacity=IsDark?.55:.20, ShadowDepth=IsDark?10:5,
+                BlurRadius=34, Direction=270
+            };
+            styles["AccentGradient"] = Gradient(new Point(0,0),new Point(1,1),
+                (IsDark?Color.FromRgb(146,112,240):Color.FromRgb(157,119,204),0),
+                (IsDark?Color.FromRgb(118,206,241):Color.FromRgb(108,160,206),.55),
+                (IsDark?Color.FromRgb(255,139,207):Color.FromRgb(215,133,179),1));
             if (Application.Current.MainWindow is SoulLink.Views.MainWindow mainWindow)
             {
                 Brush nav = (Brush)styles["NavBackground"];
@@ -71,10 +140,18 @@ namespace SoulLink.Services
                 _stylesConverted = true;
             }
             ApplyToOpenWindows();
-            if (!IsDark)
-                foreach (Window window in Application.Current.Windows) ImproveLightReadability(window);
+            // 文字与状态色均由动态资源或明确状态画刷负责；不再覆盖浅色文字。
             foreach (Window window in Application.Current.Windows)
                 if (window is SoulLink.Views.MainWindow main) main.Shell.Background = (Brush)Application.Current.FindResource("WindowBackground");
+        }
+
+        public static void ApplyWindow(Window window)
+        {
+            window.SetResourceReference(Window.BackgroundProperty, "WindowBackground");
+            if (!window.IsLoaded) return;
+            ApplyToTree(window);
+            RefreshSurfaces(window);
+            // 保留业务状态色；不把所有浅色文字统一替换成次要文字色。
         }
 
         public static bool SystemUsesLightTheme()
@@ -101,7 +178,14 @@ namespace SoulLink.Services
             ("PanelBackground", System.Windows.Controls.Border.BackgroundProperty),
             ("StrokeSoft", System.Windows.Controls.Border.BorderBrushProperty),
             ("StrokeMid", System.Windows.Controls.Border.BorderBrushProperty),
-            ("WindowBackground", System.Windows.Controls.Border.BackgroundProperty)
+            ("WindowBackground", System.Windows.Controls.Border.BackgroundProperty),
+            ("DialogSurface", System.Windows.Controls.Border.BackgroundProperty),
+            ("PopupBackground", System.Windows.Controls.Border.BackgroundProperty),
+            ("PopupBackground", System.Windows.Controls.ContextMenu.BackgroundProperty),
+            ("StrokeMid", System.Windows.Controls.ContextMenu.BorderBrushProperty),
+            ("FieldBackground", System.Windows.Controls.Border.BackgroundProperty),
+            ("SubtleSurface", System.Windows.Controls.Border.BackgroundProperty),
+            ("ControlAccentText", System.Windows.Controls.TextBlock.ForegroundProperty)
         };
 
         private static void ApplyToOpenWindows()
@@ -111,7 +195,19 @@ namespace SoulLink.Services
             {
                 window.SetResourceReference(Window.BackgroundProperty, "WindowBackground");
                 ApplyToTree(window);
+                RefreshSurfaces(window);
             }
+        }
+
+        private static void RefreshSurfaces(DependencyObject root)
+        {
+            if (root is ContextMenu menu)
+            {
+                menu.SetResourceReference(ContextMenu.BackgroundProperty, "PopupBackground");
+                menu.SetResourceReference(ContextMenu.BorderBrushProperty, "StrokeMid");
+            }
+            for (int i=0;i<VisualTreeHelper.GetChildrenCount(root);i++)
+                RefreshSurfaces(VisualTreeHelper.GetChild(root,i));
         }
 
         private static void ApplyToTree(DependencyObject element)
@@ -138,14 +234,11 @@ namespace SoulLink.Services
                     if (ReferenceEquals(setter.Value, old)) setter.Value = new DynamicResourceExtension(key);
         }
 
-        private static void ImproveLightReadability(DependencyObject root)
+        private static LinearGradientBrush Gradient(Point start, Point end, params (Color Color,double Offset)[] stops)
         {
-            if (root is System.Windows.Controls.TextBlock text)
-                if (text.Foreground is SolidColorBrush brush &&
-                    (brush.Color.A < 210 || (brush.Color.R > 170 && brush.Color.G > 170 && brush.Color.B > 170)))
-                    text.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "TextSecondary");
-            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-                ImproveLightReadability(VisualTreeHelper.GetChild(root, i));
+            var brush=new LinearGradientBrush{StartPoint=start,EndPoint=end};
+            foreach(var stop in stops)brush.GradientStops.Add(new GradientStop(stop.Color,stop.Offset));
+            brush.Freeze();return brush;
         }
 
         private static void SetBrush(ResourceDictionary resources, string key, Color color)

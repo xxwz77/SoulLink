@@ -384,8 +384,9 @@ namespace SoulLink.Services
         private static string Sec(System.Diagnostics.Stopwatch sw)
             => sw.Elapsed.TotalSeconds.ToString("F1");
 
-        /// <summary>找到 7za.exe（随程序一起分发）。</summary>
-        private static string Find7za()
+        /// <summary>找到 7za.exe（随程序一起分发）。
+        /// ★ 路线更新器（RouteUpdater）复用这一个实现，不要另写一份。</summary>
+        internal static string Find7za()
         {
             string baseDir = AppContext.BaseDirectory;
             var candidates = new[]

@@ -77,4 +77,16 @@ tools/*
 !tools/layout-check
 !tools/layout-check/LayoutCheck.cs
 !tools/layout-check/LayoutCheck.csproj
+# ── 本地构建 / 发布 / 备份产物（体积大，不入库；2026-11-20 补）────────────
+# 为什么补：git add -A 会把 7.4 GB 的 dist-*/backups/artifacts/releases 全吞进去。
+dist-*/
+dist-backup-*/
+dist-fix-*/
+backups/
+artifacts/
+releases/
+tools/**/obj*/
+tools/**/bin*/
+tools/**/out/
+
 

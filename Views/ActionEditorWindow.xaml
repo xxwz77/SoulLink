@@ -11,14 +11,8 @@
             <DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.8" Color="#FF04060E" />
         </Grid.Effect>
 
-        <Border CornerRadius="20" BorderBrush="#44FFFFFF" BorderThickness="1" ClipToBounds="True">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                    <GradientStop Color="#FF0A1020" Offset="0" />
-                    <GradientStop Color="#FF14112B" Offset="0.55" />
-                    <GradientStop Color="#FF0B0F22" Offset="1" />
-                </LinearGradientBrush>
-            </Border.Background>
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
+                        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
 
             <Grid>
                 <ctl:AuroraBackdrop Opacity="0.75" />
@@ -34,9 +28,9 @@
                     <Grid x:Name="TitleRow" Background="Transparent" MouseLeftButtonDown="TitleRow_MouseLeftButtonDown">
                         <StackPanel>
                             <TextBlock x:Name="HeaderText" Text="新建快捷动作" FontSize="18" FontWeight="Bold"
-                                       Foreground="{StaticResource TextPrimary}" />
+                                       Foreground="{DynamicResource TextPrimary}" />
                             <TextBlock Text="选择账号与程序，直接复用账号已保存的加密凭据"
-                                       FontSize="11.5" Foreground="{StaticResource TextMuted}" Margin="0,4,0,0" />
+                                       FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" />
                         </StackPanel>
                         <Button Style="{StaticResource WindowButton}" HorizontalAlignment="Right" Height="28"
                                 Click="Cancel_Click">
@@ -54,8 +48,8 @@
                     <!-- 用户名：输入区 + 下拉按钮合成一个整体，下拉列表用 Popup 贴在该框正下方 -->
                     <Grid x:Name="UserFieldHost">
                         <Border x:Name="UserFieldShell" Height="40" CornerRadius="11"
-                                Background="{StaticResource FieldBackground}"
-                                BorderBrush="{StaticResource StrokeSoft}" BorderThickness="1">
+                                Background="{DynamicResource FieldBackground}"
+                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -65,7 +59,7 @@
                                 <!-- 输入框自身无边框、无背景，完全融进外层 Border -->
                                 <TextBox x:Name="UserBox" Grid.Column="0"
                                          Background="Transparent" BorderThickness="0"
-                                         Foreground="{StaticResource TextPrimary}"
+                                         Foreground="{DynamicResource TextPrimary}"
                                          CaretBrush="{StaticResource CyanBrush}"
                                          SelectionBrush="#804FE3FF"
                                          FontFamily="{StaticResource UiFont}" FontSize="13"
@@ -77,7 +71,7 @@
                                         Cursor="Hand" Click="UserDrop_Click"
                                         ToolTip="从已保存账号中选择">
                                     <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                               Foreground="{StaticResource TextSecondary}" />
+                                               Foreground="{DynamicResource TextSecondary}" />
                                 </Button>
                             </Grid>
                         </Border>
@@ -90,8 +84,8 @@
                                Placement="Bottom" StaysOpen="False" AllowsTransparency="True"
                                PopupAnimation="Fade" VerticalOffset="4">
                             <Border CornerRadius="12" Padding="4"
-                                    Background="#E6111A33"
-                                    BorderBrush="#55FFFFFF" BorderThickness="1"
+                                    Background="{DynamicResource PopupBackground}"
+                                    BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
                                     MinWidth="{Binding ActualWidth, ElementName=UserFieldShell}">
                                 <Border.Effect>
                                     <DropShadowEffect Color="#000000" BlurRadius="16" ShadowDepth="3" Opacity="0.55" />
@@ -197,8 +191,8 @@
                         <Grid Grid.Column="1" x:Name="GroupPickShell" Margin="8,0,0,0" Visibility="Collapsed">
                             <Grid>
                                 <Border x:Name="GroupFieldShell" Height="44" CornerRadius="11"
-                                        Background="{StaticResource FieldBackground}"
-                                        BorderBrush="{StaticResource StrokeSoft}" BorderThickness="1">
+                                        Background="{DynamicResource FieldBackground}"
+                                        BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -208,13 +202,13 @@
                                                    Grid.Column="0" Margin="11,0,0,0"
                                                    VerticalAlignment="Center" FontSize="13.5"
                                                    TextTrimming="CharacterEllipsis"
-                                                   Foreground="{StaticResource TextPrimary}"
+                                                   Foreground="{DynamicResource TextPrimary}"
                                                    Text="（未选择）" />
                                         <Button Grid.Column="1" Width="38" Background="Transparent"
                                                 BorderThickness="0" Cursor="Hand" Click="GroupPick_Click"
                                                 ToolTip="选择要执行的配置组（可多选）">
                                             <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                                       Foreground="{StaticResource TextSecondary}" />
+                                                       Foreground="{DynamicResource TextSecondary}" />
                                         </Button>
                                     </Grid>
                                 </Border>
@@ -224,8 +218,8 @@
                                        Placement="Bottom" StaysOpen="False" AllowsTransparency="True"
                                        PopupAnimation="Fade" VerticalOffset="4">
                                     <Border CornerRadius="12" Padding="4"
-                                            Background="#E6111A33"
-                                            BorderBrush="#55FFFFFF" BorderThickness="1"
+                                            Background="{DynamicResource PopupBackground}"
+                                            BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
                                             MinWidth="{Binding ActualWidth, ElementName=GroupFieldShell}">
                                         <Border.Effect>
                                             <DropShadowEffect Color="#000000" BlurRadius="18" ShadowDepth="3" Opacity="0.6" />
@@ -263,10 +257,10 @@
                                TextWrapping="Wrap" />
 
                     <!-- 高级 -->
-                    <Expander x:Name="Advanced" Margin="0,16,0,0" Foreground="{StaticResource TextMuted}"
+                    <Expander x:Name="Advanced" Margin="0,16,0,0" Foreground="{DynamicResource TextMuted}"
                               HorizontalContentAlignment="Stretch">
                         <Expander.Header>
-                            <TextBlock Text="高级选项（可不填）" FontSize="11.5" Foreground="{StaticResource TextSecondary}" />
+                            <TextBlock Text="高级选项（可不填）" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" />
                         </Expander.Header>
                         <StackPanel Margin="0,10,0,0">
                             <Grid Margin="0,0,0,0">
@@ -315,13 +309,13 @@
                     </Expander>
 
                     <!-- ══════════ 定时执行 ══════════ -->
-                    <Expander x:Name="ScheduleExpander" Margin="0,14,0,0" Foreground="{StaticResource TextMuted}"
+                    <Expander x:Name="ScheduleExpander" Margin="0,14,0,0" Foreground="{DynamicResource TextMuted}"
                               HorizontalContentAlignment="Stretch" IsExpanded="False">
                         <Expander.Header>
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="定时执行" FontSize="11.5" Foreground="{StaticResource TextSecondary}" />
+                                <TextBlock Text="定时执行" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" />
                                 <TextBlock x:Name="ScheduleSummary" Text="（未启用）" FontSize="11"
-                                           Foreground="{StaticResource TextMuted}" Margin="8,0,0,0" />
+                                           Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0" />
                             </StackPanel>
                         </Expander.Header>
 
@@ -357,41 +351,41 @@
                                          这里用裸 TextBox + 外层 Border 自绘，Padding 为 0。 -->
                                     <StackPanel Orientation="Horizontal">
                                         <Border Width="62" Height="40" CornerRadius="10"
-                                                Background="{StaticResource FieldBackground}"
-                                                BorderBrush="{StaticResource StrokeSoft}" BorderThickness="1">
+                                                Background="{DynamicResource FieldBackground}"
+                                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
                                             <TextBox x:Name="HourBox" Text="4" Background="Transparent"
                                                      BorderThickness="0" Padding="0" TextAlignment="Center"
                                                      VerticalContentAlignment="Center"
-                                                     Foreground="{StaticResource TextPrimary}"
+                                                     Foreground="{DynamicResource TextPrimary}"
                                                      CaretBrush="{StaticResource CyanBrush}"
                                                      FontSize="15" TextChanged="ScheduleInput_Changed" />
                                         </Border>
                                         <TextBlock Text="时" VerticalAlignment="Center" Margin="6,0,10,0"
-                                                   Foreground="{StaticResource TextMuted}" />
+                                                   Foreground="{DynamicResource TextMuted}" />
                                         <Border Width="62" Height="40" CornerRadius="10"
-                                                Background="{StaticResource FieldBackground}"
-                                                BorderBrush="{StaticResource StrokeSoft}" BorderThickness="1">
+                                                Background="{DynamicResource FieldBackground}"
+                                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
                                             <TextBox x:Name="MinuteBox" Text="0" Background="Transparent"
                                                      BorderThickness="0" Padding="0" TextAlignment="Center"
                                                      VerticalContentAlignment="Center"
-                                                     Foreground="{StaticResource TextPrimary}"
+                                                     Foreground="{DynamicResource TextPrimary}"
                                                      CaretBrush="{StaticResource CyanBrush}"
                                                      FontSize="15" TextChanged="ScheduleInput_Changed" />
                                         </Border>
                                         <TextBlock Text="分" VerticalAlignment="Center" Margin="6,0,10,0"
-                                                   Foreground="{StaticResource TextMuted}" />
+                                                   Foreground="{DynamicResource TextMuted}" />
                                         <Border Width="62" Height="40" CornerRadius="10"
-                                                Background="{StaticResource FieldBackground}"
-                                                BorderBrush="{StaticResource StrokeSoft}" BorderThickness="1">
+                                                Background="{DynamicResource FieldBackground}"
+                                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
                                             <TextBox x:Name="SecondBox" Text="0" Background="Transparent"
                                                      BorderThickness="0" Padding="0" TextAlignment="Center"
                                                      VerticalContentAlignment="Center"
-                                                     Foreground="{StaticResource TextPrimary}"
+                                                     Foreground="{DynamicResource TextPrimary}"
                                                      CaretBrush="{StaticResource CyanBrush}"
                                                      FontSize="15" TextChanged="ScheduleInput_Changed" />
                                         </Border>
                                         <TextBlock Text="秒" VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextMuted}" />
+                                                   Foreground="{DynamicResource TextMuted}" />
                                     </StackPanel>
                                 </StackPanel>
 
@@ -417,11 +411,11 @@
                                              Style="{StaticResource CompactTextBox}"
                                              Margin="6,0,0,0" Visibility="Collapsed" TextChanged="ScheduleInput_Changed" />
                                     <TextBlock x:Name="MonthUnit" Text="月" VerticalAlignment="Center" Margin="6,0,10,0"
-                                               Foreground="{StaticResource TextMuted}" Visibility="Collapsed" />
+                                               Foreground="{DynamicResource TextMuted}" Visibility="Collapsed" />
                                     <TextBox x:Name="DayBox" Width="64" Height="40" Text="1"
                                              Style="{StaticResource CompactTextBox}" TextChanged="ScheduleInput_Changed" />
                                     <TextBlock Text="号" VerticalAlignment="Center" Margin="6,0,0,0"
-                                               Foreground="{StaticResource TextMuted}" />
+                                               Foreground="{DynamicResource TextMuted}" />
                                 </StackPanel>
 
                                 <!-- 固定间隔 -->
@@ -469,9 +463,9 @@
                                            Text="例：基准 4:00 延后 1 分钟 → 第2 次 4:01、第3 次 4:02。延后 1 天则是隔一天后的 4:00。" />
 
                                 <!-- 下次执行预览 -->
-                                <Border CornerRadius="8" Background="#18000000" Padding="10,7" Margin="0,12,0,0">
+                                <Border CornerRadius="8" Background="{DynamicResource FieldBackground}" Padding="10,7" Margin="0,12,0,0">
                                     <TextBlock x:Name="NextRunHint" Text="下次执行：—"
-                                               FontSize="11" Foreground="{StaticResource TextSecondary}"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondary}"
                                                TextWrapping="Wrap" />
                                 </Border>
                             </StackPanel>

@@ -28,7 +28,17 @@ namespace SoulLink.Services
         public static async Task<RunResult> RunAsync(AutomationFlow flow, int sessionId, AppConfig cfg, bool manual = false)
         {
             var account = cfg.Accounts.FirstOrDefault(a => a.Id == flow.AccountId);
-            if (account != null && !AccountScope.IsAllowed(account,cfg)) return new RunResult { Message = "主用户已被全局挂机账号模式排除" };
+            // ★★ 这里**不**按 AccountScope 拦截。★★
+            //
+            //   「仅管理挂机账号」的语义是「界面只显示挂机账号、不把主用户当投送目标」，
+            //   不是「禁止主用户运行自动化」。
+            //
+            //   用户原话：「不能停啊，它是主控」
+            //   —— 主用户是操作者自己的桌面，它的自动化恰恰是最常用的控制入口，
+            //      拦掉等于把主控废了（而且定时触发会静默失败，极难发现）。
+            //
+            //   真正需要拦的是「把主用户的桌面当挂机目标去投送」，
+            //   那在 SystemLauncher / ActionService 的启动路径上已经拦了。
             flow.EnsurePlcModel();
             if (flow.MigrationNotes.Count > 0)
                 LogBus.Warn("自动化「" + flow.DisplayName + "」已升级流程格式", string.Join("\n", flow.MigrationNotes));

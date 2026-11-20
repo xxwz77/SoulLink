@@ -6,64 +6,150 @@ using System.Windows.Media;
 namespace SoulLink.Controls
 {
     /// <summary>
-    /// 动态梦幻背景：深空底色 + 极光光斑 + 透视网格 + 漂浮粒子。
-    /// 纯 WPF 绘制，不需要任何图片资源；窗口最小化时自动停止刷新以省电。
+    /// 月莓星轨 / 云端棱镜。静态星野按尺寸和主题缓存，动画只更新轻量几何。
+    /// 不拦截鼠标；隐藏、最小化和卸载时暂停，后台驻留托盘不会继续刷新。
     /// </summary>
-    public class AuroraBackdrop : FrameworkElement
+    public sealed class AuroraBackdrop : FrameworkElement
     {
-        private struct Particle
-        {
-            public double X, Y, R, Speed, Phase, Drift;
-            public int Chroma;
-        }
-
-        private readonly Particle[] _particles;
+        private readonly DreamScene _scene = new();
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private TimeSpan _last;
+        private double _time = 3.2;
         private bool _running;
-
-        private static readonly Color Cyan = Color.FromRgb(0x4F, 0xE3, 0xFF);
-        private static readonly Color Violet = Color.FromRgb(0x8B, 0x6B, 0xFF);
-        private static readonly Color Magenta = Color.FromRgb(0xFF, 0x5F, 0xD2);
-        private static readonly Color Mint = Color.FromRgb(0x41, 0xF0, 0xC0);
+        private Window? _window;
 
         public AuroraBackdrop()
         {
             IsHitTestVisible = false;
-            _particles = new Particle[64];
-            var rnd = new Random(20261114);
-            for (int i = 0; i < _particles.Length; i++)
+            Focusable = false;
+            SnapsToDevicePixels = true;
+            Loaded += OnLoaded;
+            Unloaded += OnUnloaded;
+            IsVisibleChanged += (_, _) => SyncAnimation();
+        }
+
+        private void OnLoaded(object sender, RoutedEventArgs e)
+        {
+            _window = Window.GetWindow(this);
+            if (_window != null)
             {
-                _particles[i] = new Particle
-                {
-                    X = rnd.NextDouble(),
-                    Y = rnd.NextDouble(),
-                    R = 0.6 + rnd.NextDouble() * 2.0,
-                    Speed = 0.004 + rnd.NextDouble() * 0.014,
-                    Phase = rnd.NextDouble() * Math.PI * 2,
-                    Drift = (rnd.NextDouble() - 0.5) * 0.006,
-                    Chroma = rnd.Next(4)
-                };
+                _window.StateChanged += OnWindowActivityChanged;
+                _window.IsVisibleChanged += OnWindowVisibilityChanged;
+
+                // ★ 焦点事件仍然订阅。原因见 SyncAnimation 里的说明：
+                //   实测「焦点变化触发的那次重绘」是把窗口外沿那圈刷干净的关键，
+                //   去掉它白带会回来（2026-11-20 做过对照，见交接文档）。
+                _window.Activated += OnWindowActivityChanged;
+                _window.Deactivated += OnWindowActivityChanged;
             }
+            SyncAnimation();
+        }
+
+        private void OnUnloaded(object sender, RoutedEventArgs e)
+        {
+            Stop();
+            if (_window != null)
+            {
+                _window.StateChanged -= OnWindowActivityChanged;
+                _window.IsVisibleChanged -= OnWindowVisibilityChanged;
+                _window.Activated -= OnWindowActivityChanged;
+                _window.Deactivated -= OnWindowActivityChanged;
+            }
+            _window = null;
+        }
+
+        private void OnWindowActivityChanged(object? sender, EventArgs e) => SyncAnimation();
+
+        private void OnWindowVisibilityChanged(object? sender, DependencyPropertyChangedEventArgs e) => SyncAnimation();
+
+        /// <summary>
+        /// ★★ 2.17.17 性能修复。★★
+        ///
+        /// 实测（本机，2026-11-20）：这个背景动画单独一项就占约 **61 个单核百分点**。
+        /// 原因：每 33ms 触发一次 CompositionTarget.Rendering → InvalidateVisual →
+        /// 全量重绘（3 条丝带 × 24 层描边 + 76 颗粒子 + 轨道系统 56 条刻度）。
+        ///
+        /// 现在的策略（见 SyncAnimation）：
+        ///   ① 用户可在设置里关闭动画背景（AppSettings.AnimateBackdrop，默认开）；
+        ///   ② 窗口失焦即暂停 —— 挂机是主要场景，用户不看的时候一帧都不画；
+        ///   ③ 最小化、隐藏、卸载时照旧停止。
+        /// 这样"看的时候有动画，挂机时零开销"。
+        /// </summary>
+        private void SyncAnimation()
+        {
+            // ★★ 2.17.18：订阅条件**不再看窗口是否激活**。★★
+            //
+            //   根因（2026-11-20 实测）：窗口外沿有一圈约 8px 的区域，
+            //   只有在「整窗重绘」时才会被内容覆盖住。高画质因为每 33ms 全量重绘，
+            //   那一圈每帧都被顺手刷成内容色，所以看不见；中/低档不重绘，
+            //   于是露出残留色 —— 聚焦时 #B4B4B4 灰、失焦时 #F4F7FC 白，
+            //   表现为「窗口内侧一圈粗框、缺口在底边和右边」。
+            //
+            //   ⚠ 第一版修法把 ownerForeground 也当作订阅前提，结果窗口一失焦
+            //     重绘就停了，而白框恰恰是失焦时才最明显 —— 等于在最需要的时候
+            //     把它关掉了。现在订阅只看「可见且非最小化」，与焦点无关。
+            //
+            //   动画本身仍然只在窗口激活时推进（见 OnFrame），省电的逻辑不变。
+            bool canRender = IsLoaded && IsVisible && ActualWidth > 2 && ActualHeight > 2
+                             && (_window == null || (_window.IsVisible && _window.WindowState != WindowState.Minimized));
+
+            if (canRender == _running) return;
+            _running = canRender;
+            if (canRender)
+            {
+                _last = _clock.Elapsed;
+                CompositionTarget.Rendering += OnFrame;
+            }
+            else CompositionTarget.Rendering -= OnFrame;
+        }
+
+        /// <summary>
+        /// 非「高」档位的整窗重绘间隔。
+        /// 只在窗口可见、非最小化时跑，所以挂机丢到托盘后仍然零开销。
+        /// </summary>
+        private static TimeSpan RepaintInterval(int tier)
+            => TimeSpan.FromMilliseconds(tier >= Models.AppSettings.EffectTierLevel.Low ? 1000 : 500);
+
+        /// <summary>档位切换后由 ThemeManager 调用，重新判定是否播放。</summary>
+        public void RefreshAnimationState() => SyncAnimation();
+
+        private void Stop()
+        {
+            if (!_running) return;
+            _running = false;
+            CompositionTarget.Rendering -= OnFrame;
         }
 
         protected override void OnRenderSizeChanged(SizeChangedInfo info)
         {
             base.OnRenderSizeChanged(info);
-            EnsureAnimation();
-        }
-
-        private void EnsureAnimation()
-        {
-            if (_running) return;
-            _running = true;
-            CompositionTarget.Rendering += OnFrame;
+            InvalidateVisual();
+            SyncAnimation();
         }
 
         private void OnFrame(object? sender, EventArgs e)
         {
             var now = _clock.Elapsed;
-            if (now - _last < TimeSpan.FromMilliseconds(33)) return; // ~30fps 足够
+
+            int tier = SoulLink.App.Config?.Settings?.EffectTier ?? 1;
+            bool animated = Models.AppSettings.EffectTierLevel.Backdrop(tier);
+            bool active = _window == null || _window.IsActive;
+
+            // 「高」档且窗口在前台：33ms 推进动画时间，画面是动的。
+            // 失焦时降为低频重绘（挂机场景不烧 CPU）。
+            if (animated && active)
+            {
+                if (now - _last < TimeSpan.FromMilliseconds(33)) return;
+                _time += Math.Min((now - _last).TotalSeconds, .08);
+                _last = now;
+                InvalidateVisual();
+                return;
+            }
+
+            // 「中/低」档：不推进 _time（画面静止），只按慢速节奏整窗重绘一次，
+            // 把窗口外沿那圈没被覆盖的区域刷成内容色。
+            // 失焦时同样要刷 —— 那圈区域正是在失焦态最明显。
+            if (now - _last < RepaintInterval(tier)) return;
             _last = now;
             InvalidateVisual();
         }
@@ -71,115 +157,8 @@ namespace SoulLink.Controls
         protected override void OnRender(DrawingContext dc)
         {
             double w = ActualWidth, h = ActualHeight;
-            if (w <= 0 || h <= 0) return;
-
-            double t = _clock.Elapsed.TotalSeconds;
-            var full = new Rect(0, 0, w, h);
-
-            // 1) 深空底色
-            var baseBrush = new LinearGradientBrush
-            {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(1, 1)
-            };
-            bool dark = SoulLink.Services.ThemeManager.IsDark;
-            baseBrush.GradientStops.Add(new GradientStop(dark ? Color.FromRgb(0x05, 0x06, 0x0C) : Color.FromRgb(0xFF, 0xF8, 0xFD), 0));
-            baseBrush.GradientStops.Add(new GradientStop(dark ? Color.FromRgb(0x0A, 0x0E, 0x24) : Color.FromRgb(0xEE, 0xE9, 0xFF), 0.45));
-            baseBrush.GradientStops.Add(new GradientStop(dark ? Color.FromRgb(0x0D, 0x09, 0x1F) : Color.FromRgb(0xFF, 0xEC, 0xF5), 1));
-            baseBrush.Freeze();
-            dc.DrawRectangle(baseBrush, null, full);
-
-            // 2) 极光光斑
-            DrawBlob(dc, w * (0.18 + 0.06 * Math.Sin(t * 0.21)), h * (0.20 + 0.05 * Math.Cos(t * 0.17)),
-                     Math.Max(w, h) * 0.55, Violet, 0.32);
-            DrawBlob(dc, w * (0.82 + 0.05 * Math.Cos(t * 0.19)), h * (0.16 + 0.06 * Math.Sin(t * 0.23)),
-                     Math.Max(w, h) * 0.48, Cyan, 0.26);
-            DrawBlob(dc, w * (0.62 + 0.07 * Math.Sin(t * 0.13 + 1.2)), h * (0.86 + 0.04 * Math.Cos(t * 0.15)),
-                     Math.Max(w, h) * 0.52, Magenta, 0.20);
-            DrawBlob(dc, w * (0.30 + 0.06 * Math.Cos(t * 0.11 + 2.1)), h * (0.78 + 0.05 * Math.Sin(t * 0.18)),
-                     Math.Max(w, h) * 0.40, Mint, 0.14);
-
-            // 3) 透视网格（科技感底线）
-            var gridBrush = new LinearGradientBrush(Color.FromArgb(0x24, 0x7E, 0xD8, 0xFF),
-                                                    Color.FromArgb(0x00, 0x7E, 0xD8, 0xFF), 90);
-            gridBrush.Freeze();
-            var gridPen = new Pen(gridBrush, 1);
-            gridPen.Freeze();
-
-            double horizon = h * 0.62;
-            int rows = 14;
-            for (int i = 0; i <= rows; i++)
-            {
-                double p = i / (double)rows;
-                double y = horizon + Math.Pow(p, 2.2) * (h - horizon) + Math.Sin(t * 0.6 + p * 4) * 1.2;
-                if (y > h) continue;
-                dc.DrawLine(gridPen, new Point(0, y), new Point(w, y));
-            }
-            int cols = 22;
-            for (int i = -cols; i <= cols; i++)
-            {
-                double xBottom = w / 2 + i * (w / cols) * 1.35;
-                dc.DrawLine(gridPen, new Point(w / 2 + i * 6, horizon), new Point(xBottom, h));
-            }
-
-            // 4) 漂浮粒子
-            for (int i = 0; i < _particles.Length; i++)
-            {
-                var p = _particles[i];
-                double y = (p.Y - (t * p.Speed) % 1.0 + 1.0) % 1.0;
-                double x = (p.X + Math.Sin(t * 0.5 + p.Phase) * 0.012 + p.Drift * (t % 10)) % 1.0;
-                if (x < 0) x += 1;
-
-                double px = x * w, py = y * h;
-                double alpha = 0.28 + 0.42 * (Math.Sin(t * 1.4 + p.Phase) * 0.5 + 0.5);
-
-                Color c;
-                switch (p.Chroma)
-                {
-                    case 0: c = Cyan; break;
-                    case 1: c = Violet; break;
-                    case 2: c = Magenta; break;
-                    default: c = Mint; break;
-                }
-
-                var glow = new SolidColorBrush(Color.FromArgb((byte)(alpha * 60), c.R, c.G, c.B));
-                glow.Freeze();
-                dc.DrawEllipse(glow, null, new Point(px, py), p.R * 4.5, p.R * 4.5);
-
-                var core = new SolidColorBrush(Color.FromArgb((byte)(alpha * 220), 0xFF, 0xFF, 0xFF));
-                core.Freeze();
-                dc.DrawEllipse(core, null, new Point(px, py), p.R * 0.7, p.R * 0.7);
-            }
-
-            // 5) 顶部/底部渐隐，让玻璃卡片更突出
-            var vignette = new LinearGradientBrush
-            {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(0, 1)
-            };
-            vignette.GradientStops.Add(new GradientStop(Color.FromArgb(0x50, 0x00, 0x00, 0x00), 0));
-            vignette.GradientStops.Add(new GradientStop(Color.FromArgb(0x00, 0x00, 0x00, 0x00), 0.30));
-            vignette.GradientStops.Add(new GradientStop(Color.FromArgb(0x00, 0x00, 0x00, 0x00), 0.70));
-            vignette.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0x00, 0x00, 0x00), 1));
-            vignette.Freeze();
-            if (dark) dc.DrawRectangle(vignette, null, full);
-        }
-
-        private static void DrawBlob(DrawingContext dc, double cx, double cy, double radius, Color color, double opacity)
-        {
-            var brush = new RadialGradientBrush
-            {
-                Center = new Point(0.5, 0.5),
-                GradientOrigin = new Point(0.5, 0.5),
-                RadiusX = 0.5,
-                RadiusY = 0.5
-            };
-            brush.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(255 * opacity), color.R, color.G, color.B), 0));
-            brush.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(120 * opacity), color.R, color.G, color.B), 0.42));
-            brush.GradientStops.Add(new GradientStop(Color.FromArgb(0, color.R, color.G, color.B), 1));
-            brush.Freeze();
-
-            dc.DrawEllipse(brush, null, new Point(cx, cy), radius, radius);
+            if (w < 2 || h < 2) return;
+            _scene.Render(dc, w, h, _time, !Services.ThemeManager.IsDark);
         }
     }
 }

@@ -11,14 +11,8 @@
             <DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.8" Color="#FF04060E" />
         </Grid.Effect>
 
-        <Border CornerRadius="20" BorderBrush="#44FFFFFF" BorderThickness="1" ClipToBounds="True">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                    <GradientStop Color="#FF0A1020" Offset="0" />
-                    <GradientStop Color="#FF14112B" Offset="0.6" />
-                    <GradientStop Color="#FF0B0F22" Offset="1" />
-                </LinearGradientBrush>
-            </Border.Background>
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
+                        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
 
             <Grid Margin="22,18,22,18">
                 <Grid.RowDefinitions>
@@ -30,9 +24,9 @@
 
                 <Grid x:Name="DragArea" Grid.Row="0" Background="Transparent" MouseLeftButtonDown="DragArea_MouseLeftButtonDown">
                     <StackPanel>
-                        <TextBlock Text="选择运行中的程序" FontSize="17" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" />
+                        <TextBlock Text="选择运行中的程序" FontSize="17" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
                         <TextBlock x:Name="SubText" Text="从目标用户当前运行的程序里选一个，自动填好路径"
-                                   FontSize="11.5" Foreground="{StaticResource TextMuted}" Margin="0,4,0,0" />
+                                   FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" />
                     </StackPanel>
                     <Button Style="{StaticResource WindowButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
                             Height="28" Click="Cancel_Click">
@@ -40,14 +34,14 @@
                     </Button>
                 </Grid>
 
-                <Border Grid.Row="1" CornerRadius="11" Background="#1CFFFFFF" BorderBrush="#28FFFFFF" BorderThickness="1" Margin="0,14,0,10">
+                <Border Grid.Row="1" CornerRadius="11" Background="{DynamicResource FieldBackground}" BorderBrush="#28FFFFFF" BorderThickness="1" Margin="0,14,0,10">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                   Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="12,0,8,0" />
+                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="12,0,8,0" />
                         <TextBox Grid.Column="1" x:Name="SearchBox" Style="{StaticResource GlassTextBox}"
                                  Background="Transparent" BorderThickness="0" Padding="0,9" TextChanged="SearchBox_TextChanged" />
                     </Grid>
@@ -73,9 +67,9 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0">
                                         <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold"
-                                                   Foreground="{StaticResource TextPrimary}" />
+                                                   Foreground="{DynamicResource TextPrimary}" />
                                         <TextBlock Text="{Binding ExePath}" FontSize="10.5"
-                                                   Foreground="{StaticResource TextMuted}" TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource TextMuted}" TextTrimming="CharacterEllipsis"
                                                    Margin="0,2,0,0" />
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding Pid}" Style="{StaticResource Mono}"

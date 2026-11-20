@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using SoulLink.Controls;
 using SoulLink.Models;
 using SoulLink.Services;
 
@@ -65,6 +66,7 @@ namespace SoulLink.Views
             Loaded += async (_, __) => { _previewTimer.Start(); await RefreshConditionPreview(); };
             Unloaded += (_, __) => _previewTimer.Stop();
             Closed += (_, __) => _previewTimer.Stop();
+            Closed += (_, __) => EndGuide();
 
             RefreshCondModeRow();
 
@@ -620,514 +622,44 @@ namespace SoulLink.Views
         //        演什么就一定是什么；
         //     3. 不再有弹窗：说明文字与按钮直接放在遮罩层里，按钮固定在右下角。
 
+        private FlowGuideOverlay? _guide;
         private bool _guideShown;
-        private bool _guideRunning;
-        private double _guideW, _guideH;
 
-        private sealed class GuideStep
-        {
-            public string Step = "";
-            public string Title = "";
-            public List<string> Lines = new();
-            /// <summary>要高亮的区域（null = 只显示说明，不挖空）。</summary>
-            public Func<FrameworkElement?> Target = () => null;
-            /// <summary>遮罩内自绘的示例内容。</summary>
-            public Action<Canvas, Rect>? Draw;
-        }
-
+        /// <summary>只显示操作演示，不创建节点、不执行动作、不修改配置。</summary>
         private void ShowFlowGuide(bool force)
         {
             try
             {
-                if (_guideRunning) return;
+                if (_guide != null) return;
                 if (!force && (_guideShown || !_cfg.Settings.ShowFlowGuide)) return;
                 _guideShown = true;
-                _guideRunning = true;
-
-                var steps = BuildGuideSteps();
-                int index = 0;
-
-                void Show()
-                {
-                    if (index >= steps.Count) { EndGuide(); return; }
-                    RenderGuide(steps[index], index, steps.Count,
-                        next: () => { index++; Show(); },
-                        skip: EndGuide,
-                        toggleNoMore: checkedValue => { _cfg.Settings.ShowFlowGuide = !checkedValue; _dirty = true; });
-                }
-
-                Show();
+                MenuLayer.Visibility = Visibility.Collapsed;
+                GuideLayer.Children.Clear();
+                GuideLayer.Visibility = Visibility.Visible;
+                _guide = new FlowGuideOverlay(
+                    FlowGuideOverlay.BuildSteps(LibPanel, CanvasScroll, PropPanel, ValidateHint),
+                    EndGuide,
+                    () => !_cfg.Settings.ShowFlowGuide,
+                    checkedValue => { _cfg.Settings.ShowFlowGuide = !checkedValue; _dirty = true; });
+                _guide.SetSceneReferences(CanvasScroll, PropPanel);
+                GuideLayer.Children.Add(_guide);
+                GuideLayer.SizeChanged += (_, _) => _guide?.SyncHostSize();
+                _guide.SyncHostSize();
+                _guide.Start();
             }
             catch (Exception ex)
             {
-                _guideRunning = false;
                 EndGuide();
                 ThemedMessage.Info(this, "引导", "引导没能显示：" + ex.Message);
             }
-        }
-
-        private void RenderGuide(GuideStep step, int index, int total,
-            Action next, Action skip, Action<bool> toggleNoMore)
-        {
-            GuideLayer.Children.Clear();
-            GuideLayer.Visibility = Visibility.Visible;
-            GuideLayer.Background = Brushes.Transparent;
-            GuideLayer.Width = ActualWidth > 10 ? ActualWidth : 1200;
-            GuideLayer.Height = ActualHeight > 10 ? ActualHeight : 800;
-
-            double W = GuideLayer.Width, H = GuideLayer.Height;
-            _guideW = W; _guideH = H;
-
-            // ① 半透明遮罩（整块操作区压暗）
-            var veil = new System.Windows.Shapes.Rectangle
-            {
-                Width = W, Height = H,
-                Fill = new SolidColorBrush(Color.FromArgb(0xB8, 0x05, 0x0A, 0x14)),
-                IsHitTestVisible = true
-            };
-            System.Windows.Controls.Canvas.SetLeft(veil, 0);
-            System.Windows.Controls.Canvas.SetTop(veil, 0);
-            GuideLayer.Children.Add(veil);
-
-            // ② 高亮区域：把遮罩“挖空”一格，并在其上加描边
-            Rect hole = Rect.Empty;
-            var target = step.Target();
-            if (target != null && target.IsVisible && target.ActualWidth > 1)
-            {
-                try
-                {
-                    hole = target.TransformToAncestor(this)
-                        .TransformBounds(new Rect(0, 0, target.ActualWidth, target.ActualHeight));
-                }
-                catch { hole = Rect.Empty; }
-            }
-
-            if (!hole.IsEmpty)
-            {
-                var clear = new System.Windows.Shapes.Rectangle
-                {
-                    Width = hole.Width, Height = hole.Height,
-                    Fill = new SolidColorBrush(Color.FromArgb(0x1A, 0x4F, 0xE3, 0xFF)),
-                    Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
-                    StrokeThickness = 2,
-                    RadiusX = 10, RadiusY = 10,
-                    IsHitTestVisible = false
-                };
-                System.Windows.Controls.Canvas.SetLeft(clear, hole.X);
-                System.Windows.Controls.Canvas.SetTop(clear, hole.Y);
-                GuideLayer.Children.Add(clear);
-            }
-
-            // ③ 自绘示例（假数据）
-            if (step.Draw != null)
-            {
-                var demoLayer = new Canvas { IsHitTestVisible = false, Width = W, Height = H };
-                GuideLayer.Children.Add(demoLayer);
-                try { step.Draw(demoLayer, hole); } catch { }
-            }
-
-            // ④ 说明面板：贴在右侧或下方，不遮挡高亮区
-            var panel = new Border
-            {
-                Width = Math.Min(400, W * 0.40),
-                CornerRadius = new CornerRadius(14),
-                Background = new SolidColorBrush(Color.FromArgb(0xF7, 0x11, 0x19, 0x2C)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0xAA, 0x4F, 0xE3, 0xFF)),
-                BorderThickness = new Thickness(1),
-                Padding = new Thickness(18, 16, 18, 14)
-            };
-
-            var stack = new StackPanel();
-
-            stack.Children.Add(new TextBlock
-            {
-                Text = step.Step + "　" + step.Title,
-                FontSize = 14, FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xCF, 0xF3, 0xFF)),
-                TextWrapping = TextWrapping.Wrap
-            });
-
-            foreach (var line in step.Lines)
-            {
-                stack.Children.Add(new TextBlock
-                {
-                    Text = "· " + line,
-                    FontSize = 11.5,
-                    Margin = new Thickness(0, 9, 0, 0),
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xA8, 0xBC, 0xDA)),
-                    TextWrapping = TextWrapping.Wrap,
-                    LineHeight = 19
-                });
-            }
-
-            var noMore = new CheckBox
-            {
-                Content = "以后不再自动弹出（可在「使用说明」里重播）",
-                IsChecked = !_cfg.Settings.ShowFlowGuide,
-                Style = (Style)FindResource("GlassCheckBox"),
-                FontSize = 10.5,
-                Margin = new Thickness(0, 14, 0, 0)
-            };
-            noMore.Checked += (_, __) => toggleNoMore(true);
-            noMore.Unchecked += (_, __) => toggleNoMore(false);
-            stack.Children.Add(noMore);
-
-            panel.Child = stack;
-            panel.Measure(new Size(panel.Width, double.PositiveInfinity));
-            double panelH = panel.DesiredSize.Height;
-
-            // 摆放优先级：高亮区右侧 → 高亮区下方 → 窗口右下角，尽量不压住示例与高亮区
-            double left = 20;
-            double top = H - panelH - 76;
-            System.Windows.Controls.Canvas.SetLeft(panel, Math.Max(16, left));
-            System.Windows.Controls.Canvas.SetTop(panel, Math.Max(16, top));
-            GuideLayer.Children.Add(panel);
-
-            // ⑤ 进度圆点
-            var dots = new StackPanel { Orientation = Orientation.Horizontal };
-            for (int i = 0; i < total; i++)
-            {
-                dots.Children.Add(new System.Windows.Shapes.Ellipse
-                {
-                    Width = 7, Height = 7, Margin = new Thickness(0, 0, 6, 0),
-                    Fill = new SolidColorBrush(i == index
-                        ? Color.FromRgb(0x4F, 0xE3, 0xFF)
-                        : Color.FromArgb(0x55, 0x9F, 0xB4, 0xD4))
-                });
-            }
-            System.Windows.Controls.Canvas.SetLeft(dots, 24);
-            System.Windows.Controls.Canvas.SetTop(dots, H - 42);
-            GuideLayer.Children.Add(dots);
-
-            // ⑥ 按钮固定在右下角
-            var nav = new StackPanel { Orientation = Orientation.Horizontal };
-            var skipBtn = new Button
-            {
-                Content = "跳过引导",
-                Style = (Style)FindResource("GhostButton"),
-                Padding = new Thickness(16, 8, 16, 8), FontSize = 11.5
-            };
-            skipBtn.Click += (_, __) => skip();
-            nav.Children.Add(skipBtn);
-
-            var nextBtn = new Button
-            {
-                Content = index >= total - 1 ? "完成" : "下一步",
-                Style = (Style)FindResource("PrimaryButton"),
-                Margin = new Thickness(10, 0, 0, 0),
-                Padding = new Thickness(22, 8, 22, 8), FontSize = 11.5, MinWidth = 96
-            };
-            nextBtn.Click += (_, __) => next();
-            nav.Children.Add(nextBtn);
-
-            nav.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            System.Windows.Controls.Canvas.SetLeft(nav, Math.Max(24, W - nav.DesiredSize.Width - 24));
-            System.Windows.Controls.Canvas.SetTop(nav, H - nav.DesiredSize.Height - 24);
-            GuideLayer.Children.Add(nav);
-        }
-
-        /// <summary>示例模块的横向起点：尽量落在高亮区右侧，避免压住高亮内容。</summary>
-        /// <summary>
-        /// 示例区域：始终落在“高亮区内部”，并且整体居中对齐。
-        /// ★ 之前各步骤把 Y 写死成 hole.Y+20/+30，导致示例总是贴在顶部、与高亮区不协调；
-        ///   这里统一由高亮区推导，保证每一步都稳定地出现在同一视觉位置。
-        /// </summary>
-        private Rect DemoArea(Rect hole, int count, double gap = 20)
-        {
-            const double CARD_W = 228, CARD_H = 70;
-            double W = _guideW > 10 ? _guideW : 1200;
-            double H = _guideH > 10 ? _guideH : 800;
-
-            // 画布区（高亮区）左上角起，固定留出标题/画笔开关的空间；
-            // 说明面板固定在左下，按钮在右下，所以示例放在“上中部”，永不与它们重叠。
-            double originX = hole.IsEmpty ? Math.Max(280, W * 0.30) : hole.X;
-            double originY = hole.IsEmpty ? 120 : hole.Y;
-
-            double blockH = count * CARD_H + (count - 1) * gap;
-            double x = originX + 56;
-            double y = originY + 70;
-
-            // 不要把示例压到左下说明面板或右下按钮上
-            double panelTop = H - 300;          // 说明面板大致起始高度
-            if (y + blockH > panelTop - 20) y = Math.Max(originY + 24, panelTop - 20 - blockH);
-            if (y < 60) y = 60;
-
-            x = Math.Max(24, Math.Min(x, W - CARD_W - 24));
-            y = Math.Max(56, Math.Min(y, H - blockH - 96));
-            return new Rect(x, y, CARD_W, blockH);
-        }
-
-        /// <summary>在遮罩里画一个“示例模块”，state：true=满足 false=不满足。</summary>
-        private Rect _lastDemo = Rect.Empty;
-
-        private void DrawDemoNode(Canvas layer, double x, double y, string title, string summary,
-            string glyph, Color accent, bool? state, bool showPort = true)
-        {
-            var card = new Border
-            {
-                Width = 228, Height = 70,
-                CornerRadius = new CornerRadius(11),
-                Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1B, 0x30)),
-                BorderBrush = new SolidColorBrush(state == true ? Color.FromRgb(0x41, 0xF0, 0xC0) : accent),
-                BorderThickness = new Thickness(state == true ? 2 : 1)
-            };
-
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.Children.Add(new Border
-            {
-                CornerRadius = new CornerRadius(11, 0, 0, 11),
-                Background = new SolidColorBrush(Color.FromArgb(0xCC, accent.R, accent.G, accent.B))
-            });
-
-            var icon = new TextBlock
-            {
-                Text = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 15,
-                Foreground = new SolidColorBrush(accent), VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(11, 0, 0, 0)
-            };
-            Grid.SetColumn(icon, 1); grid.Children.Add(icon);
-
-            var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(9, 0, 10, 0) };
-            stack.Children.Add(new TextBlock
-            {
-                Text = title, FontSize = 12.5, FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xF2, 0xF5, 0xFF))
-            });
-            stack.Children.Add(new TextBlock
-            {
-                Text = state == null ? summary
-                    : (state == true ? "● 满足 · " : "○ 不满足 · ") + summary,
-                FontSize = 10, Margin = new Thickness(0, 2, 0, 0), TextWrapping = TextWrapping.Wrap,
-                Foreground = new SolidColorBrush(state == true
-                    ? Color.FromRgb(0x6E, 0xF0, 0xC8)
-                    : state == false ? Color.FromRgb(0x7A, 0x8C, 0xB4) : Color.FromRgb(0x9F, 0xB4, 0xD4))
-            });
-            Grid.SetColumn(stack, 2); grid.Children.Add(stack);
-            card.Child = grid;
-
-            // 边界夹紧：示例必须落在遮罩范围内，否则会跑到框外（用户截图里就是这样）
-            double maxX = Math.Max(16, _guideW - 228 - 16);
-            double maxY = Math.Max(16, _guideH - 70 - 16);
-            x = Math.Max(16, Math.Min(x, maxX));
-            y = Math.Max(16, Math.Min(y, maxY));
-            _lastDemo = new Rect(x, y, 228, 70);
-
-            System.Windows.Controls.Canvas.SetLeft(card, x);
-            System.Windows.Controls.Canvas.SetTop(card, y);
-            layer.Children.Add(card);
-
-            if (showPort)
-            {
-                var port = new System.Windows.Shapes.Ellipse
-                {
-                    Width = 20, Height = 20,
-                    Fill = new SolidColorBrush(state == true ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0x65, 0x75, 0x91)),
-                    Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)), StrokeThickness = 2
-                };
-                System.Windows.Controls.Canvas.SetLeft(port, x + 114 - 10);
-                System.Windows.Controls.Canvas.SetTop(port, y + 70 - 10);
-                layer.Children.Add(port);
-            }
-        }
-
-        /// <summary>画一个示例节点并返回它实际占据的矩形（已按遮罩边界夹紧）。</summary>
-        private Rect AddDemo(Canvas layer, double x, double y, string title, string summary,
-            string glyph, Color accent, bool? state, bool showPort = true)
-        {
-            DrawDemoNode(layer, x, y, title, summary, glyph, accent, state, showPort);
-            return _lastDemo;
-        }
-
-        /// <summary>把 A、B 两个示例连起来（坐标直接用 A 出口到 B 入口，避免手算偏移）。</summary>
-        private void DrawDemoLinkBetween(Canvas layer, Rect a, Rect b, bool powered)
-        {
-            double x1 = a.X + 114, y1 = a.Y + 70;
-            double x2 = b.X + 114, y2 = b.Y;
-            DrawDemoLink(layer, x1, y1, x2, y2, powered);
-        }
-
-        private void DrawDemoLink(Canvas layer, double x1, double y1, double x2, double y2, bool powered)
-        {
-            var path = new System.Windows.Shapes.Path
-            {
-                Data = new GeometryGroup
-                {
-                    Children =
-                    {
-                        new LineGeometry(new Point(x1, y1), new Point(x2, y2))
-                    }
-                },
-                Stroke = new SolidColorBrush(powered
-                    ? Color.FromArgb(0xEE, 0x41, 0xF0, 0xC0)
-                    : Color.FromArgb(0xAA, 0x65, 0x75, 0x91)),
-                StrokeThickness = powered ? 3 : 2
-            };
-            layer.Children.Add(path);
-        }
-
-        private List<GuideStep> BuildGuideSteps()
-        {
-            var cond = Color.FromRgb(0x4F, 0xE3, 0xFF);
-            var act = Color.FromRgb(0x6E, 0xF0, 0xC8);
-            var end = Color.FromRgb(0xFF, 0xB1, 0x4D);
-
-            var steps = new List<GuideStep>();
-
-            steps.Add(new GuideStep
-            {
-                Step = "第 1 步 / 共 6 步",
-                Title = "条件模块：判断“现在是什么状态”",
-                Lines =
-                {
-                    "条件模块只回答一个是非问题，不执行动作。",
-                    "「会话在线」看的是 Windows 登录会话是否还在。",
-                    "「BGI 是否运行」看的是 BetterGI 进程在不在。",
-                    "两者都叫“条件”，但看的东西完全不同 —— 选之前先想清楚要判断什么。"
-                },
-                Target = () => LibPanel,
-                Draw = (layer, hole) =>
-                {
-                    var area = DemoArea(hole, 2); double x = area.X, y = area.Y;
-                    DrawDemoNode(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
-                    DrawDemoNode(layer, x, y + 120, "BGI 是否运行", "检查目标账号 BGI 进程状态", "\uE950", cond, false);
-                }
-            });
-
-            steps.Add(new GuideStep
-            {
-                Step = "第 2 步 / 共 6 步",
-                Title = "状态灯：绿＝满足，灰＝不满足",
-                Lines =
-                {
-                    "灯只看“此刻”，每秒刷新一次。",
-                    "绿色「● 满足」：现在这个条件成立。",
-                    "灰色「○ 不满足」：现在不成立。",
-                    "琥珀「⚠ 数据不可用」：读不到数据，不等于不满足。",
-                    "灯亮不代表已经执行过 —— 执行看的是动作节点。"
-                },
-                Target = () => Canvas,
-                Draw = (layer, hole) =>
-                {
-                    var area = DemoArea(hole, 3); double x = area.X, y = area.Y;
-                    DrawDemoNode(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
-                    DrawDemoNode(layer, x, y + 110, "BGI 是否运行", "检查目标账号 BGI 进程状态", "\uE950", cond, false);
-                    DrawDemoNode(layer, x, y + 220, "进程检查", "严格检查目标用户，不会拿其它账号冒充", "\uE77B", cond, null);
-                }
-            });
-
-            steps.Add(new GuideStep
-            {
-                Step = "第 3 步 / 共 6 步",
-                Title = "连线：决定谁接谁",
-                Lines =
-                {
-                    "从模块下方的圆点拖到下一个模块。",
-                    "也可以先点起点模块，再点目标模块。",
-                    "一个出口连多个模块 = 并行执行，全部都会走到。",
-                    "连线上会亮起绿色，表示这一路当前是通的。"
-                },
-                Target = () => Canvas,
-                Draw = (layer, hole) =>
-                {
-                    var area = DemoArea(hole, 2); double x = area.X, y = area.Y;
-                    var d3a = AddDemo(layer, x, y, "会话在线", "目标账号的会话当前在线", "\uE8F9", cond, true);
-                    var d3b = AddDemo(layer, x + 300, y + 130, "执行一条龙", "清场后启动指定一条龙", "\uE768", act, null);
-                    DrawDemoLinkBetween(layer, d3a, d3b, true);
-                }
-            });
-
-            steps.Add(new GuideStep
-            {
-                Step = "第 4 步 / 共 6 步",
-                Title = "动作模块：条件成立后“做什么”",
-                Lines =
-                {
-                    "「等待」只是计时，时间到了才继续往下走。",
-                    "「打开程序」会真的在目标会话里启动进程。",
-                    "动作提示“成功”只代表请求已被接受，不代表任务已经跑完。",
-                    "要等任务真正结束，请用「配置组状态」或日志条件去判断。"
-                },
-                Target = () => Canvas,
-                Draw = (layer, hole) =>
-                {
-                    var area = DemoArea(hole, 2); double x = area.X, y = area.Y;
-                    var d4a = AddDemo(layer, x, y, "等待", "条件满足后开始等待，到时继续", "\uE823", act, true);
-                    var d4b = AddDemo(layer, x + 280, y + 120, "打开程序", "在目标会话启动程序；启动成功不代表持续运行", "\uE768", act, false);
-                    DrawDemoLinkBetween(layer, d4a, d4b, true);
-                }
-            });
-
-            steps.Add(new GuideStep
-            {
-                Step = "第 5 步 / 共 6 步",
-                Title = "「每天完成」决定今天还跑不跑",
-                Lines =
-                {
-                    "走到「每天完成」并完成后，本流程当天不再扫描。",
-                    "选中它，在右侧属性里设日界：00:00 或 04:00。",
-                    "想当天再跑一次：取消/勾选「今天运行这个流程」。",
-                    "没有这个节点的流程会循环执行，条件再次成立就会再跑。"
-                },
-                Target = () => PropPanel,
-                Draw = (layer, hole) =>
-                {
-                    var area5 = DemoArea(hole, 2); double x = area5.X, y = area5.Y;
-                    var d5a = AddDemo(layer, x, y, "执行一条龙", "清场后启动指定一条龙", "\uE768", act, true);
-                    var d5b = AddDemo(layer, x + 280, y + 130, "每天完成", "到达后当天停止扫描；到日界自动重置", "\uE71A", end, true);
-                    DrawDemoLinkBetween(layer, d5a, d5b, true);
-                }
-            });
-
-            steps.Add(new GuideStep
-            {
-                Step = "第 6 步 / 共 6 步",
-                Title = "底部这行是实时自检",
-                Lines =
-                {
-                    "缺条件、缺动作、参数没填、连线成环，都会在这一行提示。",
-                    "点击提示可以直接跳到出问题的模块。",
-                    "后半句「今日……」告诉你今天还会不会跑。",
-                    "看到「✔ 可以运行」才说明流程结构是完整的。"
-                },
-                Target = () => ValidateHint,
-                Draw = (layer, hole) =>
-                {
-                    var area = DemoArea(hole, 2); double x = area.X, y = area.Y;
-                    DrawDemoNode(layer, x, y, "打开程序", "在目标会话启动程序；启动成功不代表持续运行", "\uE768", act, false);
-                    DrawDemoNode(layer, x, y + 110, "每天完成", "到达后当天停止扫描；到日界自动重置", "\uE71A", end, null);
-
-                    var sample = new Border
-                    {
-                        CornerRadius = new CornerRadius(8),
-                        Padding = new Thickness(12, 8, 12, 8),
-                        Background = new SolidColorBrush(Color.FromArgb(0xF0, 0x12, 0x1B, 0x30)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0x9B, 0x9B)),
-                        BorderThickness = new Thickness(1)
-                    };
-                    sample.Child = new TextBlock
-                    {
-                        Text = "✕ 「打开程序」的「程序路径」没有填写（点击前往）　今日：今日会运行",
-                        FontSize = 11,
-                        Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x9B, 0x9B)),
-                        TextWrapping = TextWrapping.Wrap,
-                        MaxWidth = 520
-                    };
-                    System.Windows.Controls.Canvas.SetLeft(sample, x);
-                    System.Windows.Controls.Canvas.SetTop(sample, y + 230);
-                    layer.Children.Add(sample);
-                }
-            });
-
-            return steps;
         }
 
         private void EndGuide()
         {
             try
             {
+                _guide?.Close();
+                _guide = null;
                 GuideLayer.Children.Clear();
                 GuideLayer.Visibility = Visibility.Collapsed;
                 ValidateHint.IsHitTestVisible = true;
@@ -1135,10 +667,10 @@ namespace SoulLink.Views
                 _ = RefreshConditionPreview();
             }
             catch { }
-            finally { _guideRunning = false; }
         }
 
         private void CloseGuide() => EndGuide();
+
 
         private void BuildHelp()
         {
@@ -1165,34 +697,30 @@ namespace SoulLink.Views
                 });
             }
 
-            // ★ 按当前实际行为重写：旧说明里的"条件保留""执行次数""昨天今天"等说法
-            //   已与现在的运行模型不符，容易误导。
-            Add("① 每个模块都是一个条件或动作",
-                "左栏「模块库」点一下即可加到画布。条件判断当前状态，动作在条件成立后执行。");
-            Add("② 连线决定顺序",
-                "从模块下方圆点拖到下一个模块；也可以先点起点模块，再点目标模块。一个出口可以连多个，表示并行。");
-            Add("③ 状态灯表示此刻是否成立",
-                "节点旁「● 满足 / ○ 不满足」每秒刷新。它只表示当前条件，不代表已经执行过。");
-            Add("④ 条件怎么组合",
-                "多个上游汇入同一模块时，可选「全部满足才继续」或「任一满足就继续」；勾选「不满足时继续」可反向判断。");
-            Add("⑤ 日志/定时这类信号会保留",
-                "日志命中、定时、手动等瞬时信号一旦出现就会保留，等其它条件满足后一起触发，不会因为等待而失效。");
-            Add("⑥ 进程/会话这类状态只看当下",
-                "它们不会保留：进程退出、会话断开，条件立刻变成不满足。");
-            Add("⑦ 有「每天完成」= 每天只跑一次",
-                "走到「每天完成」并完成后，本流程当天不再扫描；到该节点自己设定的日界（00:00 或 04:00）自动重置。");
-            Add("⑧ 没有「每天完成」= 循环执行",
-                "每轮执行完会清空本轮状态重新获取条件，条件再次成立就会再跑，不设日界。");
-            Add("⑨ 今天跑不跑看顶部",
-                "右上角与左下角都写着「今日是否会运行」，会区分：未启用 / 已暂停 / 今日已执行 / 会运行。");
-            Add("⑩ 想今天再跑一次",
-                "点「每天完成」节点，在属性里勾选「今天运行这个流程」恢复；取消勾选则今天不再运行。");
-            Add("⑪ 画笔模式",
-                "开启后依次点模块即可连续连线；Esc 或再点开关关闭。");
-            Add("⑫ 保存前会检查",
-                "缺条件、缺动作、未选目标、连线成环或重复都会提示；底部实时显示能否运行。");
-
-            // 重新播放引导的入口（用户勾选“不再弹出”后，仍可从这里再看一次）
+            Add("① 从哪里开始",
+                "启动台选择账号 →「新建自动化」。左侧添加条件、动作或「每天完成」；拖到画布，单击具体条目也可添加。");
+            Add("② 正确连线",
+                "从下方出口拖到目标。点击起点再点目标仅用于「画笔模式」；Esc 或再次点击开关退出。");
+            Add("③ 状态灯不是执行结果",
+                "绿色＝此刻满足，灰色＝不满足，琥珀＝数据不可用。约每秒只读预览；不执行动作，也不表示已运行。");
+            Add("④ 条件怎样组合",
+                "有上游的条件可选「全部满足」或「任一满足」；取反只改变本条件。动作和结束的入线没有全部/任一选项。");
+            Add("⑤ 支路与动作",
+                "普通扇出选择全部支路，但动作依次执行，并非同时。「选择分支」只走第一条满足的支路。");
+            Add("⑥ 信号保留到本轮结束",
+                "日志命中、定时、手动等瞬时信号在本轮等待中保留，不跨轮永久保存；进程/会话等实时状态逐轮读取。");
+            Add("⑦ 启动不等于任务完成",
+                "启动 BGI / 一条龙 / 配置组成功，仅表示请求被接受。继续接「配置组状态」或日志条件，确认真实完成。");
+            Add("⑧ 等待与失败",
+                "等待期间输入断开，会清除并重新计时。动作失败后先排查；输入断开后再次成立才允许重试。");
+            Add("⑨ 每天完成与日界",
+                "所选动作全部成功才写入当天标记；停止本轮执行，但仍做只读预览。日界 00:00 / 04:00 到点开启新一轮。");
+            Add("⑩ 没有每天完成",
+                "一轮完成后清除本轮状态，条件重新满足即可再次执行，不设置日界。");
+            Add("⑪ 今天运行这个流程",
+                "在「每天完成」属性中设置：勾选恢复本业务日，取消则今日不运行；保存后生效。恢复后的当轮不保证只再跑一次。");
+            Add("⑫ 自检与立即运行",
+                "自检定位结构问题，不试运行。立即运行会执行真实动作，但仍需条件导通，并受启用、暂停和今日状态限制。");
             var replay = new Button
             {
                 Content = "▶ 重新播放引导动画",
@@ -2178,7 +1706,7 @@ namespace SoulLink.Views
         {
             if (_previewBusy || !IsLoaded || !IsVisible) return;
             // 引导演示期间不要用真实求值覆盖演示中的状态灯。
-            if (_guideRunning) return;
+            if (_guide != null) return;
             _previewBusy = true;
             int version = ++_previewVersion;
             try

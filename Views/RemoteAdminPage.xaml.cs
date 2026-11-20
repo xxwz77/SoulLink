@@ -360,20 +360,74 @@ namespace SoulLink.Views
             catch (Exception ex) { Log("选择目录失败：" + ex.Message, true); }
         }
 
+        /// <summary>
+        /// 一键安装 / 更新 RDP Wrapper。
+        ///
+        /// ★ 用户诉求（原话）：「每次更新系统，导入 0 开头的注册表就可以使用多用户了」
+        ///   「确保能使用，越简单越好，我每次都要去找文件，然后还得重启」。
+        ///
+        ///   所以这里做到：
+        ///     ① 目录自动探测，不用手动找 RDP Wrap 目录
+        ///     ② 注册表双写 CurrentControlSet + 实际 ControlSet00x（等同官方 0-*.reg）
+        ///     ③ 不重启电脑，只重启 TermService
+        ///     ④ 结果如实显示，不再"永远成功"
+        /// </summary>
         private async void BtnInstallWrap_Click(object sender, RoutedEventArgs e)
         {
+            // ① 目录：优先用输入框；为空时自动探测；都找不到就用默认目录（会自动创建+释放）
             string dir = WrapDirBox.Text?.Trim() ?? "";
+
+            if (dir.Length == 0 || !System.IO.File.Exists(System.IO.Path.Combine(dir, "TermWrap.dll")))
+            {
+                string? found = RdpWrapService.FindWrapDir();
+
+                if (found != null)
+                {
+                    dir = found;
+                    Log("自动找到已有的 RDP Wrap 目录：" + dir);
+                }
+                else
+                {
+                    // ★ 全新机器：目录不存在也没关系，安装时会自动创建并释放内嵌文件
+                    dir = RdpWrapService.DefaultWrapDir;
+                    Log("未找到已有安装，将使用默认目录并自动部署：" + dir);
+                }
+
+                WrapDirBox.Text = dir;
+            }
+
+            int running = RdpWrapService.CountActiveRdpSessions();
+
+            string tip = running > 0
+                ? "检测到 " + running + " 个正在活动的远程会话。\n\n" +
+                  "重启远程桌面服务会让这些会话短暂断开（约几秒后自动重连）。\n" +
+                  "如果现在正在挂机，建议稍后再操作。\n\n"
+                : "";
+
             if (!Dialogs.Confirm(
-                "将把 TermService 的 ServiceDll 指向：" + Environment.NewLine
-                + System.IO.Path.Combine(dir, "TermWrap.dll") + Environment.NewLine + Environment.NewLine +
-                "随后会**立即重启远程桌面服务**，当前所有 RDP 会话都会断开重连。\n\n" +
-                "请确认现在没有正在挂机的会话。继续吗？",
-                "安装 RDP Wrapper", true))
+                "将把 TermService 指向：" + Environment.NewLine
+                + System.IO.Path.Combine(dir, "TermWrap.dll") + Environment.NewLine + Environment.NewLine
+                + tip +
+                "不需要重启电脑，只会重启远程桌面服务。继续吗？",
+                "安装 / 更新 RDP Wrapper", false))
                 return;
 
             Log("开始安装 RDP Wrapper：" + dir);
             var (ok, msg) = await RdpWrapService.InstallAsync(dir, autoRestart: true);
-            Log((ok ? "✔ " : "✘ ") + msg, !ok);
+
+            // ② 如实回报，并给出下一步（不要求重启电脑）
+            if (ok)
+            {
+                Log("✔ " + msg);
+                Log("✔ 完成。多用户远程登录现在应已可用，不需要重启电脑。");
+            }
+            else
+            {
+                Log("✘ " + msg, true);
+                Log("提示：注册表已经写好了。如果只是服务重启这一步失败，" +
+                    "多用户能力不受影响 —— 下次重启电脑或手动重启「远程桌面服务」后即可生效。");
+            }
+
             RefreshWrapStatus();
         }
 

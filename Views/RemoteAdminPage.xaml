@@ -10,8 +10,8 @@
         <Grid Grid.Row="0" Margin="2,0,2,5">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="远程管理" FontSize="14" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" />
-                <TextBlock x:Name="SubTitle" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
+                <TextBlock Text="远程管理" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
+                <TextBlock x:Name="SubTitle" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" />
             </StackPanel>
             <Button Grid.Column="1" x:Name="BtnRefresh" Style="{StaticResource GhostButton}" Padding="10,3" Click="BtnRefresh_Click" Content="刷新" FontSize="10.5" />
         </Grid>
@@ -23,17 +23,17 @@
                     <Grid>
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                         <Grid>
-                            <TextBlock Text="用户与账号" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
-                            <TextBlock x:Name="UserSummary" HorizontalAlignment="Right" FontSize="10" Foreground="{StaticResource TextMuted}" />
+                            <TextBlock Text="用户与账号" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
+                            <TextBlock x:Name="UserSummary" HorizontalAlignment="Right" FontSize="10" Foreground="{DynamicResource TextMuted}" />
                         </Grid>
-                        <TextBlock Grid.Row="1" Text="系统内置用户仅展示状态，不可操作。" FontSize="9" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                        <TextBlock Grid.Row="1" Text="系统内置用户仅展示状态，不可操作。" FontSize="9" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,4,0,0" />
                         <Grid Grid.Row="2" Height="22" Margin="0,4,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130" /><ColumnDefinition Width="50" /><ColumnDefinition Width="55" /><ColumnDefinition Width="68" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="用户名" FontSize="9.5" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
-                            <TextBlock Grid.Column="1" Text="远程" FontSize="9.5" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
-                            <TextBlock Grid.Column="2" Text="管理员" FontSize="9.5" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
-                            <TextBlock Grid.Column="3" Text="密码" FontSize="9.5" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
-                            <TextBlock Grid.Column="4" Text="状态" FontSize="9.5" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
+                            <TextBlock Text="用户名" FontSize="9.5" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" />
+                            <TextBlock Grid.Column="1" Text="远程" FontSize="9.5" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" />
+                            <TextBlock Grid.Column="2" Text="管理员" FontSize="9.5" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" />
+                            <TextBlock Grid.Column="3" Text="密码" FontSize="9.5" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" />
+                            <TextBlock Grid.Column="4" Text="状态" FontSize="9.5" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" />
                         </Grid>
                         <ScrollViewer Grid.Row="3" x:Name="UserScroll" VerticalScrollBarVisibility="Auto"><StackPanel><StackPanel x:Name="UserList" /><TextBlock x:Name="NoUserHint" Text="正在读取用户列表…" Style="{StaticResource Caption}" Margin="8,5" /></StackPanel></ScrollViewer>
                     </Grid>
@@ -42,7 +42,7 @@
                     <StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="RDP Wrapper" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{StaticResource TextPrimary}" />
+                            <TextBlock Text="RDP Wrapper" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimary}" />
                             <TextBox Grid.Column="1" x:Name="WrapDirBox" Style="{StaticResource GlassTextBox}" Margin="8,0,0,0" Height="24" FontSize="10" FontFamily="{StaticResource MonoFont}" VerticalContentAlignment="Center" />
                             <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
                                 <Button x:Name="BtnBrowseWrap" Style="{StaticResource GhostButton}" Padding="8,3" Click="BtnBrowseWrap_Click" Content="选择" />
@@ -52,8 +52,8 @@
                         </Grid>
                         <Grid Margin="0,4,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <TextBlock x:Name="WrapStatusText" Text="检测中…" FontSize="10" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
-                            <TextBlock Grid.Column="1" x:Name="WrapDetail" FontSize="9" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextMuted}" FontFamily="{StaticResource MonoFont}" />
+                            <TextBlock x:Name="WrapStatusText" Text="检测中…" FontSize="10" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
+                            <TextBlock Grid.Column="1" x:Name="WrapDetail" FontSize="9" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextMuted}" FontFamily="{StaticResource MonoFont}" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -61,34 +61,34 @@
                     <Grid>
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                         <Grid>
-                            <TextBlock Text="操作日志" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
+                            <TextBlock Text="操作日志" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
                             <Button HorizontalAlignment="Right" Style="{StaticResource GhostButton}" Padding="8,2" Click="BtnClearLog_Click" Content="清空" FontSize="9.5" />
                         </Grid>
                         <ScrollViewer Grid.Row="1" x:Name="LogScroll" VerticalScrollBarVisibility="Auto" Margin="0,3,0,0">
-                            <TextBlock x:Name="LogText" FontSize="9.5" LineHeight="13" FontFamily="{StaticResource MonoFont}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
+                            <TextBlock x:Name="LogText" FontSize="9.5" LineHeight="13" FontFamily="{StaticResource MonoFont}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
                         </ScrollViewer>
                     </Grid>
                 </Border>
             </Grid>
             <Border Grid.Column="1" Style="{StaticResource GlassCard}" Padding="12,9" Margin="6,0,0,5">
                 <StackPanel>
-                    <TextBlock Text="新增用户" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
-                    <TextBlock Text="直接创建 Windows 账户和连接配置" FontSize="9.5" Foreground="{StaticResource TextMuted}" Margin="0,2,0,6" />
+                    <TextBlock Text="新增用户" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
+                    <TextBlock Text="直接创建 Windows 账户和连接配置" FontSize="9.5" Foreground="{DynamicResource TextMuted}" Margin="0,2,0,6" />
                     <TextBox x:Name="NewNickBox" Style="{StaticResource GlassTextBox}" Height="27" FontSize="10.5" VerticalContentAlignment="Center" TextChanged="NewField_TextChanged" />
-                    <TextBlock Text="昵称（可留空，与用户名相同）" FontSize="9" Foreground="{StaticResource TextMuted}" Margin="1,2,0,4" />
+                    <TextBlock Text="昵称（可留空，与用户名相同）" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,2,0,4" />
                     <TextBox x:Name="NewUserBox" Style="{StaticResource GlassTextBox}" Height="27" FontSize="10.5" VerticalContentAlignment="Center" FontFamily="{StaticResource MonoFont}" TextChanged="NewField_TextChanged" />
-                    <TextBlock Text="Windows 用户名" FontSize="9" Foreground="{StaticResource TextMuted}" Margin="1,2,0,4" />
+                    <TextBlock Text="Windows 用户名" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,2,0,4" />
                     <PasswordBox x:Name="NewPwdBox" Style="{StaticResource GlassPasswordBox}" Height="27" FontSize="10.5" VerticalContentAlignment="Center" PasswordChanged="NewPassword_Changed" />
-                    <TextBlock Text="密码（至少 6 位，不含用户名）" FontSize="9" Foreground="{StaticResource TextMuted}" Margin="1,2,0,4" />
+                    <TextBlock Text="密码（至少 6 位，不含用户名）" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,2,0,4" />
                     <PasswordBox x:Name="NewPwd2Box" Style="{StaticResource GlassPasswordBox}" Height="27" FontSize="10.5" VerticalContentAlignment="Center" PasswordChanged="NewPassword_Changed" />
-                    <TextBlock Text="再次输入密码" FontSize="9" Foreground="{StaticResource TextMuted}" Margin="1,2,0,4" />
+                    <TextBlock Text="再次输入密码" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,2,0,4" />
                     <TextBlock x:Name="NewValidText" FontSize="9.5" Foreground="#FFFFB4B4" TextWrapping="Wrap" Margin="0,2,0,4" />
                     <CheckBox x:Name="NewRemoteCheck" Style="{StaticResource GlassCheckBox}" Content="允许远程登录" IsChecked="True" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewAdminCheck" Style="{StaticResource GlassCheckBox}" Content="管理员权限" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewNeverExpireCheck" Style="{StaticResource GlassCheckBox}" Content="密码永不过期" IsChecked="True" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewHideCheck" Style="{StaticResource GlassCheckBox}" Content="登录界面隐藏" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewConfigCheck" Style="{StaticResource GlassCheckBox}" Content="同时创建 SoulLink 连接配置" IsChecked="True" FontSize="10" Margin="0,2,0,4" />
-                    <TextBlock x:Name="NewHostText" FontSize="9" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" Margin="0,0,0,5" />
+                    <TextBlock x:Name="NewHostText" FontSize="9" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,0,0,5" />
                     <Button x:Name="BtnCreateUser" Style="{StaticResource PrimaryButton}" Padding="12,5" HorizontalAlignment="Stretch" Click="CreateUser_Click" Content="创建用户" FontSize="10.5" />
                 </StackPanel>
             </Border>

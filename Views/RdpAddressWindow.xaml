@@ -16,7 +16,7 @@
             <DropShadowEffect BlurRadius="34" ShadowDepth="0" Opacity="0.8" Color="#FF05070F" />
         </Grid.Effect>
 
-        <Border CornerRadius="20" Background="#FF0A1020" BorderBrush="#38FFFFFF" BorderThickness="1"
+        <Border CornerRadius="20" Background="{DynamicResource DialogSurface}" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
                 ClipToBounds="True" Padding="24,20">
             <Grid>
                 <Grid.RowDefinitions>
@@ -27,9 +27,9 @@
 
                 <StackPanel Grid.Row="0">
                     <TextBlock x:Name="TitleText" Text="用户与 RDP 设置" FontSize="16" FontWeight="Bold"
-                               Foreground="{StaticResource TextPrimary}" />
+                               Foreground="{DynamicResource TextPrimary}" />
                     <TextBlock x:Name="SubText" Text="配置中控台接入这个用户时使用的参数"
-                               FontSize="11.5" Foreground="{StaticResource TextMuted}" Margin="0,5,0,0" />
+                               FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,5,0,0" />
                 </StackPanel>
 
                 <ScrollViewer Grid.Row="1" Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
@@ -70,18 +70,18 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="宽" FontSize="10.5" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock Text="宽" FontSize="10.5" Foreground="{DynamicResource TextMuted}" />
                                         <TextBox x:Name="WidthBox" Style="{StaticResource GlassTextBox}" Margin="0,4,0,0"
                                                  FontFamily="{StaticResource MonoFont}" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                                        <TextBlock Text="高" FontSize="10.5" Foreground="{StaticResource TextMuted}" />
+                                        <TextBlock Text="高" FontSize="10.5" Foreground="{DynamicResource TextMuted}" />
                                         <TextBox x:Name="HeightBox" Style="{StaticResource GlassTextBox}" Margin="0,4,0,0"
                                                  FontFamily="{StaticResource MonoFont}" />
                                     </StackPanel>
                                 </Grid>
 
-                                <TextBlock Text="缩放模式" FontSize="10.5" Foreground="{StaticResource TextMuted}"
+                                <TextBlock Text="缩放模式" FontSize="10.5" Foreground="{DynamicResource TextMuted}"
                                            Margin="0,10,0,4" />
                                 <ComboBox x:Name="ScaleCombo" >
                                     <ComboBoxItem Content="跟随窗口（自动调整远端分辨率）" Tag="0" />
@@ -89,7 +89,7 @@
                                     <ComboBoxItem Content="原大小（固定分辨率，不缩放）" Tag="2" />
                                 </ComboBox>
 
-                                <TextBlock Text="色深" FontSize="10.5" Foreground="{StaticResource TextMuted}"
+                                <TextBlock Text="色深" FontSize="10.5" Foreground="{DynamicResource TextMuted}"
                                            Margin="0,10,0,4" />
                                 <ComboBox x:Name="DepthCombo" >
                                     <ComboBoxItem Content="32 位（最佳画质）" Tag="32" />
@@ -114,7 +114,7 @@
                                 <TextBlock Text="关于地址" FontSize="11.5" FontWeight="SemiBold"
                                            Foreground="{StaticResource AmberBrush}" />
                                 <TextBlock TextWrapping="Wrap" FontSize="10.5" LineHeight="16"
-                                           Foreground="{StaticResource TextMuted}" Margin="0,6,0,0"
+                                           Foreground="{DynamicResource TextMuted}" Margin="0,6,0,0"
                                            Text="本机所有环回 RDP 客户端在服务端看来都是 127.0.0.1，所以「会话 8 就用 127.0.0.8」不成立。哪个地址能落到目标会话只能实测，用 1Remote 里能连的那个最稳。" />
                             </StackPanel>
                         </Border>

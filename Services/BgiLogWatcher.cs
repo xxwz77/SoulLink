@@ -20,6 +20,26 @@ namespace SoulLink.Services
     /// </summary>
     public static class BgiLogWatcher
     {
+        /// <summary>
+        /// 通道状态可能变化时触发（投送成功 / 代理退出）。
+        ///
+        /// ★ 为什么需要它：主界面（LaunchPage）原来只靠 3 秒轮询
+        ///   DiscoverLiveAgentSessions() 发现新通道。
+        ///   而投送是「先起代理进程，后建 relay 管道」两步，
+        ///   中间那段窗口期里主界面显示「未投送」——
+        ///   用户实际已经能用自由视角（代理在跑），界面却说没投送。
+        ///   这里给一个主动通知，让界面立刻刷新，不必等下一次轮询。
+        ///
+        /// ★ 订阅方必须自己 marshal 到 UI 线程；本事件可能在后台线程抛出。
+        /// </summary>
+        public static event Action? ChannelStateMayHaveChanged;
+
+        /// <summary>通知「通道状态可能变了」。失败不外抛，绝不影响投送流程。</summary>
+        public static void NotifyChannelStateChanged()
+        {
+            try { ChannelStateMayHaveChanged?.Invoke(); } catch { }
+        }
+
         /// <summary>一个会话里找到的 BGI 实例。</summary>
         public sealed class Instance
         {
@@ -67,6 +87,12 @@ namespace SoulLink.Services
         /// ★ 管道名可能短暂残留（宿主刚断开、代理正在退出），只看管道会把已死的代理
         ///   报成“通道就绪”，界面随后又跳回“未投送”，表现为状态乱跳。
         /// </summary>
+        /// <summary>上一拍判为"活着"的会话（去抖用）。</summary>
+        private static HashSet<int> LastLiveSessions = new HashSet<int>();
+        /// <summary>每个会话最后一次被确认活着的时刻（去抖用）。</summary>
+        private static readonly Dictionary<int, DateTime> LastLiveAt = new Dictionary<int, DateTime>();
+        private static readonly object LiveStateGate = new object();
+
         public static HashSet<int> DiscoverLiveAgentSessions()
         {
             var live = new HashSet<int>();
@@ -90,29 +116,67 @@ namespace SoulLink.Services
                     if (us <= 0) continue;
                     if (int.TryParse(rest.Substring(0, us), out int sid) && sid > 0) pipes.Add(sid);
                 }
-                if (pipes.Count == 0) return live;
+                // ★ 不能在这里直接 return：管道短暂消失时也要走去抖，
+                //   否则主界面会闪一下"未投送"再变回来（用户实测"显示成功又灭了"）。
+                //   没有管道时先跳过进程匹配，直接进入下面的去抖段即可。
 
-                // 代理有两种合法进程名：
-                //   同名（旧路径，直接用主程序）           → "SoulLink"
-                //   独立副本（新路径，asInvoker 代理本体） → "SoulLink.proxy"
+                // 代理有三种合法进程名：
+                //   同名（旧路径，直接用主程序）             → "SoulLink"
+                //   独立副本（计划任务通道的 asInvoker 本体） → "SoulLink.proxy"
+                //   Broker 通道的固定代理副本               → "SoulLink.Agent"
                 // ★ 必须按身份精确匹配，不能用 "SoulLink*" 前缀，
                 //   否则 SoulLink-Stable 的代理会被算成本版本的通道。
-                // ★ 也不能只认 "SoulLink"：改用独立副本后进程名变了，
-                //   会导致明明投送成功、界面却一直显示未投送（实测踩过）。
+                // ★ 也不能只认 "SoulLink"/"SoulLink.proxy"：Broker 通道用
+                //   %ProgramFiles%\SoulLinkDev\SoulLink.Agent.exe，进程名是 "SoulLink.Agent"。
+                //   漏掉它就会出现"投送明明成功、界面一直显示通道未投送"（实测踩过两次）。
                 string expected = AppIdentity.Name;
                 string expectedProxy = expected + ".proxy";
-                foreach (var proc in Process.GetProcesses())
+                string expectedBrokerAgent = BrokerInstall.AgentProcessName;
+
+                // ★ 兼容旧版代理名：代理是不定期升级的，主程序升级后
+                //   旧代理可能还在跑（用户不重启代理时）。只认新名字会漏掉它。
+                //   这里额外接受 "SoulLink-Stable.Agent" 之类同族名字，
+                //   但仍然要求管道属于本版本（上面已按 RelayPipePrefix 过滤）。
+                if (pipes.Count > 0)
                 {
-                    try
+                    foreach (var proc in Process.GetProcesses())
                     {
-                        bool ours = string.Equals(proc.ProcessName, expected, StringComparison.OrdinalIgnoreCase)
-                                 || string.Equals(proc.ProcessName, expectedProxy, StringComparison.OrdinalIgnoreCase);
-                        if (!ours) continue;
-                        int sid = proc.SessionId;
-                        if (pipes.Contains(sid)) live.Add(sid);
+                        try
+                        {
+                            string n = proc.ProcessName;
+                            bool ours = string.Equals(n, expected, StringComparison.OrdinalIgnoreCase)
+                                     || string.Equals(n, expectedProxy, StringComparison.OrdinalIgnoreCase)
+                                     || string.Equals(n, expectedBrokerAgent, StringComparison.OrdinalIgnoreCase)
+                                     || (n.StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase)
+                                         && n.EndsWith(".Agent", StringComparison.OrdinalIgnoreCase));
+                            if (!ours) continue;
+                            int sid = proc.SessionId;
+                            if (pipes.Contains(sid)) live.Add(sid);
+                        }
+                        catch { }
+                        finally { proc.Dispose(); }
                     }
-                    catch { }
-                    finally { proc.Dispose(); }
+                }
+
+                // ★ 去抖：代理重启/退出时，进程与管道不是同一拍消失的，
+                //   严格同时判定会让主界面「绿一下又灭」（用户实测）。
+                //   规则：本次没判到、但上一拍还活着，且距上次确认不到 6 秒 → 继续算活着。
+                //   超过 6 秒仍判不到才真正视为断开。
+                var nowUtc = DateTime.UtcNow;
+                lock (LiveStateGate)
+                {
+                    foreach (var sid in LastLiveSessions)
+                    {
+                        if (live.Contains(sid)) continue;
+                        if (LastLiveAt.TryGetValue(sid, out var at)
+                            && (nowUtc - at).TotalSeconds < 6)
+                        {
+                            live.Add(sid);   // 抖动期：维持"活着"
+                        }
+                    }
+
+                    foreach (var sid in live) LastLiveAt[sid] = nowUtc;
+                    LastLiveSessions = new HashSet<int>(live);
                 }
             }
             catch { }

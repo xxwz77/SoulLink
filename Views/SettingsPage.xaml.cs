@@ -103,6 +103,13 @@ namespace SoulLink.Views
         {
             _loading = true;
             TrayCheck.IsChecked = App.Config.Settings.MinimizeToTray;
+            try
+            {
+                int tier = Math.Clamp(App.Config.Settings.EffectTier, 0, 2);
+                EffectTierCombo.SelectedIndex = tier;
+                EffectTierHint.Text = DescribeTier(tier);
+            }
+            catch { }
             RemoteCheck.IsChecked = App.Config.Settings.AllowRemoteInvoke;
             FallbackCheck.IsChecked = App.Config.Settings.AllowCurrentSessionFallback;
             OnlyAutomationCheck.IsChecked = App.Config.Settings.OnlyAutomationAccounts;
@@ -311,13 +318,45 @@ namespace SoulLink.Views
         /// </summary>
         private async Task DetectAsync()
         {
+            // ★ 三选一：手动代理优先于 Broker（手动模式下不投送任何东西）
+            ApplyDeliveryModeToUi();
             EngineState.Text = "检测中…";
+            bool elevated = SystemLauncher.IsElevated;
+            if (App.Config.Settings.UseBrokerChannel && elevated)
+            {
+                var health = await BrokerProtocol.SendAsync(new BrokerProtocol.Request { Command = "health" }, 2500);
+
+                // ★ 版本不一致时：**照常可用，但要明说**。
+                //   用户实测：服务跑 2.11.0、客户端 2.17.11，协议都是 v1，
+                //   所以这里原本显示"服务可用"，可投送全部失败，非常误导。
+                //   用户选择「只提示、不拦截」。
+                string? versionNote = health.Ok
+                    ? BrokerProtocol.DescribeAppVersionMismatch(health)
+                    : null;
+
+                EngineDot.Color = !health.Ok ? Color.FromRgb(0xFF, 0x9B, 0x9B)
+                                 : versionNote != null ? Color.FromRgb(0xFF, 0xC4, 0x6B)   // 琥珀：可用但版本不符
+                                 : Color.FromRgb(0x41, 0xF0, 0xC0);
+
+                EngineState.Text = !health.Ok ? "Broker 服务不可用"
+                                 : versionNote != null ? "Broker 服务可用（版本不一致）"
+                                 : "Broker 服务可用";
+
+                EnginePath.Text = !health.Ok ? health.Message
+                                : versionNote ?? "服务健康；账号通道仍需单独投送";
+
+                if (versionNote != null)
+                    LogBus.Warn("Broker 版本不一致", versionNote);
+
+                StatusChanged?.Invoke(health.Ok, versionNote ?? health.Message);
+                return;
+            }
             var (ok, detail) = await Task.Run(() =>
             {
                 SystemLauncher.EnablePrivileges();
                 bool elevated = SystemLauncher.IsElevated;
                 string msg = elevated
-                    ? "SYSTEM 计划任务通道 · 计划任务 " + (CanUseSchtasks() ? "可用" : "受限")
+                    ? (App.Config.Settings.UseBrokerChannel ? "SYSTEM Broker · 管理员代理（测试）" : "SYSTEM 计划任务通道 · 计划任务 " + (CanUseSchtasks() ? "可用" : "受限"))
                     : "需要管理员权限";
                 return (elevated, msg);
             });
@@ -341,6 +380,163 @@ namespace SoulLink.Views
 
         // ── 引擎 ─────────────────────────────────────────────────────────────
 
+        // ── 投送方式（三选一）────────────────────────────────────────────────
+        //
+        // ★ 为什么从两个 CheckBox 改成下拉单选：
+        //   原来「Broker」和「手动代理」是两个独立复选框，可以同时勾上，
+        //   但它们的语义是互斥的（一个自动投送、一个拒绝自动投送）。
+        //   用户实测反馈：「现在能同时勾选多种」。
+        //   下拉单选从结构上杜绝这种非法组合。
+
+        /// <summary>当前投送方式：0=SYSTEM 计划任务 1=Broker 2=手动代理。</summary>
+        private int CurrentDeliveryMode()
+        {
+            if (App.Config.Settings.ManualAgentMode) return 2;
+            if (App.Config.Settings.UseBrokerChannel) return 1;
+            return 0;
+        }
+
+        /// <summary>把配置反映到界面（不触发保存逻辑）。</summary>
+        private void ApplyDeliveryModeToUi()
+        {
+            if (DeliveryModeCombo == null) return;
+            int mode = CurrentDeliveryMode();
+            if (DeliveryModeCombo.SelectedIndex != mode)
+                DeliveryModeCombo.SelectedIndex = mode;
+            UpdateDeliveryPanels(mode);
+        }
+
+        /// <summary>按模式显示对应的操作按钮与说明。</summary>
+        private void UpdateDeliveryPanels(int mode)
+        {
+            if (BrokerPanel != null) BrokerPanel.Visibility = mode == 1 ? Visibility.Visible : Visibility.Collapsed;
+            if (ManualPanel != null) ManualPanel.Visibility = mode == 2 ? Visibility.Visible : Visibility.Collapsed;
+
+            if (DeliveryModeHint == null) return;
+            DeliveryModeHint.Text = mode switch
+            {
+                1 => "Broker 通道需要先用「安装 / 管理服务」装好后台服务。所有跨会话启动的程序强制管理员权限，不降级。",
+                2 => "手动模式：不自动投送、清理自动代理，只在本机准备管道等待。随后在目标账号桌面里运行 SoulLink.Agent.exe 即可接入。",
+                _ => "默认通道：用 SYSTEM 计划任务启动代理。所有跨会话启动的程序和管理员代理均强制管理员权限；无法取得管理员令牌时拒绝执行，不降级。"
+            };
+        }
+
+        private async void DeliveryMode_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                if (DeliveryModeCombo == null || DeliveryModeCombo.SelectedIndex < 0) return;
+                int wanted = DeliveryModeCombo.SelectedIndex;
+                int current = CurrentDeliveryMode();
+                UpdateDeliveryPanels(wanted);
+                if (wanted == current) return;   // 初始化赋值不重复处理
+
+                bool wantManual = wanted == 2;
+                bool wantBroker = wanted == 1;
+
+                // ① 先落盘两个互斥开关
+                App.Config.Settings.UseBrokerChannel = wantBroker;
+                ConfigStore.Save(App.Config);
+
+                // ② 手动模式的启停要走它自己的流程（会清理/恢复自动代理）
+                string? message = null;
+                if (wantManual != App.Config.Settings.ManualAgentMode)
+                    message = await Services.ManualAgentMode.SetEnabledAsync(wantManual);
+
+                Services.LogBus.Info("投送方式已切换",
+                    "现在是：" + DeliveryModeCombo.Text + (message != null ? "\n" + message : ""));
+
+                if (DeliveryModeHint != null && message != null)
+                    DeliveryModeHint.Text = message.Replace("\n\n", "  ");
+
+                // ③ 切回自动模式时立刻重新检测，让状态栏反映真实可用性
+                await DetectAsync();
+            }
+            catch (Exception ex)
+            {
+                Services.LogBus.Error("切换投送方式失败", ex.Message);
+                ThemedMessage.Info(Window.GetWindow(this), "切换失败", ex.Message);
+            }
+        }
+
+        private void BrokerManage_Click(object sender, RoutedEventArgs e) => new BrokerWindow { Owner = Window.GetWindow(this) }.Show();
+
+        /// <summary>界面动效档位变更：立即保存并重启动画（无需重启程序）。</summary>
+        private void EffectTier_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            try
+            {
+                int tier = Math.Clamp(EffectTierCombo.SelectedIndex, 0, 2);
+                App.Config.Settings.EffectTier = tier;
+                EffectTierHint.Text = DescribeTier(tier);
+                ConfigStore.Save(App.Config);
+                ThemeManager.RefreshEffects();
+            }
+            catch (Exception ex) { LogBus.Warn("切换界面动效档位失败", ex.Message); }
+        }
+
+        private static string DescribeTier(int tier) => tier switch
+        {
+            0 => "完整动效：动态背景 + 呼吸灯。实测窗口在前台时约占 1 个核心；失去焦点后自动暂停。",
+            2 => "全部静止：无动态背景、呼吸灯保持常亮。挂机最省电，实测约 22 个单核百分点。",
+            _ => "推荐档位：关闭动态背景，保留呼吸灯。外观接近原版，开销明显低于「高」。"
+        };
+
+        /// <summary>
+        /// Broker 服务被安装 / 更新后，重新检测并刷新状态栏。
+        ///
+        /// ★ 用户实测：「安装服务后状态没刷新」——
+        ///   服务已经换成新版（日志 SERVICE_RUNNING），
+        ///   但设置页那段文字还停在"服务版本 2.17.12.0 低于最低要求 2.17.13.0"，
+        ///   因为这里从来没订阅过服务更新事件，只能等手动点「重新检测」。
+        /// </summary>
+        private void OnBrokerServiceUpdatedForUi()
+        {
+            try
+            {
+                if (Dispatcher.HasShutdownStarted) return;
+                Dispatcher.BeginInvoke(new Action(async () =>
+                {
+                    try
+                    {
+                        Services.LogBus.Info("检测到 Broker 服务已更新", "正在重新检测通道状态");
+                        await DetectAsync();
+                    }
+                    catch (Exception ex) { App.AppendErrorLog("OnBrokerServiceUpdatedForUi", ex); }
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 导出手动代理：生成一个 asInvoker 副本，用户放到目标账号的远程桌面里双击即可。
+        /// 不写服务、不建计划任务、不需要管理员权限。
+        /// </summary>
+        private void ExportAgent_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // 默认导到主程序旁边的 agent 目录，便于直接从远程桌面访问共享路径。
+                string self = Services.SystemLauncher.ResolveSelfExe();
+                string baseDir = string.IsNullOrWhiteSpace(self)
+                    ? AppContext.BaseDirectory
+                    : (System.IO.Path.GetDirectoryName(self) ?? AppContext.BaseDirectory);
+                string target = System.IO.Path.Combine(baseDir, "agent");
+
+                var (ok, message) = Services.ManualAgent.Export(target);
+                string tip = ok
+                    ? "已生成手动代理：\n" + message +
+                      "\n\n用法：把这个 exe 复制到目标账号的远程桌面里，双击运行即可。\n" +
+                      "它会自动找到本机等待中的宿主管道（按会话号匹配），并在该会话内接管鼠标注入。\n\n" +
+                      "注意：运行前请先在主程序里对该账号发起过「连接」或「投送」，让宿主把管道建好。"
+                    : message;
+                ThemedMessage.Info(Window.GetWindow(this), ok ? "导出手动代理" : "导出失败", tip);
+            }
+            catch (Exception ex)
+            {
+                ThemedMessage.Info(Window.GetWindow(this), "导出失败", ex.Message);
+            }
+        }
         private async void Redetect_Click(object sender, RoutedEventArgs e) => await DetectAsync();
 
         /// <summary>以管理员身份重启自己（跨会话投送必须提权）。</summary>
@@ -420,6 +616,7 @@ namespace SoulLink.Views
         {
             if (_loading) return;
             App.Config.Settings.MinimizeToTray = TrayCheck.IsChecked == true;
+
             App.Config.Settings.AllowRemoteInvoke = RemoteCheck.IsChecked == true;
             App.Config.Settings.AllowCurrentSessionFallback = FallbackCheck.IsChecked == true;
             App.Config.Settings.OnlyAutomationAccounts = OnlyAutomationCheck.IsChecked == true;

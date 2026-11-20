@@ -7,7 +7,7 @@
         ResizeMode="NoResize" FontFamily="{StaticResource UiFont}">
     <Grid Margin="18">
         <Grid.Effect><DropShadowEffect BlurRadius="34" ShadowDepth="0" Opacity="0.8" Color="#FF03050D" /></Grid.Effect>
-        <Border CornerRadius="20" Background="{StaticResource WindowBackground}" BorderBrush="{StaticResource StrokeMid}"
+        <Border CornerRadius="20" Background="{DynamicResource WindowBackground}" BorderBrush="{DynamicResource StrokeMid}"
                 BorderThickness="1" ClipToBounds="True">
             <Grid>
                 <ctl:AuroraBackdrop Opacity="0.5" IsHitTestVisible="False" />
@@ -16,10 +16,10 @@
                         <TextBlock x:Name="IconText" Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="22"
                                    Foreground="{StaticResource CyanBrush}" VerticalAlignment="Top" />
                         <TextBlock x:Name="TitleText" Text="SoulLink" FontSize="18" FontWeight="SemiBold"
-                                   Foreground="{StaticResource TextPrimary}" Margin="38,0,0,0" />
+                                   Foreground="{DynamicResource TextPrimary}" Margin="38,0,0,0" />
                     </Grid>
                     <TextBlock x:Name="MessageText" Margin="0,18,0,0" FontSize="12.5" LineHeight="22"
-                               TextWrapping="Wrap" Foreground="{StaticResource TextSecondary}" />
+                               TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}" />
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0">
                         <Button x:Name="CancelButton" Content="取消" Style="{StaticResource GhostButton}" Padding="22,9"
                                 Click="Cancel_Click" IsCancel="True" />

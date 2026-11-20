@@ -399,6 +399,18 @@ namespace SoulLink.Services
         /// <summary>控件创建完成（句柄就绪）</summary>
         public event Action<RdpAxHost>? Ready;
 
+        /// <summary>
+        /// 用户在这个控件上按下了鼠标（WM_MOUSEACTIVATE）。
+        ///
+        /// ★ 为什么需要它：解锁态下 RDP 原生窗口会吞掉鼠标消息，
+        ///   WPF 的格子 Border 收不到点击，只能靠 150ms 轮询焦点来跟进，
+        ///   于是"点第一下不切焦点、要等下一次轮询才切"（用户实测）。
+        ///   这里在**消息到达的第一时间**通知外层，点击当拍就能切焦点。
+        ///
+        /// ★ 只在控件 WndProc 里发事件，不做任何 UI 操作，不阻塞消息处理。
+        /// </summary>
+        public event Action<RdpAxHost>? MouseActivated;
+
         public RdpAxHost(string clsid) : base(clsid) { }
 
         protected override void AttachInterfaces()
@@ -445,9 +457,17 @@ namespace SoulLink.Services
                 return;
             }
 
-            if (m.Msg == WM_MOUSEACTIVATE && !ContainsFocus)
+            if (m.Msg == WM_MOUSEACTIVATE)
             {
-                try { Focus(); } catch { }
+                // ★ 点击当拍就通知外层切焦点（不等到看门狗轮询）。
+                //   先通知再 Focus：外层需要在这条消息里把 _viewing 切过来，
+                //   否则后续按键会按旧焦点判断归属。
+                try { MouseActivated?.Invoke(this); } catch { }
+
+                if (!ContainsFocus)
+                {
+                    try { Focus(); } catch { }
+                }
             }
 
             base.WndProc(ref m);

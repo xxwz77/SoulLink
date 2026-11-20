@@ -265,7 +265,14 @@ namespace SoulLink.Services
         /// <summary>刷新一轮。单轮不重入，避免卡住时堆叠。</summary>
         private static void RefreshOnce(AppConfig cfg)
         {
-            if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0) return;
+            if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0)
+            {
+                // ★ 临时诊断：跳过次数要留痕，否则"看起来在跑其实全跳过"无从发现。
+                InputTrace.Write("REFRESH_SKIP", "上一轮未完成，本轮跳过");
+                return;
+            }
+            var __sw = System.Diagnostics.Stopwatch.StartNew();
+            long __tQuery = 0, __tBgi = 0, __tProc = 0, __tAcct = 0;
             try
             {
                 SyncAccounts(cfg);
@@ -276,9 +283,11 @@ namespace SoulLink.Services
                 }
 
                 // ① 一次查询会话（所有账号共用）
+                var __s1 = __sw.ElapsedMilliseconds;
                 List<Models.SessionInfo> sessions;
                 try { sessions = SessionService.QueryAsync().GetAwaiter().GetResult(); }
                 catch { sessions = new List<SessionInfo>(); }
+                __tQuery = __sw.ElapsedMilliseconds - __s1;
                 lock (_sync) _sessions = sessions;
 
                 // ② 一次枚举 BGI 进程（所有账号共用）
@@ -286,8 +295,15 @@ namespace SoulLink.Services
                 try { bgi = BgiLogWatcher.Discover(); }
                 catch { bgi = new Dictionary<int, BgiLogWatcher.Instance>(); }
 
-                // 一次枚举进程及 Windows 所有者；流程触点不再各自启动 tasklist。
+                // ★ 先把"会话号 → 用户名"映射更新好，再刷新进程快照。
+                //   进程枚举只拿得到 SessionId，用户名要靠这份映射补；
+                //   而会话列表本来就在上面①查过了，直接复用，不额外起进程。
+                ProcessOwnerSnapshot.SessionUsers.Set(sessions);
+
+                // 一次枚举进程（内存枚举，约 20ms）；流程触点不再各自启动 tasklist。
+                var __s3 = __sw.ElapsedMilliseconds;
                 ProcessOwnerSnapshot.Refresh();
+                __tProc = __sw.ElapsedMilliseconds - __s3;
                 bool anyChanged = false;
 
                 List<AccountState> snapshot;
@@ -304,6 +320,14 @@ namespace SoulLink.Services
                 if (anyChanged)
                 {
                     try { Changed?.Invoke(); } catch { }
+                }
+
+                // ★ 临时诊断：每轮各阶段耗时（只在开启全量日志时输出）。
+                if (SoulLink.Controls.RdpConsole.VerboseLog)
+                {
+                    InputTrace.Write("REFRESH_TIME", "本轮总耗时=" + __sw.ElapsedMilliseconds + "ms"
+                        + " query=" + __tQuery + "ms 进程快照=" + __tProc + "ms"
+                        + " 刷新计数=" + ProcessOwnerSnapshot.RefreshCount);
                 }
             }
             catch (Exception ex) { App.AppendErrorLog("AccountStateCenter.Refresh", ex); }

@@ -6,7 +6,7 @@
    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
     <StackPanel><TextBlock Text="自动化配置组" Style="{StaticResource Title}" /><TextBlock Text="多用户 · 顺序流程 · 定时任务" Style="{StaticResource Caption}" Margin="0,4,0,10" /></StackPanel>
     <ListBox x:Name="ProfileList" Grid.Row="1" SelectionChanged="ProfileList_SelectionChanged" Background="Transparent" BorderThickness="0">
-     <ListBox.ItemTemplate><DataTemplate><Border Style="{StaticResource GlassPanel}" Margin="0,4" Padding="12,10"><StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" /><TextBlock Text="{Binding Summary}" Style="{StaticResource Caption}" Margin="0,4,0,0" /></StackPanel></Border></DataTemplate></ListBox.ItemTemplate>
+     <ListBox.ItemTemplate><DataTemplate><Border Style="{StaticResource GlassPanel}" Margin="0,4" Padding="12,10"><StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" /><TextBlock Text="{Binding Summary}" Style="{StaticResource Caption}" Margin="0,4,0,0" /></StackPanel></Border></DataTemplate></ListBox.ItemTemplate>
     </ListBox>
     <Button Grid.Row="2" x:Name="BtnNewProfile" Style="{StaticResource PrimaryButton}" Content="新建配置组" Margin="0,12,0,0" Click="New_Click" />
    </Grid>

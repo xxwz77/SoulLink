@@ -113,6 +113,285 @@ namespace SoulLink.Controls
             catch { }
         }
 
+        // ══════════════════════════════════════════════════════════════════
+        // 保护层：禁用 RDP 原生窗口（2026-11-19 第三版实现）
+        //
+        // ★ 演进过程（三次都踩过，别再走回头路）：
+        //   ① 半透明浮层压在画面上 → 分层窗口(WS_EX_LAYERED)压到
+        //      mstscax 的 DirectComposition 表面上 → 整块黑屏。已废弃。
+        //   ② 低级鼠标钩子只吞左键 Down/Up → 鼠标**移动**照样进 RDP，
+        //      远程光标跟着动、悬停/拖动全生效，等于没保护。已废弃。
+        //   ③ 当前：EnableWindow(宿主窗口, FALSE)。
+        //      禁用只影响输入路由（WS_DISABLED + WM_ENABLE），
+        //      **不新建/不销毁窗口、不动合成表面**，所以既不会黑屏，
+        //      也不具备 0x119（VIDEO_SCHEDULER_INTERNAL_ERROR）的触发条件
+        //      ——那次事故的成因是多窗口挂载/ActiveX 反复进出容器。
+        //
+        //   ★ 已知限制：禁用期间键盘完全进不去（这是"未接管"的应有语义）；
+        //     恢复时要显式把焦点交回 RDP，否则用户会觉得"点了没反应"。
+        // ══════════════════════════════════════════════════════════════════
+
+        /// <summary>是否生效（勾选「点击画面才捕获键鼠」才有保护层）。</summary>
+        public bool ShieldActive => CaptureOnClick;
+
+        /// <summary>当前是否处于锁定态（键鼠尚未交给 RDP）。</summary>
+        public bool ShieldLocked { get; private set; }
+
+        /// <summary>锁定态变化：true=已锁，false=已交给 RDP。</summary>
+        public event Action<RdpConsole, bool>? ShieldLockChanged;
+
+        /// <summary>用户点击锁定中的画面 = 请求接管。</summary>
+        public event Action<RdpConsole>? ShieldClicked;
+
+        /// <summary>锁定时鼠标是否真的被拦住（宿主窗口确实处于禁用态）。</summary>
+        public bool ShieldEnforced => !ShieldLocked || _hostDisabled;
+
+        /// <summary>原生宿主窗口当前是否被我们禁用。</summary>
+        private volatile bool _hostDisabled;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool EnableWindow(IntPtr hWnd, bool bEnable);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool IsWindowEnabled(IntPtr hWnd);
+
+
+        /// <summary>
+        /// 锁定：禁用承载 ActiveX 的原生窗口。
+        /// 幂等 —— 看门狗 150ms 就会调一次。
+        /// </summary>
+        public void LockShield(string reason)
+        {
+            if (_disposed) return;
+            bool changed = !ShieldLocked;
+            ShieldLocked = true;
+            _pointerCaptured = false;
+            PointerCaptureEnabled = false;
+            if (changed)
+            {
+                try { System.Windows.Input.Keyboard.ClearFocus(); } catch { }
+                Debug("保护层锁定（" + reason + "）→ 禁用 RDP 原生窗口");
+            }
+            ApplyHostEnabled(false);
+            if (changed) { try { ShieldLockChanged?.Invoke(this, true); } catch { } }
+        }
+
+        /// <summary>解锁：恢复原生窗口，把键鼠交给 RDP。</summary>
+        public void UnlockShield(string reason)
+        {
+            bool was = ShieldLocked || _hostDisabled;
+            ShieldLocked = false;
+            _pointerCaptured = true;
+            PointerCaptureEnabled = true;
+            ApplyHostEnabled(true);
+            if (was)
+            {
+                Debug("保护层解锁（" + reason + "）→ 恢复 RDP 原生窗口");
+                try { ShieldLockChanged?.Invoke(this, false); } catch { }
+            }
+            // ★ 恢复后必须显式把键盘焦点交回 RDP：
+            //   禁用期间 SetFocus 全部失败，不补这一步用户会觉得"点了没反应"。
+            try { GiveKeyboardFocus(); } catch { }
+        }
+
+        /// <summary>
+        /// 禁用/恢复承载 ActiveX 的原生窗口。
+        ///
+        /// ★ 用 _host.Handle（WindowsFormsHost 的原生 HWND），不是 _ax.Handle：
+        ///   禁用宿主的整个子树（含 ActiveX 与 IHWindowClass）一并生效。
+        /// </summary>
+        private void ApplyHostEnabled(bool enabled)
+        {
+            try
+            {
+                IntPtr handle = IntPtr.Zero;
+                try { handle = _host?.Handle ?? IntPtr.Zero; } catch { handle = IntPtr.Zero; }
+                if (handle == IntPtr.Zero)
+                {
+                    // 句柄还没建好：先记状态，看门狗下一轮再来。
+                    if (enabled) _hostDisabled = false;
+                    return;
+                }
+
+                // 已经是目标状态就别重复调：每调一次都会发一条 WM_ENABLE。
+                bool want = enabled;
+                bool now = IsWindowEnabled(handle);
+                if (now == want)
+                {
+                    _hostDisabled = !want;
+                    return;
+                }
+
+                bool ok = EnableWindow(handle, want);
+                _hostDisabled = !want;
+                Debug("保护层：" + (want ? "恢复" : "禁用") + " RDP 宿主窗口 hwnd=" + handle
+                      + " ok=" + ok + " nowEnabled=" + IsWindowEnabled(handle));
+            }
+            catch (Exception ex)
+            {
+                _hostDisabled = false;
+                App.AppendErrorLog("保护层.ApplyHostEnabled", ex);
+            }
+        }
+
+        /// <summary>
+        /// 自愈：确保"该禁用时确实禁用"。
+        /// 由 ConsolePage 的 150ms 看门狗周期调用，不依赖某一次回调。
+        /// </summary>
+        public void EnsureShieldEnforced()
+        {
+            if (_disposed) return;
+            if (!ShieldActive)
+            {
+                if (ShieldLocked) UnlockShield("保护层已关闭");
+                return;
+            }
+            if (ShieldLocked && !_hostDisabled) ApplyHostEnabled(false);
+            else if (!ShieldLocked && _hostDisabled) ApplyHostEnabled(true);
+        }
+
+        // ── 焦点归属识别 ────────────────────────────────────────────────────
+        //
+        // 解锁后 RDP 原生窗口恢复启用，鼠标点击被它自己吞掉，
+        // WPF 的格子 Border 根本收不到 MouseLeftButtonUp。
+        // 所以"点画面切焦点"不能靠 WPF 点击事件，只能**问系统**：
+        // 当前键盘焦点到底落在哪个 RDP 窗口里。
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct GUITHREADINFO
+        {
+            public int cbSize;
+            public int flags;
+            public IntPtr hwndActive;
+            public IntPtr hwndFocus;
+            public IntPtr hwndCapture;
+            public IntPtr hwndMenuOwner;
+            public IntPtr hwndMoveSize;
+            public IntPtr hwndCaret;
+            public int rcCaretLeft, rcCaretTop, rcCaretRight, rcCaretBottom;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool GetGUIThreadInfo(int threadId, ref GUITHREADINFO info);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);
+
+        /// <summary>
+        /// 本画面（的 ActiveX 子树）当前是否持有键盘焦点。
+        ///
+        /// ★ 判定要同时看三处，缺一不可（都实测过）：
+        ///   · hwndFocus —— 光标真正落入的那个子窗口（通常是 IHWindowClass）；
+        ///   · hwndActive —— 前台线程的活动窗口（点子窗口时可能只有它变）；
+        ///   · 前台窗口本身 —— 用户刚点进来时焦点还没完全沉降。
+        ///
+        /// 只看 AxHost.ContainsFocus 不够：RDP 的焦点常落在它自己创建的子窗口上。
+        /// </summary>
+        public bool HasKeyboardFocus
+        {
+            get
+            {
+                try
+                {
+                    if (_disposed) return false;
+                    if (_ax == null || !_ax.IsHandleCreated) return false;
+                    IntPtr root = _host?.Handle ?? IntPtr.Zero;
+                    if (root == IntPtr.Zero) return false;
+
+                    // ★ 被我们禁用的宿主窗口不算"持有焦点"。
+                    //   禁用只是让消息进不来，键盘焦点**仍然停在原来的子窗口上**
+                    //   （Windows 不会因为 EnableWindow(FALSE) 就转移焦点）。
+                    //   不排除它的话，锁定态点 B 之后看门狗会把焦点拉回 A
+                    //   —— 用户实测："从 A 到 B，焦点窗会自动回 A"。
+                    if (_hostDisabled) return false;
+                    if (!IsWindowEnabled(root)) return false;
+
+                    // ① AxHost 自己的判断（最快，但不一定准）
+                    if (_ax.ContainsFocus) return true;
+
+                    // ② 前台窗口是否属于本画面
+                    IntPtr fg = GetForegroundWindow();
+                    if (fg != IntPtr.Zero && (fg == root || IsChild(root, fg))) return true;
+
+                    // ③ 本进程 UI 线程的焦点窗口是否属于本画面（最可靠）
+                    try
+                    {
+                        var gi = new GUITHREADINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<GUITHREADINFO>() };
+                        int tid = (int)GetWindowThreadProcessId(root, IntPtr.Zero);
+                        if (tid != 0 && GetGUIThreadInfo(tid, ref gi))
+                        {
+                            if (gi.hwndFocus != IntPtr.Zero
+                                && (gi.hwndFocus == root || IsChild(root, gi.hwndFocus))) return true;
+                            if (gi.hwndActive != IntPtr.Zero
+                                && (gi.hwndActive == root || IsChild(root, gi.hwndActive))) return true;
+                        }
+                    }
+                    catch { }
+
+                    return false;
+                }
+                catch { return false; }
+            }
+        }
+
+        /// <summary>
+        /// RDP 控件收到 WM_MOUSEACTIVATE：用户点了这个画面。
+        /// 立即广播给外层，让它当拍把焦点切过来（不等看门狗轮询）。
+        /// </summary>
+        private void OnAxMouseActivated(RdpAxHost ax)
+        {
+            try
+            {
+                // 只广播，不做 UI 操作 —— 这里还在 RDP 的窗口过程里。
+                ShieldClicked?.Invoke(this);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 把**真实键盘焦点**转移给本画面的 RDP 控件。
+        ///
+        /// ★ 与 GiveKeyboardFocus 的区别：后者在保护层锁定时会主动放弃
+        ///   （CaptureOnClick &amp;&amp; !_pointerCaptured 时直接 return）。
+        ///   而这里用于"用户刚刚点了这一格"的场景，必须无条件生效 ——
+        ///   否则 A 的原生窗口会一直持有系统焦点，看门狗又把焦点拉回 A
+        ///   （用户实测："焦点框回落到 A"）。
+        /// ★ 必须在宿主窗口**已恢复启用**之后调用，否则 SetFocus 会失败。
+        /// </summary>
+        public void ForceKeyboardFocus()
+        {
+            try
+            {
+                if (_disposed || _ax == null || !_ax.IsHandleCreated) return;
+                if (_hostDisabled) return;   // 还锁着就不抢焦点
+
+                _host.Focusable = false;
+                var form = System.Windows.Forms.Control.FromChildHandle(_ax.Handle);
+                IntPtr target = form?.Handle ?? _ax.Handle;
+
+                _ax.Focus();
+                SetFocus(target);
+            }
+            catch { }
+        }
+
+        /// <summary>用户在锁定中的画面上点了鼠标 = 请求接管。</summary>
+        public void RequestTakeover()
+        {
+            if (_disposed) return;
+            UnlockShield("用户点击画面");
+            try { ShieldClicked?.Invoke(this); } catch { }
+        }
         /// <summary>连接代次：每次主动重连递增，后台恢复时可据此重新锁定。</summary>
         public int ConnectionGeneration => _connectionGeneration;
 
@@ -144,7 +423,25 @@ namespace SoulLink.Controls
             System.Windows.Input.KeyboardNavigation.SetIsTabStop(_host, false);
             _host.Focusable = false;
 
-            Children.Add(_host);
+            // ★★ 2.17.17：WindowsFormsHost 不再在构造时就挂进视觉树。★★
+            //
+            //   WindowsFormsHost 是**独立 HWND**，不参与 WPF/DWM 的圆角裁剪。
+            //   一旦它进入视觉树，即使还没连接任何账号（Child 为空），
+            //   也会在窗口上铺出一块方形不透明区域，把 DWM 的圆角盖成直角，
+            //   并在窗口内侧露出一条与圆角错位的边。
+            //
+            //   实测（2026-11-20，本机）：
+            //     · 高画质启动：AuroraBackdrop 每帧全量重绘，把这块方形区域刷成
+            //       与周围一致的像素，视觉上被掩盖 → 看不到异常；
+            //     · 中/低画质启动：背景不再重绘，方形块边界暴露 → 一圈灰/白边、
+            //       圆角变直角、底边与右边还因为布局尚未完成而"缺口"；
+            //     · 关掉 RDP 自启（不创建 Console）→ 完全正常；
+            //     · 切后台再回来 → 触发一次重排重绘，整圈又被画出来。
+            //   四个现象与"独立 HWND 盖住圆角"完全吻合。
+            //
+            //   现在改为：只在真正需要时（EnsureHost 成功创建 OCX 后）才挂上。
+            //   未连接的账号不再影响窗口外观。
+            _host.Visibility = Visibility.Collapsed;
             HookInput();
         }
 
@@ -251,7 +548,20 @@ namespace SoulLink.Controls
 
         /// <summary>系统热键：开启锁定时注册，按一下就退出（默认 Ctrl+Alt+Q）。</summary>
         private NativeHotkey? _escapeHotkey;
-        internal bool HotkeyArmed { get; set; }
+        private bool _hotkeyArmed;
+        internal bool HotkeyArmed
+        {
+            get => _hotkeyArmed;
+            set
+            {
+                if (_hotkeyArmed == value) return;
+                // ★ 临时诊断：记录每一次翻转，用来回答"热键为什么判成非当前控制台"。
+                InputTrace.Write("ARMED", "实例=" + _inst + " 会话=" + CurrentSessionId + " HotkeyArmed " + _hotkeyArmed + " → " + value
+                    + " _activeState=" + _activeState + " IsVisible=" + _uiVisibleCache
+                    + " ownerActive=" + _ownerActiveCache + " 调用方=" + InputTrace.Caller(3));
+                _hotkeyArmed = value;
+            }
+        }
         private int _hotkeyToggleVersion;
         private readonly System.Collections.Generic.HashSet<string> _injectedButtons
             = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -259,14 +569,72 @@ namespace SoulLink.Controls
         private int _inputGeneration;
         private int _connectionGeneration;
         private int _inputStartPending;
+
+        // ★★ 临时诊断（交接文档 4.1 取证）★★ 定位代理建连约 2 秒后被断开的原因。
+        // 只记录、不参与控制流。结论落定后连同 Services/InputTrace.cs 一起删除。
+        private System.Diagnostics.Stopwatch? _traceSw;
+        private static string TraceId(object? o) => o == null ? "null" : "#" + o.GetHashCode().ToString("X8");
         private bool _nativeRelativeMouse;
         private int _activeState; // 0=前台允许输入，1=后台/已撤销
+
+        // ★ 临时诊断：每个 RdpConsole 一个稳定短标识，用来区分"到底哪个实例"。
+        private readonly string _inst = "C" + Guid.NewGuid().ToString("N").Substring(0, 4);
+
+        /// <summary>
+        /// ★ 诊断专用：UI 属性的缓存副本。
+        ///
+        /// 为什么需要：IsVisible / _ownerWindow.IsActive 都是 **UI 线程专属**，
+        /// 而 SET_ACTIVE / ARMED 这些埋点会在后台线程被调用（例如 Broker 服务更新后的
+        /// InvalidateAgentConnection 路径）。直接读会抛
+        /// "The calling thread cannot access this object because a different thread owns it."
+        /// —— 实测中它把一次成功的投送判成了失败。
+        ///
+        /// 所以埋点**只读这两个 volatile 缓存**，由 UI 线程在 OnIsVisibleChanged /
+        /// owner 状态变化时更新。读缓存永远不会抛异常。
+        /// </summary>
+        private volatile bool _uiVisibleCache;
+        private volatile bool _ownerActiveCache;
+
+        private void RefreshUiCache()
+        {
+            try
+            {
+                _uiVisibleCache = IsVisible;
+                _ownerActiveCache = _ownerWindow?.IsActive == true;
+            }
+            catch { /* 不在 UI 线程时保持旧值 */ }
+        }
         public void SetForegroundActive(bool active)
         {
+            InputTrace.Write("SET_ACTIVE", "实例=" + _inst + " 会话=" + CurrentSessionId + " active=" + active
+                + " 旧_activeState=" + _activeState + " 可见缓存=" + _uiVisibleCache
+                + " 调用方=" + InputTrace.Caller(3));
             System.Threading.Interlocked.Exchange(ref _activeState, active ? 0 : 1);
             HotkeyArmed = active;
             if (!active)
             {
+                // ★★ 自由视角期间必须整体跳过。★★
+                //
+                //   实测（rdp-debug 2026-11-20 03:33）：
+                //     03:33:26~03:33:34 连续 5 次都是"进入自由视角 captured=True"，
+                //     没有一次是"退出" —— 说明每次进入后 _captured 立刻又被清回 false。
+                //
+                //   链路：进入自由视角 → 撤保护层 → 画面控件 IsVisible=false
+                //        → IsVisibleChanged 触发 → SetForegroundActive(false)
+                //        → 这里的 _captured = false 把刚设上的捕获清掉
+                //        → 下一次按侧键又变成"进入"，永远出不来；
+                //          同时 HotkeyArmed 被打成 false，热键逐渐失效。
+                //
+                //   守卫必须排在 _captured = false 之前：
+                //   自由视角是"用户主动接管输入"的状态，与"画面是否可见"无关。
+                //   画面不可见只影响鼠标钩子（看不见就别吞输入），仅此而已。
+                if (_captured)
+                {
+                    InputTrace.Write("SET_ACTIVE_SKIP", "实例=" + _inst + " 会话=" + CurrentSessionId
+                        + " 正在自由视角 → 不撤销捕获/热键资格（_activeState 已置 1）");
+                    UninstallMouseHook();
+                    return;
+                }
                 _captured = false;
                 InputMode = ConsoleInputMode.Pointer;
                 InputModeChanged?.Invoke(this, InputMode);
@@ -330,14 +698,64 @@ namespace SoulLink.Controls
 
                 CurrentSessionId = s.Id;
                 Debug("投送通道：「" + acc.UserName + "」→ 会话 " + s.Id);
+
+                // ★★ 不能立刻 return true。★★
+                //
+                //   原来这里 BeginInput（异步 void）一发出就返回 true，
+                //   调用方（会话监控）据此记「通道投送成功」，并写进 _deployHandled。
+                //   但投送是异步的：代理进程没起来、管道没建立、甚至失败了，
+                //   日志里照样是"投送成功"。
+                //
+                //   用户实测：日志 01:53:59 两条"通道投送成功"，
+                //   而实际 Get-Process SoulLink.Agent 为空、relay 管道也没有。
+                //
+                //   现在：真正发出投送，然后等一次结果（最多 8 秒），按真实结果返回。
+                //   等不到也不算失败 —— 仍返回 true，但会记一条"已发起未确认"，
+                //   由调用方的 6 秒去抖与状态刷新兜底。
+
+                // ★★ 这一行绝不能少：它才是真正发起投送的地方。★★
+                //   上一轮改"等待确认"时把它误删了，结果只等不投 ——
+                //   表现为日志一直"已发起未确认"，代理进程永远不存在。
                 BeginInput(s.Id, acc);
-                return true;
+
+                bool started = await WaitForRelayConnectedAsync(timeoutMs: 8000).ConfigureAwait(false);
+                if (started)
+                {
+                    Debug("投送通道：「" + acc.UserName + "」已确认连接（会话 " + s.Id + "）");
+                    return true;
+                }
+
+                Debug("投送通道：「" + acc.UserName + "」已发起，但未在 8 秒内确认连接");
+                return true;   // 仍然算"已发起"，不阻塞监控循环；状态由实际探测决定
             }
             catch (Exception ex)
             {
                 Debug("投送通道失败：" + ex.Message);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// 等待注入通道真正连上（代理进程 + relay 管道都就绪）。
+        /// 只做轮询观察，不主动探测管道（探测会占掉代理的单连接名额）。
+        /// </summary>
+        private async Task<bool> WaitForRelayConnectedAsync(int timeoutMs)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                if (_disposed) return false;
+                if (Input?.Relay.IsConnected == true) return true;
+
+                // ★ ConfigureAwait(false)：绝不能回 UI 线程。
+                //   投送会被并发触发（监控、切页、重建三条路径），
+                //   每个等待循环若每 200ms 往 UI 线程排一次队，
+                //   叠起来会把 UI 线程占满 —— 实测单线程累计 98 秒 CPU、
+                //   日志停摆、界面卡顿。
+                //   这里只读取一个字段，不需要回到 UI 线程。
+                await Task.Delay(200).ConfigureAwait(false);
+            }
+            return Input?.Relay.IsConnected == true;
         }
 
         /// <summary>切回画面时调用：如果输入通道已断开，重建一次。</summary>
@@ -350,6 +768,9 @@ namespace SoulLink.Controls
                 if (CurrentSessionId <= 0) return;
                 var acc = Account;
                 if (acc == null) return;
+                InputTrace.Write("ENSURE_RESTORE", "切回画面触发重建 会话=" + CurrentSessionId
+                    + " 旧Input=" + TraceId(Input) + " IsConnected=" + IsConnected
+                    + " 调用方=" + InputTrace.Caller(3));
                 _ = StopInputAsync();
                 BeginInput(CurrentSessionId, acc);
                 Debug("切回画面：重建输入通道 会话=" + CurrentSessionId);
@@ -426,12 +847,22 @@ namespace SoulLink.Controls
                     // ★ 退出永远放行：只要正在自由视角，任何条件都不能挡住解锁。
                     //   这是"进了出不来"事故的直接教训——锁定状态下必须无条件可退。
                     if (_captured) return true;
-                    if (_disposed || !IsVisible) return false;
-                    if (_ownerWindow == null || !_ownerWindow.IsActive) return false;
-                    if (_ownerWindow.WindowState == WindowState.Minimized) return false;
+                    // ★ 临时诊断：每个拒绝分支都留痕，否则"按了没反应"无从排查。
+                    RefreshUiCache();   // 本属性由 UI 线程读取，刷新缓存供埋点使用
+                    string deny = null;
+                    if (_disposed || !IsVisible) deny = "_disposed=" + _disposed + " IsVisible=" + IsVisible;
+                    else if (_ownerWindow == null || !_ownerWindow.IsActive) deny = "_ownerWindow=" + (_ownerWindow == null ? "null" : "有") + " IsActive=" + (_ownerWindow?.IsActive);
+                    else if (_ownerWindow.WindowState == WindowState.Minimized) deny = "窗口已最小化";
+                    else if (!(HotkeyArmed && IsConnected)) deny = "HotkeyArmed=" + HotkeyArmed + " IsConnected=" + IsConnected + " _activeState=" + _activeState;
+                    if (deny != null)
+                    {
+                        InputTrace.Write("HOTKEY_DENY", "实例=" + _inst + " 会话=" + CurrentSessionId + " 原因=" + deny
+                            + " 调用方=" + InputTrace.Caller(3));
+                        return false;
+                    }
                     // ActiveX 不会让 WPF 稳定看到 ContainsFocus / Mouse.DirectlyOver。
                     // 不能用这两个条件阻断热键，否则用户按了也被判为"不属于画面"。
-                    return HotkeyArmed && IsConnected;
+                    return true;
                 }
                 catch { return false; }
             }
@@ -512,6 +943,14 @@ namespace SoulLink.Controls
                 //     列为高风险组合（0x119）。
                 //   改为：只记目标，停手 ResizeSettleMs 后由串行队列统一协商。
                 NoteViewportSizeChanged();
+
+                // ★ 拉伸模式：窗口变大后必须让控件重新按宿主尺寸铺开。
+                //
+                //   SmartSizing 是**连接时**的设备属性，窗口尺寸变化**不会**自动重算，
+                //   于是远端 1920x1080 的内容停在左上角，多出来的部分露出底色
+                //   —— 这就是用户看到的"最大化后画面不跟着放大、四周有灰边"。
+                //   这里在尺寸稳定后重新应用一次，不改远端分辨率（用户要求固定 1 模式）。
+                ScheduleStretchRefit();
             };
 
             Loaded += (_, __) =>
@@ -530,9 +969,43 @@ namespace SoulLink.Controls
 
             IsVisibleChanged += (_, __) =>
             {
-                if (IsVisible && _activeState == 0) { InstallMouseHook(); EnsureToggleHotkey(); }
+                RefreshUiCache();
+                // ★ 恢复分支**不能**再要求 _activeState == 0。★★
+                //
+                //   实测（input-trace 2026-11-20 03:37）：
+                //     03:37:41.506 SetForegroundActive(false) → _activeState=1、HotkeyArmed=False
+                //     03:38:00.383 画面重新可见，_activeState 仍是 1
+                //     03:38:02.162 HOTKEY_DENY 原因=HotkeyArmed=False
+                //   隐藏分支把 _activeState 置 1，恢复分支又要求它是 0 ——
+                //   **一旦隐藏过一次就永远恢复不了**，这是个自锁。
+                //
+                //   现在：变可见时无条件装上钩子、确保热键已注册。
+                //   至于"谁是前台"，由 ConsolePage 在页面恢复时显式指定
+                //   （见 ConsolePage.IsVisibleChanged 里的 SetForegroundActive(true)），
+                //   本类不再自己推断，避免两处互相打架。
+                if (IsVisible) { InstallMouseHook(); EnsureToggleHotkey(); }
                 else if (!IsVisible)
                 {
+                    // ★★ 自由视角期间画面"本来就该不可见"，绝不能因此撤销捕获。★★
+                    //
+                    //   实测（input-trace 2026-11-20 03:23）：
+                    //     03:23:07 LOCAL_HOTKEY 进入自由视角
+                    //     03:23:09 ARMED True → False  调用方=<HookInput>b__172_2 < OnIsVisibleChanged
+                    //   进自由视角 → 撤保护层 → 画面控件 IsVisible=false → 触发本订阅
+                    //   → SetForegroundActive(false) 里有 _captured = false
+                    //   → **刚设上的 _captured 被自己抹掉**，自由视角从未真正生效；
+                    //     同时 HotkeyArmed 被打成 false，之后每次按侧键都被拒。
+                    //
+                    //   这是"进入动作触发退出逻辑"的自毁回路。
+                    //   画面不可见只影响鼠标钩子（看不见就别吞输入），
+                    //   与"是否处于自由视角""热键资格"无关。
+                    if (_captured)
+                    {
+                        InputTrace.Write("VISIBLE_SKIP", "画面不可见但正在自由视角 → 不撤销捕获 会话=" + CurrentSessionId
+                            + " _activeState=" + _activeState + " HotkeyArmed=" + HotkeyArmed);
+                        UninstallMouseHook();
+                        return;
+                    }
                     SetForegroundActive(false);
                 }
             };
@@ -665,6 +1138,10 @@ namespace SoulLink.Controls
         /// <summary>切换输入模式。进入自由视角前会先确认一切就绪。</summary>
         public (bool ok, string message) SetInputMode(ConsoleInputMode mode)
         {
+            InputTrace.Write("SET_MODE", "请求切换模式 会话=" + CurrentSessionId + " target=" + mode
+                + " 当前=" + InputMode + " _captured=" + _captured
+                + " _inputUsable=" + _inputUsable + " Input=" + TraceId(Input)
+                + " relayConnected=" + (Input?.Relay.IsConnected) + " 调用方=" + InputTrace.Caller(3));
             if (mode == InputMode && (mode != ConsoleInputMode.FreeLook || _captured))
                 return (true, mode == ConsoleInputMode.FreeLook ? "已进入自由视角" : "已切回指针模式");
             if (mode == ConsoleInputMode.FreeLook)
@@ -854,6 +1331,9 @@ namespace SoulLink.Controls
 
         private void OnToggleHotkey()
         {
+            InputTrace.Write("LOCAL_HOTKEY", "实例=" + _inst + " 会话=" + CurrentSessionId
+                + " _captured=" + _captured + " _activeState=" + _activeState
+                + " HotkeyArmed=" + HotkeyArmed + " 调用方=" + InputTrace.Caller(3));
             Debug("执行热键切换 · guard=" + _hotkeyToggleVersion + " UI线程=" + Dispatcher.CheckAccess());
             // 只有空闲状态(0)才能进入；原实现把比较结果当成 -1 标记，导致所有事件直接返回。
             if (System.Threading.Interlocked.CompareExchange(ref _hotkeyToggleVersion, 1, 0) != 0) return;
@@ -900,10 +1380,16 @@ namespace SoulLink.Controls
             ReleaseInjectedButtonsAsync();
             // 先排队抬起；代理断开仍会 releaseall，不把释放指令自己清掉。
             ResetLookQueue();
-            // ★ 无论之前是否在自由视角，都要恢复保护层。
-            //   原实现在 !wasCaptured 时直接 return，导致"关掉自由视角后不会重新上锁"。
+            // ★ 只有**退出自由视角**才需要请求恢复保护层。
+            //
+            //   原实现无条件发 ShieldVisibleRequested(true)，而这条消息的含义是
+            //   "请重新上锁"。于是多画面切换焦点时（旧焦点 Console 会收到
+            //   SetForegroundActive(false) → ReleaseCapture），整块画面区被重新锁住，
+            //   表现就是"点 B 之后焦点再也切不回 A，必须重新上锁一次"（用户实测）。
+            //
+            //   自由视角期间本来就隐藏保护层，所以 wasCaptured 才是需要恢复的场景。
+            if (!wasCaptured) return;   // 非自由视角：不动保护层状态，直接返回
             try { ShieldVisibleRequested?.Invoke(this, true); } catch { }
-            if (!wasCaptured) return;
             _keyboardFocusRetry = 20;
             Debug("退出自由视角（" + reason + "）");
         }
@@ -1306,9 +1792,29 @@ namespace SoulLink.Controls
         ///   那会让 ActiveX 在容器之间反复进出，正是 0x119 事故的高风险形态。
         ///   这里只动原生窗口的显示状态，控件树结构完全不变。
         /// </summary>
+        /// <summary>
+        /// 上次设置的可见状态。null = 还没设置过。
+        /// ★ 用于幂等：状态没变就**不要**再动窗口。
+        /// </summary>
+        private bool? _nativeVisibleState;
+
         public void SetNativeVisible(bool visible)
         {
             if (_disposed) return;
+
+            // ★★ 幂等短路（2.17.3 修）。★★
+            //
+            //   用户实测：「中控页面 RDP 画面之间切换也会晃动一下，配置菜单切 RDP 也会缩放一下」。
+            //
+            //   根因就在这里：SyncNativeVisibility 每次切页会对**所有**画面无差别调用本方法，
+            //   于是本来就在原位、正显示着的画面也会被「移到屏幕外(-32000) → 再移回」，
+            //   而移回要调 RestoreHostToLayout()，它内部强制 UpdateLayout() 同步重排整棵树。
+            //   几何最终不变（实测切页前后窗口/内容区尺寸完全一致），但中间有瞬移+重排+重绘，
+            //   视觉上就是「按左上角缩放了一下」。
+            //
+            //   状态没变就什么都不做 —— 既不移动窗口，也不触发重新布局。
+            if (_nativeVisibleState == visible) return;
+            _nativeVisibleState = visible;
 
             // ★ 不再用 SW_HIDE 来"藏"RDP 窗口。
             //
@@ -1358,10 +1864,33 @@ namespace SoulLink.Controls
         {
             try
             {
-                // ① 让 WPF 重新计算这个宿主的布局槽位。
-                try { _host.InvalidateMeasure(); } catch { }
-                try { _host.InvalidateArrange(); } catch { }
-                try { UpdateLayout(); } catch { }
+                // ★★ 不要在这里无条件 InvalidateMeasure/Arrange + UpdateLayout。★★
+                //
+                //   用户实测（精确复现序列）：
+                //     「配置切 A 不晃 / 切配置切 A 不晃 / 切配置切 B 晃 / 再切配置切 B 不晃 / 切配置切 A 晃」
+                //   —— 即「某画面第一次从隐藏恢复成可见」时才晃，同一画面再次恢复就不晃。
+                //
+                //   原因就在这里：WPF 布局槽位从来没变过，变的只是原生 HWND 的屏幕坐标
+                //   （被 SetWindowPos 移到了屏幕外的 ParkX/ParkY）。
+                //   PointToScreen 返回的是 WPF 的布局坐标，与原生窗口当前在哪无关，
+                //   所以**不需要**先失效布局就能读到正确位置。
+                //
+                //   无条件 UpdateLayout() 会在窗口"正要显示"的这一拍强制重排整棵可视化树，
+                //   视觉上就是画面抖一下。第一次恢复时布局可能真的还没跑过（IsArrangeValid=false），
+                //   所以只在确实需要时才补一次 —— 需要时也只影响这一个宿主。
+                bool needLayout = false;
+                try
+                {
+                    needLayout = !_host.IsMeasureValid || !_host.IsArrangeValid;
+                }
+                catch { needLayout = true; }
+
+                if (needLayout)
+                {
+                    try { _host.InvalidateMeasure(); } catch { }
+                    try { _host.InvalidateArrange(); } catch { }
+                    try { UpdateLayout(); } catch { }
+                }
 
                 // ② 读 WPF 认为它应该在的屏幕位置（物理像素）。
                 int x = 0, y = 0;
@@ -1449,6 +1978,11 @@ namespace SoulLink.Controls
             // 锁定状态下的退出无条件放行；只有"进入"才需要当前控制台资格。
             if (!_captured && !CanUseToggleHotkey)
             {
+                RefreshUiCache();
+                InputTrace.Write("RELAY_HOTKEY_DROP", "丢弃目标会话热键 会话=" + CurrentSessionId
+                    + " _captured=" + _captured + " IsVisible=" + _uiVisibleCache
+                    + " ownerActive=" + _ownerActiveCache + " HotkeyArmed=" + HotkeyArmed
+                    + " IsConnected=" + IsConnected + " _activeState=" + _activeState);
                 Debug("丢弃非当前控制台热键事件（非锁定态）");
                 return;
             }
@@ -1533,14 +2067,44 @@ namespace SoulLink.Controls
             if (_ax != null) return;
 
             Exception? last = null;
+            var failures = new List<string>();
             foreach (var clsid in CandidateClsids)
             {
+                RdpAxHost? ax = null;
                 try
                 {
-                    var ax = new RdpAxHost(clsid);
+                    ax = new RdpAxHost(clsid);
+                    // ★ 点击瞬间就广播"我被点了"，外层据此当拍切焦点。
+                    //   解锁态下 RDP 会吞掉鼠标消息，只靠看门狗轮询会慢半拍
+                    //   （用户实测：第一下点击不切焦点）。
+                    ax.MouseActivated += OnAxMouseActivated;
+
+                    // ★★ 顺序不能改：先"挂进视觉树 + 可见"，再创建 OCX。★★
+                    //
+                    //   RdpAxHost.EnsureCreated() 内部是 Control.CreateControl()，
+                    //   而 WinForms 的 CreateControl() 在控件**不可见**时是空操作：
+                    //   宿主 WindowsFormsHost 保持 Visibility=Collapsed 且没有父窗口
+                    //   时，AxHost 的窗口根本不会被创建，AttachInterfaces 也不会被
+                    //   调用 → GetOcx() 恒为 null → 每个候选都"创建后 OCX 为空"，
+                    //   最终报"无法创建 RDP 控件"（2.17.17 回归，2026-11-20 实测）。
+                    //
+                    //   本机 .NET 8 实测对照（同一台机器、同一 CLSID）：
+                    //     · host 分离 + Collapsed → OCX 为空，且**不抛任何异常**
+                    //     · host 分离 + Visible   → OCX 正常
+                    //     · host 已挂 + Collapsed → OCX 正常（要求外层已在窗口里）
+                    //   失败时下方会把宿主收回，未连接的 Console 依然不会在窗口上
+                    //   露出方形 HWND（见构造函数里关于 DWM 圆角的说明）。
+                    MountHostForCreation();
                     _host.Child = ax;
+
                     ax.EnsureCreated();
-                    if (ax.Ocx == null) { last = new InvalidOperationException("控件创建后 OCX 为空（" + clsid + "）"); continue; }
+                    if (ax.Ocx == null)
+                    {
+                        failures.Add(clsid + "：控件创建后 OCX 为空（控件未创建，宿主不可见或 COM 未激活）");
+                        DetachControl(ax);
+                        continue;
+                    }
+
                     _ax = ax;
                     _ocx = ax.Ocx;
                     LogBus.Info("RDP 控件就绪", "CLSID " + clsid);
@@ -1548,11 +2112,59 @@ namespace SoulLink.Controls
                 }
                 catch (Exception ex)
                 {
+                    failures.Add(clsid + "：" + ex.GetType().Name
+                                 + " 0x" + ex.HResult.ToString("X8") + " " + ex.Message);
                     last = ex;
+                    DetachControl(ax);
                 }
             }
+
+            // ★ 全部候选都失败：把宿主收回（保持未挂载、不可见）。
+            //   未连接的 Console 不该在窗口上留下一块方形 HWND。
+            UnmountHostAfterFailure();
+
+            // ★ 每个候选的失败原因都要带出来：
+            //   原来只保留最后一条，v9/v10 的真实 HRESULT 被 v11 的
+            //   "OCX 为空"覆盖，排查时完全看不出是"没注册类"还是"不可见"。
             throw new InvalidOperationException(
-                "无法创建 RDP 控件。系统可能缺少远程桌面 ActiveX 组件。\n" + (last?.Message ?? ""), last);
+                "无法创建 RDP 控件。系统可能缺少远程桌面 ActiveX 组件。\n"
+                + string.Join("\n", failures), last);
+        }
+
+        /// <summary>
+        /// 创建 OCX 前把宿主挂进视觉树并置为可见 —— 这是 CreateControl() 真正创建
+        /// ActiveX 窗口的前提条件（见 EnsureHost 里的实测说明）。
+        /// </summary>
+        private void MountHostForCreation()
+        {
+            try
+            {
+                if (!Children.Contains(_host)) Children.Add(_host);
+                if (_host.Visibility != Visibility.Visible) _host.Visibility = Visibility.Visible;
+                _host.UpdateLayout();
+            }
+            catch { }
+        }
+
+        /// <summary>放弃这个候选控件：摘掉并释放，避免残留半成品 HWND / RCW。</summary>
+        private void DetachControl(RdpAxHost? ax)
+        {
+            if (ax == null) return;
+            try { if (ReferenceEquals(_host.Child, ax)) _host.Child = null; } catch { }
+            try { ax.MouseActivated -= OnAxMouseActivated; } catch { }
+            try { ax.Dispose(); } catch { }
+        }
+
+        /// <summary>创建失败后恢复"未挂载、不可见"状态，保住 DWM 圆角。</summary>
+        private void UnmountHostAfterFailure()
+        {
+            try
+            {
+                _host.Child = null;
+                if (Children.Contains(_host)) Children.Remove(_host);
+                _host.Visibility = Visibility.Collapsed;
+            }
+            catch { }
         }
 
         /// <summary>
@@ -1816,7 +2428,8 @@ namespace SoulLink.Controls
             dynamic adv2 = ocx.AdvancedSettings2;
             adv2.RDPPort = account.RdpPort > 0 ? account.RdpPort : 3389;
             adv2.EncryptionEnabled = 1;
-            adv2.SmartSizing = false;          // 关闭：跟随窗口缩放会让远端分辨率协商异常
+            // SmartSizing 由下面的缩放模式统一决定（见 scaleMode 那段），
+            // 这里不再写死 false —— 两处冲突会让"拉伸"模式实际不生效。
             // ★ 必须是 true：否则连接后控件拿不到键盘焦点，按键根本进不去。
             //   （之前设成 false 是怕抢焦点，但中控台就是要抢——这是它的本职工作）
             adv2.GrabFocusOnConnect = true;
@@ -1911,8 +2524,16 @@ namespace SoulLink.Controls
                 ? account.RdpScaleMode
                 : settings.RdpScaleMode;
             bool stretch = scaleMode == 1 || scaleMode == 3;
-            adv2.SmartSizing = stretch;
-            Debug("Desktop = " + w + "x" + h + " 色深=" + depth + " Mode=" + scaleMode + " SmartSizing=" + stretch);
+            bool smartOk = false;
+            try
+            {
+                adv2.SmartSizing = stretch;
+                // 回读确认 OCX 真的接受了这个值（属性可能是只写的）。
+                smartOk = (bool)adv2.SmartSizing;
+            }
+            catch (Exception ex) { Debug("SmartSizing 设置失败：" + ex.Message); }
+            Debug("Desktop = " + w + "x" + h + " 色深=" + depth
+                  + " Mode=" + scaleMode + " SmartSizing=" + stretch + "(回读 " + smartOk + ")");
 
             // ── 密码 ──
             // 实测：目标已登录时根本不需要密码；目标已注销时 Connect() 也会用 UserName 自动登录。
@@ -2180,9 +2801,27 @@ namespace SoulLink.Controls
             //   → 同一账号出现多个 --relay 进程（会话 3 一度有两个），
             //   表现为"无法自由切换账号"（用户实测）。
             //   通道属于连接状态，与"是否正在看这个画面"解耦；前台限制只用于拦截键鼠消息。
-            if (!InjectEnabled || _disposed
-                || System.Threading.Interlocked.CompareExchange(ref _inputStartPending, 1, 0) != 0)
+            // ★★ 每一种提前返回都必须留痕。★★
+            //   原来这三条判断合并成一个 return，一条日志都没有 ——
+            //   用户看到的现象是「监控说投送成功，但根本没有代理进程」，
+            //   而我花了很久才定位到是这个静默 return。
+            if (!InjectEnabled)
+            {
+                Debug("投送跳过：注入被禁用（会话 " + sessionId + "）");
                 return;
+            }
+            if (_disposed)
+            {
+                Debug("投送跳过：Console 已销毁（会话 " + sessionId + "）");
+                return;
+            }
+            if (System.Threading.Interlocked.CompareExchange(ref _inputStartPending, 1, 0) != 0)
+            {
+                // 上一次投送还没结束（DeployAsync 最长等 20 秒）。
+                // 记一条，否则"永远投送不出去"完全无从排查。
+                Debug("投送跳过：上一轮投送仍在进行中（会话 " + sessionId + "）");
+                return;
+            }
 
             // ★ 已有可用通道且会话号相同 → 直接复用，绝不重复投送。
             //   RelayClient 每次投送都会新建一条命名管道和一个代理进程，
@@ -2206,7 +2845,15 @@ namespace SoulLink.Controls
             }
             try
             {
-                await BeginInputCore(sessionId, account);
+                // ★ 硬超时：DeployAsync 内部虽有 20 秒超时，
+                //   但异常路径下可能不返回，导致 _inputStartPending 永久为 1、
+                //   后续所有投送被永久静默挡掉（用户实测过这个症状）。
+                var core = BeginInputCore(sessionId, account);
+                var finished = await Task.WhenAny(core, Task.Delay(45000));
+                if (finished != core)
+                    Debug("投送超时（45 秒未返回）会话 " + sessionId + "，强制释放标志");
+                else
+                    await core;   // 传播内部异常
             }
             catch (Exception ex)
             {
@@ -2228,6 +2875,12 @@ namespace SoulLink.Controls
 
         private async Task BeginInputCore(int sessionId, Account account)
         {
+            _traceSw = System.Diagnostics.Stopwatch.StartNew();
+            RefreshUiCache();
+            InputTrace.Write("BIC_ENTER", "实例=" + _inst + " 会话=" + sessionId + " 本Console.Input=" + TraceId(Input)
+                + " 当前跟踪会话=" + CurrentSessionId + " _activeState=" + _activeState
+                + " IsVisible=" + _uiVisibleCache + " IsConnected=" + IsConnected
+                + " 调用方=" + InputTrace.Caller());
             await StopInputAsync().ConfigureAwait(true);
             int generation = System.Threading.Interlocked.Increment(ref _inputGeneration);
 
@@ -2247,6 +2900,13 @@ namespace SoulLink.Controls
                 //   最长 20 秒。若回到 UI 线程继续，界面会在这段时间无法响应
                 //   （用户实测：多账号自动投送时卡死）。后续对控件的操作会显式切回 UI。
                 var (ok, msg) = await relay.DeployAsync(account).ConfigureAwait(false);
+                InputTrace.Write("DEPLOY_RESULT", "会话=" + sessionId + " ok=" + ok
+                    + " AgentPid=" + relay.AgentPid + " BrokerBacked=" + relay.BrokerBacked
+                    + " IsConnected=" + relay.IsConnected + " msg=" + msg
+                    + " 距投送开始=" + (_traceSw == null ? "n/a" : _traceSw.ElapsedMilliseconds + "ms"));
+
+                // 只保留"失败"与"关键身份"这类有用信息，正常成功路径不刷日志。
+                if (!ok) Debug("投送失败：会话 " + sessionId + " · " + msg);
 
                 if (!ok)
                 {
@@ -2322,12 +2982,37 @@ namespace SoulLink.Controls
                         (usable, why) = await input.CheckUsableAsync().ConfigureAwait(true);
                 }
 
-                if (!ReferenceEquals(Input, input)) return;
-                if (!InputAllowed)
+                if (!ReferenceEquals(Input, input))
                 {
-                    _ = StopInputAsync();
+                    InputTrace.Write("BIC_ABANDON", "通道已被替换，放弃本次投送 会话=" + sessionId
+                        + " 当前Input=" + TraceId(Input) + " 本次Input=" + TraceId(input)
+                        + " 距投送开始=" + (_traceSw == null ? "n/a" : _traceSw.ElapsedMilliseconds + "ms"));
                     return;
                 }
+                // ★★ 这里**绝对不能**再按 InputAllowed 停通道。★★
+                //
+                //   2.17.20 取证结论（交接文档 4.1 的根因）：
+                //   会话监控投送前会显式 SetForegroundActive(false)（#1079），
+                //   于是后台账号的 _activeState 恒为 1、IsVisible 恒为 false，
+                //   InputAllowed 永远为 false —— 而这条分支正好在
+                //   "投送成功 + 握手完成"之后执行，等于把刚建好、已经连上的代理当场杀掉。
+                //
+                //   实测日志（input-trace）：
+                //     02:54:42.200 DEPLOY_RESULT ok=True IsConnected=True
+                //     02:54:43.708 KILL_INPUTALLOWED _activeState=1 IsVisible=False   ← 在这里被杀
+                //     02:54:43.710 RL_SEND_EXIT
+                //     代理侧：02:54:42.021 已连上宿主管道 → 02:54:43.713 宿主断开（存活 1.7 秒）
+                //
+                //   通道属于**连接状态**，与"是否正在看这个画面"解耦 ——
+                //   这与 BeginInput 顶部（#2576）以及 SetForegroundActive（#554）的注释完全一致，
+                //   是这一条判断把它们推翻了。前台限制只用于拦截键鼠消息，
+                //   InputAllowed 在消息处理路径里仍然生效（#870 / #1388）。
+                //
+                //   真正的清理仍然由 Disconnect / Dispose 负责。
+                RefreshUiCache();
+                InputTrace.Write("PROBE", "实例=" + _inst + " 会话=" + sessionId + " usable=" + usable + " why=" + why
+                    + " _activeState=" + _activeState + " IsVisible=" + _uiVisibleCache
+                    + " 距投送开始=" + (_traceSw == null ? "n/a" : _traceSw.ElapsedMilliseconds + "ms"));
                 _inputUsable = usable;
                 SyncRelayHotkey("代理就绪");
 
@@ -2342,6 +3027,19 @@ namespace SoulLink.Controls
                     ScheduleInputRebuild("探测不可用");
                 }
 
+                InputTrace.Write("BIC_OK", "实例=" + _inst + " 会话=" + sessionId + " usable=" + usable
+                    + " Input=" + TraceId(Input) + " 距投送开始=" + (_traceSw == null ? "n/a" : _traceSw.ElapsedMilliseconds + "ms"));
+
+                // ★★ 这里曾经有一段"兜底恢复前台资格"的代码，已删除。★★
+                //   它读 IsVisible 并调 SetForegroundActive —— 两者都是 UI 线程专属，
+                //   而本方法在后台线程继续（DeployAsync 用 ConfigureAwait(false)）。
+                //   实测抛出 "The calling thread cannot access this object because a
+                //   different thread owns it."，被外层 catch 判成"建立输入通道异常"，
+                //   于是投送明明成功却被当作失败并触发重建，HotkeyArmed 永远停在 false
+                //   （表现为"重装服务后按侧键完全没反应"）。
+                //
+                //   前台资格的归属由 ConsolePage 负责（ShowViewPageAsync / SetFocusFromShield），
+                //   这里不该越权修改，更不该在后台线程碰 UI。
                 InputActivity?.Invoke(this, usable ? ("注入就绪 · " + why) : ("注入待命 · " + why));
                 Debug("输入探测：" + (usable ? "就绪 · " : "待命 · ") + why);
 
@@ -2358,8 +3056,41 @@ namespace SoulLink.Controls
             finally { System.Threading.Interlocked.Exchange(ref _inputStartPending, 0); }
         }
 
+        /// <summary>
+        /// 只让**当前这条注入连接失效**，用于 Broker 服务更新等场景。
+        ///
+        /// ★ 为什么不用 SetForegroundActive(false)：
+        ///   那是"前台/后台"语义，会一并改 _activeState、关掉 HotkeyArmed、
+        ///   释放捕获、卸载鼠标钩子。而这些与"代理连接指向旧服务登记表"毫无关系。
+        ///   实测（2026-11-20 03:12）服务更新后就是这么把热键打死、且无人恢复的。
+        ///
+        /// 这里只处置通道本身：StopInputAsync 会递增 generation、注销注册表、
+        /// Dispose 旧 RelayClient（向旧服务发 stop），前台状态一概不碰。
+        /// </summary>
+        public void InvalidateAgentConnection()
+        {
+            try
+            {
+                if (Input == null) return;
+                InputTrace.Write("INVALIDATE_AGENT", "仅失效代理连接（不碰前台资格）会话=" + CurrentSessionId
+                    + " Input=" + TraceId(Input) + " HotkeyArmed=" + HotkeyArmed
+                    + " _activeState=" + _activeState);
+                _ = StopInputAsync();
+            }
+            catch (Exception ex) { Debug("失效代理连接异常：" + ex.Message); }
+        }
+
         private async Task StopInputAsync()
         {
+            var traceOld = Input;
+            // ★ 后台线程也会走到这里（InvalidateAgentConnection / Dispose），
+            //   所以只读缓存，绝不碰 IsVisible 本体。
+            InputTrace.Write("STOP_ENTER", "实例=" + _inst + " 谁调的=" + InputTrace.Caller()
+                + " 将被停的Input=" + TraceId(traceOld)
+                + " 跟踪会话=" + CurrentSessionId + " _activeState=" + _activeState
+                + " IsVisible=" + _uiVisibleCache + " IsConnected=" + IsConnected
+                + " _disposed=" + _disposed
+                + " 距本Console投送开始=" + (_traceSw == null ? "n/a" : _traceSw.ElapsedMilliseconds + "ms"));
             System.Threading.Interlocked.Increment(ref _inputGeneration);
             // ★ 停掉等待中的重建定时器：否则"主动停止"会被当成"通道断开"，
             //   重建 → 再停 → 再重建，形成死循环。
@@ -2373,11 +3104,18 @@ namespace SoulLink.Controls
             // 从全局注册表注销，避免自动化流程拿到已断开的通道
             try { if (CurrentSessionId > 0) RelayClient.Unregister(CurrentSessionId); } catch { }
 
-            if (old == null) return;
+            if (old == null)
+            {
+                InputTrace.Write("STOP_NOOP", "没有可停的通道（Input 已为 null）跟踪会话=" + CurrentSessionId);
+                return;
+            }
             await Task.Run(() =>
             {
+                InputTrace.Write("STOP_DISPOSE", "开始 Dispose 会话=" + CurrentSessionId + " Input=" + TraceId(old)
+                    + " 距投送开始=" + (_traceSw == null ? "n/a" : _traceSw.ElapsedMilliseconds + "ms"));
                 try { old.Dispose(); } catch { }
             }).ConfigureAwait(true);
+            InputTrace.Write("STOP_DONE", "已停会话=" + CurrentSessionId + " 距投送开始=" + (_traceSw == null ? "n/a" : _traceSw.ElapsedMilliseconds + "ms"));
         }
 
         /// <summary>
@@ -2400,6 +3138,102 @@ namespace SoulLink.Controls
             input.Mapper.Update(remoteW, remoteH, r.width, r.height);
             Debug("坐标视口(物理像素)=" + r.width + "x" + r.height
                   + " 远端=" + remoteW + "x" + remoteH + " · " + input.Mapper.Describe());
+        }
+
+        private System.Windows.Threading.DispatcherTimer? _stretchRefit;
+
+        /// <summary>
+        /// 拉伸模式下的重新铺满（防抖 200ms）。
+        ///
+        /// 只重新应用 SmartSizing，**不调用 UpdateSessionDisplaySettings**：
+        /// 用户明确要求「不改远端分辨率，只有本地显示缩放」。
+        /// </summary>
+        private void ScheduleStretchRefit()
+        {
+            try
+            {
+                if (_disposed) return;
+                // 只有 拉伸(1) / 原大小(2) 之外不处理；跟随窗口(0) 走分辨率协商。
+                int mode = Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode;
+                if (mode != 1 && mode != 3) return;
+
+                _stretchRefit ??= new System.Windows.Threading.DispatcherTimer
+                { Interval = TimeSpan.FromMilliseconds(200) };
+                _stretchRefit.Tick -= OnStretchRefitTick;
+                _stretchRefit.Tick += OnStretchRefitTick;
+                _stretchRefit.Stop();
+                _stretchRefit.Start();
+            }
+            catch { }
+        }
+
+        private void OnStretchRefitTick(object? sender, EventArgs e)
+        {
+            try
+            {
+                _stretchRefit?.Stop();
+                ApplyStretchRefit();
+            }
+            catch { }
+        }
+
+        /// <summary>把控件重新按当前宿主尺寸铺满（不改远端分辨率）。</summary>
+        public void ApplyStretchRefit()
+        {
+            try
+            {
+                if (_disposed || _ocx == null || !_hasConnected) return;
+                int mode = Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode;
+                if (mode != 1 && mode != 3) return;
+
+                if (_host == null || _host.ActualWidth < 4 || _host.ActualHeight < 4) return;
+
+                // ★★ 不能再"先关再开"（2.17.3 修）。★★
+                //
+                //   原写法：
+                //       adv2.SmartSizing = false;   ← 这一拍控件按 1:1 显示原始 1920x1080
+                //       adv2.SmartSizing = true;    ← 再按客户区缩放
+                //
+                //   用户录屏抓到了中间那一帧：RDP 内层渲染窗口是 1920x1080，
+                //   而外层 WindowsFormsHost 只有 771x395 —— 画面整个放大溢出窗口，
+                //   就是用户描述的"明显是缩放了"。
+                //
+                //   「属性值没变不触发重算」这个担心是对的，但代价是必然露出一帧未缩放的原始画面。
+                //   改用**不改变语义的刷新方式**：
+                //     · 已经是 true 时，直接调用控件的重绘 + 尺寸重设，不碰 SmartSizing；
+                //     · 只有当前状态确实是 false 才打开它（那本来就需要一帧）。
+                dynamic adv2 = _ocx.AdvancedSettings2;
+
+                bool current = true;
+                try { current = (bool)adv2.SmartSizing; } catch { current = true; }
+
+                if (!current)
+                {
+                    // 确实没开：打开它（这一帧本来就需要重算，无法避免）
+                    try { adv2.SmartSizing = true; } catch { }
+                }
+
+                // 已经是拉伸状态：用"宿主尺寸没变也强制重铺"的替代手段 ——
+                // 让 WinForms 宿主把尺寸重设一次，ActiveX 会按新客户区重新布局内容，
+                // 全程 SmartSizing 保持开启，不会露出未缩放的中间帧。
+                try
+                {
+                    var h = _host;
+                    if (h != null && h.ActualWidth > 4 && h.ActualHeight > 4)
+                    {
+                        double w = h.Width, ht = h.Height;
+                        // 微调 1 DIP 再改回：触发 WM_SIZE，控件按当前客户区重铺内容。
+                        h.Width = w - 1;
+                        h.Height = ht - 1;
+                        h.Width = w;
+                        h.Height = ht;
+                    }
+                }
+                catch { }
+
+                Debug("拉伸重铺 hwnd=" + (_host.Handle) + " " + _host.ActualWidth.ToString("0") + "x" + _host.ActualHeight.ToString("0"));
+            }
+            catch { }
         }
 
         /// <summary>画面尺寸变化时同步坐标换算。</summary>

@@ -27,7 +27,7 @@
 
     <!-- 外层容器。圆角由 DWM 负责，这里只铺底色，不再画边框（避免和内部玻璃层叠出两道框） -->
     <Grid x:Name="RootLayer" Margin="0">
-        <Border x:Name="Shell" CornerRadius="0" Background="{StaticResource WindowBackground}" BorderThickness="0">
+        <Border x:Name="Shell" CornerRadius="0" Background="{DynamicResource WindowBackground}" BorderThickness="0">
             <Grid>
                 <ctl:AuroraBackdrop x:Name="Backdrop" />
 
@@ -66,19 +66,19 @@
                                 <Ellipse Width="9" Height="9" Fill="#FFFFFFFF" />
                             </Grid>
                             <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" />
-                                <TextBlock x:Name="VersionText" FontSize="10.5" Foreground="{StaticResource TextMuted}" />
+                                <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
+                                <TextBlock x:Name="VersionText" FontSize="10.5" Foreground="{DynamicResource TextMuted}" />
                             </StackPanel>
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
                                     WindowChrome.IsHitTestVisibleInChrome="True">
-                            <Border CornerRadius="12" Padding="11,5" Margin="0,0,12,0" Background="#16FFFFFF" BorderBrush="#28FFFFFF" BorderThickness="1">
+                            <Border CornerRadius="12" Padding="11,5" Margin="0,0,12,0" Background="{DynamicResource ButtonBackground}" BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1">
                                 <StackPanel Orientation="Horizontal">
                                     <ctl:GlowDot Width="9" Height="9" x:Name="EngineDot" VerticalAlignment="Center"
                                                  Color="#FF41F0C0" />
                                     <TextBlock x:Name="EngineText" Text="引擎就绪" Margin="7,0,0,0" FontSize="11.5"
-                                               Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
                             <Button x:Name="BtnCollapseNav" Style="{StaticResource WindowButton}"
@@ -153,7 +153,7 @@
                                                    Margin="6,0,0,0" Visibility="Collapsed" />
                                     </Grid>
 
-                                    <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
+                                    <Border Height="1" Background="{DynamicResource StrokeSoft}" Margin="9,10,9,10" />
 
                                     <!-- 导航行：图标 +（展开时）文字 -->
                                     <Grid Height="38" Tag="launch" ToolTip="启动台"
@@ -163,10 +163,10 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE768;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock x:Name="NavTextLaunch" Grid.Column="1" Text="启动台"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
                                     <Grid Height="38" Tag="console" ToolTip="中控台"
@@ -176,10 +176,10 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE7F4;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock x:Name="NavTextConsole" Grid.Column="1" Text="中控台"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
                                     <Grid Height="38" Tag="datacenter" ToolTip="数据中心"
@@ -189,10 +189,10 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE9D9;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock x:Name="NavTextDataCenter" Grid.Column="1" Text="数据中心"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
                                     <Grid Height="38" Tag="update" ToolTip="更新 BGI"
@@ -202,10 +202,23 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE896;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock x:Name="NavTextUpdate" Grid.Column="1" Text="更新 BGI"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
+                                    <Grid Height="38" Tag="routeupdate" ToolTip="路线更新"
+                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="&#xE8B7;" Width="42" TextAlignment="Center"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <TextBlock x:Name="NavTextRouteUpdate" Grid.Column="1" Text="路线更新"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
                                     <Grid Height="38" Tag="remote" ToolTip="远程管理"
@@ -215,11 +228,11 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE968;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}"
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}"
                                                    Background="Transparent" MouseLeftButtonUp="NavRow_Click" />
                                         <TextBlock x:Name="NavTextRemote" Grid.Column="1" Text="远程管理"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" MouseLeftButtonUp="NavRow_Click" />
                                     </Grid>
                                     <Grid Height="38" Tag="sessions" ToolTip="联机大厅"
@@ -229,10 +242,10 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE772;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock x:Name="NavTextSessions" Grid.Column="1" Text="联机大厅"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
                                     <Grid Height="38" Tag="procs" ToolTip="会话进程"
@@ -242,10 +255,10 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE9D9;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock x:Name="NavTextProcs" Grid.Column="1" Text="会话进程"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
                                     <Grid Height="38" Tag="cli" ToolTip="命令行"
@@ -255,13 +268,13 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="&#xE756;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock x:Name="NavTextCli" Grid.Column="1" Text="命令行"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{StaticResource TextPrimary}" FontSize="12.5"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
-                                    <Border Height="1" Background="{StaticResource StrokeSoft}" Margin="9,10,9,10" />
+                                    <Border Height="1" Background="{DynamicResource StrokeSoft}" Margin="9,10,9,10" />
                                 </StackPanel>
 
                                 <!-- 下：悬停开关 + 当前会话 + 主题/设置（贴底） -->
@@ -277,7 +290,7 @@
 
                                     <!-- ★ 这两块原先在旧 Popup 面板里，重建侧栏时必须搬过来，
                                          否则展开后看不到「鼠标悬停展开」和「当前会话」（用户实测丢失）。 -->
-                                    <Border x:Name="NavExpandedDivider" Grid.Row="0" Height="1" Background="{StaticResource StrokeSoft}"
+                                    <Border x:Name="NavExpandedDivider" Grid.Row="0" Height="1" Background="{DynamicResource StrokeSoft}"
                                             Margin="6,6,6,8" Visibility="Collapsed" />
 
                                     <CheckBox Grid.Row="1" x:Name="AutoHideNavCheck" Style="{StaticResource GlassCheckBox}"
@@ -300,11 +313,11 @@
                                     <StackPanel Grid.Row="3">
                                         <Button x:Name="BtnThemeBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
                                                 HorizontalAlignment="Left" Click="BtnTheme_Click" ToolTip="主题：跟随系统">
-                                            <TextBlock x:Name="ThemeGlyphBottom" Text="&#xE708;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                            <TextBlock x:Name="ThemeGlyphBottom" Text="&#xE708;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         </Button>
                                         <Button x:Name="BtnSettingsBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
                                                 HorizontalAlignment="Left" Click="GeneralSettings_Click" ToolTip="应用设置">
-                                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource TextMuted}" />
+                                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
                                         </Button>
                                     </StackPanel>
                                 </Grid>
@@ -333,6 +346,9 @@
                             </Grid>
                             <Grid x:Name="PageUpdate" Visibility="Collapsed">
                                 <vm:BgiUpdatePage x:Name="UpdateView" />
+                            </Grid>
+                            <Grid x:Name="PageRouteUpdate" Visibility="Collapsed">
+                                <vm:RouteUpdatePage x:Name="RouteUpdateView" />
                             </Grid>
                             <Grid x:Name="PageRemote" Visibility="Collapsed">
                                 <vm:RemoteAdminPage x:Name="RemoteView" />

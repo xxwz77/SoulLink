@@ -28,7 +28,7 @@
                                              Color="#FF41F0C0" />
                                 <StackPanel Margin="10,0,0,0">
                                     <TextBlock x:Name="EngineState" Text="检测中…" FontSize="12.5" FontWeight="SemiBold"
-                                               Foreground="{StaticResource TextPrimary}" />
+                                               Foreground="{DynamicResource TextPrimary}" />
                                     <TextBlock x:Name="EnginePath" Text="—" Style="{StaticResource Mono}"
                                                TextWrapping="Wrap" MaxWidth="360" Margin="0,3,0,0" />
                                 </StackPanel>
@@ -36,8 +36,32 @@
 
                             <Border Style="{StaticResource Divider}" Margin="0,12" />
 
-                            <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
-                                       Text="投送进程走 Windows 计划任务（SYSTEM 身份），免安装、不需要任何外部工具。唯一要求是「以管理员身份运行」——这也是 RDP 画面注入所必需的。" />
+                            <!-- ★ 投送方式：三选一（用户要求"三种模式互斥，现在能同时勾选多种"）。
+                                 原来 Broker 和手动代理是两个独立 CheckBox，
+                                 可以同时勾上，语义互斥但界面允许 —— 这是设计缺陷。
+                                 改成下拉单选，从结构上杜绝多选。 -->
+                            <TextBlock Text="投送方式" FontSize="10.5"
+                                       Foreground="{DynamicResource TextMuted}" Margin="0,0,0,4" />
+                            <ComboBox x:Name="DeliveryModeCombo" Margin="0,0,0,0"
+                                      SelectionChanged="DeliveryMode_Changed">
+                                <ComboBoxItem Content="SYSTEM 计划任务（默认，自动投送）" />
+                                <ComboBoxItem Content="SYSTEM Broker 管理员代理（自动投送）" />
+                                <ComboBoxItem Content="手动代理模式（不自动投送）" />
+                            </ComboBox>
+
+                            <TextBlock x:Name="DeliveryModeHint" Style="{StaticResource Caption}"
+                                       TextWrapping="Wrap" Margin="0,8,0,0"
+                                       Text="所有跨会话启动的程序和管理员代理均强制管理员权限；无法取得管理员令牌时拒绝执行，不降级。" />
+
+                            <!-- Broker 专用 -->
+                            <StackPanel x:Name="BrokerPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                                <Button Content="安装 / 管理服务" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Click="BrokerManage_Click" />
+                            </StackPanel>
+
+                            <!-- 手动代理专用 -->
+                            <StackPanel x:Name="ManualPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                                <Button Content="导出手动代理" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Click="ExportAgent_Click" />
+                            </StackPanel>
 
                             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                                 <Button Style="{StaticResource GhostButton}" Padding="14,8" Click="Redetect_Click">
@@ -69,6 +93,16 @@
                             <CheckBox x:Name="FallbackCheck" Content="找不到会话时，允许回退到当前用户会话"
                                       Style="{StaticResource GlassCheckBox}" Margin="0,10,0,0"
                                       Checked="Option_Changed" Unchecked="Option_Changed" />
+                            <TextBlock Text="界面动效（性能档位）" FontSize="10.5"
+                                       Foreground="{DynamicResource TextMuted}" Margin="0,12,0,4" />
+                            <ComboBox x:Name="EffectTierCombo" SelectionChanged="EffectTier_Changed">
+                                <ComboBoxItem Content="高（完整动效）· 前台约 1 核" />
+                                <ComboBoxItem Content="中（关闭动态背景，保留呼吸灯）· 推荐" />
+                                <ComboBoxItem Content="低（全部静止）· 挂机最省电" />
+                            </ComboBox>
+                            <TextBlock x:Name="EffectTierHint" Style="{StaticResource Caption}"
+                                       TextWrapping="Wrap" Margin="0,6,0,0"
+                                       Text="实测：动态背景约占 61 个单核百分点，呼吸灯约占 27 个。窗口失去焦点时动画会自动暂停，所以挂机时即使选「高」也会自动降下来。" />
                         </StackPanel>
                     </Border>
 
@@ -80,7 +114,7 @@
                                        Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="18" />
 
                             <TextBlock Text="启动账户（该账户登录时启动程序）" FontSize="10.5"
-                                       Foreground="{StaticResource TextMuted}" Margin="0,12,0,0" />
+                                       Foreground="{DynamicResource TextMuted}" Margin="0,12,0,0" />
                             <ComboBox x:Name="AutoStartUserCombo" Margin="0,5,0,0" />
 
                             <!-- 按钮紧跟它所控制的设置项，文案写清作用对象 -->
@@ -154,7 +188,7 @@
                                                FontSize="12" Margin="12,0,0,0"
                                                VerticalAlignment="Center"
                                                IsHitTestVisible="False"
-                                               Foreground="{StaticResource TextMuted}" />
+                                               Foreground="{DynamicResource TextMuted}" />
                                 </Grid>
 
                                 <Button Grid.Column="1" Style="{StaticResource GhostButton}"
@@ -217,7 +251,7 @@
                     </Button>
                 </Grid>
 
-                <Border Grid.Row="1" CornerRadius="13" Background="#33000000" BorderBrush="#22FFFFFF" BorderThickness="1" Padding="10,8">
+                <Border Grid.Row="1" CornerRadius="13" Background="{DynamicResource FieldBackground}" BorderBrush="#22FFFFFF" BorderThickness="1" Padding="10,8">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <ItemsControl x:Name="LogList">
                             <ItemsControl.ItemTemplate>

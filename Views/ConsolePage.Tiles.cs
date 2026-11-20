@@ -118,10 +118,32 @@ namespace SoulLink.Views
             stack.Children.Add(console);
             chrome.Child = stack;
 
-            // 点击格子 = 把焦点切到这个画面（不是切标签）
+            // 点击格子 = 把焦点切到这个画面（不是切标签），并请求接管键鼠。
+            //
+            // ★ 这条路径现在是保护层唯一的解锁入口：
+            //   RDP 宿主窗口被 EnableWindow(FALSE) 之后，鼠标消息在系统层面
+            //   就不再投递给它，而是落到这层 Border 上。
             chrome.MouseLeftButtonUp += (_, e) =>
             {
-                SetFocus(row, reason: "tile-click");
+                // 点击格子 = 一次完成「切焦点 + 解锁」。
+                //
+                // ★★ 这段代码的顺序经过多次实测才定下来，改动前请先读这里 ★★
+                //
+                //   一次点击必须同时做到两件事：
+                //     ① 焦点切到被点的格子（紫框过去）
+                //     ② 全部画面解锁（可以操作）
+                //   中间不能有任何"还要再点一下"的中间态。
+                //
+                //   坑（都踩过）：
+                //   · 先 SetFocus 再解锁 → SetFocus 内部 UpdateShield 又锁回去，要点两下；
+                //   · 只解开被点的那格 → 其余格子还锁着，切过去点不动；
+                //   · RequestTakeover 里再回调 OnShieldClicked 切焦点 → 与这里重复，互相打架。
+                //
+                //   所以这里的顺序固定为：
+                //     置锁存(已接管) → 解锁全部 → 切焦点（此时已解锁，UpdateShield 不会再锁）
+                //   并且 OnShieldClicked 不再负责切焦点，避免两条路径重复。
+                EnterTakeover(row);
+
                 e.Handled = true;
             };
             chrome.MouseRightButtonUp += (_, e) =>
@@ -190,6 +212,43 @@ namespace SoulLink.Views
             return order.Count - 1;
         }
 
+        /// <summary>
+        /// 一次点击完成「接管 + 切焦点」的唯一入口。
+        ///
+        /// ★ 顺序是固定的，别调换：
+        ///   ① 置锁存为"已接管"（后续 UpdateShield 不会再锁回去）
+        ///   ② 解锁全部画面（所有格子的宿主窗口恢复可用）
+        ///   ③ 切焦点（此时状态已是非锁定，SetFocus 内部的 UpdateShield 不会再上锁）
+        /// </summary>
+        private void EnterTakeover(UserRow row)
+        {
+            try
+            {
+                // ① 先置锁存：这是"用户已接管"的唯一真源。
+                _lastTakeoverAt = DateTime.UtcNow;
+                SetShieldReleased(true);
+
+                // ② 解锁全部画面（保护层是整个画面区的闸门，不是单格）。
+                ApplyShieldToAllTiles(false);
+
+                // ③ 切 WPF 侧的焦点（高亮/标签/_viewing）。
+                SetFocus(row, reason: "takeover-click");
+
+                // ④ ★ 把**真实的系统键盘焦点**交给这一格。
+                //
+                //   只做 ③ 是不够的：A 的原生窗口仍然持有键盘焦点，
+                //   而解锁后看门狗会跟随"谁有焦点"，于是又把焦点拉回 A
+                //   （用户实测："焦点框回落到 A"）。
+                //   必须在解锁之后显式 SetFocus 到被点的这一格，
+                //   让 A 的残留焦点真正失效。
+                try { row.Console?.ForceKeyboardFocus(); } catch { }
+            }
+            catch (Exception ex)
+            {
+                App.AppendErrorLog("EnterTakeover", ex);
+            }
+        }
+
         // ── 焦点 ─────────────────────────────────────────────────────────
 
         /// <summary>
@@ -230,14 +289,29 @@ namespace SoulLink.Views
             //   只有"画面本身变了"（还没连上 / 新开的标签）才需要重新挂保护层。
             bool consoleChanged = ReferenceEquals(_shieldWatchedConsole, row.Console) == false;
             _shieldPendingAfterBusy = !(row.Console?.IsConnected ?? false);
-            if (consoleChanged || row.Console?.IsConnected != true) ArmShieldForNewTab(row);
-            UpdateShield();
-            Dispatcher.BeginInvoke(new Action(() =>
+            // ★ 只有"画面本身换了"才需要重新上锁（重新登记待保护）。
+            //   如果用户刚刚点击接管过这个画面（_shieldReleased = true），
+            //   这里再 ArmShieldForNewTab 会把锁存清掉 → 立刻又被锁回去。
+            if (consoleChanged || row.Console?.IsConnected != true)
+            {
+                if (!_shieldReleased) ArmShieldForNewTab(row);
+            }
+
+            // ★ 用户已接管时，这里只刷指示灯，**绝不**再调 UpdateShield。
+            //   UpdateShield 会按锁存重新判定要不要上锁，而焦点切换发生在
+            //   解锁的同一拍里，很容易踩到"刚解锁又被锁回去"。
+            //   延时那个 BeginInvoke 尤其危险：它在下一轮消息循环才跑，
+            //   那时锁存可能已被别的路径改过（用户实测：紫框切不回去）。
+            if (_shieldReleased)
+            {
+                RefreshInputIndicator();
+            }
+            else
             {
                 UpdateShield();
-                SyncShieldSize();
-                _shieldOverlayWindow?.SyncToAnchor();
-            }), System.Windows.Threading.DispatcherPriority.Loaded);
+                Dispatcher.BeginInvoke(new Action(UpdateShield),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+            }
 
             row.Console.EnsureInputRestored();
             RenderTabs();
@@ -266,6 +340,10 @@ namespace SoulLink.Views
         /// <summary>按当前模式重排所有格子。只改几何与可见性，不增删控件。</summary>
         private bool _applyingLayout;
 
+        // ★ 已回退 "_ignoreViewportSizeChange 挂起视口响应" 的做法。
+        //   它让 ApplyLayout 在需要重排时被整体跳过，直接导致 RDP 画面不显示（用户实测）。
+        //   反馈环改为只靠 OnViewportResized 里的尺寸去重来打破 —— 那一条不会阻止必要布局。
+
         private void ApplyLayout()
         {
             if (!_initialized) return;
@@ -284,6 +362,20 @@ namespace SoulLink.Views
             // 单画面：只留焦点格子可见，铺满；但控件仍在树里。
             if (mode == ConsoleLayoutMode.Single)
             {
+                // ★★ 必须先禁用滚动条，再测量宽度。★★
+                //
+                // 这里踩过一个用户可见的严重问题：切标签时画面**左右晃动/像缩放了一下**。
+                //
+                // 原因链：
+                //   ① ViewportHostWidth() = 视口宽 − 滚动条宽（滚动条可见时）；
+                //   ② 单画面分支过去先测量、再设 TileHost 尺寸、**最后**才禁用滚动条；
+                //   ③ 于是这一帧可能带着滚动条测量（宽 A），设完尺寸后滚动条消失，
+                //      下一次 ApplyLayout（ShowViewPageAsync 里会连调两次）测到 A+17；
+                //   ④ 画面宽度在 A 与 A+17 之间跳 → 视觉上就是左右晃一下。
+                //
+                // 单画面本来就不需要滚动条，先关掉再测，两次测量结果才稳定。
+                ViewportScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+
                 int vw = (int)Math.Round(ViewportHostWidth());
                 int vh = (int)Math.Round(ViewportHostHeight());
                 if (vw < 1 || vh < 1) return;
@@ -308,7 +400,8 @@ namespace SoulLink.Views
                 }
                 TileHost.Width = vw;
                 TileHost.Height = vh;
-                ViewportScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+                // （滚动条已在本分支开头禁用，这里不再重复设置）
+
                 _layoutDirty = false;
                 SyncNativeVisibility();
                 return;
@@ -433,14 +526,42 @@ namespace SoulLink.Views
         private void UpdateTileChrome()
         {
             bool multi = CurrentLayoutMode != ConsoleLayoutMode.Single;
+
+            // 锁定态边框：键鼠还没交给 RDP 时，框住 RDP 画布的那个框。
+            // 颜色/粗细可在「RDP 通用设置」里改；留空 = 跟主题默认色。
+            //
+            // ★ 只在锁定态出现，解锁后恢复成普通的焦点/非焦点描边。
+            // ★ 画在主窗口内部的 WPF Border 上，不是独立分层窗口，
+            //   所以不会像旧的半透明覆盖层那样把 RDP 画面压成黑色。
+            // ★ 默认色必须与焦点边框（主题紫 #7C5CFF）明显区分：
+            //   两者一样的话，锁定态看起来就像"只是焦点高亮"，
+            //   用户会误判成保护层没生效（实测踩过）。
+            var lockColor = Services.ColorText.TryParse(App.Config.Settings.ShieldBorderColor)
+                            ?? Color.FromArgb(0xCC, 0xF0, 0xC0, 0x41);
+            double lockThickness = Math.Max(0, Math.Min(8, App.Config.Settings.ShieldBorderThickness));
+
             foreach (var t in _tiles)
             {
                 bool focus = ReferenceEquals(t, _focusTile);
                 if (t.Chrome == null) continue;
-                t.Chrome.BorderBrush = new SolidColorBrush(focus
-                    ? Color.FromArgb(0xAA, 0x7C, 0x5C, 0xFF)
-                    : Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF));
-                t.Chrome.BorderThickness = new Thickness(focus && multi ? 2 : 1);
+
+                // ★ 锁定框画在**每一个**锁定的格子上（不是只画焦点格）。
+                //   用户实测：多画面只框住一格，会误以为"只有这格被保护"，
+                //   而且焦点一换框就跟着跑，看起来像焦点边框。
+                bool locked = t.Console?.ShieldLocked ?? false;
+
+                if (locked && lockThickness > 0)
+                {
+                    t.Chrome.BorderBrush = new SolidColorBrush(lockColor);
+                    t.Chrome.BorderThickness = new Thickness(lockThickness);
+                }
+                else
+                {
+                    t.Chrome.BorderBrush = new SolidColorBrush(focus
+                        ? Color.FromArgb(0xAA, 0x7C, 0x5C, 0xFF)
+                        : Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF));
+                    t.Chrome.BorderThickness = new Thickness(focus && multi ? 2 : 1);
+                }
                 t.Header.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
             }
         }
@@ -537,10 +658,38 @@ namespace SoulLink.Views
         private double ViewportHostHeight()
             => Math.Max(1, ViewportScroll.ActualHeight);
 
-        /// <summary>视口尺寸变化：多画面要重排，单画面也要跟着铺满。</summary>
+        /// <summary>
+        /// 视口尺寸变化：多画面要重排，单画面也要跟着铺满。
+        ///
+        /// ★★ 必须精确去重（照 1Remote 的做法）。★★
+        ///
+        ///   1Remote 的 AxMsRdpClient09Host.WindowSizeChanged：
+        ///       if (nw != _previousWidth || nh != _previousHeight) { ... 启动 500ms 防抖 ... }
+        ///   尺寸没变就**完全不触发**后续重算。
+        ///
+        ///   SoulLink 原来这里是无条件 ApplyLayout()，而 ApplyLayout 又会改
+        ///   TileHost.Width/Height —— 那是 ViewportHost 的子元素，
+        ///   尺寸变化会再发一次 SizeChanged，于是「改尺寸 → 回调 → 再改尺寸」形成反馈，
+        ///   表现为切标签/切布局时画面持续抖动（用户实测：RDP 互切一直晃、双列也晃）。
+        ///
+        ///   _applyingLayout 挡不住它：那个标志在同一个调用栈内就复位了，
+        ///   而 SizeChanged 是后续消息，早已出栈。
+        /// </summary>
+        private double _lastViewportW = -1;
+        private double _lastViewportH = -1;
+
         private void OnViewportResized()
         {
             if (!_initialized) return;
+
+            double w = ViewportScroll.ActualWidth;
+            double h = ViewportScroll.ActualHeight;
+
+            // 尺寸没变就别重排（这是打破反馈环的关键一步）
+            if (Math.Abs(w - _lastViewportW) < 0.5 && Math.Abs(h - _lastViewportH) < 0.5) return;
+            _lastViewportW = w;
+            _lastViewportH = h;
+
             _layoutDirty = true;
             ApplyLayout();
         }

@@ -24,6 +24,8 @@ namespace SoulLink.Views
         private readonly ObservableCollection<ActionVm> _actions = new ObservableCollection<ActionVm>();
         private readonly ObservableCollection<SessionVm> _sessions = new ObservableCollection<SessionVm>();
         private bool _busy;
+        private bool _compactLayout;
+        private ScrollViewer? _sessionScroller;
 
         /// <summary>
         /// 在线会话的定时刷新。
@@ -34,9 +36,59 @@ namespace SoulLink.Views
         private System.Windows.Threading.DispatcherTimer? _sessionTimer;
         private bool _refreshingSessions;
 
+        private void UpdateResponsiveLayout()
+        {
+            bool compact = ActualWidth > 0 && ActualWidth < 760;
+            _compactLayout = compact;
+            var columns = LayoutRoot.ColumnDefinitions;
+            var rows = LayoutRoot.RowDefinitions;
+            if (rows.Count == 0)
+            {
+                rows.Add(new RowDefinition { Height = GridLength.Auto });
+                rows.Add(new RowDefinition { Height = GridLength.Auto });
+                rows.Add(new RowDefinition { Height = GridLength.Auto });
+            }
+
+            // 空间不足时不再强行保持两列，改为可滚动的上下布局。
+            // 两列下右侧会话区需要的最小宽度会把内容挤到窗口之外。
+            Grid.SetColumn(SessionPanel, compact ? 0 : 2);
+            Grid.SetRow(SessionPanel, compact ? 2 : 0);
+            Grid.SetRowSpan(SessionPanel, 1);
+            columns[0].Width = compact ? new GridLength(1, GridUnitType.Star) : new GridLength(3, GridUnitType.Star);
+            columns[1].Width = new GridLength(compact ? 0 : 18);
+            columns[2].Width = compact ? new GridLength(0) : new GridLength(2, GridUnitType.Star);
+            SessionPanel.Padding = new Thickness(compact ? 10 : 16, 16, compact ? 10 : 16, 16);
+
+            if (compact)
+            {
+                if (_sessionScroller == null)
+                {
+                    var content = SessionPanel.Child;
+                    SessionPanel.Child = null;
+                    _sessionScroller = new ScrollViewer
+                    {
+                        MaxHeight = 360,
+                        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                        Content = content
+                    };
+                    SessionPanel.Child = _sessionScroller;
+                }
+            }
+            else if (_sessionScroller != null)
+            {
+                var content = _sessionScroller.Content;
+                _sessionScroller.Content = null;
+                SessionPanel.Child = content as UIElement;
+                _sessionScroller = null;
+            }
+        }
+
         public LaunchPage()
         {
             InitializeComponent();
+            Loaded += (_, __) => UpdateResponsiveLayout();
+            SizeChanged += (_, __) => UpdateResponsiveLayout();
             ActionList.ItemsSource = _actions;
             SessionList.ItemsSource = _sessions;
 
@@ -79,6 +131,14 @@ namespace SoulLink.Views
                 StopFollower();
                 StopStatusFollower();
             };
+
+            // ★ 投送成功时立刻刷新通道状态，不等 3 秒轮询。
+            //
+            //   实测现象：用户投送后能用自由视角（代理已在跑），
+            //   但主界面仍显示「未投送」，切回主界面才变成「投送成功」。
+            //   原因是投送分两步（先起代理进程、后建 relay 管道），
+            //   而轮询间隔 3 秒，中间那段窗口期界面看到的是旧状态。
+            BgiLogWatcher.ChannelStateMayHaveChanged += OnChannelStateMayHaveChanged;
         }
 
         public void Activate()
@@ -89,6 +149,28 @@ namespace SoulLink.Views
                 _sessionTimer.Start();
             RefreshSessions();
             RefreshAutomationList();
+        }
+
+        /// <summary>
+        /// 通道状态可能变化（投送成功 / 代理退出）→ 立刻刷新。
+        /// ★ 事件可能来自后台线程，必须 marshal 回 UI 线程。
+        /// </summary>
+        private void OnChannelStateMayHaveChanged()
+        {
+            try
+            {
+                if (Dispatcher.HasShutdownStarted) return;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        if (!IsLoaded) return;
+                        RefreshSessions();
+                    }
+                    catch (Exception ex) { App.AppendErrorLog("LaunchPage.OnChannelStateMayHaveChanged", ex); }
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }
+            catch { }
         }
 
         // ══════════ 数据加载 ══════════
@@ -662,7 +744,7 @@ namespace SoulLink.Views
                                         row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
                                             ranToday
                                                 ? System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B)   // 橙：跑过但退出了
-                                                : System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8)); // 灰：今天没跑
+                                                : ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85)); // 灰：今天没跑
                                         row.Line2.Visibility = Visibility.Visible;
                                     }
                                     if (row.Line3 != null)
@@ -730,9 +812,9 @@ namespace SoulLink.Views
                                         if (row.Line3.Text != prob) row.Line3.Text = prob;
                                         row.Line3.Foreground = st.FailedGroup.Length > 0 || st.LastError.Length > 0
                                             ? new System.Windows.Media.SolidColorBrush(
-                                                System.Windows.Media.Color.FromRgb(0xFF, 0x7B, 0x7B))
+                                                ThemeManager.IsDark ? Color.FromRgb(0xFF, 0x7B, 0x7B) : Color.FromRgb(0xB4, 0x3F, 0x66))
                                             : new System.Windows.Media.SolidColorBrush(
-                                                System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8));
+                                                ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85));
                                     }
                                     continue;
                                 }
@@ -1354,9 +1436,9 @@ namespace SoulLink.Views
                     SetText(StatusError, et);
                     StatusError.Foreground = _bgiStatus.FailCount > 0
                         ? new System.Windows.Media.SolidColorBrush(
-                            System.Windows.Media.Color.FromRgb(0xFF, 0x7B, 0x7B))
+                            ThemeManager.IsDark ? Color.FromRgb(0xFF, 0x7B, 0x7B) : Color.FromRgb(0xB4, 0x3F, 0x66))
                         : new System.Windows.Media.SolidColorBrush(
-                            System.Windows.Media.Color.FromRgb(0xFF, 0xD5, 0x4A));
+                            ThemeManager.IsDark ? Color.FromRgb(0xFF, 0xD5, 0x4A) : Color.FromRgb(0x96, 0x67, 0x16));
                     StatusErrorTitle.Visibility = Visibility.Visible;
                     StatusError.Visibility = Visibility.Visible;
                 }
@@ -1595,6 +1677,11 @@ namespace SoulLink.Views
                     return;
                 }
 
+                // ★ 不要按 AccountScope 过滤掉主用户的自动化。
+                //   用户明确要求：「自动化应该要的，不然怎么控制，只是不显示运行数据之类的」
+                //   这里是**控制入口**，流程必须列出来；要限制的是执行目标与运行数据展示。
+                //   （曾误删过一次，会导致主用户根本看不到自己的自动化流程。）
+
                 // 找到该账号（按用户名匹配配置里的账号）
                 Account? account = null;
                 foreach (var a in App.Config.Accounts)
@@ -1632,8 +1719,13 @@ namespace SoulLink.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             // 暂停灰 / END 琥珀 / 有触点成立青绿 / 全灭灰。
-            bool anyLit = f.RuntimeStates.Any(kv => kv.Value.Value && f.FindNode(kv.Key)?.IsContact == true);
-            Color dotColor = paused ? Color.FromRgb(0x8B,0x9C,0xC8)
+            // ★ 被「仅管理挂机账号」排除的账号：状态灯属于运行数据，一律显示中性灰，
+            //   否则主用户会看到"青绿=正在跑"，与"该账号不是挂机目标"自相矛盾。
+            bool excluded = !AccountScope.Allows(OwnerUserNameOf(f));
+            bool anyLit = !excluded
+                && f.RuntimeStates.Any(kv => kv.Value.Value && f.FindNode(kv.Key)?.IsContact == true);
+            Color dotColor = excluded ? Color.FromRgb(0x65,0x75,0x91)
+                : paused ? Color.FromRgb(0x8B,0x9C,0xC8)
                 : f.IsDailyComplete ? Color.FromRgb(0xFF,0xB1,0x4D)
                 : anyLit ? Color.FromRgb(0x41,0xF0,0xC0) : Color.FromRgb(0x65,0x75,0x91);
 
@@ -1788,12 +1880,38 @@ namespace SoulLink.Views
             return null;
         }
 
+        /// <summary>
+        /// 自动化卡片的一行摘要。
+        ///
+        /// ★ 被「仅管理挂机账号」排除的账号（主用户）：只显示**结构**（几个条件、几个动作），
+        ///   不显示**运行数据**（实时触点满足数、今日运行状态）。
+        ///
+        ///   用户明确要求：「自动化应该要的，不然怎么控制，只是不显示运行数据之类的」
+        ///   —— 流程列表是控制入口必须保留，但主用户不该被呈现成挂机目标。
+        /// </summary>
         private static string AutomationSummary(AutomationFlow f)
         {
             int contacts = f.Nodes.Count(n => n.IsContact);
             int outs = f.Nodes.Count(n => n.Kind == FlowNodeKind.Action);
+            string structure = contacts + " 个条件 · " + outs + " 个动作";
+
+            // 主用户（被全局排除）不显示运行数据
+            if (!AccountScope.Allows(OwnerUserNameOf(f))) return structure;
+
             int lit = f.RuntimeStates.Count(kv => kv.Value.Value && f.FindNode(kv.Key)?.IsContact == true);
             return contacts + " 个条件（满足 " + lit + "） · " + outs + " 个动作 · " + f.TodayRunState().Text;
+        }
+
+        /// <summary>取流程所属账号的用户名（找不到返回空，视为不在管理范围内）。</summary>
+        private static string OwnerUserNameOf(AutomationFlow f)
+        {
+            try
+            {
+                foreach (var a in App.Config.Accounts)
+                    if (a != null && a.Id == f.AccountId) return a.UserName ?? "";
+            }
+            catch { }
+            return "";
         }
 
         private void NewAutomation_Click(object sender, RoutedEventArgs e)
@@ -2028,11 +2146,11 @@ namespace SoulLink.Views
                 if (!HasSchedule) return System.Windows.Media.Brushes.Transparent;
                 if (SchedulePaused)
                     return new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8));
+                        ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85));
                 var next = Services.ScheduleCalculator.NextRun(Model.Schedule);
                 if (next == null)
                     return new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8));
+                        ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85));
                 var span = next.Value - DateTime.Now;
                 if (span.TotalMinutes <= 10)
                     return new System.Windows.Media.SolidColorBrush(
@@ -2223,7 +2341,7 @@ namespace SoulLink.Views
                 if (Session.IsConsoleSession || Session.IsActive)
                     return Color.FromRgb(0x41, 0xF0, 0xC0);                         // 绿
                 if (Session.IsDisconnected) return Color.FromRgb(0xFF, 0xC4, 0x6B); // 断开：橙
-                return Color.FromRgb(0x8B, 0x9C, 0xC8);                             // 其它：灰蓝
+                return (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85);                             // 其它：灰蓝
             }
         }
 
@@ -2278,11 +2396,11 @@ namespace SoulLink.Views
             {
                 Color c;
                 if (Session.IsConsoleSession || Session.IsActive)
-                    c = Color.FromRgb(0x8F, 0xE8, 0xD0);      // 在线/当前会话：绿
+                    c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8F, 0xE8, 0xD0) : Color.FromRgb(0x17, 0x78, 0x65);      // 在线/当前会话：绿
                 else if (Session.IsDisconnected)
-                    c = Color.FromRgb(0xFF, 0xD5, 0x4A);      // 离线：黄
+                    c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0xD5, 0x4A) : Color.FromRgb(0x96, 0x67, 0x16);      // 离线：黄
                 else
-                    c = Color.FromRgb(0x8B, 0x9C, 0xC8);      // 其它：灰蓝
+                    c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85);      // 其它：灰蓝
                 var b = new System.Windows.Media.SolidColorBrush(c);
                 b.Freeze();
                 return b;
@@ -2348,10 +2466,10 @@ namespace SoulLink.Views
             get
             {
                 Color c = HasChannel
-                    ? Color.FromRgb(0x8F, 0xE8, 0xD0)     // 就绪：绿
+                    ? (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8F, 0xE8, 0xD0) : Color.FromRgb(0x17, 0x78, 0x65)     // 就绪：绿
                     : ChannelError.Length > 0
-                        ? Color.FromRgb(0xFF, 0x9B, 0x9B)  // 失败：红
-                        : Color.FromRgb(0x8B, 0x9C, 0xC8); // 未投送：灰蓝
+                        ? (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0x9B, 0x9B) : Color.FromRgb(0xB4, 0x3F, 0x66)  // 失败：红
+                        : (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85); // 未投送：灰蓝
                 var b = new System.Windows.Media.SolidColorBrush(c);
                 b.Freeze();
                 return b;
@@ -2384,9 +2502,9 @@ namespace SoulLink.Views
                 Color c;
                 switch (BgiLevel)
                 {
-                    case 0: c = Color.FromRgb(0x8F, 0xE8, 0xD0); break;   // 绿
-                    case 1: c = Color.FromRgb(0xFF, 0xD5, 0x4A); break;   // 黄
-                    default: c = Color.FromRgb(0xFF, 0x7B, 0x7B); break;  // 红
+                    case 0: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8F, 0xE8, 0xD0) : Color.FromRgb(0x17, 0x78, 0x65); break;   // 绿
+                    case 1: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0xD5, 0x4A) : Color.FromRgb(0x96, 0x67, 0x16); break;   // 黄
+                    default: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0x7B, 0x7B) : Color.FromRgb(0xB4, 0x3F, 0x66); break;  // 红
                 }
                 var b = new System.Windows.Media.SolidColorBrush(c);
                 b.Freeze();
@@ -2402,9 +2520,9 @@ namespace SoulLink.Views
                 Color c;
                 switch (BgiLevel)
                 {
-                    case 0: c = Color.FromRgb(0x8F, 0xE8, 0xD0); break;   // 绿
-                    case 1: c = Color.FromRgb(0xFF, 0xD5, 0x4A); break;   // 黄
-                    default: c = Color.FromRgb(0xFF, 0x7B, 0x7B); break;  // 红
+                    case 0: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8F, 0xE8, 0xD0) : Color.FromRgb(0x17, 0x78, 0x65); break;   // 绿
+                    case 1: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0xD5, 0x4A) : Color.FromRgb(0x96, 0x67, 0x16); break;   // 黄
+                    default: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0x7B, 0x7B) : Color.FromRgb(0xB4, 0x3F, 0x66); break;  // 红
                 }
                 var b = new System.Windows.Media.SolidColorBrush(c);
                 b.Freeze();

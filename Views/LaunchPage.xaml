@@ -11,12 +11,17 @@
         </Storyboard>
     </UserControl.Resources>
 
-    <Grid>
+    <Grid x:Name="LayoutRoot">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" MinWidth="330" />
+            <ColumnDefinition Width="3*" />
             <ColumnDefinition Width="18" />
-            <ColumnDefinition Width="360" />
+            <ColumnDefinition Width="2*" />
         </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
         <!-- ══════════ 左：运行状态 / 快捷动作 / 自动化 ══════════ -->
         <Border Grid.Column="0" Style="{StaticResource GlassCardStrong}" Padding="18,16">
@@ -52,7 +57,7 @@
 
                     <Grid Grid.Row="0" Margin="2,0,2,8">
                         <TextBlock Text="快捷动作" FontSize="12" FontWeight="SemiBold"
-                                   Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
+                                   Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
                         <!-- 执行结果提示：出现在标题行中间，6 秒后自动消失 -->
                         <TextBlock x:Name="RunHint" Text="" FontSize="10.5"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -98,11 +103,11 @@
 
                                 <StackPanel Grid.Column="1" Margin="12,0,10,0" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Name}" FontSize="13.5" FontWeight="SemiBold"
-                                               Foreground="{StaticResource TextPrimary}" TextTrimming="CharacterEllipsis" />
+                                               Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis" />
                                     <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
                                         <TextBlock Text="{Binding AccountName}" FontSize="11" Foreground="{StaticResource CyanBrush}" />
-                                        <TextBlock Text=" · " FontSize="11" Foreground="{StaticResource TextMuted}" />
-                                        <TextBlock Text="{Binding ExeName}" FontSize="11" Foreground="{StaticResource TextMuted}"
+                                        <TextBlock Text=" · " FontSize="11" Foreground="{DynamicResource TextMuted}" />
+                                        <TextBlock Text="{Binding ExeName}" FontSize="11" Foreground="{DynamicResource TextMuted}"
                                                    TextTrimming="CharacterEllipsis" MaxWidth="190" />
                                     </StackPanel>
 
@@ -110,7 +115,7 @@
                                     <StackPanel Orientation="Horizontal" Margin="0,3,0,0"
                                                 Visibility="{Binding ScheduleVisibility}">
                                         <TextBlock Text="&#xE823;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                                                   VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" />
+                                                   VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock Text="{Binding NextRunText}" FontSize="10.5"
                                                    Foreground="{Binding NextRunBrush}"
                                                    VerticalAlignment="Center" Margin="5,0,0,0" />
@@ -166,10 +171,10 @@
                                 </Ellipse.Effect>
                             </Ellipse>
                         </Grid>
-                        <TextBlock Text="还没有快捷动作" FontSize="13" Foreground="{StaticResource TextSecondary}"
+                        <TextBlock Text="还没有快捷动作" FontSize="13" Foreground="{DynamicResource TextSecondary}"
                                    HorizontalAlignment="Center" Margin="0,12,0,0" />
                         <TextBlock Text="点上方「新建」，只需要：账号 + 程序路径" FontSize="11.5"
-                                   Foreground="{StaticResource TextMuted}" HorizontalAlignment="Center" Margin="0,5,0,0" />
+                                   Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center" Margin="0,5,0,0" />
                     </StackPanel>
                 </Grid>
 
@@ -184,7 +189,7 @@
 
                         <!-- 这里不再重复"运行状态"标题：外层 PageTitle 会按会话切换 -->
                         <TextBlock x:Name="StatusMeta" Grid.Row="0" Text="未检测"
-                                   FontSize="10" Foreground="{StaticResource TextMuted}"
+                                   FontSize="10" Foreground="{DynamicResource TextMuted}"
                                    HorizontalAlignment="Left" VerticalAlignment="Center" />
 
                         <!-- ① 单个账号的详细状态（选中挂机账号时） -->
@@ -206,7 +211,7 @@
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Grid.Row="0" Text="配置组 / 脚本" FontSize="9.5"
-                                           Foreground="{StaticResource TextMuted}" />
+                                           Foreground="{DynamicResource TextMuted}" />
                                 <TextBlock Grid.Row="1" x:Name="StatusGroup" Text="—"
                                            FontSize="11.5" FontWeight="SemiBold"
                                            Foreground="{StaticResource CyanBrush}"
@@ -222,15 +227,15 @@
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Grid.Row="0" Text="轮次 / 角色" FontSize="9.5"
-                                           Foreground="{StaticResource TextMuted}" />
+                                           Foreground="{DynamicResource TextMuted}" />
                                 <TextBlock Grid.Row="1" x:Name="StatusRound" Text="—"
                                            FontSize="11.5" FontWeight="SemiBold"
-                                           Foreground="{StaticResource TextPrimary}"
+                                           Foreground="{DynamicResource TextPrimary}"
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
 
                                 <!-- 每日报错次数：有错误/失败才显示 -->
                                 <TextBlock Grid.Row="2" x:Name="StatusErrorTitle" Text="今日报错"
-                                           FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                                           FontSize="9.5" Foreground="{DynamicResource TextMuted}"
                                            Margin="0,10,0,0" Visibility="Collapsed" />
                                 <TextBlock Grid.Row="3" x:Name="StatusError" Text=""
                                            FontSize="10.5" TextWrapping="Wrap"
@@ -248,12 +253,12 @@
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Grid.Row="0" Text="当前路线" FontSize="9.5"
-                                           Foreground="{StaticResource TextMuted}" />
+                                           Foreground="{DynamicResource TextMuted}" />
                                 <TextBlock Grid.Row="1" x:Name="StatusRoute" Text="—"
-                                           FontSize="11" Foreground="{StaticResource TextPrimary}"
+                                           FontSize="11" Foreground="{DynamicResource TextPrimary}"
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
                                 <TextBlock Grid.Row="2" x:Name="StatusEta" Text=""
-                                           FontSize="10" Foreground="{StaticResource TextMuted}"
+                                           FontSize="10" Foreground="{DynamicResource TextMuted}"
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
                             </Grid>
 
@@ -271,10 +276,10 @@
                                         <!-- 组名：允许换行，不再被截断 -->
                                         <TextBlock x:Name="StatusPicksTitle" Grid.Column="0" Text="本次拾取"
                                                    FontSize="10" FontWeight="SemiBold"
-                                                   Foreground="{StaticResource TextMuted}"
+                                                   Foreground="{DynamicResource TextMuted}"
                                                    TextWrapping="Wrap" />
                                         <TextBlock x:Name="PicksExpandHint" Grid.Column="1" Text="▾ 展开全天"
-                                                   FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                                                   FontSize="9.5" Foreground="{DynamicResource TextMuted}"
                                                    VerticalAlignment="Top" Margin="8,0,0,0" />
                                     </Grid>
                                     <TextBlock x:Name="StatusPicks" Text=""
@@ -286,7 +291,7 @@
                                          组名用粗体+亮色，材料用细体+暗色，视觉上分层 -->
                                     <Border x:Name="DailyPicksPanel" Visibility="Collapsed"
                                             Margin="0,8,0,0" Padding="9,8" CornerRadius="6"
-                                            Background="#18000000">
+                                            Background="{DynamicResource FieldBackground}">
                                         <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto"
                                                       HorizontalScrollBarVisibility="Disabled">
                                             <StackPanel x:Name="DailyPicksList" />
@@ -309,7 +314,7 @@
                         <StackPanel x:Name="OverviewPanel" Grid.Row="1" Margin="0,8,0,0"
                                     Visibility="Collapsed">
                             <TextBlock Text="正在监控以下挂机账号的 BGI 运行情况"
-                                       FontSize="9.5" Foreground="{StaticResource TextMuted}"
+                                       FontSize="9.5" Foreground="{DynamicResource TextMuted}"
                                        Margin="0,0,0,8" />
                             <!-- 每个账号一行，运行时生成 -->
                             <StackPanel x:Name="OverviewList" />
@@ -328,9 +333,9 @@
                     <Grid Grid.Row="0" Margin="2,0,2,6">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="自动化" FontSize="12" FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextPrimary}" />
+                                       Foreground="{DynamicResource TextPrimary}" />
                             <TextBlock x:Name="AutomationMeta" Text=""
-                                       FontSize="10.5" Foreground="{StaticResource TextMuted}"
+                                       FontSize="10.5" Foreground="{DynamicResource TextMuted}"
                                        VerticalAlignment="Center" Margin="8,0,0,0" />
                         </StackPanel>
                         <Button x:Name="BtnNewAutomation" Style="{StaticResource GhostButton}"
@@ -356,7 +361,7 @@
         </Border>
 
         <!-- ══════════ 右：实时会话 ══════════ -->
-        <Border Grid.Column="2" Style="{StaticResource GlassCard}" Padding="16,16">
+        <Border x:Name="SessionPanel" Grid.Column="2" Style="{StaticResource GlassCard}" Padding="16,16">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -404,7 +409,7 @@
                                 <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
                                     <!-- 优先显示备注名：A2 · 山客 -->
                                     <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold"
-                                               Foreground="{StaticResource TextPrimary}" />
+                                               Foreground="{DynamicResource TextPrimary}" />
                                     <!-- 单行：状态 ● 通道 ● BGI
                                          分隔圆点颜色固定（灰），不随任何状态变化，
                                          避免把颜色含义混淆到文字上 -->
@@ -412,11 +417,11 @@
                                         <TextBlock Text="{Binding StateText}" FontSize="10.5"
                                                    Foreground="{Binding StateBrush}" />
                                         <TextBlock Text=" ● " FontSize="8" VerticalAlignment="Center"
-                                                   Foreground="#66AABBCC" />
+                                                   Foreground="{DynamicResource TextMuted}" />
                                         <TextBlock Text="{Binding ChannelText}" FontSize="10.5"
                                                    Foreground="{Binding ChannelBrush}" />
                                         <TextBlock Text=" ● " FontSize="8" VerticalAlignment="Center"
-                                                   Foreground="#66AABBCC"
+                                                   Foreground="{DynamicResource TextMuted}"
                                                    Visibility="{Binding BgiVisibility}" />
                                         <TextBlock Text="{Binding BgiText}" FontSize="10.5"
                                                    Foreground="{Binding BgiBrush}"
@@ -424,7 +429,7 @@
                                     </StackPanel>
                                 </StackPanel>
                                 <Border Grid.Column="2" CornerRadius="6" Padding="7,2" Background="#1CFFFFFF" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding SideText}" FontSize="10" Foreground="{StaticResource TextSecondary}" />
+                                    <TextBlock Text="{Binding SideText}" FontSize="10" Foreground="{DynamicResource TextSecondary}" />
                                 </Border>
                             </Grid>
                         </DataTemplate>
@@ -445,13 +450,13 @@
                                        FontSize="11" FontWeight="SemiBold"
                                        Foreground="{StaticResource CyanBrush}" />
                             <TextBlock x:Name="LogMeta" Text="点击上方会话查看"
-                                       FontSize="10" Foreground="{StaticResource TextMuted}"
+                                       FontSize="10" Foreground="{DynamicResource TextMuted}"
                                        HorizontalAlignment="Right" VerticalAlignment="Center" />
                         </Grid>
 
                         <TextBlock x:Name="TipText" Grid.Row="1"
                                    Text="实时跟随所选会话的 BetterGI 日志。"
-                                   FontSize="10.5" Foreground="{StaticResource TextMuted}"
+                                   FontSize="10.5" Foreground="{DynamicResource TextMuted}"
                                    TextWrapping="Wrap" Margin="0,5,0,0" />
 
                         <!-- 日志正文：等宽字体，只读，自动滚到底 -->
@@ -461,7 +466,7 @@
                             <TextBlock x:Name="LogText" Text=""
                                        FontFamily="{StaticResource MonoFont}"
                                        FontSize="10" LineHeight="15"
-                                       Foreground="{StaticResource TextSecondary}"
+                                       Foreground="{DynamicResource TextSecondary}"
                                        TextWrapping="Wrap" />
                         </ScrollViewer>
                     </Grid>

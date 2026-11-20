@@ -38,6 +38,50 @@
                  ToolTip="支持单键、修饰键组合、鼠标中键/侧键；录制后立即生效" />
       <ctl:HotkeyRecorder Grid.Column="1" x:Name="GlobalHotkey" Style="{StaticResource GhostButton}" Width="180" Height="36" />
      </Grid>
+
+     <!-- ── 保护层边框 ─────────────────────────────────────────────
+          ★ 锁定态时才出现，框住 RDP 画布。默认色故意与焦点边框区分开，
+            否则用户会误以为"保护层没生效、只是焦点高亮"。
+          ★ 画在主窗口内部的 WPF Border 上，不是独立分层窗口。 -->
+     <Border Style="{StaticResource Divider}" Margin="0,18,0,0" />
+     <TextBlock Text="保护层边框" Style="{StaticResource Label}" Margin="0,14,0,0"
+                ToolTip="锁定态时框住 RDP 画布的边框颜色" />
+
+     <Grid Margin="0,10,0,0">
+      <Grid.ColumnDefinitions>
+       <ColumnDefinition Width="Auto" />
+       <ColumnDefinition Width="*" />
+       <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <!-- 颜色预览块：跟着输入实时变色 -->
+      <Border Grid.Column="0" x:Name="ShieldColorPreview" Width="34" Height="34" CornerRadius="8"
+              VerticalAlignment="Center" BorderThickness="1" BorderBrush="#44FFFFFF"
+              Background="#CCF0C041" />
+      <TextBox Grid.Column="1" x:Name="ShieldColorBox" Style="{StaticResource GlassTextBox}"
+               Margin="10,0,10,0" VerticalAlignment="Center"
+               FontFamily="{StaticResource MonoFont}"
+               ToolTip="支持 #RGB / #RRGGBB / #AARRGGBB（前两位是透明度，FF=不透明）"
+               TextChanged="ShieldColor_TextChanged" />
+      <Button Grid.Column="2" x:Name="ShieldColorReset" Content="恢复默认"
+              Style="{StaticResource GhostButton}" Padding="12,6" VerticalAlignment="Center"
+              Click="ShieldColorReset_Click" />
+     </Grid>
+     <TextBlock Text="格式 #AARRGGBB，前两位是透明度（AA ≈ 67%、FF = 不透明）。留空使用主题默认色。"
+                Style="{StaticResource Caption}" Margin="44,6,0,0" TextWrapping="Wrap" />
+
+     <Grid Margin="0,14,0,0">
+      <Grid.ColumnDefinitions>
+       <ColumnDefinition Width="*" />
+       <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="边框粗细" Style="{StaticResource Label}" VerticalAlignment="Center" />
+      <TextBlock Grid.Column="1" x:Name="ShieldThicknessText" Text="2 px" Style="{StaticResource Mono}"
+                 Foreground="{StaticResource CyanBrush}" VerticalAlignment="Center" />
+     </Grid>
+     <Slider x:Name="ShieldThicknessSlider" Style="{StaticResource GlassSlider}"
+             Minimum="0" Maximum="8" TickFrequency="1" SmallChange="1" LargeChange="1"
+             Margin="0,10,0,0" ValueChanged="ShieldThickness_Changed" />
+     <TextBlock Text="0 = 不显示保护层边框。" Style="{StaticResource Caption}" Margin="2,6,0,0" />
     </StackPanel>
    </Border>
    <TextBlock Text="支持键盘单键/组合键与鼠标中键、侧键（可带 Ctrl/Alt/Shift/Win）。录制完成立即生效；按 Esc 取消。&#x0a;旧热键在录制期间暂停。若设置左键为热键，需另用键盘打开画面，避免无法点击。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="2,10,0,0" />

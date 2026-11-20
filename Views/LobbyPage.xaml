@@ -29,7 +29,7 @@
                                      VerticalAlignment="Center" Margin="14,3,5,0"
                                      Fill="#8B9CC8" />
                             <TextBlock x:Name="ConnText" Text="连接中…" FontSize="10.5"
-                                       Foreground="{StaticResource TextMuted}"
+                                       Foreground="{DynamicResource TextMuted}"
                                        VerticalAlignment="Center" Margin="0,3,0,0" />
                             <TextBlock x:Name="SubText" Text="" Style="{StaticResource Caption}"
                                        Margin="10,3,0,0" VerticalAlignment="Center"
@@ -98,13 +98,13 @@
 
                 <TextBlock Grid.Row="0" x:Name="DetailTitle" Text="房间详情"
                            FontSize="14" FontWeight="SemiBold"
-                           Foreground="{StaticResource TextPrimary}" Margin="2,0,0,12" />
+                           Foreground="{DynamicResource TextPrimary}" Margin="2,0,0,12" />
 
                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled">
                     <StackPanel x:Name="DetailPanel">
                         <TextBlock Text="点击左侧房间查看详情" FontSize="11.5"
-                                   Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" />
+                                   Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" />
                     </StackPanel>
                 </ScrollViewer>
 

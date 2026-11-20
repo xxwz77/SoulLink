@@ -95,11 +95,16 @@ namespace SoulLink.Services
                 var cfg = JsonSerializer.Deserialize<AppConfig>(json, Opt);
                 if (cfg == null) return Defaults();
                 if (cfg.Settings == null) cfg.Settings = new AppSettings();
+                if (cfg.Settings.RouteUpdate == null) cfg.Settings.RouteUpdate = new RouteUpdateSettings();
                 if (cfg.Accounts == null) cfg.Accounts = new List<Account>();
                 if (cfg.Actions == null) cfg.Actions = new List<ActionItem>();
             if (cfg.AutomationProfiles == null) cfg.AutomationProfiles = new List<AutomationProfile>();
                 if (cfg.Automations == null) cfg.Automations = new List<AutomationFlow>();
                 bool migrated = false;
+
+                // 2.14.0 只有单目标字段 RouteUpdatePath；2.15 起是多目标 + 云端 + 定时。
+                if (cfg.Settings.RouteUpdate.MigrateFromLegacy(cfg.Settings)) migrated = true;
+
                 foreach (var flow in cfg.Automations)
                 {
                     if (flow.EngineVersion < 2)

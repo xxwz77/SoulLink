@@ -54,6 +54,8 @@ namespace SoulLink.Services
             /// <summary>true = 在用户交互桌面（winsta0\default）上启动，false = 后台</summary>
             public bool Interactive { get; set; } = true;
             public string ResultPath { get; set; } = "";
+            public bool RequireElevated { get; set; } = true;
+            public string Nonce { get; set; } = "";
         }
 
         // ── 特权 ─────────────────────────────────────────────────────────────
@@ -199,6 +201,7 @@ namespace SoulLink.Services
                     ? (Path.GetDirectoryName(exePath) ?? "")
                     : workingDir,
                 Interactive = interactive,
+                RequireElevated = true,
                 ResultPath = resultPath
             };
 
@@ -441,6 +444,116 @@ namespace SoulLink.Services
             return path;
         }
 
+        public static Result LaunchAdminAgentFromBroker(int sessionId, string pipeName, string nonce)
+        {
+            string exe = BrokerInstall.ServiceExe, agent = BrokerInstall.AgentExe;
+            if (!IsElevated || !BrokerInstall.IsFixedTestPath(ResolveSelfExe()) || !BrokerInstall.ValidAgent(exe, agent)) return Result.Fail("Broker 身份或固定代理路径无效");
+            if (BrokerSecurity.InspectProcess(Environment.ProcessId).Sid != "S-1-5-18") return Result.Fail("Broker 不是 LocalSystem");
+
+            // WTSQueryUserToken / SetTokenInformation(TokenSessionId) 都需要 SeTcbPrivilege，
+            // 服务启动的 SYSTEM 令牌里这些特权默认是关闭的，这里显式打开再投送。
+            EnablePrivileges();
+
+            // ★ 必须把代理参数带全：--relay <管道> 决定代理连回哪条管道，
+            //   --require-elevated + --deploy-nonce 决定代理是否做管理员/会话/桌面自检。
+            //   以前这里没有带参数，代理就以宿主模式启动、根本不连管道，
+            //   即使认证通过也只会"启动了但没连回来"。
+            if (!BrokerProtocol.ValidPipeName(pipeName)) return Result.Fail("代理管道名不合法：" + pipeName);
+            string arguments = "--relay " + pipeName;
+            if (!string.IsNullOrWhiteSpace(nonce)) arguments = BrokerArguments.AddElevated(arguments, nonce);
+
+            var job = new Job
+            {
+                SessionId = sessionId,
+                ExePath = agent,
+                Arguments = arguments,
+                RequireElevated = true,
+                Nonce = nonce,
+                WorkingDir = BrokerInstall.Root,
+                Interactive = false
+            };
+            var r = LaunchAsUser(job); return new Result { Ok = r.ok, Pid = r.pid, Message = r.message };
+        }
+
+        /// <summary>
+        /// 目标会话是否在线：返回 null 表示 Active 且用户匹配；否则返回可直接展示的失败原因。
+        ///
+        /// ★ 语义以 Windows 会话状态为准（WTSQuerySessionInformation）：
+        ///   A2/A3 断开（Disc）时不应该投送——代理会落在没人看的桌面上。
+        ///   查询本身失败时按“在线”处理，避免把平台差异当成离线而误拒。
+        /// </summary>
+        public static string? DescribeSessionOnline(int sessionId, string userName)
+        {
+            if (sessionId <= 0) return "无效的目标会话";
+            string expected = SessionService.BareName(userName ?? "");
+            int state = WtsSessionState(sessionId);
+            string hookUser = WtsUserName(sessionId);
+            string stateText = state switch
+            {
+                WTS_ACTIVE => "在线",
+                WTS_CONNECTED => "已连接但未登录",
+                WTS_IDLE => "空闲",
+                3 => "正在连接",
+                WTS_DISCONNECTED => "断开",
+                5 => "正在初始化",
+                6 => "正在注销",
+                _ => "状态 " + state
+            };
+
+            if (state < 0)
+            {
+                // WTS 查询失败（少见）：退回 query user，不因为查询问题一刀切拒绝。
+                var listed = SessionService.QueryAsync().GetAwaiter().GetResult().FirstOrDefault(s => s.Id == sessionId);
+                if (listed == null) return "会话 " + sessionId + " 不存在或已注销，需要先登录该账号";
+                if (string.Equals(listed.State, "Active", StringComparison.OrdinalIgnoreCase)) return null;
+                return "会话 " + sessionId + " 当前不在线（" + listed.State + "），需要先连上才能投送";
+            }
+            if (state == WTS_DISCONNECTED) return "会话 " + sessionId + " 已断开（Disc），需要先用 RDP 连上才能投送";
+            if (state != WTS_ACTIVE && state != WTS_CONNECTED) return "会话 " + sessionId + " 当前" + stateText + "，需要在线才能投送";
+            if (hookUser.Length > 0 && expected.Length > 0
+                && !string.Equals(SessionService.BareName(hookUser), expected, StringComparison.OrdinalIgnoreCase))
+                return "会话 " + sessionId + " 当前登录用户是 " + hookUser + "，不是 " + expected;
+            return null;
+        }
+
+        private const int WTS_ACTIVE = 0;
+        private const int WTS_CONNECTED = 1;
+        private const int WTS_IDLE = 2;
+        private const int WTS_DISCONNECTED = 4;
+        private const int WTS_INFO_STATE = 8;
+        private const int WTS_INFO_USERNAME = 5;
+
+        private static int WtsSessionState(int sessionId)
+        {
+            IntPtr buffer = IntPtr.Zero;
+            try
+            {
+                if (!WTSQuerySessionInformationW(IntPtr.Zero, sessionId, WTS_INFO_STATE, out buffer, out int bytes) || buffer == IntPtr.Zero)
+                    return -1;
+                return Marshal.ReadInt32(buffer);
+            }
+            catch { return -1; }
+            finally { if (buffer != IntPtr.Zero) WTSFreeMemory(buffer); }
+        }
+
+        private static string WtsUserName(int sessionId)
+        {
+            IntPtr buffer = IntPtr.Zero;
+            try
+            {
+                if (!WTSQuerySessionInformationW(IntPtr.Zero, sessionId, WTS_INFO_USERNAME, out buffer, out int bytes) || buffer == IntPtr.Zero)
+                    return "";
+                return Marshal.PtrToStringUni(buffer) ?? "";
+            }
+            catch { return ""; }
+            finally { if (buffer != IntPtr.Zero) WTSFreeMemory(buffer); }
+        }
+
+        [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool WTSQuerySessionInformationW(IntPtr server, int sessionId, int infoClass, out IntPtr buffer, out int bytes);
+        [DllImport("wtsapi32.dll")]
+        private static extern void WTSFreeMemory(IntPtr memory);
+
         // ── 引导进程（以 SYSTEM 运行） ───────────────────────────────────────
 
         /// <summary>
@@ -516,8 +629,8 @@ namespace SoulLink.Services
                     if (!GetTokenInformation(token, TOKEN_INFORMATION_CLASS.TokenElevationType, buf, size, out _))
                         return IntPtr.Zero;
                     int type = Marshal.ReadInt32(buf);
-                    // 1 = TokenElevationTypeLimited（标准令牌，存在提权副本）
-                    if (type != 1) return IntPtr.Zero;
+                    // TokenElevationTypeLimited=3 才查询 linked elevated token。
+                    if (type != 3) return IntPtr.Zero;
                 }
                 finally { Marshal.FreeHGlobal(buf); }
 
@@ -551,8 +664,24 @@ namespace SoulLink.Services
                 // ② 优先取“提权令牌”：UAC 开启时，登录令牌是标准令牌，
                 //    它的 linked token 才是管理员令牌。这样即使 UAC 开着，
                 //    启动的目标程序也能拿到管理员权限。
+                // ★ 只有 UAC 开启时才有 linked token。EnableLUA=0 的机器上，
+                //   会话令牌本身已是完整管理员令牌（ElevationTypeDefault），
+                //   以前要求"必须拿到 linked token"会把每次投送都拒掉。
+                //   现在改为：拿得到 linked token 就用它，拿不到就校验登录令牌本身；
+                //   校验不通过仍然拒绝，管理员强制要求没有放宽。
                 IntPtr elevated = TryGetElevatedToken(userToken);
                 IntPtr source = elevated != IntPtr.Zero ? elevated : userToken;
+                if (job.RequireElevated)
+                {
+                    var sourceInfo = BrokerSecurity.InspectToken(source);
+                    if (!sourceInfo.Elevated || !sourceInfo.Administrator)
+                    {
+                        if (elevated != IntPtr.Zero) CloseHandle(elevated);
+                        return (false, 0, "目标会话令牌不具备管理员权限（" + sourceInfo.User
+                            + " elevated=" + sourceInfo.Elevated + " admin=" + sourceInfo.Administrator
+                            + "）；已拒绝启动，未降级。");
+                    }
+                }
 
                 if (!DuplicateTokenEx(source, TOKEN_ALL_ACCESS, IntPtr.Zero,
                         SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out primary))
@@ -562,9 +691,19 @@ namespace SoulLink.Services
                     return (false, 0, "DuplicateTokenEx 失败（错误 " + dupErr + "）。");
                 }
                 if (elevated != IntPtr.Zero) CloseHandle(elevated);
+                if (job.RequireElevated)
+                {
+                    var primaryInfo = BrokerSecurity.InspectToken(primary);
+                    if (!primaryInfo.Elevated || !primaryInfo.Administrator) return (false, 0, "目标程序令牌未通过管理员校验");
+                }
+                if (job.RequireElevated)
+                {
+                    int sid = job.SessionId;
+                    if (!SetTokenInformation(primary, TokenSessionId, ref sid, sizeof(int))) return (false, 0, "无法固定目标会话");
+                }
 
                 // ③ 用户环境变量（不建的话会继承 SYSTEM 的 PATH / TEMP，程序可能找不到依赖）
-                CreateEnvironmentBlock(out env, primary, false);
+                if (!CreateEnvironmentBlock(out env, primary, false)) return (false, 0, "无法创建用户环境");
 
                 // ④ 组装命令行
                 string cmd = QuoteArg(job.ExePath);
@@ -577,7 +716,7 @@ namespace SoulLink.Services
                 var si = new STARTUPINFO();
                 si.cb = Marshal.SizeOf<STARTUPINFO>();
                 // 交互式：让程序显示在目标用户桌面上；否则不给桌面
-                si.lpDesktop = job.Interactive ? desktop : IntPtr.Zero;
+                si.lpDesktop = desktop;
 
                 var flags = CREATE_UNICODE_ENVIRONMENT;
                 if (job.Interactive) flags |= CREATE_NEW_CONSOLE;
@@ -608,6 +747,17 @@ namespace SoulLink.Services
 
                 int newPid = pi.dwProcessId;
                 CloseHandle(pi.hThread);
+                if (job.RequireElevated)
+                {
+                    try
+                    {
+                        var target = BrokerSecurity.InspectProcess(newPid);
+                        if (target.SessionId != job.SessionId || !target.Elevated || !target.Administrator)
+                        { TerminateProcess(pi.hProcess, 5); CloseHandle(pi.hProcess); return (false, newPid, "目标程序未通过管理员、会话或身份校验，已终止。"); }
+                    }
+                    catch (Exception ex)
+                    { TerminateProcess(pi.hProcess, 5); CloseHandle(pi.hProcess); return (false, newPid, "目标程序身份校验失败，已终止：" + ex.Message); }
+                }
                 CloseHandle(pi.hProcess);
 
                 // ⑤ 复核落点：进程真的在目标会话里吗？
@@ -760,6 +910,7 @@ namespace SoulLink.Services
         private enum SECURITY_IMPERSONATION_LEVEL { SecurityAnonymous, SecurityIdentification, SecurityImpersonation, SecurityDelegation }
         private enum TOKEN_TYPE { TokenPrimary = 1, TokenImpersonation = 2 }
         private enum TOKEN_INFORMATION_CLASS { TokenElevation = 20, TokenElevationType = 18, TokenLinkedToken = 19 }
+        private const TOKEN_INFORMATION_CLASS TokenSessionId = (TOKEN_INFORMATION_CLASS)12;
 
         [DllImport("advapi32.dll", SetLastError = true)]
         private static extern bool GetTokenInformation(IntPtr token, TOKEN_INFORMATION_CLASS cls, out IntPtr info, int len, out int ret);
@@ -817,6 +968,8 @@ namespace SoulLink.Services
         private static extern bool CreateEnvironmentBlock(out IntPtr env, IntPtr token, bool inherit);
         [DllImport("userenv.dll", SetLastError = true)]
         private static extern bool DestroyEnvironmentBlock(IntPtr env);
+        [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetTokenInformation(IntPtr token, TOKEN_INFORMATION_CLASS cls, ref int value, int length);
+        [DllImport("kernel32.dll")] private static extern bool TerminateProcess(IntPtr process, uint code);
         [DllImport("wtsapi32.dll", SetLastError = true)]
         private static extern bool WTSQueryUserToken(uint sessionId, out IntPtr token);
     }

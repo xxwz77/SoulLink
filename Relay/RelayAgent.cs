@@ -5,9 +5,11 @@ using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using SoulLink.Services;   // ★ 临时诊断：InputTrace（交接文档 4.1 取证，结论后连同文件一起删除）
 
 namespace SoulLink.Relay
 {
@@ -22,6 +24,7 @@ namespace SoulLink.Relay
     /// </summary>
     internal static class RelayAgent
     {
+        private static string? _deploymentNonce;
         // ── Win32 ────────────────────────────────────────────────────────────
         [DllImport("user32.dll")]
         private static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, IntPtr dwExtraInfo);
@@ -258,7 +261,12 @@ namespace SoulLink.Relay
         private static void SendHotkey(string value)
         {
             // 钩子线程只入队，不执行序列化/管道 IO；队列满则丢弃过期通知，不阻塞系统输入。
-            try { HotkeyEvents.TryAdd(value); } catch { }
+            bool added = false;
+            try { added = HotkeyEvents.TryAdd(value); } catch { }
+            // ★ 入队结果必须记录：以前这里静默丢弃，
+            //   出现"代理已命中但宿主收不到"时完全看不出是哪一环断的。
+            Log("热键入队 value=" + value + " ok=" + added
+                + " writer=" + (_eventWriter != null) + " sender=" + (_eventSender != null));
         }
 
         private static async Task SendHotkeysAsync()
@@ -269,11 +277,16 @@ namespace SoulLink.Relay
                 {
                     try
                     {
-                        if (_eventWriter == null) continue;
+                        if (_eventWriter == null)
+                        {
+                            Log("热键发送跳过：_eventWriter 为空 value=" + value);
+                            continue;
+                        }
                         await _eventWriter.WriteLineAsync(JsonSerializer.Serialize(new
                         {
                             Event = "hotkey", Value = value
                         }, Json)).ConfigureAwait(false);
+                        Log("热键已写入事件管道 value=" + value);
                     }
                     catch (Exception ex) { Log("热键事件回传异常：" + ex.Message); }
                 }
@@ -328,6 +341,10 @@ namespace SoulLink.Relay
             public int ScreenWidth { get; set; }
             public int ScreenHeight { get; set; }
             public string Info { get; set; } = "";
+            public int SessionId { get; set; }
+            public bool Elevated { get; set; }
+            public bool DesktopOk { get; set; }
+            public string Nonce { get; set; } = "";
             public List<string> Windows { get; set; } = new List<string>();
         }
 
@@ -342,10 +359,18 @@ namespace SoulLink.Relay
         public static int Run(string[] args)
         {
             string pipeName = args.Length > 1 ? args[1] : "SoulLink.Relay";
+            _deploymentNonce = Services.BrokerArguments.NonceFromArgs(args);
+            _deploymentNonce = Services.BrokerArguments.NonceFromArgs(args);
             try { _logPath = Path.Combine(Path.GetTempPath(), "soullink-relay-" + Process.GetCurrentProcess().Id + ".log"); }
             catch { }
 
             try { SetProcessDPIAware(); } catch { }
+            if (args.Any(a => a == "--require-elevated"))
+            {
+                string? failure = AgentSecurity.Validate(Process.GetCurrentProcess().SessionId,
+                    Services.BrokerArguments.NonceFromArgs(args));
+                if (failure != null) { Log("拒绝启动：" + failure); return 5; }
+            }
 
             Log("relay 启动 pid=" + Process.GetCurrentProcess().Id + " pipe=" + pipeName
                 + " session=" + Process.GetCurrentProcess().SessionId);
@@ -374,7 +399,10 @@ namespace SoulLink.Relay
                     {
                         // 第一次连不上的话快速失败，交给宿主重试
                         pipe.Connect(3000);
+                        _traceRelaySw = Stopwatch.StartNew();
                         Log("已连上宿主管道");
+                        InputTrace.Write("AGENT_CONNECT", "已连上宿主管道 pid=" + Process.GetCurrentProcess().Id
+                            + " 会话=" + Process.GetCurrentProcess().SessionId + " 管道=" + pipeName);
                         idleRounds = 0;
                         ServePipe(pipe, stop);
                         break; // 宿主消失后不保留孤儿代理和输入状态。
@@ -393,6 +421,9 @@ namespace SoulLink.Relay
                 }
             }
 
+            InputTrace.Write("AGENT_EXIT", "relay 退出 pid=" + Process.GetCurrentProcess().Id
+                + " 会话=" + Process.GetCurrentProcess().SessionId
+                + " 握手后存活=" + _traceRelaySw.ElapsedMilliseconds + "ms");
             ReleaseAllMouseButtons();
             try { _hotkeys?.Dispose(); } catch { }
             _hotkeys = null;
@@ -405,6 +436,10 @@ namespace SoulLink.Relay
             return 0;
         }
 
+        // ★ 临时诊断（交接文档 4.1 取证）：记录从"连上宿主"到"被断开"的真实时长。
+        private static Stopwatch _traceRelaySw = Stopwatch.StartNew();
+        private static int _traceCmdCount;
+
         private static void ServePipe(Stream pipe, ManualResetEventSlim stop)
         {
             var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, leaveOpen: true);
@@ -414,9 +449,29 @@ namespace SoulLink.Relay
             {
                 string? line = null;
                 try { line = reader.ReadLine(); }
-                catch { break; }
-                if (line == null) break;                 // 宿主断开
+                catch (Exception rex)
+                {
+                    InputTrace.Write("AGENT_PIPE_ERR", "读管道异常 pid=" + Process.GetCurrentProcess().Id
+                        + " 会话=" + Process.GetCurrentProcess().SessionId + " 异常=" + rex.GetType().Name + " " + rex.Message);
+                    break;
+                }
+                if (line == null)
+                {
+                    InputTrace.Write("AGENT_EOF", "宿主关掉了管道（EOF）pid=" + Process.GetCurrentProcess().Id
+                        + " 会话=" + Process.GetCurrentProcess().SessionId + " 握手后存活=" + _traceRelaySw.ElapsedMilliseconds + "ms");
+                    break;
+                }
                 if (line.Length == 0) continue;
+                // 降温：自由视角/探测期间指令会连着来，只记前若干条与收尾指令，避免日志被刷爆。
+                bool traceAlways = line.IndexOf("releaseall", StringComparison.OrdinalIgnoreCase) >= 0
+                                || line.IndexOf("\"exit\"", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (traceAlways || _traceCmdCount < 30)
+                {
+                    if (!traceAlways) _traceCmdCount++;
+                    InputTrace.Write("AGENT_RECV_CMD", "收到指令 pid=" + Process.GetCurrentProcess().Id
+                        + " cmd=" + (line.Length > 120 ? line.Substring(0, 120) : line)
+                        + " 握手后=" + _traceRelaySw.ElapsedMilliseconds + "ms");
+                }
 
                 Response resp;
                 try
@@ -458,6 +513,10 @@ namespace SoulLink.Relay
                     {
                         Ok = true,
                         Message = "pong",
+                        SessionId = Process.GetCurrentProcess().SessionId,
+                        Elevated = Environment.IsPrivilegedProcess,
+                        DesktopOk = AgentSecurity.Validate(Process.GetCurrentProcess().SessionId, _deploymentNonce) == null,
+                        Nonce = _deploymentNonce ?? "",
                         ScreenWidth = GetSystemMetrics(SM_CXSCREEN),
                         ScreenHeight = GetSystemMetrics(SM_CYSCREEN),
                         Info = "pid=" + Process.GetCurrentProcess().Id + " session=" + Process.GetCurrentProcess().SessionId
@@ -615,6 +674,7 @@ namespace SoulLink.Relay
                     }
 
                 case "exit":
+                    InputTrace.Write("AGENT_RECV", "收到 exit 指令（宿主让我们退出）pid=" + Process.GetCurrentProcess().Id);
                     Log("收到退出指令");
                     ReleaseAllMouseButtons();
                     return new Response { Ok = true, Message = "bye" };

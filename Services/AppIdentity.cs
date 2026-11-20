@@ -47,6 +47,26 @@ namespace SoulLink.Services
         /// <summary>临时工作目录。</summary>
         public static string TempRoot => Path.Combine(Path.GetTempPath(), Name);
 
+        /// <summary>
+        /// 手动代理的文件名。它是主程序的副本，必须归属主程序身份，
+        /// 否则会被当成另一个版本，导致管道前缀对不上、永远找不到宿主管道。
+        /// </summary>
+        public const string AgentFileName = "SoulLink.Agent";
+
+        /// <summary>当前进程是不是"手动代理"副本（按文件名判断，不看参数）。</summary>
+        public static bool IsAgentExecutable
+        {
+            get
+            {
+                try
+                {
+                    string file = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "");
+                    return string.Equals(file, AgentFileName, StringComparison.OrdinalIgnoreCase);
+                }
+                catch { return false; }
+            }
+        }
+
         private static string Resolve()
         {
             // ① 命令行显式指定优先
@@ -63,7 +83,20 @@ namespace SoulLink.Services
             }
             catch { }
 
-            // ② 用当前可执行文件名（不含扩展名）
+            // ② 手动代理副本：SoulLink.Agent.exe 属于主程序身份。
+            //    ★ 它若按自己的文件名取身份，会得到 "SoulLink.Agent"，
+            //      于是管道前缀变成 SoulLink.Agent_Relay_...，永远匹配不到宿主。
+            try
+            {
+                if (IsAgentExecutable)
+                {
+                    // 配置里的身份名就是主程序文件名；取不到就用 SoulLink。
+                    return "SoulLink";
+                }
+            }
+            catch { }
+
+            // ③ 用当前可执行文件名（不含扩展名）
             try
             {
                 string? path = Environment.ProcessPath;

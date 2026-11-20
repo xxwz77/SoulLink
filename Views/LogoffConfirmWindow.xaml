@@ -10,14 +10,8 @@
         <Grid.Effect>
             <DropShadowEffect BlurRadius="38" ShadowDepth="0" Opacity="0.85" Color="#FF02040A" />
         </Grid.Effect>
-        <Border CornerRadius="20" BorderBrush="#38FFFFFF" BorderThickness="1" ClipToBounds="True">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                    <GradientStop Color="#FF0A1020" Offset="0" />
-                    <GradientStop Color="#FF171126" Offset="0.65" />
-                    <GradientStop Color="#FF0B0F22" Offset="1" />
-                </LinearGradientBrush>
-            </Border.Background>
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
+                        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
             <Grid>
                 <ctl:AuroraBackdrop Opacity="0.5" IsHitTestVisible="False" />
                 <StackPanel Margin="26,24,26,22">
@@ -34,9 +28,9 @@
                         </Border>
                         <StackPanel Grid.Column="1" Margin="14,0,0,0">
                             <TextBlock Text="注销这个用户？" FontSize="18" FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextPrimary}" />
+                                       Foreground="{DynamicResource TextPrimary}" />
                             <TextBlock x:Name="AccountText" FontSize="12" Margin="0,5,0,0"
-                                       Foreground="{StaticResource TextMuted}" />
+                                       Foreground="{DynamicResource TextMuted}" />
                         </StackPanel>
                     </Grid>
                     <Border Style="{StaticResource GlassPanel}" Margin="0,22,0,0" Padding="15,13">
@@ -44,7 +38,7 @@
                             <TextBlock Text="所有正在运行的程序都会被关闭" FontSize="13" FontWeight="SemiBold"
                                        Foreground="{StaticResource RoseBrush}" />
                             <TextBlock x:Name="SessionText" TextWrapping="Wrap" LineHeight="20" FontSize="11.5"
-                                       Foreground="{StaticResource TextSecondary}" Margin="0,7,0,0" />
+                                       Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
                             <TextBlock Text="未保存的内容将丢失，此操作不可恢复。" TextWrapping="Wrap"
                                        Style="{StaticResource Caption}" Margin="0,3,0,0" />
                         </StackPanel>

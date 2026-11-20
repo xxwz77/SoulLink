@@ -44,7 +44,12 @@ namespace SoulLink.Services
                 if (def == null) { Error(n,"未知模块："+n.Type); continue; }
                 foreach (var p in def.Params)
                     if (p.Required && p.Default.Length == 0 && string.IsNullOrWhiteSpace(n.Get(p.Key))) Field(n,p.Key,"「"+n.Title+"」的「"+p.Label+"」没有填写");
-                if (n.Get("user").Length > 0 && cfg != null && (!cfg.Accounts.Any(a => string.Equals(a.UserName, SessionService.BareName(n.Get("user")), StringComparison.OrdinalIgnoreCase)) || !AccountScope.Allows(n.Get("user"),cfg)))
+                // ★ 只校验"账号存在"，**不**按 AccountScope 排除主用户。
+                //   原来这处会让引用主用户的流程直接校验失败 → 整个流程拒绝运行。
+                //   用户原话：「不能停啊，它是主控」—— 主控自己的自动化必须能跑。
+                //   （"不把主用户当投送目标"由 SystemLauncher / RequestHandler 负责。）
+                if (n.Get("user").Length > 0 && cfg != null
+                    && !cfg.Accounts.Any(a => string.Equals(a.UserName, SessionService.BareName(n.Get("user")), StringComparison.OrdinalIgnoreCase)))
                     Field(n,"user","「"+n.Title+"」的目标账号不存在；不会回退操作其它账号");
                 if (n.Type == FlowNodeType.TrigSchedule && !TimeSpan.TryParse(n.Get("time"),out _)) Error(n,"时刻必须是 HH:mm");
                 if (n.Type == FlowNodeType.CondTimeRange && (!TimeSpan.TryParse(n.Get("from"),out _) || !TimeSpan.TryParse(n.Get("to"),out _))) Error(n,"时间段必须是 HH:mm");

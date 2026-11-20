@@ -435,11 +435,25 @@ namespace SoulLink.Services
         {
             try
             {
-                using var id = WindowsIdentity.GetCurrent();
-                return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+                // ★ 只读令牌事实：WindowsPrincipal.IsInRole 在 SYSTEM/受限令牌下会抛
+                //   SecurityException（拒绝访问），那会被误判成"没有管理员权限"。
+                if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, out IntPtr token)) return false;
+                try
+                {
+                    return BrokerSecurity.IsAdministrator(token) && BrokerSecurity.TokenElevation(token);
+                }
+                finally { CloseHandle(token); }
             }
             catch { return false; }
         }
+
+        [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetCurrentProcess();
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
+        private const uint TOKEN_QUERY = 0x0008;
 
         private static string Clean(string s)
         {

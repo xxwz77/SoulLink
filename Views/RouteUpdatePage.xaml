@@ -1,0 +1,244 @@
+<UserControl x:Class="SoulLink.Views.RouteUpdatePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FontFamily="{StaticResource UiFont}">
+
+    <Grid Margin="18,16,18,16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <!-- ══════════ 左：来源 + 目标 + 定时 ══════════ -->
+        <Border Grid.Column="0" Style="{StaticResource GlassCardStrong}" Padding="18,16">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+
+                    <!-- 标题 -->
+                    <TextBlock Text="路线更新" Style="{StaticResource Title}" />
+                    <TextBlock x:Name="SubText"
+                               Text="核对包内文件夹，只删除目标里同名的文件夹，然后放进去"
+                               Style="{StaticResource Caption}" Margin="0,3,0,0" TextWrapping="Wrap" />
+
+                    <!-- ── 路线包来源 ── -->
+                    <TextBlock Text="路线包来源" Style="{StaticResource Label}" Margin="0,18,0,0" />
+
+                    <!-- 云端更新源：★ 只显示状态，绝不显示地址/主机名/文件名 -->
+                    <TextBlock Text="云端更新源"
+                               Style="{StaticResource Caption}" Margin="0,8,0,4" />
+                    <Border Style="{StaticResource GlassPanel}" Padding="12,8">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="CloudDot" Width="8" Height="8" VerticalAlignment="Center"
+                                     Fill="{DynamicResource TextMuted}" />
+                            <TextBlock x:Name="CloudStatus" Margin="9,0,0,0" FontSize="11.5"
+                                       VerticalAlignment="Center" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       Text="未检查" />
+                            <Button x:Name="BtnCheckCloud" Style="{StaticResource GhostButton}"
+                                    Padding="10,3" Margin="12,0,0,0" Click="CheckCloud_Click"
+                                    ToolTip="检查是否有新版本（不显示地址）">
+                                <TextBlock Text="检查更新" FontSize="10.5" />
+                            </Button>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 本地包 -->
+                    <TextBlock Text="本地路线包（填了就用本地，优先于云端）"
+                               Style="{StaticResource Caption}" Margin="0,12,0,4" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="ZipBox" Grid.Column="0" Height="36"
+                                 Style="{StaticResource GlassTextBox}"
+                                 Padding="11,0,11,0" FontSize="12"
+                                 VerticalContentAlignment="Center"
+                                 IsReadOnly="True" />
+                        <Button Grid.Column="1" Style="{StaticResource GhostButton}"
+                                Padding="12,7" Margin="8,0,0,0" Click="PickZip_Click"
+                                ToolTip="默认打开下载目录，历史包都在里面，可直接选来回档">
+                            <TextBlock Text="选择文件" FontSize="11.5" />
+                        </Button>
+                        <Button Grid.Column="2" Style="{StaticResource GhostButton}"
+                                Padding="10,7" Margin="6,0,0,0" Click="OpenCache_Click"
+                                ToolTip="打开下载目录（历史包所在位置）">
+                            <TextBlock Text="&#xE838;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                        </Button>
+                        <Button Grid.Column="3" Style="{StaticResource GhostButton}"
+                                Padding="10,7" Margin="6,0,0,0" Click="ClearZip_Click"
+                                ToolTip="清空本地包，改用云端更新">
+                            <TextBlock Text="清空" FontSize="11.5" />
+                        </Button>
+                    </Grid>
+
+                    <!-- ── 更新目标 ── -->
+                    <Grid Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="更新目标（路线库根目录）"
+                                   Style="{StaticResource Label}" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}" Padding="10,5"
+                                    Click="AddTarget_Click" ToolTip="添加一个目标">
+                                <TextBlock Text="+ 添加" FontSize="11" />
+                            </Button>
+                            <Button Style="{StaticResource GhostButton}" Padding="10,5"
+                                    Margin="6,0,0,0" Click="PickFromAccounts_Click"
+                                    ToolTip="从已配置的账号 BGI 路径自动生成">
+                                <TextBlock Text="从账号生成" FontSize="11" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="通常会填 ...\User\AutoPathing（不要再往里进一层），包内第一层文件夹会替换到这里同名的文件夹。"
+                               Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,5,0,0" />
+
+                    <Border Style="{StaticResource GlassPanel}" Padding="6,6" Margin="0,8,0,0">
+                        <StackPanel x:Name="TargetList" />
+                    </Border>
+
+                    <!-- ── 定时更新 ── -->
+                    <TextBlock Text="定时更新" Style="{StaticResource Label}" Margin="0,18,0,0" />
+
+                    <CheckBox x:Name="SchedEnableCheck" Margin="0,8,0,0"
+                              Content="启用定时更新（程序运行期间生效）"
+                              Style="{StaticResource GlassCheckBox}"
+                              FontSize="11.5"
+                              Checked="SchedEnable_Changed" Unchecked="SchedEnable_Changed" />
+
+                    <Grid x:Name="SchedDetail" Margin="0,8,0,0" IsEnabled="False">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <ComboBox x:Name="SchedKindBox" Grid.Column="0" Height="32" Width="120"
+                                  SelectionChanged="SchedKind_Changed">
+                            <ComboBoxItem Content="每天定时" />
+                            <ComboBoxItem Content="每隔一段" />
+                        </ComboBox>
+
+                        <!-- 每天定时：HH:mm -->
+                        <StackPanel x:Name="DailyPanel" Grid.Column="1" Orientation="Horizontal"
+                                    Margin="10,0,0,0" VerticalAlignment="Center">
+                            <TextBox x:Name="HourBox" Width="42" Height="32"
+                                     Style="{StaticResource GlassTextBox}"
+                                     FontSize="12" TextAlignment="Center" VerticalContentAlignment="Center" />
+                            <TextBlock Text=":" VerticalAlignment="Center" Margin="4,0"
+                                       Foreground="{DynamicResource TextSecondary}" />
+                            <TextBox x:Name="MinuteBox" Width="42" Height="32"
+                                     Style="{StaticResource GlassTextBox}"
+                                     FontSize="12" TextAlignment="Center" VerticalContentAlignment="Center" />
+                            <TextBlock Text="每天" VerticalAlignment="Center" Margin="10,0,0,0"
+                                       Foreground="{DynamicResource TextSecondary}" FontSize="11.5" />
+                        </StackPanel>
+
+                        <!-- 间隔：N 小时 -->
+                        <StackPanel x:Name="IntervalPanel" Grid.Column="1" Orientation="Horizontal"
+                                    Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                            <TextBlock Text="每" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextSecondary}" FontSize="11.5" />
+                            <TextBox x:Name="IntervalBox" Width="56" Height="32" Margin="8,0"
+                                     Style="{StaticResource GlassTextBox}"
+                                     FontSize="12" TextAlignment="Center" VerticalContentAlignment="Center" />
+                            <TextBlock Text="小时" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextSecondary}" FontSize="11.5" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="SchedNextText" Grid.Column="4"
+                                   Style="{StaticResource Caption}" VerticalAlignment="Center"
+                                   Margin="14,0,0,0" TextTrimming="CharacterEllipsis" />
+                    </Grid>
+
+                    <CheckBox x:Name="BackupCheck" Margin="0,12,0,0"
+                              Content="替换前把旧文件夹移入 SoulLink 备份目录（可还原）"
+                              Style="{StaticResource GlassCheckBox}"
+                              IsChecked="True" FontSize="11.5" />
+
+                    <!-- ── 包内文件夹预览 ── -->
+                    <Grid Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="包内第一层文件夹" Style="{StaticResource Label}"
+                                   VerticalAlignment="Center" />
+                        <Button x:Name="BtnRescan" Grid.Column="1" Style="{StaticResource GhostButton}"
+                                Padding="10,5" Click="Rescan_Click" ToolTip="重新解压核对一次">
+                            <TextBlock Text="重新核对" FontSize="11" />
+                        </Button>
+                    </Grid>
+
+                    <StackPanel x:Name="FolderList" Margin="0,8,0,0" />
+
+                    <!-- ── 按钮 ── -->
+                    <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                        <Button x:Name="BtnApply" Style="{StaticResource PrimaryButton}"
+                                Padding="22,9" Click="StartUpdate_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="12" VerticalAlignment="Center" />
+                                <TextBlock Text="开始更新" Margin="7,0,0,0" FontSize="12"
+                                           FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button x:Name="BtnCancel" Style="{StaticResource GhostButton}"
+                                Padding="18,9" Margin="10,0,0,0" Click="Cancel_Click"
+                                Visibility="Collapsed">
+                            <TextBlock Text="停止" FontSize="11.5" />
+                        </Button>
+
+                        <TextBlock x:Name="StatusText" Style="{StaticResource Caption}"
+                                   VerticalAlignment="Center" Margin="14,0,0,0"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- ══════════ 右：进度 / 日志 ══════════ -->
+        <Border Grid.Column="1" Width="380" Style="{StaticResource GlassCard}"
+                Padding="16,16" Margin="14,0,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="更新进度" FontSize="13.5" FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextPrimary}" Margin="2,0,0,10" />
+
+                <StackPanel Grid.Row="1" Margin="2,0,2,12">
+                    <Grid Height="6">
+                        <Border CornerRadius="3" Background="#18FFFFFF" />
+                        <Border x:Name="ProgressFill" CornerRadius="3"
+                                Background="{StaticResource CyanBrush}"
+                                HorizontalAlignment="Left" Width="0" />
+                    </Grid>
+                    <TextBlock x:Name="ProgressText" Text="等待开始"
+                               Style="{StaticResource Caption}" Margin="0,7,0,0" />
+                </StackPanel>
+
+                <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="11,9">
+                    <ScrollViewer x:Name="LogScroll" VerticalScrollBarVisibility="Auto">
+                        <TextBlock x:Name="LogText" Text="" FontSize="11"
+                                   Foreground="{DynamicResource TextSecondary}"
+                                   TextWrapping="Wrap" LineHeight="18"
+                                   FontFamily="Consolas" />
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

@@ -58,6 +58,7 @@ namespace SoulLink.Views
             _pages["launch"] = PageLaunch;
             _pages["console"] = PageConsole;
             _pages["update"] = PageUpdate;
+            _pages["routeupdate"] = PageRouteUpdate;
             _pages["datacenter"] = PageDataCenter;
             _pages["remote"] = PageRemote;
             _pages["sessions"] = PageSessions;
@@ -75,8 +76,8 @@ namespace SoulLink.Views
             SourceInitialized += (_, __) =>
             {
                 ApplyDwmCorners();
-                HookWindowChrome();
-                // 保留系统主题色边框；顶部额外横条由 WM_NCCALCSIZE 的非客户区高度处理。
+                HookMaximizeWorkArea();
+                // 客户区与缩放交给 WPF WindowChrome；这里只修正最大化工作区。
             };
 
             Loaded += MainWindow_Loaded;
@@ -172,7 +173,10 @@ namespace SoulLink.Views
         }
 
         /// <summary>
-        /// 激活时使用系统主题强调色，未激活时交回系统原生边框，符合 Windows 原生行为。
+        /// 边框固定使用系统主题强调色；只在创建窗口、系统强调色变化时设置。
+        ///
+        /// 不要在每次激活/失活时切换 DWMWA_BORDER_COLOR（尤其不要切到
+        /// DWMWA_COLOR_NONE）：窗口切换焦点会反复重设非客户区，产生可见闪框。
         ///
         /// ★ 关键修复（边框没有用上系统强调色）：
         ///   DWMWA_BORDER_COLOR 要的是 COLORREF（0x00BBGGRR，alpha 必须是 0x00）。
@@ -180,9 +184,19 @@ namespace SoulLink.Views
         ///   边框从来没被改过色 —— 于是永远显示系统默认边框。
         ///   颜色换算与校验都在 WindowCorners.SetBorderColor 里完成。
         ///
-        /// ★ 未激活时传 DWMWA_COLOR_DEFAULT 而不是写死的深灰：
-        ///   这样失焦后的边框和资源管理器等原生窗口完全一致（本机实测 #ABABAB）。
+        /// 焦点变化不再调用这里，避免自定义窗口随激活状态反复重设 DWM 属性。
         /// </summary>
+        /// <summary>供外部（如档位切换）主动刷新窗口边框色。</summary>
+        public static void RefreshWindowBorder()
+        {
+            try
+            {
+                if (Application.Current?.MainWindow is MainWindow mw)
+                    mw.Dispatcher.BeginInvoke(new Action(mw.UpdateBorderColor));
+            }
+            catch { }
+        }
+
         private void UpdateBorderColor()
         {
             try
@@ -190,15 +204,9 @@ namespace SoulLink.Views
                 var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
                 if (hwnd == IntPtr.Zero) return;
 
-                if (!IsActive)
-                {
-                    SoulLink.Services.WindowCorners.ResetBorderColor(hwnd);
-                    return;
-                }
-
                 uint accent = SoulLink.Services.WindowCorners.GetSystemAccentColor();
-                SoulLink.Services.WindowCorners.SetBorderColor(hwnd, accent);
-                App.Breadcrumb($"边框色 accent=#{accent & 0xFFFFFF:X6}");
+                bool ok = SoulLink.Services.WindowCorners.SetBorderColor(hwnd, accent);
+                App.Breadcrumb("边框色 固定系统强调色 accent=#" + (accent & 0xFFFFFF).ToString("X6") + " ok=" + ok);
             }
             catch (Exception ex)
             {
@@ -209,94 +217,129 @@ namespace SoulLink.Views
         protected override void OnActivated(EventArgs e)
         {
             base.OnActivated(e);
-            UpdateBorderColor();
+            InputTrace.Write("MAIN_ACT", "主窗口激活 IsVisible=" + IsVisible + " state=" + WindowState);
+            // 不再随焦点切换修改 DWM 边框属性。
+        }
+
+        /// <summary>★ 临时诊断：记录每一次 WindowState 变化，定位"装完服务后按 X 主窗口消失"。</summary>
+        protected override void OnStateChanged(EventArgs e)
+        {
+            base.OnStateChanged(e);
+            InputTrace.Write("MAIN_STATE", "主窗口状态=" + WindowState + " IsVisible=" + IsVisible
+                + " Active=" + IsActive + " 调用方=" + InputTrace.Caller(4));
         }
 
         protected override void OnDeactivated(EventArgs e)
         {
             base.OnDeactivated(e);
+            InputTrace.Write("MAIN_DEACT", "主窗口失活 IsVisible=" + IsVisible
+                + " state=" + WindowState + " 调用方=" + InputTrace.Caller(3));
             _navOverlayWindow?.HideForOwnerState();
             if (_autoHide) SetNavCollapsed(true, "主窗口失活");
-            UpdateBorderColor();
+            // 不再随焦点切换修改 DWM 边框属性。
         }
 
-        /// <summary>
-        /// 非分层窗口没有 WindowChrome，靠这段 P/Invoke 让窗口可拖动 / 可缩放。
-        /// 挂在 HwndSource 上处理 WM_NCHITTEST。
-        /// </summary>
-        private void HookWindowChrome()
+
+
+        private void HookMaximizeWorkArea()
         {
-            try
-            {
-                var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-                var src = System.Windows.Interop.HwndSource.FromHwnd(hwnd);
-                src?.AddHook(WndProc);
-            }
-            catch (Exception ex)
-            {
-                App.AppendErrorLog("MainWindow.HookWindowChrome", ex);
-            }
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            var source = System.Windows.Interop.HwndSource.FromHwnd(hwnd);
+            source?.AddHook(ResizeBorderHook);
+            source?.AddHook(MaximizeWorkAreaHook);
         }
 
+        private const int WM_GETMINMAXINFO = 0x0024;
         private const int WM_NCHITTEST = 0x0084;
-        private const int WM_NCCALCSIZE = 0x0083;
-        private const int WM_NCPAINT = 0x0085;
+        private const int WM_SETCURSOR = 0x0020;
         private const int HTCLIENT = 1;
-        private const int HTCAPTION = 2;
-        private const int HTLEFT = 10;
-        private const int HTRIGHT = 11;
-        private const int HTTOP = 12;
-        private const int HTTOPLEFT = 13;
-        private const int HTTOPRIGHT = 14;
-        private const int HTBOTTOM = 15;
-        private const int HTBOTTOMLEFT = 16;
-        private const int HTBOTTOMRIGHT = 17;
 
-        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr LoadCursor(IntPtr instance, IntPtr cursorName);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr SetCursor(IntPtr cursor);
+
+        private IntPtr ResizeBorderHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
-            // 顶部非客户区标题横条不属于应用内容，去掉多余高度，保留系统细边框。
-            if (msg == WM_NCCALCSIZE && wParam != IntPtr.Zero)
+            if (msg == WM_NCHITTEST && WindowState == WindowState.Normal && ResizeMode == ResizeMode.CanResize)
             {
-                handled = true;
-                return IntPtr.Zero;
-            }
-
-            if (msg != WM_NCHITTEST) return IntPtr.Zero;
-
-            try
-            {
-                // 屏幕坐标 → 客户区坐标
-                int lp = lParam.ToInt32();
-                var pt = PointFromScreen(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
-
-                const int grip = 6;
-                double w = ActualWidth, h = ActualHeight;
-
-                bool left = pt.X <= grip, right = pt.X >= w - grip;
-                bool top = pt.Y <= grip, bottom = pt.Y >= h - grip;
-
-                if (top && left) { handled = true; return (IntPtr)HTTOPLEFT; }
-                if (top && right) { handled = true; return (IntPtr)HTTOPRIGHT; }
-                if (bottom && left) { handled = true; return (IntPtr)HTBOTTOMLEFT; }
-                if (bottom && right) { handled = true; return (IntPtr)HTBOTTOMRIGHT; }
-                if (left) { handled = true; return (IntPtr)HTLEFT; }
-                if (right) { handled = true; return (IntPtr)HTRIGHT; }
-                if (top) { handled = true; return (IntPtr)HTTOP; }
-                if (bottom) { handled = true; return (IntPtr)HTBOTTOM; }
-
-                // 标题栏区域（避开右上角按钮）
-                if (pt.Y <= 64 && pt.X > 120 && pt.X < w - 260)
+                int packed = lParam.ToInt32();
+                var screen = new Point((short)(packed & 0xFFFF), (short)((packed >> 16) & 0xFFFF));
+                var point = PointFromScreen(screen);
+                double grip = WindowChrome.GetWindowChrome(this)?.ResizeBorderThickness.Left ?? 6;
+                bool left = point.X <= grip, right = point.X >= ActualWidth - grip;
+                bool top = point.Y <= grip, bottom = point.Y >= ActualHeight - grip;
+                int hit = top && left ? 13 : top && right ? 14
+                    : bottom && left ? 16 : bottom && right ? 17
+                    : left ? 10 : right ? 11 : top ? 12 : bottom ? 15 : HTCLIENT;
+                if (hit != HTCLIENT)
                 {
                     handled = true;
-                    return (IntPtr)HTCAPTION;
+                    return new IntPtr(hit);
                 }
             }
-            catch { }
 
+            if (msg == WM_SETCURSOR && WindowState == WindowState.Normal && ResizeMode == ResizeMode.CanResize)
+            {
+                int hit = (int)lParam & 0xFFFF;
+                int cursor = hit is 10 or 11 ? 32644 : hit is 12 or 15 ? 32645
+                    : hit is 13 or 17 ? 32643 : hit is 14 or 16 ? 32642 : 0;
+                if (cursor != 0)
+                {
+                    SetCursor(LoadCursor(IntPtr.Zero, new IntPtr(cursor)));
+                    handled = true;
+                    return new IntPtr(1);
+                }
+            }
             return IntPtr.Zero;
         }
 
-        /// <summary>
+        private struct NativePoint { public int X, Y; }
+        private struct NativeRect { public int Left, Top, Right, Bottom; }
+        private struct MinMaxInfo
+        {
+            public NativePoint Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize;
+        }
+        private struct MonitorInfo
+        {
+            public int Size;
+            public NativeRect Monitor, WorkArea;
+            public int Flags;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+        private IntPtr MaximizeWorkAreaHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg != WM_GETMINMAXINFO) return IntPtr.Zero;
+            var monitor = MonitorFromWindow(hwnd, 2);
+            var info = new MonitorInfo { Size = System.Runtime.InteropServices.Marshal.SizeOf<MonitorInfo>() };
+            if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return IntPtr.Zero;
+
+            var mmi = (MinMaxInfo)System.Runtime.InteropServices.Marshal.PtrToStructure(
+                lParam, typeof(MinMaxInfo));
+            var work = info.WorkArea;
+            var monitorBounds = info.Monitor;
+            mmi.MaxPosition.X = work.Left - monitorBounds.Left;
+            mmi.MaxPosition.Y = work.Top - monitorBounds.Top;
+            mmi.MaxSize.X = work.Right - work.Left;
+            mmi.MaxSize.Y = work.Bottom - work.Top;
+
+            // MinWidth/MinHeight 是 DIP；原生拖动边界必须使用当前显示器的物理像素。
+            // 否则 WM_GETMINMAXINFO 被标记为已处理后，窗口仍可能缩得比布局下限更小，
+            // 导致标题栏被裁掉、RDP 原生画面越界，边框也无法再拖大恢复。
+            var dpi = VisualTreeHelper.GetDpi(this);
+            mmi.MinTrackSize.X = (int)Math.Ceiling(MinWidth * dpi.DpiScaleX);
+            mmi.MinTrackSize.Y = (int)Math.Ceiling(MinHeight * dpi.DpiScaleY);
+
+            System.Runtime.InteropServices.Marshal.StructureToPtr(mmi, lParam, false);
+            handled = true;
+            return IntPtr.Zero;
+        }
+
         /// 关闭分层窗口。RDP 画面必须跑在非分层窗口里，否则全黑。
         /// 视觉上用「深色底 + 圆角 + 自绘边框」替代原来的透明发光层。
         /// </summary>
@@ -312,16 +355,39 @@ namespace SoulLink.Views
                     System.Windows.Media.Color.FromRgb(0x05, 0x07, 0x0F));
                 Background = (System.Windows.Media.Brush)Application.Current.Resources["WindowBackground"];
 
-                // ★ 非分层窗口的圆角只能靠 DWM。
-                //   WindowChrome 的 CornerRadius=0 会把窗口角做成直角，覆盖 DWM 的圆角，
-                //   所以必须摘掉 WindowChrome（我们本来就是自绘标题栏，不依赖它）。
-                WindowChrome.SetWindowChrome(this, null);
-                WindowChrome.SetIsHitTestVisibleInChrome(this, false);
+                // 圆角仍交给 DWM；缩放、客户区与最大化使用 WPF 自带的 WindowChrome。
+                // 不再另行拦截 WM_NCCALCSIZE / WM_NCHITTEST，避免两套几何互相覆盖。
+                WindowChrome.SetWindowChrome(this, new WindowChrome
+                {
+                    CaptionHeight = 0,
+                    ResizeBorderThickness = new Thickness(6),
+                    GlassFrameThickness = new Thickness(0),
+                    CornerRadius = new CornerRadius(0),
+                    UseAeroCaptionButtons = false
+                });
+                WindowChrome.SetIsHitTestVisibleInChrome(this, true);
 
                 // 窗口底色 + DWM 圆角。
-                // ★ 内容区必须留出边距，否则标题栏会把方形背景顶到圆角外面
-                //   （用户反馈：底部圆角正常、顶部是方的）。
+                // ★ 内容区必须留出边距，否则方形内容会铺到 DWM 圆角之外，
+                //   在窗口边缘露出一圈残留的浅色边（用户反馈：
+                //   「以中/低画质启动会有一圈灰框，切到高画质就消失」）。
+                //
+                //   这里原来写的是 Thickness(0) —— 与上面这条注释自相矛盾，
+                //   也解释了为什么只有低档位才看得见：
+                //   高档位有 AuroraBackdrop 每帧全量重绘，把那圈残余盖住了；
+                //   关掉动画后底层不再重绘，露出的窗口底色就暴露出来。
+                //
+                //   现在与 ToggleMax() 保持同一套边距规则，启动路径不再漏设。
                 RootLayer.Effect = null;
+                // ★★ 回到 0：不要把内容内缩。★★
+                //
+                //   DWM 圆角裁的是**窗口**四角，WPF 内容铺满客户区即可跟随；
+                //   一旦给 RootLayer 留 Margin，那圈露出的就是窗口 Background，
+                //   在深色主题下表现为窗口内侧一圈浅色细边
+                //   （用户反馈：「高画质没事，中低画质启动就有一圈灰框」）。
+                //
+                //   之前误以为是"内容顶到圆角外"，实际恰恰相反：
+                //   内缩才会露边。ToggleMax 里的 2/14 同理已一并移除。
                 RootLayer.Margin = new Thickness(0);
 
                 // 关键：不给 Shell 铺满整个窗口，让 DWM 的圆角能被看到
@@ -608,6 +674,27 @@ namespace SoulLink.Views
             if (!_autoHide && _navCollapsed) SetNavCollapsed(false, "启动恢复");
         }
 
+        /// <summary>
+        /// 当前页面是否含 HWND 空域（RDP 的 WindowsFormsHost）。
+        ///
+        /// ★ 只有中控台页才有。其余页面是纯 WPF，NavRail 留在主窗口里就能正常盖住内容，
+        ///   根本不需要独立 HWND 浮层。
+        ///
+        /// ★ 为什么必须区分：用户实测「从别的菜单页切过来也会晃动，以左上角为原点缩放了一下」。
+        ///   根因就是无论在哪一页，点导航都会触发侧栏悬停展开，
+        ///   而展开会把 NavRail 从主窗口摘下、塞进一个 owned 独立 HWND
+        ///   （OwnedOverlayWindow，见其注释：WPF ZIndex 盖不住 HWND 子窗口）。
+        ///   主窗口本身是 AllowsTransparency=True 的分层窗口，
+        ///   再挂一个带 alpha 的 owned 窗口会让 DWM 重算整块重定向表面，
+        ///   右侧内容就整体跳一下 —— 看起来就是「按左上角缩了一下」。
+        ///
+        ///   2.11.0 没有这套浮层侧栏，所以没有这个现象。
+        /// </summary>
+        private bool PageNeedsOverlayNav()
+        {
+            return string.Equals(_activePage, "console", StringComparison.OrdinalIgnoreCase);
+        }
+
         private void EnsureNavOverlayWindow()
         {
             if (NavHomeHost == null) return;
@@ -726,7 +813,12 @@ namespace SoulLink.Views
 
             try
             {
-                if (!collapsed) EnsureNavOverlayWindow();
+                // ★ 只有含 RDP 空域的页面才用独立 HWND 浮层。
+                //   其它页面在主窗口内直接改宽度，完全不碰窗口合成表面 ——
+                //   这样切页/悬停都不会再出现"整体按左上角缩放一下"。
+                bool useOverlay = PageNeedsOverlayNav();
+                if (!collapsed && useOverlay) EnsureNavOverlayWindow();
+                if (collapsed && !useOverlay) RestoreNavRail();
 
                 const double collapsedWidth = 56;
                 const double expandedWidth = 180;
@@ -752,11 +844,14 @@ namespace SoulLink.Views
                     if (_navCollapsed != collapsed) return;
                     NavRail.BeginAnimation(FrameworkElement.WidthProperty, null);
                     NavRail.Width = target;
-                    if (!collapsed)
+                    if (!collapsed && useOverlay)
                         _navOverlayWindow?.UpdateOverlaySize(target, SideNavHost.ActualHeight);
                 };
                 NavRail.BeginAnimation(FrameworkElement.WidthProperty, anim);
-                BeginNavOverlaySync(!collapsed);
+
+                // 只有浮层模式才需要 16ms 的同步定时器（它一直在 BringToFront）。
+                // 普通页面没有浮层，启动它只会白白刷新窗口。
+                if (useOverlay) BeginNavOverlaySync(!collapsed);
 
                 // ★ 列宽必须一起变：NavRail 在 Column 0，列宽固定 76 时，
                 //   加宽后的侧栏会被 Column 1 的内容压住（用户实测"被别的界面挡住"）。
@@ -803,7 +898,7 @@ namespace SoulLink.Views
             foreach (var t in new FrameworkElement?[]
             {
                 NavTitleText, NavTextLaunch, NavTextConsole,
-                NavTextDataCenter, NavTextUpdate, NavTextRemote, NavTextSessions, NavTextProcs, NavTextCli
+                NavTextDataCenter, NavTextUpdate, NavTextRouteUpdate, NavTextRemote, NavTextSessions, NavTextProcs, NavTextCli
             })
             {
                 if (t != null) t.Visibility = vis;
@@ -864,7 +959,9 @@ namespace SoulLink.Views
         private void ToggleMax()
         {
             WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-            RootLayer.Margin = WindowState == WindowState.Maximized ? new Thickness(2) : new Thickness(14);
+            // ★ 不要再改 RootLayer.Margin：任何非 0 边距都会在内侧露出一圈窗口底色。
+            //   圆角由 DWM 负责，内容铺满即可。
+            RootLayer.Margin = new Thickness(0);
         }
 
         private void UpdateMaxGlyph()
@@ -956,6 +1053,16 @@ namespace SoulLink.Views
             _activePage = tag;
             UpdateRailHighlight();
 
+
+
+            // ★ 离开含 RDP 空域的页面时，把导航从独立 HWND 浮层收回主窗口。
+            //   否则中控台把 NavRail 挂在浮层里，切到别的页后它会继续浮在最上面，
+            //   而且那条 16ms 的 BringToFront 同步也会一直跑。
+            if (!PageNeedsOverlayNav() && _navDockedInOverlay)
+            {
+                try { RestoreNavRail(); } catch (Exception ex) { App.AppendErrorLog("RestoreNavRail on switch", ex); }
+            }
+
             switch (tag)
             {
                 case "automation": AutomationView.Activate(); break;
@@ -963,6 +1070,7 @@ namespace SoulLink.Views
                 case "datacenter": DataCenterView.Activate(); break;
                 case "remote": RemoteView.ReloadAsync(); break;
                 case "update": UpdateView.Reload(); break;
+                case "routeupdate": RouteUpdateView.Reload(); break;
                 case "sessions": LobbyView.Refresh(); break;
                 case "procs": ProcsView.Activate(); break;
                 case "cli": CliView.Activate(); break;

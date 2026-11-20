@@ -13,7 +13,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- ★ 版本号唯一来源：改这里即可，FileVersion/AssemblyVersion 自动派生。
          历史教训：标签打到 v1.4.3 而这里仍是 1.4.1，标题栏一直显示旧版本。 -->
-    <Version>2.6.1</Version>
+    <Version>2.17.19</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 多用户挂机中控台</AssemblyTitle>
@@ -26,6 +26,8 @@
          都必须排除：其中的 .cs 副本被通配符编译进来会造成类型重复定义（AutoStart 已踩过）。 -->
     <!-- ★ Server\** 是独立的服务端项目（有自己的 csproj），必须排除，
          否则客户端会把 Server/obj 里的 AssemblyInfo 也编译进来，导致特性重复。 -->
+    <!-- ★ Assets\RdpWrap 里的 dll 已显式声明为 EmbeddedResource，
+         这里排除掉默认的 None/Content 通配，避免同一文件被重复包含导致编译报错。 -->
     <DefaultItemExcludes>$(DefaultItemExcludes);tools\**;releases\**;Server\**;dist-server\**;dist-server-win\**</DefaultItemExcludes>
     <ApplicationIcon Condition="Exists('Assets\soullink.ico')">Assets\soullink.ico</ApplicationIcon>
   </PropertyGroup>
@@ -34,25 +36,68 @@
     <Resource Include="Assets\soullink.ico" />
   </ItemGroup>
 
+  <!-- ★ RDP Wrapper 运行时文件（内嵌进 exe）
+       用户诉求：新机器不用再去找文件夹、不用手动导 reg。
+       安装时由 RdpWrapService 从内嵌资源释放到目标目录，再按实际路径写注册表。
+
+       ★ 只带运行时必需的文件：
+         TermWrap.dll  核心
+         Zydis.dll     反汇编依赖，缺了 TermWrap 加载不起来（最容易漏）
+         UmWrap.dll    会话/相机重定向补丁
+         EndpWrap.dll  音频端点补丁
+       不带 .lib / .exp（编译产物）、.pdb（调试符号）、*Test.exe（诊断用）、
+       .reg（路径是硬编码的，换机器就错）。
+
+       ★ 全部为 x64，与 SoulLink 自身架构一致（已核对 PE 头）。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\RdpWrap\TermWrap.dll" Condition="Exists('Assets\RdpWrap\TermWrap.dll')" />
+    <EmbeddedResource Include="Assets\RdpWrap\Zydis.dll" Condition="Exists('Assets\RdpWrap\Zydis.dll')" />
+    <EmbeddedResource Include="Assets\RdpWrap\UmWrap.dll" Condition="Exists('Assets\RdpWrap\UmWrap.dll')" />
+    <EmbeddedResource Include="Assets\RdpWrap\EndpWrap.dll" Condition="Exists('Assets\RdpWrap\EndpWrap.dll')" />
+  </ItemGroup>
+
   <ItemGroup>
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="tools\broker-*.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+  </ItemGroup>
 
   <!-- ★ 自带 7za.exe（官方 7-Zip 命令行工具，1.2 MB）
        用于解压 BGI 更新包：519MB/2244 文件实测 5.3 秒。
        把它作为独立文件放在 exe 旁边，用户不需要装 7-Zip。 -->
   <Target Name="Copy7zaToOutput" AfterTargets="AfterBuild">
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\7za\7za.exe"
-          DestinationFolder="$(TargetDir)"
-          SkipUnchangedFiles="true"
-          Condition="Exists('$(MSBuildProjectDirectory)\tools\7za\7za.exe')" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\7za\7za.exe" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" Condition="Exists('$(MSBuildProjectDirectory)\tools\7za\7za.exe')" />
   </Target>
 
   <Target Name="Copy7zaToPublish" AfterTargets="Publish">
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\7za\7za.exe"
-          DestinationFolder="$(PublishDir)"
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\7za\7za.exe" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="Exists('$(MSBuildProjectDirectory)\tools\7za\7za.exe')" />
+  </Target>
+
+  <!-- ★ Broker 独立安装器：必须作为**独立文件**放到 exe 旁边的 tools\ 目录。
+       用户实测：点「安装 / 修复服务」报「找不到独立安装器」。
+
+       ★ 为什么必须用 Target 复制，而不是 None/Content 项：
+         单文件发布（PublishSingleFile）会把带 CopyToPublishDirectory 的
+         托管程序集**合并进 exe**。实测：加 None 项后 exe 从 67MB 涨到 97.9MB，
+         而程序是在 exe 旁的 tools 目录里找它 —— 打进去等于没放。
+         Target 是构建结束后直接复制文件，不参与打包决策。
+
+       ★ 条件：文件不存在时跳过（35MB 二进制不在 Git 里，clone 后可能没有）。 -->
+  <Target Name="CopyBrokerSetupToOutput" AfterTargets="AfterBuild">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe"
+          DestinationFolder="$(TargetDir)tools"
           SkipUnchangedFiles="true"
-          Condition="Exists('$(MSBuildProjectDirectory)\tools\7za\7za.exe')" />
+          Condition="Exists('$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe')" />
+  </Target>
+
+  <Target Name="CopyBrokerSetupToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe"
+          DestinationFolder="$(PublishDir)tools"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe')" />
   </Target>
 </Project>
 

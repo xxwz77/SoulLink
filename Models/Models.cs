@@ -326,6 +326,21 @@ namespace SoulLink.Models
         public string LastExportPath { get; set; } = "";
         /// <summary>自动化编辑器首次打开时显示引导动画；用户勾选“不再弹出”后置为 false。</summary>
         public bool ShowFlowGuide { get; set; } = true;
+        public bool UseBrokerChannel { get; set; }
+
+        /// <summary>
+        /// 手动代理模式。
+        ///
+        /// ★ 语义：完全不自动投送，只在本机建好管道等待用户手动启动代理。
+        ///   开启时：停止本账号的自动投送、清理该会话已有的自动代理、建立监听。
+        ///   关闭时：撤销监听，恢复自动投送。
+        ///   程序启动时读取此开关；开着就直接进入等待状态，不投送任何东西。
+        ///
+        /// ★ 为什么做成显式开关而不是"检测有没有手动代理"：
+        ///   手动代理和自动代理同名同进程，靠进程/命令行反推既不可靠也很难解释。
+        ///   开关是用户明确声明的状态，逻辑简单、可预期。
+        /// </summary>
+        public bool ManualAgentMode { get; set; }
 
         // ── 开机自启 ────────────────────────────────────────────────────
         /// <summary>
@@ -409,6 +424,59 @@ namespace SoulLink.Models
         public bool RdpCaptureOnClick { get; set; } = false;
 
         /// <summary>
+        /// 界面动效档位（性能 vs 观感）。
+        ///
+        /// ★ 实测（本机 2026-11-20，无 RDP 画面、仅主窗口）：
+        ///   · 动态背景（梦幻星海）单独约占 61 个单核百分点
+        ///     —— 每 33ms 全量重绘 3×24 层丝带 + 76 粒子 + 轨道系统；
+        ///   · 呼吸灯（GlowDot）单独约占 27 个单核百分点
+        ///     —— 每 60ms InvalidateVisual，且旧实现每次都新建渐变画刷。
+        ///
+        ///   三档含义见 <see cref="EffectTierLevel"/>。
+        ///   默认「中」：保留呼吸灯、关掉动态背景，视觉损失小、收益大。
+        ///   另外动画在**窗口失焦时一律暂停**，所以挂机场景即使选「高」也会自动降下来。
+        /// </summary>
+        public int EffectTier { get; set; } = 1;
+
+        /// <summary>兼容旧配置：早期只有一个 AnimateBackdrop 布尔开关。</summary>
+        public bool? AnimateBackdrop { get; set; }
+
+        /// <summary>
+        /// 档位 → 行为。集中在这里判断，避免各处散落魔法数字。
+        /// </summary>
+        public static class EffectTierLevel
+        {
+            /// <summary>高：全部保留。</summary>
+            public const int High = 0;
+            /// <summary>中：关动态背景，保留呼吸灯（默认，推荐）。</summary>
+            public const int Medium = 1;
+            /// <summary>低：全部静止。</summary>
+            public const int Low = 2;
+
+            /// <summary>是否播放动态背景。</summary>
+            public static bool Backdrop(int tier) => tier <= High;
+
+            /// <summary>呼吸灯是否脉冲（低档时保持静态点亮）。</summary>
+            public static bool GlowPulse(int tier) => tier <= Medium;
+        }
+
+        /// <summary>
+        /// 保护层边框颜色（#AARRGGBB）：锁定态时框住 RDP 画布的那个框。
+        ///
+        /// ★ 为什么是高亮边框而不是画面上的半透明覆盖层：
+        ///   覆盖层是独立的分层窗口（AllowsTransparency=True = WS_EX_LAYERED），
+        ///   压到 mstscax 的 DirectComposition 表面上会让那块区域退出硬件合成、
+        ///   变成纯黑（2026-11-19 已定论）。而边框是主窗口内部的 WPF Border，
+        ///   和 RDP 共用同一个重定向表面，不产生新的合成层，所以安全。
+        ///
+        /// 空字符串 = 用主题默认色（焦点紫）。
+        /// </summary>
+        public string ShieldBorderColor { get; set; } = "";
+
+        /// <summary>RDP 焦点边框粗细（DIP）。0 = 不画高亮（保留 1px 极淡边界）。</summary>
+        public double ShieldBorderThickness { get; set; } = 2.0;
+
+        /// <summary>
         /// 画面区排列：0=单个（只显示焦点画面）1=双列（可滚动浏览）2=网格（等分）。
         /// ★ 只影响"怎么摆"，不影响远端分辨率——缩放模式在连接时就已确定。
         /// </summary>
@@ -420,6 +488,140 @@ namespace SoulLink.Models
         /// </summary>
         public System.Collections.Generic.List<string> RdpViewOrder { get; set; }
             = new System.Collections.Generic.List<string>();
+
+        /// <summary>
+        /// 旧版单目标字段（2.14.0 只有它）。
+        /// ★ 仅为兼容旧配置保留：加载时会迁移进 <see cref="RouteUpdate"/>.Targets。
+        ///   新代码不要再读写它。
+        /// </summary>
+        public string RouteUpdatePath { get; set; } = "";
+
+        /// <summary>路线更新的云端地址、多目标与定时设置。</summary>
+        public RouteUpdateSettings RouteUpdate { get; set; } = new RouteUpdateSettings();
+    }
+
+    /// <summary>一个路线更新目标（通常是某个账号的 AutoPathing 目录）。</summary>
+    public class RouteUpdateTarget
+    {
+        /// <summary>路线库根目录，包内第一层文件夹直接落在这里。</summary>
+        public string Path { get; set; } = "";
+
+        /// <summary>本目标是否参与更新（界面上打勾）。</summary>
+        public bool Enabled { get; set; } = true;
+    }
+
+    /// <summary>
+    /// 路线更新设置。
+    ///
+    /// ★ 语义：这是**路线库的根目录**，压缩包里的"第一层文件夹"直接落在这里。
+    ///   BetterGI 的路线实际位于 &lt;BGI 目录&gt;\User\AutoPathing，
+    ///   例如包内是「CD采集路线\12小时狗粮\…」，更新后就是
+    ///   &lt;目标根目录&gt;\CD采集路线\12小时狗粮\…，
+    ///   只删除同名的第一层文件夹，其余文件夹和文件一律不动。
+    /// </summary>
+    public class RouteUpdateSettings
+    {
+        /// <summary>更新目标列表（每个账号一行，可勾选）。</summary>
+        public List<RouteUpdateTarget> Targets { get; set; } = new List<RouteUpdateTarget>();
+
+        /// <summary>
+        /// 官方默认更新源（清单地址）。
+        /// ★ 用途：用户没改过设置时自动使用它；界面上**绝不显示**这个地址。
+        /// </summary>
+        public const string DefaultCloudUrl = "https://cdn.example.invalid/pathing/update.txt";
+
+        /// <summary>
+        /// 云端地址：清单或压缩包地址。
+        /// ★ 界面不提供输入框、不显示地址。
+        /// ★ 不写进配置文件（[JsonIgnore]）：免得用户打开 config.json 就看到服务器地址，
+        ///   每次从默认源取。
+        /// </summary>
+        [JsonIgnore]
+        public string CloudUrl { get; set; } = DefaultCloudUrl;
+
+        /// <summary>
+        /// 实际使用的云端地址：用户没配置过就用默认源。
+        /// ★ [JsonIgnore]：这是计算属性，不参与序列化 ——
+        ///   漏了它会让默认地址被写进 config.json（实测踩到）。
+        /// </summary>
+        [JsonIgnore]
+        public string EffectiveCloudUrl =>
+            string.IsNullOrWhiteSpace(CloudUrl) ? DefaultCloudUrl : CloudUrl.Trim();
+
+        /// <summary>
+        /// 云端清单里当前包的版本标识。
+        /// ★ 存文件指纹（大小+哈希）而不是清单里写的原始包名 ——
+        ///   包名会暴露服务器的文件命名，用户要求界面上绝不出现。
+        /// </summary>
+        public string CloudVersion { get; set; } = "";
+
+        /// <summary>上次成功更新时的版本指纹。与 CloudVersion 相同 = 无更新，跳过。</summary>
+        public string LastAppliedVersion { get; set; } = "";
+
+        /// <summary>
+        /// 本地保留的历史包数量（含当前）。超过就删最旧的。
+        /// </summary>
+        public int KeepArchives { get; set; } = 3;
+
+        /// <summary>
+        /// 本地路线包路径（上一个选中的包，方便重复使用）。
+        /// ★ 与云端地址同时存在时：**本地包优先**，只有本地留空才去下载。
+        /// </summary>
+        public string LocalArchive { get; set; } = "";
+
+        /// <summary>替换前是否把旧文件夹移入备份目录。</summary>
+        public bool BackupBeforeReplace { get; set; } = true;
+
+        /// <summary>定时更新计划（复用动作的 ScheduleSpec 与 ScheduleCalculator）。</summary>
+        public ScheduleSpec Schedule { get; set; } = new ScheduleSpec();
+
+        /// <summary>上次执行时间与结果，用于界面显示。</summary>
+        public DateTime? LastRunAt { get; set; }
+        public string LastResult { get; set; } = "";
+
+        /// <summary>
+        /// 把旧的单目标字段迁移进 Targets。
+        /// 返回 true 表示配置发生了迁移（调用方据此决定是否保存）。
+        /// </summary>
+        public bool MigrateFromLegacy(AppSettings settings)
+        {
+            if (settings == null) return false;
+
+            bool changed = false;
+            if (Targets == null) { Targets = new List<RouteUpdateTarget>(); changed = true; }
+
+            string legacy = settings.RouteUpdatePath ?? "";
+            if (Targets.Count == 0 && legacy.Trim().Length > 0)
+            {
+                Targets.Add(new RouteUpdateTarget { Path = legacy.Trim(), Enabled = true });
+                changed = true;
+            }
+
+            if (Schedule == null) { Schedule = new ScheduleSpec(); changed = true; }
+            if (Targets.FindAll(t => t == null).Count > 0)
+            {
+                Targets.RemoveAll(t => t == null);
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        /// <summary>参与更新的目标（去重、去掉空路径，保持顺序）。</summary>
+        public List<string> ActiveTargets()
+        {
+            var list = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in Targets ?? new List<RouteUpdateTarget>())
+            {
+                if (t == null || !t.Enabled) continue;
+                string p = (t.Path ?? "").Trim().Trim('"');
+                if (p.Length == 0) continue;
+                if (!seen.Add(p)) continue;
+                list.Add(p);
+            }
+            return list;
+        }
     }
 
     public class AutomationProfile

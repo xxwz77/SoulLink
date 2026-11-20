@@ -105,7 +105,7 @@
                     </StackPanel>
                 </StackPanel>
 
-                <Border Grid.Row="2" CornerRadius="13" Background="#33000000" BorderBrush="#26FFFFFF" BorderThickness="1"
+                <Border Grid.Row="2" CornerRadius="13" Background="{DynamicResource FieldBackground}" BorderBrush="#26FFFFFF" BorderThickness="1"
                         Margin="0,14,0,0" Padding="12,10">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <TextBlock x:Name="OutputText" Text="等待执行…" Style="{StaticResource Mono}"
@@ -117,7 +117,7 @@
                     <StackPanel>
                         <TextBlock Text="提示" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource CyanBrush}" />
                         <TextBlock Text="把这个 exe 丢进计划任务、开机脚本或其它程序里调用都可以；同一时刻只会有一个常驻实例，重复调用会自动转交给它处理。"
-                                   FontSize="11" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                                   FontSize="11" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,5,0,0" />
                     </StackPanel>
                 </Border>
             </Grid>

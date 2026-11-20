@@ -97,7 +97,10 @@ namespace SoulLink.Services
         }
 
         private static bool IsFlag(string key) =>
-            key.Equals("quiet", StringComparison.OrdinalIgnoreCase) || key.Equals("help", StringComparison.OrdinalIgnoreCase);
+            key.Equals("quiet", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("help", StringComparison.OrdinalIgnoreCase)
+            // 纯诊断开关：不消费下一个参数，也不该让进程进入"命令模式"。
+            || key.Equals("verbose-log", StringComparison.OrdinalIgnoreCase);
 
         private static bool IsValueOption(string key) =>
             ValueOptions.Contains(key.ToLowerInvariant());
