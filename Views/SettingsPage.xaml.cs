@@ -540,6 +540,9 @@ namespace SoulLink.Views
                 App.Config.Settings.EffectTier = tier;
                 EffectTierHint.Text = DescribeTier(tier);
                 ConfigStore.Save(App.Config);
+                // ★ 2.17.47：CardShadow 现在跟随档位（低档关闭），
+                //   必须重新 Apply 一次主题才能让资源生效。
+                ThemeManager.Apply();
                 ThemeManager.RefreshEffects();
             }
             catch (Exception ex) { LogBus.Warn("切换界面动效档位失败", ex.Message); }
@@ -548,7 +551,7 @@ namespace SoulLink.Views
         private static string DescribeTier(int tier) => tier switch
         {
             0 => "完整动效：动态背景 + 呼吸灯。实测窗口在前台时约占 1 个核心；失去焦点后自动暂停。",
-            2 => "全部静止：无动态背景、呼吸灯保持常亮。挂机最省电，实测约 22 个单核百分点。",
+            2 => "全部静止：无动态背景、呼吸灯常亮、卡片阴影关闭。挂机最省电。",
             _ => "推荐档位：关闭动态背景，保留呼吸灯。外观接近原版，开销明显低于「高」。"
         };
 

@@ -108,12 +108,46 @@ namespace SoulLink.Services
                 (IsDark?Color.FromArgb(102,231,213,255):Color.FromArgb(140,155,122,191),0),
                 (IsDark?Color.FromArgb(36,255,255,255):Color.FromArgb(65,133,108,176),.45),
                 (IsDark?Color.FromArgb(18,255,255,255):Color.FromArgb(50,128,161,188),1));
-            styles["CardShadow"] = new DropShadowEffect
-            {
-                Color=IsDark?Color.FromRgb(2,4,10):Color.FromRgb(102,80,140),
-                Opacity=IsDark?.55:.20, ShadowDepth=IsDark?10:5,
-                BlurRadius=34, Direction=270
-            };
+            // ★★ 2.17.47：卡片阴影改为按【档位 + 主题】决定。★★
+            //
+            //   实测（ETW + Microsoft 符号 + 二分，2560×1368、LaunchPage、12 秒稳态）：
+            //     · 保留 CardShadow（DropShadowEffect BlurRadius=34）：52.5% 单核
+            //     · 关闭阴影：                                       38.2% 单核
+            //     → 阴影单独占约 14 个单核百分点。
+            //   热点函数是 CHwRasterizer::RasterizeEdges —— WPF 的 Effect 全部在
+            //   CPU 上算高斯模糊，卡片内容一变就整块重算。
+            //
+            //   视觉验证（像素级 diff，放大 6 倍）：
+            //     · 深色主题 #02040A/55% 叠在 #090919 上 —— 卡片轮廓完全看不出来，
+            //       这 14 个点是纯浪费，关闭零视觉损失。
+            //     · 亮色主题 #6650508C/20% 叠在 #FBF7FE 上 —— 可见（轻微紫晕），保留。
+            //
+            //   最终策略（用户选定）：
+            //     低档（EffectTier=2）→ 一律关闭。选低档就是要性能。
+            //     中/高档           → 亮色保留（缩小模糊半径）；深色仍关闭。
+            int shadowTier = App.Config?.Settings?.EffectTier ?? 1;
+            bool shadowOn = shadowTier <= Models.AppSettings.EffectTierLevel.Medium && !IsDark;
+
+            styles["CardShadow"] = shadowOn
+                ? new DropShadowEffect
+                {
+                    Color = Color.FromRgb(102, 80, 140),
+                    Opacity = .20,
+                    ShadowDepth = 5,
+                    // 34 → 20：模糊半径决定 CPU 光栅化面积（半径² 量级）。
+                    // 亮色下 20 与 34 视觉几乎无差（阴影本就只有 20% 不透明度）。
+                    BlurRadius = 20,
+                    Direction = 270
+                }
+                : new DropShadowEffect
+                {
+                    // 等效于「没有阴影」：不参与任何光栅化预算
+                    Color = Colors.Transparent,
+                    Opacity = 0,
+                    ShadowDepth = 0,
+                    BlurRadius = 0,
+                    Direction = 270
+                };
             styles["AccentGradient"] = Gradient(new Point(0,0),new Point(1,1),
                 (IsDark?Color.FromRgb(146,112,240):Color.FromRgb(157,119,204),0),
                 (IsDark?Color.FromRgb(118,206,241):Color.FromRgb(108,160,206),.55),

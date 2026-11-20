@@ -6,7 +6,7 @@
         Title="SoulLink · 跨会话执行器"
         Width="1240" Height="820" MinWidth="1040" MinHeight="700"
         WindowStartupLocation="CenterScreen"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource WindowBackground}"
         ResizeMode="CanResizeWithGrip" UseLayoutRounding="True"
         FontFamily="{StaticResource UiFont}"
         TextOptions.TextFormattingMode="Ideal">
