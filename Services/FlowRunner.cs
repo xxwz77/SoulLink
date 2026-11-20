@@ -298,7 +298,8 @@ namespace SoulLink.Services
                 case FlowNodeType.TrigDogfoodRoute:
                 case FlowNodeType.CondDogfoodRoute:
                 {
-                    var route = BusinessDayData.GetView(accountId, flow.DayBoundaryHour, now).Dogfood.Route;
+                    // ★ 狗粮保持 04:00 业务日（用户确认），数据直接从 AccountState 取。
+                    var route = state?.DogfoodRoute ?? DogfoodEndingRoute.Unknown;
                     return route != DogfoodEndingRoute.Unknown && (route == DogfoodEndingRoute.EndingA) == n.GetBool("expectA", false);
                 }
                 case FlowNodeType.CondBgiRunning: return state != null && (state.BgiRunning == n.GetBool("expect", true));
@@ -316,7 +317,9 @@ namespace SoulLink.Services
                 case FlowNodeType.CondLogContains:
                 case FlowNodeType.CondLogMissing:
                 {
-                    string text = BusinessDayData.GetView(accountId, flow.DayBoundaryHour, now).RecentLog;
+                    // ★ 统一从 BgiLogCenter 的尾窗取原文（唯一保留原文的地方）。
+                    //   未绑定 BGI 路径 → 没有数据 → 条件不满足（编辑器里已不列出这类账号）。
+                    string text = state?.RecentLog ?? "";
                     int within = Math.Max(1, n.GetInt("withinSeconds", n.Type == FlowNodeType.TrigLogMatch ? 10 : 120));
                     if (text.Length == 0 || !PlcLogMatcher.ValidPattern(n.Get("pattern"), n.GetBool("isRegex", false))) return new PlcSignal(false,false);
                     bool hit = PlcLogMatcher.Contains(text, n.Get("pattern"), n.GetBool("isRegex", false), n.Get("level"), within, now);
@@ -324,7 +327,7 @@ namespace SoulLink.Services
                 }
                 case FlowNodeType.CondLogHasError:
                 {
-                    string text = BusinessDayData.GetView(accountId, flow.DayBoundaryHour, now).RecentLog;
+                    string text = state?.RecentLog ?? "";
                     return PlcLogMatcher.HasError(text, Math.Max(1, n.GetInt("withinSeconds", 300)), now);
                 }
                 case FlowNodeType.CondProcessExists:
@@ -376,7 +379,10 @@ namespace SoulLink.Services
         {
             string expect = n.Get("expect", "finished");
             if (state == null || n.Get("group").Length == 0) return false;
-            var value = BusinessDayData.GetView(accountId, flow.DayBoundaryHour, now).Groups.Get(n.Get("group"))?.State ?? ScriptGroupState.Never;
+            // ★ 配置组状态来自 BgiLogCenter 快照（只读列表，不再每次重建投影）。
+            string name = n.Get("group");
+            var hit = state.Groups.FirstOrDefault(g => string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase));
+            var value = hit?.State ?? ScriptGroupState.Never;
             return expect switch { "never" => value == ScriptGroupState.Never, "running" => value == ScriptGroupState.Running,
                 "finished" or "done" => value == ScriptGroupState.Finished,
                 "failed" => value == ScriptGroupState.Failed || value == ScriptGroupState.Cancelled || value == ScriptGroupState.Interrupted, _ => false };

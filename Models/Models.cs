@@ -389,6 +389,18 @@ namespace SoulLink.Models
             = new System.Collections.Generic.List<string>();
 
         /// <summary>
+        /// 「自动绑定 → 手动绑定」的一次性迁移已完成。
+        ///
+        /// ★ 为什么需要：2.17.44 及更早的 <c>BgiPathResolver.Resolve</c> 会在
+        ///   <c>persist:true</c> 时把自动探测到的路径写进 <see cref="BgiPaths"/>，
+        ///   使"用户是否显式绑定过"无法判断。2.17.45 起只有 <c>Pin()</c> 能写，
+        ///   并且启动时按「路径存在且该 BGI 正在运行」补一次绑定，避免
+        ///   升级后所有账号突然变成"未绑定"导致数据不再刷新。
+        /// ★ 迁移只做一次；之后绑定完全由用户在设置页点按钮决定。
+        /// </summary>
+        public bool BgiMigrated { get; set; }
+
+        /// <summary>
         /// 联机大厅服务端地址（例如 http://121.4.78.52:45080）。
         /// 空 = 用默认地址。
         /// </summary>

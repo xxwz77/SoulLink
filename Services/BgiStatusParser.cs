@@ -91,6 +91,16 @@ namespace SoulLink.Services
         /// </summary>
         public bool RoundRunning { get; set; }
 
+        /// <summary>
+        /// 最近一次判定为"停止"的时间；MinValue = 从未停止。
+        /// ★ 日志出现 <see cref="Stopped"/> 锚点即置位，界面据此显示"已停止"
+        ///   而不是继续挂着上一个配置组名。
+        /// </summary>
+        public DateTime StoppedAt { get; set; } = DateTime.MinValue;
+
+        /// <summary>是否处于停止状态（用于界面判断是否还展示运行中信息）。</summary>
+        public bool Stopped => StoppedAt != DateTime.MinValue;
+
         /// <summary>全天分组拾取的展示文字（多行）。</summary>
         public string DailyByGroupDisplay
         {
@@ -547,7 +557,31 @@ namespace SoulLink.Services
                         if (tm.Success) { Team = tm.Groups["v"].Value; matched = true; }
                     }
 
-                    // ⑦ 每日报错计数（按行统计，与状态解析互不影响）
+                    // ⑦ 停止判定：脚本停了就不再显示"当前配置组/任务/路线"。
+                    //   用户要求：日志出现停止即判为停止，不再保留运行状态。
+                    //   锚点与 BgiLogCenter.RxStopped 保持一致。
+                    if (line.IndexOf("停止快捷键", StringComparison.Ordinal) >= 0
+                        && line.IndexOf("按下", StringComparison.Ordinal) >= 0
+                        || line.IndexOf("停止当前执行任务", StringComparison.Ordinal) >= 0
+                        || line.IndexOf("任务已停止", StringComparison.Ordinal) >= 0
+                        || line.IndexOf("→ \"任务结束\"", StringComparison.Ordinal) >= 0
+                        || line.IndexOf("取消执行配置组", StringComparison.Ordinal) >= 0
+                        || (line.IndexOf("配置组 \"", StringComparison.Ordinal) >= 0
+                            && (line.IndexOf("执行结束", StringComparison.Ordinal) >= 0
+                                || line.IndexOf("未成功完成", StringComparison.Ordinal) >= 0)))
+                    {
+                        StoppedAt = DateTime.Now;
+                        RoundRunning = false;
+                        TaskName = "";
+                        RouteFile = "";
+                        RouteProgress = "";
+                        RouteEta = "";
+                        RoundRemain = "";
+                        AreaName = "";
+                        PickCount = "";
+                    }
+
+                    // ⑦' 每日报错计数（按行统计，与状态解析互不影响）
                     if (line.IndexOf("[ERR]", StringComparison.Ordinal) >= 0)
                     {
                         ErrorCount++;
@@ -660,6 +694,21 @@ namespace SoulLink.Services
         public void MergeStructuralFrom(BgiStatus other)
         {
             if (other == null) return;
+
+            // ★ 如果对方处于"已停止"状态，只能继承"停在哪"这些静态信息，
+            //   绝不能把轮次 / 角色 / 路线 / 进度一并搬过来——
+            //   那正是"脚本明明停了，总览还挂着第 2/2 轮 · 阿宴"的根因。
+            if (other.Stopped)
+            {
+                StoppedAt = other.StoppedAt;
+                RoundRunning = false;
+                if (string.IsNullOrEmpty(ConfigGroup) && !string.IsNullOrEmpty(other.ConfigGroup))
+                    ConfigGroup = other.ConfigGroup;
+                if (string.IsNullOrEmpty(OneDragonConfig) && !string.IsNullOrEmpty(other.OneDragonConfig))
+                    OneDragonConfig = other.OneDragonConfig;
+                // Round / RoleName / TaskName / RouteFile / AreaName / CurrentAction 一律不继承。
+                return;
+            }
 
             if (string.IsNullOrEmpty(ConfigGroup) && !string.IsNullOrEmpty(other.ConfigGroup))
                 ConfigGroup = other.ConfigGroup;

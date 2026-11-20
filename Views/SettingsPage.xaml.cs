@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using SoulLink.Models;
 using SoulLink.Services;
@@ -138,9 +139,11 @@ namespace SoulLink.Views
 
         // ── BetterGI 路径（每账号一行） ──────────────────────────────────
         //
-        // ★ 唯一数据源：Settings.BgiPaths（用户名 → 路径）。
-        //   留空 = 自动（由 BgiPathResolver 从运行中的进程识别）。
-        //   填了 = 固定使用该值（BgiPinnedUsers 里会记录该用户，自动探测不再覆盖）。
+        // ★ 2.17.45 语义变更（用户要求）：
+        //   只有**已绑定**（BgiPinnedUsers 里存在）的账号才会被读取日志。
+        //   未绑定 = 零 IO，界面显示"未绑定"，日志类条件也不会列出该账号。
+        //   改这个行为的原因：旧版 Resolve(persist:true) 会自动把探测到的路径
+        //   写进 BgiPaths，"用户填没填"根本无法判断（实测 A1/A4 全被污染）。
 
         private void RebuildBgiPathList()
         {
@@ -158,17 +161,18 @@ namespace SoulLink.Views
                 return;
             }
 
-            int auto = 0, manual = 0;
+            int unbound = 0, bound = 0;
             foreach (var a in AccountScope.Accounts(App.Config))
             {
                 bool pinned = BgiPathResolver.IsPinned(a.UserName);
-                if (pinned) manual++; else auto++;
+                if (pinned) bound++; else unbound++;
                 BgiPathList.Children.Add(BuildBgiRow(a, pinned));
             }
 
             if (BgiPathStatus != null)
                 BgiPathStatus.Text = "共 " + AccountScope.Accounts(App.Config).Count + " 个账号："
-                    + manual + " 个手动指定 · " + auto + " 个自动识别";
+                    + bound + " 个已绑定（会读取日志） · " + unbound + " 个未绑定（不读取任何文件）"
+                    + "。未绑定账号在日志类条件里也不会被列出。";
         }
 
         private UIElement BuildBgiRow(Account a, bool pinned)
@@ -196,31 +200,51 @@ namespace SoulLink.Views
             // 路径框
             string saved = "";
             try { App.Config.Settings.BgiPaths.TryGetValue(a.UserName, out saved); } catch { }
+            // ★ 未绑定但配置里还残留旧路径（2.17.44 的 Resolve 自动写入的）：
+            //   显示成灰字提示，不要让它看起来"已经生效"。
             var box = new TextBox
             {
                 Text = saved ?? "",
+                Foreground = pinned ? (Brush)FindResource("TextPrimary")
+                                    : (Brush)FindResource("TextMuted"),
                 Height = 30,
                 Style = (Style)FindResource("InlineTextBox"),
                 VerticalContentAlignment = VerticalAlignment.Center,
                 FontSize = 11,
                 FontFamily = (FontFamily)FindResource("MonoFont"),
-                ToolTip = pinned ? "手动指定：一直使用此路径" : "留空 = 自动从运行中的进程识别",
+                ToolTip = pinned
+                    ? "已绑定：会读取该路径下的 BGI 日志"
+                    : "未绑定：不会读取任何文件。输入路径后回车即可绑定",
                 Tag = a.UserName,
                 Margin = new Thickness(8, 0, 0, 0)
             };
+            // ★ 输入框现在**真的会提交**：回车或失焦即绑定/解绑。
+            //   改造前这个框是死的（没有任何 LostFocus/KeyDown 处理），
+            //   用户打了路径也不生效，只能靠"从进程取"按钮——这也是
+            //   BgiPinnedUsers 一直为空的原因。
+            box.KeyDown += (_, e2) =>
+            {
+                if (e2.Key != Key.Enter) return;
+                CommitBgiPath(a.UserName, box.Text);
+                e2.Handled = true;
+            };
+            box.LostFocus += (_, __) => CommitBgiPath(a.UserName, box.Text);
+
             Grid.SetColumn(box, 1);
             grid.Children.Add(box);
 
-            // 状态
+            // 状态：只有"已绑定/未绑定"两种，因为**只有绑定的账号才会被读日志**。
+            // ★ 原来的"手动/自动/记忆"三态让用户以为自动识别也能读日志，
+            //   而实际门禁只看 BgiPinnedUsers（见 BgiPathResolver.GetBoundPath）。
             var state = new TextBlock
             {
-                Text = pinned ? "手动" : (string.IsNullOrWhiteSpace(saved) ? "自动" : "记忆"),
+                Text = pinned ? "已绑定" : "未绑定",
                 FontSize = 10,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(8, 0, 0, 0),
                 Foreground = pinned
                     ? new SolidColorBrush(Color.FromRgb(0x7C, 0x5C, 0xFF))
-                    : (Brush)FindResource("TextMuted")
+                    : new SolidColorBrush(Color.FromRgb(0xFF, 0xB4, 0x7A))
             };
             Grid.SetColumn(state, 2);
             grid.Children.Add(state);
@@ -239,23 +263,68 @@ namespace SoulLink.Views
             btnProbe.Click += BgiProbe_Click;
             ops.Children.Add(btnProbe);
 
-            var btnClear = new Button
+            // ★ 2.17.45：去掉了「自动」按钮。
+            //
+            //   那个按钮原本是"清除手动指定，恢复自动识别"，但改造后
+            //   **不存在"自动识别"这条路径** —— 未绑定就是零 IO、不读日志。
+            //   留着它会让用户以为点一下就会自动恢复，实际是变成未绑定。
+            //   现在只有两种明确动作：「从进程取」（绑定）和输入框清空（解绑）。
+            if (pinned)
             {
-                Content = "自动",
-                FontSize = 10,
-                Padding = new Thickness(8, 3, 8, 3),
-                Margin = new Thickness(4, 0, 0, 0),
-                Style = (Style)FindResource("GhostButton"),
-                Tag = a.UserName,
-                ToolTip = "清除手动指定，恢复自动识别"
-            };
-            btnClear.Click += BgiClear_Click;
-            ops.Children.Add(btnClear);
+                var btnClear = new Button
+                {
+                    Content = "解绑",
+                    FontSize = 10,
+                    Padding = new Thickness(8, 3, 8, 3),
+                    Margin = new Thickness(4, 0, 0, 0),
+                    Style = (Style)FindResource("GhostButton"),
+                    Tag = a.UserName,
+                    ToolTip = "解除绑定：不再读取该账号的任何日志"
+                };
+                btnClear.Click += BgiClear_Click;
+                ops.Children.Add(btnClear);
+            }
 
             Grid.SetColumn(ops, 3);
             grid.Children.Add(ops);
 
             return grid;
+        }
+
+        /// <summary>
+        /// 提交手动输入的 BGI 路径：空白 = 解绑；有效路径 = 绑定。
+        /// </summary>
+        private void CommitBgiPath(string user, string text)
+        {
+            try
+            {
+                string v = (text ?? "").Trim();
+                if (v.Length == 0)
+                {
+                    BgiPathResolver.Unpin(user);
+                    ConfigStore.Save(App.Config);
+                    BgiDataCenter.Invalidate(user);
+                    RebuildBgiPathList();
+                    if (BgiPathStatus != null) BgiPathStatus.Text = user + "：已解绑（不再读取该账号的日志）";
+                    return;
+                }
+                if (!System.IO.File.Exists(v))
+                {
+                    if (BgiPathStatus != null) BgiPathStatus.Text = user + "：路径不存在 → " + v;
+                    return;
+                }
+                if (BgiPathResolver.IsPinned(user)
+                    && string.Equals(BgiPathResolver.GetBoundPath(user), BgiPathResolver.Normalize(v), StringComparison.OrdinalIgnoreCase))
+                    return;   // 没变化，避免每次失焦都写盘
+
+                BgiDataCenter.SetPath(user, v);   // 内部会 Pin + 保存 + 失效缓存
+                RebuildBgiPathList();
+                if (BgiPathStatus != null) BgiPathStatus.Text = user + "：已绑定 → " + v;
+            }
+            catch (Exception ex)
+            {
+                if (BgiPathStatus != null) BgiPathStatus.Text = user + "：绑定失败：" + ex.Message;
+            }
         }
 
         /// <summary>从正在运行的进程读取该账号的 BGI 路径并填入。</summary>
@@ -285,7 +354,7 @@ namespace SoulLink.Views
             finally { b.IsEnabled = true; }
         }
 
-        /// <summary>清除手动指定，恢复自动识别。</summary>
+        /// <summary>解绑：不再读取该账号的任何日志。</summary>
         private void BgiClear_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not Button b || b.Tag is not string user) return;
@@ -294,8 +363,9 @@ namespace SoulLink.Views
                 BgiPathResolver.Unpin(user);
                 try { App.Config.Settings.BgiPaths.Remove(user); } catch { }
                 ConfigStore.Save(App.Config);
+                BgiDataCenter.Invalidate(user);
                 RebuildBgiPathList();
-                if (BgiPathStatus != null) BgiPathStatus.Text = user + "：已恢复自动识别";
+                if (BgiPathStatus != null) BgiPathStatus.Text = user + "：已解绑（不再读取该账号的日志）";
             }
             catch (Exception ex)
             {

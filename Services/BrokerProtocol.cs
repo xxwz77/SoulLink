@@ -226,9 +226,15 @@ namespace SoulLink.Services
             return security;
         }
 
+        /// <summary>
+        /// 测试版与挂机验证版各自的代理管道。身份前缀必须完整匹配，不能因此共用
+        /// 命名管道或放宽会话号 / 随机后缀；其余 nonce 与进程身份校验保持不变。
+        /// </summary>
         public static bool ValidPipeName(string? value) => !string.IsNullOrWhiteSpace(value)
             && value.Length <= 160
-            && System.Text.RegularExpressions.Regex.IsMatch(value, @"^SoulLink_Relay_[1-9][0-9]*_[0-9a-f]{8}$");
+            && System.Text.RegularExpressions.Regex.IsMatch(value,
+                @"^(?:SoulLink|SoulLink-Stable)_Relay_[1-9][0-9]*_[0-9a-f]{8}$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
         /// <summary>缓存的"服务版本是否达标"结果，避免每条请求都读文件。</summary>
         private static bool? _serviceVersionOk;

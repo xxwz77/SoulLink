@@ -82,6 +82,18 @@ namespace SoulLink.Services
                     if (path.Length == 0) r.Issues.Add(new Issue{Node=n,IsError=true,Message="「"+n.Title+"」找不到目标账号 BGI 路径",Target="bgi"});
                     else if (!System.IO.File.Exists(path)) r.Issues.Add(new Issue{Node=n,IsError=true,Message="「"+n.Title+"」BGI 路径不存在："+path,Target="bgi"});
                 }
+                // ★ 依赖日志数据的节点：账号未绑定 BGI 路径时直接判校验失败。
+                //   用户要求「使用日志判断的直接不显示未绑定的用户」；
+                //   已存在的旧流程若还指着未绑定账号，这里给出明确错误，
+                //   避免运行时静默 return false 让用户以为自动化坏了。
+                if (cfg != null && BgiDataDependency.NeedsBoundBgi(n.Type)
+                    && !BgiDataDependency.IsSatisfied(n, flow, cfg))
+                {
+                    string u = BgiDataDependency.EffectiveUser(n, flow, cfg);
+                    Field(n, "user", "「" + n.Title + "」的目标账号"
+                        + (u.Length == 0 ? "（流程账号）" : "「" + u + "」")
+                        + " 未绑定 BGI 路径，拿不到日志数据");
+                }
                 if (n.Type == FlowNodeType.ActRunAction && cfg != null && !cfg.Actions.Any(a=>a.Id==n.Get("actionId"))) Field(n,"actionId","快捷动作不存在");
             }
             if (HasCycle(flow)) Error(null,"连线形成循环，请改成从上到下依次执行");

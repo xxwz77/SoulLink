@@ -134,6 +134,12 @@ namespace SoulLink.Views
             _automationTimer.Tick += (_, __) =>
             {
                 if (!IsVisible) return;
+                // ★ 2.17.45：内容没变就不重建卡片。
+                //   原来每秒无条件 Children.Clear() + 重建全部卡片，
+                //   WPF 每秒都要重新测量/排版/生成字形，即使流程状态一个字都没变。
+                string sig = AutomationSignature();
+                if (sig == _automationSignature) return;
+                _automationSignature = sig;
                 RefreshAutomationList();
             };
             Loaded += (_, __) => _automationTimer?.Start();
@@ -313,6 +319,15 @@ namespace SoulLink.Views
                     DateTime? bgiTime = bgiTimes.TryGetValue(u.Id, out var bt) ? bt : (DateTime?)null;
                     bool hasChannel = channelSessions.Contains(u.Id);
 
+                    // ★ 是否已绑定 BGI 路径。未绑定 → 界面显示「BGI 未绑定」，
+                    //   而不是断言「BGI 未运行」（我们根本没有它的日志路径）。
+                    bool bound = BgiPathResolver.IsPinned(u.UserName);
+
+                    // ★ 停止状态也要传进来，否则右侧会把它显示成"BGI 空闲 N 分钟"。
+                    var stForUser = AccountStateCenter.GetByUser(u.UserName);
+                    var stoppedAt = stForUser?.StoppedAt ?? DateTime.MinValue;
+                    bool groupRunning = (stForUser?.CurrentGroup.Length ?? 0) > 0;
+
                     // 备注名 + 真实大小写：都从账号配置里取
                     string remark = "";
                     string realName = "";
@@ -329,6 +344,9 @@ namespace SoulLink.Views
                         var newVm = new SessionVm(u)
                         {
                             BgiLastWrite = bgiTime,
+                            BgiBound = bound,
+                            BgiStoppedAt = stoppedAt,
+                            BgiGroupRunning = groupRunning,
                             HasChannel = hasChannel
                         };
                         if (hasChannel) newVm.ChannelError = "";
@@ -339,6 +357,9 @@ namespace SoulLink.Views
                     else
                     {
                         exist.BgiLastWrite = bgiTime;
+                        exist.BgiBound = bound;
+                        exist.BgiStoppedAt = stoppedAt;
+                        exist.BgiGroupRunning = groupRunning;
                         if (hasChannel) exist.ChannelError = "";
                         exist.HasChannel = hasChannel;
                         exist.SetRealName(realName);
@@ -478,19 +499,23 @@ namespace SoulLink.Views
             {
                 try
                 {
-                    var bgi = BgiLogWatcher.Discover();
+                    var bgi = BgiLogCenter.SharedInstances();
                     Dispatcher.InvokeAsync(() =>
                     {
                         try
                         {
-                            // ★ 列出**所有**远程账号（主会话除外），
-                            //   没跑 BGI 的也要显示，否则用户看不出"这个号今天没上工"。
-                            //   inst 为 null 表示该会话没有 BetterGI 进程。
+                            // ★ 只列出**已绑定 BGI 路径**的账号（主会话除外）。
+                            //
+                            //   用户要求：未绑定的直接不显示，把空间让出来。
+                            //   这跟"今天没跑过"是两回事 —— 未绑定 = 我们根本没有它的
+                            //   日志路径，列出来只能写个"未绑定"，纯占地方。
+                            //   要看某个未绑定账号，去「设置 → BetterGI 路径」绑定即可。
                             var wanted = new List<(SessionInfo sess, BgiLogWatcher.Instance? inst)>();
                             foreach (var vm in _sessions)
                             {
                                 var s = vm.Session;
                                 if (!AccountScope.Allows(s.UserName)) continue;
+                                if (!BgiPathResolver.IsPinned(s.UserName)) continue;   // ★ 未绑定 → 不显示
                                 bgi.TryGetValue(s.Id, out var inst);
                                 wanted.Add((s, inst));
                             }
@@ -629,14 +654,16 @@ namespace SoulLink.Views
             catch { return ""; }
         }
 
-        /// <summary>更新总览里每个账号的进度文字（读各自日志尾部）。</summary>
+        /// <summary>更新总览里每个账号的进度文字（**只读 BgiLogCenter 快照**）。</summary>
         private void UpdateOverviewTexts()
         {
             _ = Task.Run(() =>
             {
                 try
                 {
-                    var bgi = BgiLogWatcher.Discover();
+                    // ★ 2.17.45：改用 BgiLogCenter 的共享探测结果（2 秒缓存），
+                    //   不再每次自己 Discover()。一次刷新里原来要跑好几遍全进程枚举。
+                    var bgi = BgiLogCenter.SharedInstances();
 
                     // ★ 每次刷新都重算备注名：中控台里改了备注名后，
                     //   卡片不会重建（账号集合没变），必须在更新时同步。
@@ -679,56 +706,27 @@ namespace SoulLink.Views
                             continue;
                         }
 
-                        // ★ 性能优化：原来每次刷新都把整份日志完整读两遍
-                        //   （TailLinesDeep 最多 16MB + CountDailyErrors 扫全文件）。
-                        //   A1 的当天日志有 33MB，每秒刷一次 = 每秒处理几十 MB，
-                        //   日志读取明显卡顿（用户实测）。
+                        // ★ 2.17.45：**不再从磁盘深读 16MB**。
                         //
-                        //   现在按 (文件, 最后写入时间, 长度) 缓存：
-                        //   文件没变就直接复用上次结果，只有真正追加了内容才重新解析。
-                        var fi = new FileInfo(inst.LogFile);
-                        var key = inst.LogFile + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length;
-
-                        StatusCacheEntry entry;
-                        lock (_statusCache)
+                        //   旧实现每轮（2 秒）TailLinesDeep(4000 行 / 16MB) 重新解析一遍，
+                        //   再叠加 CountDailyErrors 全文件扫描 —— 在 A1 满速写日志时
+                        //   这是持续性的大头开销。
+                        //   现在结构性字段（任务名/配置组/路线/轮次）由 BgiLogCenter 的
+                        //   单遍扫描增量维护（它从文件头扫到尾巴，不会漏掉"只在任务开始时
+                        //   写一次"的行），这里只做一次结构拷贝。
+                        string uname0 = row.User.Split('·')[0].Trim();
+                        var snap0 = BgiLogCenter.SnapshotByUser(uname0);
+                        var st0 = new BgiStatus();
+                        if (snap0 != null)
                         {
-                            if (!_statusCache.TryGetValue(inst.LogFile, out entry)
-                                || entry.Key != key)
-                            {
-                                // ★ 深读一段再解析：
-                                //   「开始执行地图追踪任务」这类行只在任务开始时写一次，
-                                //   而 BGI 每秒写 ~11 行，尾部 300 行只覆盖约 30 秒 ——
-                                //   过了这个窗口就永远解析不到任务名/路线，
-                                //   表现就是"路线名显示一下又消失"（用户实测）。
-                                //   这里读 4000 行 / 最多 16MB，与左侧状态面板一致。
-                                var fresh = new BgiStatus();
-                                string text = BgiLogWatcher.TailLinesDeep(
-                                    inst.LogFile, 4000, 16L * 1024 * 1024);
-                                fresh.Update(text);
-
-                                var (errs, warns, fails) = BgiLogWatcher.CountDailyErrors(inst.LogFile);
-                                if (errs > fresh.ErrorCount) fresh.ErrorCount = errs;
-                                if (warns > fresh.WarnCount) fresh.WarnCount = warns;
-                                if (fails > fresh.FailCount) fresh.FailCount = fails;
-
-                                // ★ 兜底：如果这次没解析到任务/路线，沿用该文件上一次解析到的结构字段。
-                                //   日志滚出深读窗口后仍能保持显示，不会"闪一下就没了"。
-                                lock (_statusCache)
-                                {
-                                    if (_structCache.TryGetValue(inst.LogFile, out var prev) && prev != null)
-                                        fresh.MergeStructuralFrom(prev);
-                                }
-                                var keep = new BgiStatus();
-                                keep.MergeStructuralFrom(fresh);
-                                lock (_statusCache) _structCache[inst.LogFile] = keep;
-
-                                entry = new StatusCacheEntry { Key = key, Status = fresh };
-                                _statusCache[inst.LogFile] = entry;
-                            }
+                            st0.MergeStructuralFrom(snap0.Status);
+                            st0.ErrorCount = snap0.ErrorCount;
+                            st0.WarnCount = snap0.WarnCount;
+                            st0.FailCount = snap0.FailCount;
+                            if (snap0.CurrentGroup.Length > 0)
+                            { st0.ConfigGroup = snap0.CurrentGroup; st0.PicksRoute = snap0.CurrentGroup; }
                         }
-
-                        var st = entry.Status;
-                        results.Add((row, st, true, true));
+                        results.Add((row, st0, true, true));
                     }
 
                     Dispatcher.InvokeAsync(() =>
@@ -740,31 +738,46 @@ namespace SoulLink.Views
                                 var accountState = AccountStateCenter.GetByUser(row.User);
                                 if (accountState != null)
                                 {
-                                    var current = accountState.Groups.All().Where(g => g.State == ScriptGroupState.Running)
-                                        .OrderByDescending(g => g.StartedAt).FirstOrDefault()
-                                        ?? accountState.Groups.All().OrderByDescending(g => g.StartedAt).FirstOrDefault();
-                                    if (current != null && current.Name.Length > 0)
+                                    // ★ 当前配置组只认 AccountState.CurrentGroup。
+                                    //   它是"运行中的那个"：出现新的才替换，跨天滚动时继承，
+                                    //   但日志出现停止锚点后立刻清空 —— 停止就是停止，
+                                    //   不再保留运行状态（用户明确要求）。
+                                    string currentName = accountState.CurrentGroup;
+                                    if (currentName.Length > 0)
                                     {
-                                        st.ConfigGroup = current.Name;
-                                        st.PicksRoute = current.Name;
+                                        st.ConfigGroup = currentName;
+                                        st.PicksRoute = currentName;
                                         st.TaskName = "";
                                     }
+                                    else if (accountState.StoppedAt != DateTime.MinValue)
+                                    {
+                                        st.ConfigGroup = "";
+                                    }
                                 }
-                                // ★ 没跑 BGI：分两种说法
-                                //   今天跑过（有当天日志）→ "今天运行过，当前已退出"
-                                //   今天没跑过（无日志）  → "今日还未运行 BetterGI"
+                                // ★ 没跑 BGI：先分**未绑定**和已绑定两种情况。
+                                //
+                                //   未绑定 = 我们根本没有它的日志路径，**什么都不知道**。
+                                //   这时说"今日还未运行 BetterGI / 今天运行过"是在编造结论
+                                //   （实测 A2/A3 从来没绑定过，界面却在断言它们跑没跑）。
+                                //   用户要求：直接显示「BGI 未绑定」。
                                 if (!running)
                                 {
                                     if (row.Line1 != null && row.Line1.Text != row.User)
                                         row.Line1.Text = row.User;
+
+                                    bool bound = accountState?.Bound == true;
                                     if (row.Line2 != null)
                                     {
-                                        string txt = ranToday
-                                            ? "今天运行过，当前已退出"
-                                            : "今日还未运行 BetterGI";
+                                        string txt = !bound
+                                            ? "BGI 未绑定"
+                                            : ranToday ? "今天运行过，当前已退出"
+                                                       : "今日还未运行 BetterGI";
                                         if (row.Line2.Text != txt) row.Line2.Text = txt;
                                         row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
-                                            ranToday
+                                            !bound
+                                                ? (ThemeManager.IsDark ? Color.FromRgb(0xFF, 0xB4, 0x7A)
+                                                                       : Color.FromRgb(0xC0, 0x5A, 0x1E))   // 琥珀：未绑定
+                                            : ranToday
                                                 ? System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B)   // 橙：跑过但退出了
                                                 : ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85)); // 灰：今天没跑
                                         row.Line2.Visibility = Visibility.Visible;
@@ -788,6 +801,37 @@ namespace SoulLink.Views
                                 if (!string.IsNullOrEmpty(group) && group != "—")
                                     head += "  ·  " + group;
                                 if (row.Line1 != null && row.Line1.Text != head) row.Line1.Text = head;
+
+                                // ★ 已停止：BGI 进程还在，但日志里已经出现停止锚点
+                                //   （执行结束 / 未成功完成 / 取消 / 停止快捷键）。
+                                //   这时**不能再显示轮次/角色/路线**——那些是停止前的残留，
+                                //   照抄过来就是"脚本明明停了，卡片还写着第 2/2 轮"。
+                                if (accountState != null
+                                    && accountState.CurrentGroup.Length == 0
+                                    && accountState.StoppedAt != DateTime.MinValue)
+                                {
+                                    if (row.Line1 != null)
+                                    {
+                                        string stoppedHead = row.User + "  ·  已停止";
+                                        if (accountState.LastGroup.Length > 0)
+                                            stoppedHead += "（" + accountState.LastGroup + "）";
+                                        if (row.Line1.Text != stoppedHead) row.Line1.Text = stoppedHead;
+                                    }
+                                    if (row.Line2 != null)
+                                    {
+                                        string txt2 = accountState.StoppedAt.ToString("HH:mm:ss") + " 停止 · BGI 仍在运行";
+                                        if (row.Line2.Text != txt2) row.Line2.Text = txt2;
+                                        row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
+                                            System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B));   // 橙：已停
+                                        row.Line2.Visibility = Visibility.Visible;
+                                    }
+                                    if (row.Line3 != null)
+                                    {
+                                        row.Line3.Text = "";
+                                        row.Line3.Visibility = Visibility.Collapsed;
+                                    }
+                                    continue;
+                                }
 
                                 // ★ 有 BGI 进程，但今天这份日志里没有任何状态信息
                                 //   （刚启动、或还没开始跑任务）→ 也要给个明确说法。
@@ -1137,6 +1181,7 @@ namespace SoulLink.Views
                     // 文件没变 + 跟随器活着 → 不重建
                     if (inst.LogFile == _statusFile && _statusFollower != null)
                     {
+                        _currentStatusUser = user;
                         Dispatcher.InvokeAsync(() => StatusMeta.Text = user + " · 实时跟随中");
                         return;
                     }
@@ -1158,6 +1203,7 @@ namespace SoulLink.Views
                     {
                         StopStatusFollower();             // 内部会把 _statusSessionId/_statusFile 清 0
                         _statusSessionId = sid;           // ★ 清完必须重新写回
+                        _currentStatusUser = user;        // ★ 快照抄取用
                         _statusFile = logFile;            // ★ 同上，用局部变量恢复
                         _bgiStatus = new BgiStatus();
 
@@ -1197,40 +1243,11 @@ namespace SoulLink.Views
                                 initialLines: 400,
                                 deepBackfill: true);   // ★ 状态行可能埋在几十万行之前（实测 20261107）
 
-                            // ★ 每日报错统计：挂上跟随器后，后台扫一遍全天日志。
-                            //   增量解析只能覆盖最近内容，无法回溯全天。
-                            string lf = logFile;
-                            _ = Task.Run(() =>
-                            {
-                                try
-                                {
-                                    var (errs, warns, fails) = BgiLogWatcher.CountDailyErrors(lf);
-                                    // 拾取也要扫全天，并且按配置组分类
-                                    var (byGroup, lastGroup) = BgiLogWatcher.CountDailyPicksByGroup(lf);
-                                    Dispatcher.InvokeAsync(() =>
-                                    {
-                                        _bgiStatus.ErrorCount = errs;
-                                        _bgiStatus.WarnCount = warns;
-                                        _bgiStatus.FailCount = fails;
-
-                                        // 全天分组数据
-                                        _bgiStatus.DailyByGroup.Clear();
-                                        foreach (var g in byGroup)
-                                            _bgiStatus.DailyByGroup[g.Key] = g.Value;
-
-                                        // 本轮 = 最后一个（当前）配置组的拾取
-                                        if (!string.IsNullOrEmpty(lastGroup)
-                                            && byGroup.TryGetValue(lastGroup, out var cur))
-                                        {
-                                            _bgiStatus.RoutePicks.Clear();
-                                            foreach (var kv in cur) _bgiStatus.RoutePicks[kv.Key] = kv.Value;
-                                            _bgiStatus.PicksRoute = lastGroup;
-                                        }
-                                        ApplyStatusToUi();
-                                    });
-                                }
-                                catch { }
-                            });
+                            // ★ 2.17.45：全天报错统计 / 分组拾取**不再各自扫一遍日志**。
+                            //   原来这里额外跑了 CountDailyErrors + CountDailyPicksByGroup
+                            //   两次全文件扫描（各 50MB），而 BgiLogCenter 的单遍流式扫描
+                            //   已经把这两项都算出来了。这里只是抄一次快照。
+                            ApplyCenterSnapshot();
                         }
                         catch (Exception ex)
                         {
@@ -1375,37 +1392,63 @@ namespace SoulLink.Views
             _lastStatusRebuild = DateTime.Now;
             _statusRebuildRunning = true;
 
-            string lf = logFile;
-            _ = Task.Run(() =>
+            // ★ 2.17.45：**不再从磁盘重读 16MB**。
+            //
+            //   旧实现每 3 秒 TailLinesDeep(file, 4000, 16MB)，也就是每次把最多
+            //   16MB 读进来重新解析 —— 在 A1 满速写日志时这是持续性的主要开销之一。
+            //   现在"任务名/配置组/路线"这些结构性字段由 BgiLogCenter 的单遍扫描
+            //   增量维护（它从文件头一路扫到尾巴，永远不会漏掉"只在任务开始时写一次"
+            //   的那些行），这里只做一次快照抄写。
+            _statusRebuildRunning = true;
+            try
             {
-                try
-                {
-                    // 读足够大的一段（16MB 上限），保证能覆盖任务开始那几行
-                    string text = BgiLogWatcher.TailLinesDeep(lf, 4000, 16L * 1024 * 1024);
-                    if (string.IsNullOrEmpty(text)) return;
-
-                    var fresh = new BgiStatus();
-                    fresh.Update(text);
-
-                    Dispatcher.InvokeAsync(() =>
-                    {
-                        try
-                        {
-                            // 换个账号了就别写回去
-                            if (!string.Equals(_statusFile, lf, StringComparison.OrdinalIgnoreCase)) return;
-
-                            // ★ 只补齐"结构性"字段（配置组/任务名/一条龙/轮次/路线），
-                            //   拾取与报错统计由别的流程维护，避免互相覆盖。
-                            _bgiStatus.MergeStructuralFrom(fresh);
-                            ApplyStatusToUi();
-                        }
-                        catch { }
-                    });
-                }
-                catch { }
-                finally { _statusRebuildRunning = false; }
-            });
+                ApplyCenterSnapshot();
+            }
+            finally { _statusRebuildRunning = false; }
         }
+
+        /// <summary>
+        /// 把 BgiLogCenter 快照里的"全天"统计抄到界面状态上。
+        /// ★ 只有一个数据源：报错计数 / 分组拾取 / 当前配置组 / 今日累计，
+        ///   全部来自那一次单遍流式扫描，界面不再自己读文件。
+        /// </summary>
+        private void ApplyCenterSnapshot()
+        {
+            try
+            {
+                var st = AccountStateCenter.GetByUser(_currentStatusUser);
+                if (st == null) return;
+
+                _bgiStatus.ErrorCount = st.ErrorCount;
+                _bgiStatus.WarnCount = st.WarnCount;
+                _bgiStatus.FailCount = st.FailCount;
+
+                var snap = BgiLogCenter.Snapshot(st.AccountId);
+                if (snap != null)
+                {
+                    _bgiStatus.DailyByGroup.Clear();
+                    foreach (var g in snap.PicksByGroup)
+                        _bgiStatus.DailyByGroup[g.Key] = new System.Collections.Generic.Dictionary<string, int>(
+                            g.Value, StringComparer.OrdinalIgnoreCase);
+
+                    if (snap.CurrentGroup.Length > 0)
+                    {
+                        _bgiStatus.ConfigGroup = snap.CurrentGroup;
+                        _bgiStatus.PicksRoute = snap.CurrentGroup;
+                        if (snap.PicksByGroup.TryGetValue(snap.CurrentGroup, out var cur))
+                        {
+                            _bgiStatus.RoutePicks.Clear();
+                            foreach (var kv in cur) _bgiStatus.RoutePicks[kv.Key] = kv.Value;
+                        }
+                    }
+                }
+                ApplyStatusToUi();
+            }
+            catch { }
+        }
+
+        /// <summary>当前状态面板对应的用户名。</summary>
+        private string _currentStatusUser = "";
 
         private void ApplyStatusToUi()
         {
@@ -1415,11 +1458,9 @@ namespace SoulLink.Views
                 if (currentState != null)
                 {
                     var accountState = AccountStateCenter.GetByUser(currentState.UserName);
-                    var current = accountState?.Groups.All().Where(g => g.State == ScriptGroupState.Running)
-                        .OrderByDescending(g => g.StartedAt).FirstOrDefault()
-                        ?? accountState?.Groups.All().OrderByDescending(g => g.StartedAt).FirstOrDefault();
-                    if (current != null && current.Name.Length > 0)
-                    { _bgiStatus.ConfigGroup = current.Name; _bgiStatus.PicksRoute = current.Name; _bgiStatus.TaskName = ""; }
+                    string currentName = accountState?.CurrentGroup ?? "";
+                    if (currentName.Length > 0)
+                    { _bgiStatus.ConfigGroup = currentName; _bgiStatus.PicksRoute = currentName; _bgiStatus.TaskName = ""; }
                 }
                 if (!_bgiStatus.HasData)
                 {
@@ -1444,11 +1485,31 @@ namespace SoulLink.Views
                 //   有轮次 → "配置组 / 第 2/3 轮 · 思 / 路线"
                 //   无轮次 → "每日采集 / 每日采集 / 03-霜仙花… 共1440条"
                 //   一条龙 → "灭绝提瓦特 / 灭绝提瓦特 / 一条龙：灭绝提瓦特"
-                SetText(StatusGroup, _bgiStatus.GroupDisplay);
-                SetText(StatusRound, string.IsNullOrWhiteSpace(_bgiStatus.SafeRoundDisplay)
-                    ? "—" : _bgiStatus.SafeRoundDisplay);
-                SetText(StatusRoute, _bgiStatus.RouteDisplay);
-                SetText(StatusEta, _bgiStatus.EtaDisplay);
+                // ★ 停止优先：日志里已经出现停止锚点（执行结束 / 未成功完成 /
+                //   取消 / 停止快捷键 F12）时，不再显示"当前配置组"，
+                //   直接写明已停止 + 停的是哪个组（用户要求不再保留运行状态）。
+                var stStop = AccountStateCenter.GetByUser(_currentStatusUser);
+                bool stopped = stStop != null && stStop.StoppedAt != DateTime.MinValue
+                               && stStop.CurrentGroup.Length == 0;
+
+                if (stopped)
+                {
+                    SetText(StatusGroup, stStop!.LastGroup.Length > 0
+                        ? "已停止（上一个：" + stStop.LastGroup + "）"
+                        : "已停止");
+                    SetText(StatusRound, "—");
+                    SetText(StatusRoute, "—");
+                    SetText(StatusEta, "脚本已停止 · " + stStop.StoppedAt.ToString("HH:mm:ss")
+                        + (stStop.BgiRunning ? "（BGI 仍在运行）" : "（BGI 已退出）"));
+                }
+                else
+                {
+                    SetText(StatusGroup, _bgiStatus.GroupDisplay);
+                    SetText(StatusRound, string.IsNullOrWhiteSpace(_bgiStatus.SafeRoundDisplay)
+                        ? "—" : _bgiStatus.SafeRoundDisplay);
+                    SetText(StatusRoute, _bgiStatus.RouteDisplay);
+                    SetText(StatusEta, _bgiStatus.EtaDisplay);
+                }
 
                 // 今日报错：只显示错误/失败（纯警告太多，不占版面）
                 if (_bgiStatus.ErrorLevel >= 2)
@@ -1685,6 +1746,34 @@ namespace SoulLink.Views
         // ══════════ 自动化流程 ══════════
 
         /// <summary>刷新当前账号的自动化流程列表。</summary>
+        /// <summary>上一轮自动化卡片的渲染签名。</summary>
+        private string _automationSignature = "";
+
+        /// <summary>
+        /// 压出"卡片上会显示的所有东西"。相同就不必重建视觉树。
+        /// </summary>
+        private string AutomationSignature()
+        {
+            var sb = new System.Text.StringBuilder(256);
+            try
+            {
+                var sess = _logSession;
+                sb.Append(sess?.UserName ?? "").Append('|');
+                if (sess != null)
+                {
+                    foreach (var f in App.Config.Automations)
+                    {
+                        sb.Append(f.Id).Append(f.Enabled ? '1' : '0')
+                          .Append(f.Paused ? 'P' : '-')
+                          .Append(f.LastRunAt?.Ticks ?? 0)
+                          .Append(f.RunDayKey).Append(';');
+                    }
+                }
+            }
+            catch { }
+            return sb.ToString();
+        }
+
         private void RefreshAutomationList()
         {
             try
@@ -2655,6 +2744,19 @@ namespace SoulLink.Views
         public DateTime? BgiLastWrite { get; set; }
 
         /// <summary>
+        /// 该账号是否**已绑定** BGI 路径（由外部填充）。
+        /// ★ 未绑定 = 我们根本没有它的日志路径，连"跑没跑"都不知道，
+        ///   不能说成"BGI 未运行"（那是编造结论）。
+        /// </summary>
+        public bool BgiBound { get; set; }
+
+        /// <summary>最近一次判定为"停止"的时刻（由外部填充）。</summary>
+        public DateTime BgiStoppedAt { get; set; } = DateTime.MinValue;
+
+        /// <summary>当前是否真的有一个配置组在跑（由外部填充）。</summary>
+        public bool BgiGroupRunning { get; set; }
+
+        /// <summary>
         /// BGI 活跃度等级（决定"空闲"文字的颜色）：
         ///   0 = 绿：1 分钟内有日志（脚本正常运行）
         ///   1 = 黄：1~5 分钟无日志（可能卡住或任务间隙较长）
@@ -2666,6 +2768,9 @@ namespace SoulLink.Views
             {
                 // 主会话不参与 BGI 活跃度判断，固定绿色（用户正在操作）
                 if (Session.IsConsoleSession) return 0;
+
+                // ★ 未绑定：不是"异常红"，而是"未知"——用黄色，避免误导成故障。
+                if (!BgiBound) return 1;
 
                 if (BgiLastWrite == null) return 2;                 // 没跑 BGI → 红
                 double mins = (DateTime.Now - BgiLastWrite.Value).TotalMinutes;
@@ -2747,6 +2852,9 @@ namespace SoulLink.Views
             PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasChannel)));
             PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ChannelText)));
             PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ChannelBrush)));
+            // ★ 绑定状态变了也要刷新 BGI 那一行的文字/颜色。
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(BgiText)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(BgiBrush)));
         }
 
         /// <summary>三种状态：就绪 / 未投送 / 投送失败。</summary>
@@ -2788,7 +2896,15 @@ namespace SoulLink.Views
             get
             {
                 if (Session.IsConsoleSession) return "";
+                // ★ 未绑定优先：没绑定就不知道它跑没跑，不能说"未运行"。
+                if (!BgiBound) return "BGI 未绑定";
                 if (BgiLastWrite == null) return "BGI 未运行";
+
+                // ★ 已停止：日志里出现停止锚点后，不能再说"空闲 N 分钟"——
+                //   空闲是"还在跑但没输出"，停止是"根本不在跑"，两者含义完全不同。
+                if (BgiStoppedAt != DateTime.MinValue && BgiGroupRunning == false)
+                    return "BGI 已停止 " + BgiStoppedAt.ToString("HH:mm");
+
                 var span = DateTime.Now - BgiLastWrite.Value;
                 if (span.TotalSeconds < 5) return "BGI 刚活动";
                 if (span.TotalSeconds < 60) return "BGI 空闲 " + (int)span.TotalSeconds + " 秒";

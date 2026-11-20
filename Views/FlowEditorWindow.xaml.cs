@@ -1805,13 +1805,34 @@ namespace SoulLink.Views
                         BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
                         BorderThickness = new Thickness(1)
                     };
-                    combo.Items.Add(new ComboBoxItem { Content = "（本账号）", Tag = "" });
-                    foreach (var a in AccountScope.Accounts(_cfg))
+                    // ★ 用户要求：依赖日志数据的节点，**不列出未绑定 BGI 路径的账号**。
+                    //   否则会出现"能选中、但运行时永远拿不到数据"的静默失配。
+                    bool needsBound = BgiDataDependency.NeedsBoundBgi(node.Type);
+
+                    // 「本账号」= 流程自己绑定的账号；它未绑定时同样不能列。
+                    string selfUser = _account?.UserName ?? "";
+                    bool selfOk = !needsBound || (selfUser.Length > 0 && BgiPathResolver.IsPinned(selfUser));
+                    if (selfOk) combo.Items.Add(new ComboBoxItem { Content = "（本账号）", Tag = "" });
+
+                    var candidates = needsBound ? BgiDataDependency.BoundAccounts(_cfg) : AccountScope.Accounts(_cfg);
+                    foreach (var a in candidates)
                         combo.Items.Add(new ComboBoxItem
                         {
                             Content = a.UserName + (string.IsNullOrWhiteSpace(a.DisplayName) ? "" : "　" + a.DisplayName),
                             Tag = a.UserName
                         });
+
+                    if (needsBound && combo.Items.Count == 0)
+                    {
+                        block.Children.Add(new TextBlock
+                        {
+                            Text = BgiDataDependency.UnboundHint,
+                            FontSize = 10, TextWrapping = TextWrapping.Wrap,
+                            Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xB4, 0x7A)),
+                            Margin = new Thickness(0, 6, 0, 0)
+                        });
+                        break;   // 没有可选账号就不给下拉，避免误操作
+                    }
 
                     string cur = node.Get(p.Key);
                     foreach (ComboBoxItem it in combo.Items)

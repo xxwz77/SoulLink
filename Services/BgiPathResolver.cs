@@ -65,8 +65,50 @@ namespace SoulLink.Services
         /// <param name="userName">Windows 用户名</param>
         /// <param name="sessions">当前会话快照；传 null 则内部自行查询一次</param>
         /// <param name="persist">是否把新发现写回配置对象（不落盘）</param>
+        // ── 解析结果缓存 ────────────────────────────────────────────
+        //
+        // ★ 实测：Resolve 占 UI 相关 CPU 的 3.5%。它被 BgiDataCenter.Get
+        //   在界面刷新里每个账号每 3 秒调一次，而每次都要枚举进程 + 建对象。
+        //   1 秒缓存足够：BGI 的启动/退出本来就是秒级事件。
+        private static readonly object _cacheSync = new object();
+        private static readonly Dictionary<string, (BgiPathInfo Info, DateTime At)> _cache
+            = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(1);
+
+        /// <summary>路径/绑定变化后立刻失效缓存。</summary>
+        public static void InvalidateCache(string? userName = null)
+        {
+            lock (_cacheSync)
+            {
+                if (string.IsNullOrWhiteSpace(userName)) _cache.Clear();
+                else _cache.Remove(userName);
+            }
+        }
+
         public static BgiPathInfo Resolve(string userName,
             List<SessionInfo>? sessions = null, bool persist = true)
+        {
+            var info = new BgiPathInfo { UserName = userName ?? "" };
+            if (string.IsNullOrWhiteSpace(userName)) return info;
+
+            // 带会话快照和 persist 的调用走原路径（不做缓存，语义不同）。
+            if (sessions == null && !persist)
+            {
+                lock (_cacheSync)
+                {
+                    if (_cache.TryGetValue(userName, out var hit)
+                        && (DateTime.UtcNow - hit.At) < CacheTtl && hit.Info != null)
+                        return hit.Info;
+                }
+                var computed = ResolveCore(userName, null, false);
+                lock (_cacheSync) _cache[userName] = (computed, DateTime.UtcNow);
+                return computed;
+            }
+            return ResolveCore(userName, sessions, persist);
+        }
+
+        private static BgiPathInfo ResolveCore(string userName,
+            List<SessionInfo>? sessions, bool persist)
         {
             var info = new BgiPathInfo { UserName = userName ?? "" };
             if (string.IsNullOrWhiteSpace(userName)) return info;
@@ -259,10 +301,79 @@ namespace SoulLink.Services
         {
             try
             {
-                var info = Resolve(userName, null, persist: true);
+                // ★ 读取路径绝不写回配置。
+                //   原来 persist:true 会让「打开数据中心页」这个纯读动作
+                //   把自动探测到的路径写进 BgiPaths，于是"用户有没有绑过"
+                //   这个判断被污染（实测 A1/A4 的 BgiPinnedUsers 是空的，
+                //   但 BgiPaths 里已有值）。只有 Pin() 才能写。
+                var info = Resolve(userName, null, persist: false);
                 return info.HasPath ? info.Path : "";
             }
             catch { return ""; }
+        }
+
+        /// <summary>
+        /// 取"用户显式绑定"的 BGI 路径；没绑定返回空串。
+        ///
+        /// ★ 与 <see cref="GetPath"/> 的区别：
+        ///   GetPath 是"该用哪个"（可能来自自动探测/记忆），
+        ///   本方法是"用户填过没有"——决定要不要读日志只看它。
+        /// </summary>
+        public static string GetBoundPath(string userName)
+        {
+            if (string.IsNullOrWhiteSpace(userName)) return "";
+            if (!IsPinned(userName)) return "";
+            try
+            {
+                if (App.Config.Settings.BgiPaths.TryGetValue(userName, out var p) && !string.IsNullOrWhiteSpace(p))
+                    return Normalize(p);
+            }
+            catch { }
+            return "";
+        }
+
+        /// <summary>
+        /// 一次性迁移：把"已有路径 + 该路径对应的进程正在运行"的账号标记为已绑定。
+        ///
+        /// ★ 为什么需要：旧版 Resolve 自动把路径写进 BgiPaths，
+        ///   导致改造后所有跑过 BGI 的账号都成了"未绑定"、整片数据不再刷新。
+        ///   这里只在首次启动时补一次，之后完全由用户点按钮决定。
+        /// ★ 只认**确实在运行**的，避免把历史残留路径误判成用户意图。
+        /// </summary>
+        public static int MigrateAutoBindings()
+        {
+            int n = 0;
+            try
+            {
+                var settings = App.Config.Settings;
+                if (settings.BgiMigrated) return 0;
+
+                var live = new System.Collections.Generic.HashSet<string>(
+                    System.IO.Path.GetFullPath(Environment.ProcessPath ?? ".").Length == 0
+                        ? Array.Empty<string>() : Array.Empty<string>(),
+                    StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    foreach (var inst in BgiLogWatcher.Discover().Values)
+                        if (inst != null && !string.IsNullOrWhiteSpace(inst.ExePath)) live.Add(Normalize(inst.ExePath));
+                }
+                catch { }
+
+                foreach (var acc in AccountScope.Accounts(App.Config))
+                {
+                    string user = acc?.UserName ?? "";
+                    if (user.Length == 0 || IsPinned(user)) continue;
+                    if (!settings.BgiPaths.TryGetValue(user, out var saved) || string.IsNullOrWhiteSpace(saved)) continue;
+                    if (!live.Contains(Normalize(saved))) continue;   // 没在跑 → 当作未绑定
+                    Pin(user, saved);
+                    n++;
+                }
+
+                settings.BgiMigrated = true;
+                if (n > 0 || true) ConfigStore.Save(App.Config);
+            }
+            catch { }
+            return n;
         }
 
         /// <summary>用户手动指定路径（会标记为 pinned）。</summary>
@@ -287,6 +398,7 @@ namespace SoulLink.Services
                 }
                 AddKnown(list, norm);
             }
+            InvalidateCache(userName);
         }
 
         /// <summary>恢复自动模式（后续以探测到的为准）。</summary>
@@ -299,6 +411,7 @@ namespace SoulLink.Services
                     .RemoveAll(x => string.Equals(x, userName, StringComparison.OrdinalIgnoreCase));
             }
             catch { }
+            InvalidateCache(userName);
         }
 
         /// <summary>该用户是否处于手动指定状态。</summary>

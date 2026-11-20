@@ -38,6 +38,8 @@ namespace SoulLink.Services
     {
         private static readonly object Sync = new();
         private static readonly Dictionary<string, BgiAccountData> Cache = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>每个账号上次算出的 Stamp（命中就不用再扫目录）。</summary>
+        private static readonly Dictionary<string, string> _stamps = new(StringComparer.OrdinalIgnoreCase);
         public static event Action<string>? AccountDataChanged;
 
         public static BgiAccountData Get(string userName) => Read(userName, false);
@@ -73,11 +75,29 @@ namespace SoulLink.Services
             string user = userName?.Trim() ?? "";
             if (user.Length == 0) return new BgiAccountData { UserName = "", Error = "未指定账号", ReadAt = DateTime.Now };
             string path = BgiPathResolver.GetPath(user);
+
+            // ★ 2.17.45：缓存命中时**不要**再算 Stamp()。
+            //   Stamp() 会对 User、User\OneDragon、User\ScriptGroup 三个目录
+            //   各做一次 Directory.GetFiles + 逐文件 stat —— 而它本来就是为了
+            //   "判断要不要重新读"，缓存命中时算两遍是纯浪费。
+            //   改成：1 秒内直接命中缓存；超过 1 秒才算 Stamp 比对。
+            lock (Sync)
+            {
+                if (!force && Cache.TryGetValue(user, out var cached)
+                    && cached.ExePath.Equals(path, StringComparison.OrdinalIgnoreCase)
+                    && (DateTime.UtcNow - cached.ReadAt.ToUniversalTime()) < TimeSpan.FromSeconds(1))
+                    return Clone(cached);
+            }
+
+            // 超过 1 秒才做一次目录比对；比对通过就复用缓存。
             string stamp = Stamp(path);
             lock (Sync)
             {
-                if (!force && Cache.TryGetValue(user, out var cached) && cached.ExePath.Equals(path, StringComparison.OrdinalIgnoreCase) && Stamp(path) == stamp)
-                    return Clone(cached);
+                if (!force && Cache.TryGetValue(user, out var cached2)
+                    && cached2.ExePath.Equals(path, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(_stamps.GetValueOrDefault(user, ""), stamp, StringComparison.Ordinal))
+                    return Clone(cached2);
+                _stamps[user] = stamp;
             }
             var data = ReadFiles(user, path);
             BgiAccountData? previous;

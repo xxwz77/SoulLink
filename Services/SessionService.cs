@@ -55,6 +55,15 @@ namespace SoulLink.Services
         public static async Task<List<SessionInfo>> QueryAsync()
         {
             var list = new List<SessionInfo>();
+
+            // ★ 2.17.45：先试 qwinsta —— 它**一次**就给出会话号 + 真实大小写的用户名
+            //   + 状态，不需要再起第二个子进程做大小写校正。
+            //   原来每轮要起 query.exe（~32ms）再起 qwinsta（~32ms），
+            //   而调用方（状态中心 1 Hz、启动台 3 秒、控制台 2 秒）各自都会触发，
+            //   实测占 UI 相关 CPU 的 13%。
+            var viaQwinsta = await QueryViaQwinstaAsync().ConfigureAwait(false);
+            if (viaQwinsta.Count > 0) return viaQwinsta;
+
             string raw = await RunAsync("query.exe", "user", 8000).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(raw)) return list;
 
@@ -92,6 +101,54 @@ namespace SoulLink.Services
             //   qwinsta 给的是真实大小写，用它校正显示（匹配逻辑本来就是忽略大小写的，
             //   所以这只是显示问题，不影响自动连接/投送）。
             try { ApplyRealCasing(list); } catch { }
+            return list;
+        }
+
+        /// <summary>
+        /// 用 qwinsta 一次性拿到会话（含真实大小写用户名）。
+        /// ★ qwinsta 列顺序是「会话名 用户名 ID 状态」，会话名可能为空
+        ///   （断开的会话会这样输出），所以按"第一个纯数字 = 会话号"定位，
+        ///   它前一列就是用户名。
+        /// </summary>
+        private static async Task<List<SessionInfo>> QueryViaQwinstaAsync()
+        {
+            var list = new List<SessionInfo>();
+            string raw;
+            try { raw = await RunAsync("qwinsta", "", 5000).ConfigureAwait(false); }
+            catch { return list; }
+            if (string.IsNullOrWhiteSpace(raw)) return list;
+
+            foreach (var line in raw.Replace("\r", "").Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 3) continue;
+
+                int idIdx = -1;
+                for (int i = 0; i < parts.Length; i++)
+                    if (int.TryParse(parts[i], out _)) { idIdx = i; break; }
+                if (idIdx < 1) continue;
+                if (!int.TryParse(parts[idIdx], out int sid) || sid <= 0) continue;
+
+                string user = parts[idIdx - 1].TrimStart('>', '*');
+                if (user.Length == 0) continue;
+                if (user.Equals("USERNAME", StringComparison.OrdinalIgnoreCase)
+                    || user.Equals("用户名", StringComparison.Ordinal)
+                    || user.StartsWith("---", StringComparison.Ordinal)) continue;
+
+                string state = idIdx + 1 < parts.Length ? NormalizeState(parts[idIdx + 1]) : "";
+                string sess = idIdx >= 2 ? parts[idIdx - 2] : "";
+
+                list.Add(new SessionInfo
+                {
+                    UserName = user,
+                    SessionName = sess,
+                    Id = sid,
+                    State = state,
+                    IdleTime = "",
+                    LogonTime = ""
+                });
+            }
             return list;
         }
 

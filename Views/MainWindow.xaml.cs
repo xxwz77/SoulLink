@@ -1087,16 +1087,13 @@ namespace SoulLink.Views
                 if (RailIcons == null) return;
 
                 var primary = (System.Windows.Media.Brush)FindResource("TextPrimary");
-                var muted = (System.Windows.Media.Brush)FindResource("TextMuted");
+
                 // ★ 文字与图标要分开取色：
                 //   原来两者都用 muted（#7A8CB4E0，仅 48% 不透明），
                 //   在展开的深色面板上文字几乎糊在一起（用户反馈"文字颜色不对"）。
                 //   图标用 muted 作次级元素，文字用 secondary 保证可读。
                 var textIdle = (System.Windows.Media.Brush)FindResource("TextSecondary");
-                // 图标颜色：未选中用次级色，选中用主色。缺这行时深色主题下图标是黑的（用户实测）。
-                // 选中底色：与旧版一致的紫色半透明
-                var activeBg = new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromArgb(0x33, 0x7C, 0x5C, 0xFF));
+                // 图标和选中底色由菜单专用装饰层读取现有主题画刷，不修改主题资源。
 
                 // ★ 导航行现在是 Grid（图标+文字），不再是 Button。
                 //   原来只处理 Button，导致选中高亮完全失效（用户实测）。
@@ -1105,18 +1102,20 @@ namespace SoulLink.Views
                     if (child is not Grid row || row.Tag is not string t) continue;
 
                     bool on = t == _activePage;
-                    row.Background = on ? activeBg : System.Windows.Media.Brushes.Transparent;
-
-                    // 图标是第 0 列（Glyph），文字是第 1 列。
-                    // 选中：两者都用主色；未选中：图标 muted、文字 secondary。
+                    // A 方案：装饰只作用于本菜单行，原 Grid 的尺寸和点击处理不变。
+                    row.Background = System.Windows.Media.Brushes.Transparent;
+                    // 只更新既有装饰层的显示状态；悬停与尺寸由侧栏内部的纯样式绑定提供。
                     foreach (var el in row.Children)
                     {
-                        if (el is not System.Windows.Controls.TextBlock tb) continue;
-                        bool isGlyph = System.Windows.Controls.Grid.GetColumn(tb) == 0;
-                        if (on)
-                            tb.Foreground = primary;
-                        else
-                            tb.Foreground = isGlyph ? muted : textIdle;
+                        if (el is SoulLink.Controls.NavigationOrnament navGlyph)
+                        {
+                            navGlyph.IsSelected = on;
+                            navGlyph.IsLight = !SoulLink.Services.ThemeManager.IsDark;
+                        }
+                        else if (el is System.Windows.Controls.TextBlock tb)
+                        {
+                            tb.Foreground = on ? primary : textIdle;
+                        }
                     }
                 }
             }

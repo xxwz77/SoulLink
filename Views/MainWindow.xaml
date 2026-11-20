@@ -131,6 +131,17 @@
                                 Margin="0" Padding="3,12"
                                 ClipToBounds="True"
                                 MouseEnter="NavRail_MouseEnter" MouseLeave="NavRail_MouseLeave">
+                            <!-- A 方案仅作用于这个可展开菜单；不改全局主题，也不接管任何输入。 -->
+                            <Border.Resources>
+                                <Style TargetType="{x:Type ctl:NavigationOrnament}">
+                                    <Setter Property="VerticalAlignment" Value="Stretch" />
+                                    <Setter Property="IsHovered" Value="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" />
+                                    <Setter Property="MutedBrush" Value="{DynamicResource TextMuted}" />
+                                    <Setter Property="TextBrush" Value="{DynamicResource TextSecondary}" />
+                                    <Setter Property="CyanBrush" Value="{DynamicResource CyanBrush}" />
+                                    <Setter Property="VioletBrush" Value="{DynamicResource VioletBrush}" />
+                                </Style>
+                            </Border.Resources>
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 
@@ -162,8 +173,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE768;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphLaunch}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphLaunch}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphLaunch" Grid.Column="0" PageKey="launch" Width="42"
+                                                   />
                                         <TextBlock x:Name="NavTextLaunch" Grid.Column="1" Text="启动台"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
@@ -175,8 +189,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE7F4;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphConsole}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphConsole}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphConsole" Grid.Column="0" PageKey="console" Width="42"
+                                                   />
                                         <TextBlock x:Name="NavTextConsole" Grid.Column="1" Text="中控台"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
@@ -188,8 +205,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE9D9;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphDataCenter}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphDataCenter}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphDataCenter" Grid.Column="0" PageKey="datacenter" Width="42"
+                                                   />
                                         <TextBlock x:Name="NavTextDataCenter" Grid.Column="1" Text="数据中心"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
@@ -201,8 +221,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE896;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphUpdate}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphUpdate}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphUpdate" Grid.Column="0" PageKey="update" Width="42"
+                                                   />
                                         <TextBlock x:Name="NavTextUpdate" Grid.Column="1" Text="更新 BGI"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
@@ -214,8 +237,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE8B7;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphRouteUpdate}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphRouteUpdate}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphRouteUpdate" Grid.Column="0" PageKey="routeupdate" Width="42"
+                                                   />
                                         <TextBlock x:Name="NavTextRouteUpdate" Grid.Column="1" Text="路线更新"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
@@ -227,9 +253,10 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE968;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}"
-                                                   Background="Transparent" MouseLeftButtonUp="NavRow_Click" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphRemote}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphRemote}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphRemote" Grid.Column="0" PageKey="remote" Width="42" />
                                         <TextBlock x:Name="NavTextRemote" Grid.Column="1" Text="远程管理"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
@@ -241,8 +268,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE772;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphSessions}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphSessions}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphSessions" Grid.Column="0" PageKey="sessions" Width="42"
+                                                   />
                                         <TextBlock x:Name="NavTextSessions" Grid.Column="1" Text="联机大厅"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
@@ -254,8 +284,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE9D9;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphProcs}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphProcs}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphProcs" Grid.Column="0" PageKey="procs" Width="42"
+                                                   />
                                         <TextBlock x:Name="NavTextProcs" Grid.Column="1" Text="会话进程"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
@@ -267,8 +300,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="&#xE756;" Width="42" TextAlignment="Center"
-                                                   VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
+                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
+                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphCli}"
+                                                                IsLight="{Binding IsLight, ElementName=NavGlyphCli}" />
+                                        <ctl:NavigationOrnament x:Name="NavGlyphCli" Grid.Column="0" PageKey="cli" Width="42"
+                                                   />
                                         <TextBlock x:Name="NavTextCli" Grid.Column="1" Text="命令行"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"

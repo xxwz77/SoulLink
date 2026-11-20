@@ -24,6 +24,46 @@ namespace SoulLink.Views
         private bool _active;
         private readonly Dictionary<string, string> _sharedSignatures = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>上一轮渲染依据的数据签名；相同就不重建视觉树。</summary>
+        private string _lastSignature = "";
+
+        /// <summary>
+        /// 把"界面会显示的东西"压成一个字符串。
+        /// ★ 只要它没变，重建出来的视觉树和现在完全一样，纯属白烧 CPU。
+        /// </summary>
+        private string BuildSignature()
+        {
+            var sb = new System.Text.StringBuilder(512);
+            try
+            {
+                foreach (var a in AccountScope.Accounts(App.Config))
+                {
+                    var st = AccountStateCenter.Get(a.Id);
+                    if (st == null) { sb.Append(a.UserName).Append("|null;"); continue; }
+                    sb.Append(a.UserName).Append('|')
+                      .Append(st.SessionId).Append(',')
+                      .Append(st.SessionState).Append(',')
+                      .Append(st.BgiRunning).Append(',')
+                      .Append(st.BgiPid).Append(',')
+                      .Append(st.Bound).Append(',')
+                      .Append(st.CurrentGroup).Append(',')
+                      .Append(st.OneDragon).Append(',')
+                      .Append(st.Groups.Count).Append(',')
+                      .Append(st.ErrorCount).Append(',')
+                      .Append(st.WarnCount).Append(',')
+                      .Append(st.FailCount).Append(',')
+                      .Append(st.DogfoodRoute).Append(',')
+                      .Append(st.DogfoodValid).Append(',')
+                      .Append(st.BgiPath).Append(';');
+                    // ★ 绝对不要把 st.UpdatedAt 放进签名：它在每轮刷新里都会被
+                    //   赋成 DateTime.Now，等于签名每秒都变，去重完全失效
+                    //   （实测：加了它 CPU 从 13% 反弹到 52%）。
+                }
+            }
+            catch { }
+            return sb.ToString();
+        }
+
         public DataCenterPage()
         {
             InitializeComponent();
@@ -33,7 +73,13 @@ namespace SoulLink.Views
             {
                 if (!IsVisible) return;
                 SharedDataChanged();
-                // 配置只决定展示内容；运行状态与日志仍按原周期刷新。
+                // ★ 2.17.45：只有数据真的变了才重建视觉树。
+                //   原来每秒无条件 Rebuild() —— 整个页面的卡片、边框、文本块
+                //   全部丢弃重建，WPF 每次都要重新测量/排版/生成字形，
+                //   即使内容一个字都没变。这是纯浪费的 UI 线程开销。
+                string sig = BuildSignature();
+                if (sig == _lastSignature) return;
+                _lastSignature = sig;
                 Rebuild();
             };
         }
@@ -216,14 +262,18 @@ namespace SoulLink.Views
                 : (System.IO.Path.GetFileName(st.BgiLogFile) + "  " + st.BgiLogWrite.ToString("HH:mm:ss")), mono: true);
             AddRow(grid, row++, "任务原文", ExtractTaskLine(st), mono: true);
 
-            // ── 原文占用（观察内存是否异常增长）──
-            int logChars = st.RecentLog?.Length ?? 0;
-            long logBytes = logChars * 2L;   // .NET 字符串是 UTF-16
-            AddRow(grid, row++, "日志原文",
-                FormatSize(logBytes) + "  ·  " + (st.RecentLogAt == DateTime.MinValue
+            // ── 数据中心占用（回归哨兵：改造后应稳定在百 KB 级）──
+            //   ★ 2.17.45 起不再保留日志原文，这里改成数据中心常驻量；
+            //     如果这个数字开始涨到 MB 级，说明尾窗预算失守。
+            long centerChars = BgiLogCenter.ResidentChars();
+            long centerBytes = centerChars * 2L;
+            AddRow(grid, row++, "数据中心占用",
+                (st.Bound ? "已绑定" : "未绑定（不读日志）")
+                + "  ·  " + FormatSize(centerBytes) + "（全部账号）"
+                + "  ·  尾窗 " + CountLines(st.RecentLog) + " 行"
+                + "  ·  " + (st.RecentLogAt == DateTime.MinValue
                     ? "未采集"
-                    : st.RecentLogAt.ToString("HH:mm:ss") + " 采集")
-                + "  ·  " + CountLines(st.RecentLog) + " 行",
+                    : st.RecentLogAt.ToString("HH:mm:ss") + " 更新"),
                 mono: true);
 
             columns.Children.Add(grid);
@@ -253,9 +303,33 @@ namespace SoulLink.Views
         private UIElement BuildGroupRuns(AccountState st)
         {
             var panel = new StackPanel();
-            var view = BusinessDayData.GetView(st.AccountId, 4, DateTime.Now);
-            var runs = view.Groups.All().OrderByDescending(x => x.StartedAt).ToList();
-            panel.Children.Add(new TextBlock { Text="04:00 业务日配置组（"+runs.Count+" 个）", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary") });
+
+            // ★ 未绑定 BGI 路径：不读任何文件，明确告诉用户"没绑定"而不是"没数据"。
+            if (!st.Bound)
+            {
+                panel.Children.Add(new TextBlock { Text="配置组", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary") });
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "未绑定 BGI 路径 · 不读取日志\n请到「设置 → BetterGI 路径」点一次「从进程取」",
+                    FontSize=10.5, TextWrapping=TextWrapping.Wrap,
+                    Foreground=(Brush)FindResource("TextMuted"), Margin=new Thickness(0,5,0,0)
+                });
+                return panel;
+            }
+
+            // ★ 日志按天滚动，日界硬性 00:00（用户确认；狗粮仍保留 04:00）。
+            var runs = st.Groups.OrderByDescending(x => x.StartedAt).ToList();
+            string head = "今日配置组（" + runs.Count + " 个）";
+            if (st.CurrentGroup.Length > 0)
+                head += " · 当前：" + st.CurrentGroup
+                     + (st.CurrentGroupAt == DateTime.MinValue ? "" : "（" + st.CurrentGroupAt.ToString("HH:mm:ss") + "）");
+            else if (st.StoppedAt != DateTime.MinValue)
+                // ★ 日志里已经出现停止锚点（执行结束 / 未成功完成 / 取消 /
+                //   停止快捷键）→ 明确显示"已停止"，不再挂着上一个组名。
+                head += " · 已停止"
+                     + (st.LastGroup.Length > 0 ? "（上一个：" + st.LastGroup + "）" : "")
+                     + "（" + st.StoppedAt.ToString("HH:mm:ss") + "）";
+            panel.Children.Add(new TextBlock { Text=head, FontSize=11, FontWeight=FontWeights.SemiBold, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextPrimary") });
             panel.Children.Add(new TextBlock { Text=st.GroupsSource.Length==0?"尚未读取日志":"来源："+st.GroupsSource+" · 更新 "+st.GroupsUpdatedAt.ToString("HH:mm:ss"), FontSize=9.5, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextMuted"), Margin=new Thickness(0,3,0,5) });
             if (runs.Count == 0)
             { panel.Children.Add(new TextBlock { Text=st.GroupsReadError.Length>0?st.GroupsReadError:"今日日志中尚未识别到配置组", FontSize=10.5, Foreground=(Brush)FindResource("TextMuted") }); return panel; }
@@ -300,12 +374,30 @@ namespace SoulLink.Views
         private UIElement BuildDogfood(AccountState st)
         {
             var panel = new StackPanel { Margin=new Thickness(20,0,0,0) };
-            var view = BusinessDayData.GetView(st.AccountId, 4, DateTime.Now);
-            var zero = BusinessDayData.GetView(st.AccountId, 0, DateTime.Now);
-            var rec = view.Dogfood;
-            panel.Children.Add(new TextBlock { Text="狗粮记录 · 日界 04:00 / 00:00", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary") });
+            // ★ 狗粮保持 04:00 业务日（它读的是独立 records 文件，不随日志滚动）；
+            //   原来这里还取了一份 00:00 视图做对照，现在日志侧统一 00:00、
+            //   狗粮侧统一 04:00，双视图已无意义，去掉后少一份缓存。
+            var rec = DogfoodRecordReader.ForDay(
+                st.DogfoodRecords.FirstOrDefault(r => DogfoodRecordReader.ForDay(r, DateTime.Now, 4).IsValid)
+                    ?? st.DogfoodRecords.FirstOrDefault() ?? new DogfoodRecord(),
+                DateTime.Now, 4);
+            panel.Children.Add(new TextBlock { Text="狗粮记录 · 日界 04:00", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary") });
             string route = rec.Route switch { DogfoodEndingRoute.EndingA=>"A：走联机",DogfoodEndingRoute.EndingB=>"B：自己跑",_=>"无有效记录" };
-            panel.Children.Add(new TextBlock { Text="业务日 "+view.DayKey+"："+(rec.IsValid?"有效":"不可用")+" · "+route+"\n日期："+(rec.Date.Length==0?"—":rec.Date)+"\n经验："+rec.Exp.ToString("N0")+" · 摩拉："+rec.Mora.ToString("N0")+"\n"+(rec.Reason.Length==0?"记录读取正常":rec.Reason)+"\n00:00 业务日 "+zero.DayKey+"："+(zero.Dogfood.IsValid?"有效":"不可用")+" · "+zero.Dogfood.Route+"\n统计：04:00 经验 "+view.Stats.DogfoodExp.ToString("N0")+" / 00:00 经验 "+zero.Stats.DogfoodExp.ToString("N0")+"\n读取："+(st.DogfoodReadAt==DateTime.MinValue?"—":st.DogfoodReadAt.ToString("HH:mm:ss"))+"\n"+st.DogfoodRecordPath, FontSize=10.5, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextSecondary"), Margin=new Thickness(0,5,0,0) });
+            string dayKey = rec.BusinessDay == DateTime.MinValue ? "—" : rec.BusinessDay.ToString("yyyy-MM-dd");
+            panel.Children.Add(new TextBlock
+            {
+                Text = "业务日 " + dayKey + "：" + (rec.IsValid ? "有效" : "不可用") + " · " + route
+                     + "\n日期：" + (rec.Date.Length == 0 ? "—" : rec.Date)
+                     + "\n经验：" + rec.Exp.ToString("N0") + " · 摩拉：" + rec.Mora.ToString("N0")
+                     + "\n" + (rec.Reason.Length == 0 ? "记录读取正常" : rec.Reason)
+                     + "\n今日日志统计（00:00 日界）：经验 " + st.Today.DogfoodExp.ToString("N0")
+                     + " / 摩拉 " + st.Today.DogfoodMora.ToString("N0")
+                     + " / 拾取 " + st.Today.PickTotal.ToString("N0") + " 件"
+                     + "\n读取：" + (st.DogfoodReadAt == DateTime.MinValue ? "—" : st.DogfoodReadAt.ToString("HH:mm:ss"))
+                     + "\n" + st.DogfoodRecordPath,
+                FontSize = 10.5, TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)FindResource("TextSecondary"), Margin = new Thickness(0, 5, 0, 0)
+            });
             return panel;
         }
 

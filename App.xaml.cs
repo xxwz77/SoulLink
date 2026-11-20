@@ -478,6 +478,17 @@ namespace SoulLink
                 }
                 catch { }
 
+                // ★ 一次性迁移：旧版 Resolve 会自动把路径写进 BgiPaths，
+                //   导致"用户是否显式绑定过"无法判断。2.17.45 起只有 Pin() 能写，
+                //   这里对「路径存在 + 该 BGI 正在运行」的账号补一次绑定，
+                //   避免升级后所有账号突然变成"未绑定"而不再刷新日志数据。
+                try
+                {
+                    int migrated = BgiPathResolver.MigrateAutoBindings();
+                    if (migrated > 0) Breadcrumb("BGI 绑定迁移：" + migrated + " 个账号");
+                }
+                catch (Exception ex) { LogBus.Error("BGI 绑定迁移失败：" + ex.Message); }
+
                 // 启动账号状态中心：每账号一份快照，供触发器/条件/界面统一取数。
                 // ★ 必须先于调度器启动，否则第一轮 Tick 会拿不到快照而各自现查。
                 try

@@ -150,7 +150,7 @@
                     <TextBlock Text="BetterGI 路径" Style="{StaticResource Label}" Margin="0,18,0,6" />
                     <Border Style="{StaticResource GlassPanel}" Padding="14,12">
                         <StackPanel>
-                            <TextBlock Text="每个账号的 BetterGI.exe 位置。留空则自动从运行中的进程识别；也可以手动指定，指定后一直以指定值为准。"
+                            <TextBlock Text="只有在这里绑定过的账号才会被读取日志（未绑定 = 完全不读文件，界面显示「BGI 未绑定」）。点「从进程取」自动填入正在运行的 BetterGI，也可以直接输入路径后回车。"
                                        Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="18" />
 
                             <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,10,0,0">
