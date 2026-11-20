@@ -1,0 +1,19 @@
+{
+  // ★ 锁定构建用的 .NET SDK 版本。
+  //   背景：本机同时装了 8 / 9 / 10 / 11 四套 SDK，不锁的话装个 11.0.2xx
+  //   就会自动切过去，构建环境悄悄变化，排查问题时无法复现。
+  //
+  //   rollForward=latestPatch：只允许 11.0.1xx 这一档（11.0.100 / 11.0.101 ...），
+  //   不会自动跳到 11.0.2xx 或 12.0。需要升档时手动改这里。
+  //
+  //   allowPrerelease=false：绝不解析到 rc / preview 版 SDK
+  //   （之前装过 11.0.100-rc.3，已卸载，这条是防止再混进来）。
+  //
+  //   ★ 这个文件只影响"编译这个仓库的机器"，不会被打进 exe，
+  //     对 SoulLink 的最终用户没有任何影响。
+  "sdk": {
+    "version": "11.0.100",
+    "rollForward": "latestPatch",
+    "allowPrerelease": false
+  }
+}
