@@ -225,20 +225,99 @@ namespace SoulLink.Services
         /// 配置文件在 &lt;BGI 目录&gt;\User\config.json。
         /// 读不到就返回空字符串，调用方会改为直接杀进程。
         /// </summary>
+        /// <summary>诊断用：记录快捷键读取的决策路径（只在真的读失败时才有排查价值）。</summary>
+        private static void HkLog(string msg)
+        {
+            try { App.AppendErrorLog("ReadCancelHotkey: " + msg, null); } catch { }
+        }
+
+        /// <summary>
+        /// 按**会话 ID** 取「停止当前脚本」快捷键 —— 首选路径。
+        ///
+        /// ★★ 2.17.47：用户要求「直接从数据中心读取」。★★
+        ///
+        ///   数据中心（BgiDataCenter）已经按账号解析好 config.json，
+        ///   界面上显示的就是它读出来的 F12。这里直接复用那一份结果，
+        ///   不再自己从 exePath 反推目录和正则匹配：
+        ///
+        ///     · 会话ID → 账号（SessionService / AccountStateCenter 都可查）
+        ///     · 账号 → BgiDataCenter.Refresh(账号).CancelTaskHotkey
+        ///
+        ///   只有「查不到会话对应的账号」时才退回按 exePath 读文件。
+        /// </summary>
+        public static string ReadCancelHotkeyFor(int sessionId, string bgiExePath)
+        {
+            try
+            {
+                // 1) 会话 ID → 账号：AccountStateCenter 每个账号都记着 SessionId
+                string user = "";
+                try
+                {
+                    foreach (var st in AccountStateCenter.All())
+                        if (st.SessionId == sessionId && (st.UserName ?? "").Length > 0)
+                        { user = st.UserName!; break; }
+                }
+                catch { }
+
+                if (user.Length > 0)
+                {
+                    // 2) 账号 → 数据中心快照里的 CancelTaskHotkey
+                    foreach (var a in App.Config.Accounts)
+                    {
+                        if (!string.Equals(BgiPathResolver.Normalize(a.UserName),
+                                           BgiPathResolver.Normalize(user),
+                                           StringComparison.OrdinalIgnoreCase)) continue;
+
+                        string hk = BgiDataCenter.Refresh(a.UserName).CancelTaskHotkey;
+                        if (hk.Length > 0)
+                        {
+                            HkLog("数据中心命中 " + a.UserName + " => " + hk + "（会话 " + sessionId + "）");
+                            return hk;
+                        }
+                        HkLog("数据中心读到空 " + a.UserName + "，转用 exePath");
+                        break;
+                    }
+                }
+                else HkLog("会话 " + sessionId + " 找不到对应用户，转用 exePath");
+            }
+            catch (Exception ex) { HkLog("按会话取快捷键失败: " + ex.Message); }
+
+            // 3) 兜底：按 exePath 读该 BGI 目录下的 User\config.json
+            return ReadCancelHotkey(bgiExePath);
+        }
+
         public static string ReadCancelHotkey(string bgiExePath)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(bgiExePath)) return "";
-                // 数据中心已按账号读取时复用同一结果；直接调用仍允许传入任意 exe 做兼容。
+                if (string.IsNullOrWhiteSpace(bgiExePath)) { HkLog("输入路径为空"); return ""; }
+                // ★★ 2.17.47：修致命 bug —— 未绑定账号的空路径会匹配一切空输入。★★
+                //
+                //   现场：日志出现「BGI 未设置停止快捷键，已直接关闭并确认退出」，
+                //   但 D:\AAA挂机专区\A1\BetterGI\User\config.json 里明明是 "F12"。
+                //
+                //   根因：下面这个匹配循环里，未绑定 BGI 的账号 GetPath() 返回 ""，
+                //   而 Normalize("") 仍是 ""。只要传入的 bgiExePath 归一化后也是空，
+                //   "" == "" 成立 → 命中该账号 → 返回它（空的）CancelTaskHotkey，
+                //   直接 return，永远走不到后面按 exePath 推导目录的正确分支。
                 foreach (var a in App.Config.Accounts)
-                    if (string.Equals(BgiPathResolver.Normalize(BgiPathResolver.GetPath(a.UserName)), BgiPathResolver.Normalize(bgiExePath), StringComparison.OrdinalIgnoreCase))
-                        return BgiDataCenter.Refresh(a.UserName).CancelTaskHotkey;
+                {
+                    string accountPath = BgiPathResolver.Normalize(BgiPathResolver.GetPath(a.UserName));
+                    if (accountPath.Length == 0) continue;   // ★ 空路径不参与匹配
+                    if (string.Equals(accountPath, BgiPathResolver.Normalize(bgiExePath), StringComparison.OrdinalIgnoreCase))
+                    {
+                        string hk = BgiDataCenter.Refresh(a.UserName).CancelTaskHotkey;
+                        if (hk.Length > 0) { HkLog("账号匹配命中 " + a.UserName + " => " + hk); return hk; }
+                        // 账号匹配到了但快捷键为空：不要直接返回，继续按 exePath 兜底
+                        HkLog("账号匹配 " + a.UserName + " 但快捷键为空，转用配置目录");
+                        break;
+                    }
+                }
                 string? dir = Path.GetDirectoryName(bgiExePath);
-                if (string.IsNullOrEmpty(dir)) return "";
+                if (string.IsNullOrEmpty(dir)) { HkLog("无法从 exePath 取目录: " + bgiExePath); return ""; }
 
                 string cfg = Path.Combine(dir, "User", "config.json");
-                if (!File.Exists(cfg)) return "";
+                if (!File.Exists(cfg)) { HkLog("配置文件不存在: " + cfg); return ""; }
 
                 // ★ 用 FileShare.ReadWrite：BGI 可能正在写这个文件
                 string text;
@@ -250,11 +329,12 @@ namespace SoulLink.Services
                 }
 
                 var m = RxCancel.Match(text);
-                if (!m.Success) return "";
+                if (!m.Success) { HkLog("配置里没有 cancelTaskHotkey: " + cfg); return ""; }
                 string key = m.Groups["v"].Value.Trim();
 
                 // 空字符串 = 用户没设置，返回空让调用方走杀进程
-                if (key.Length == 0 || key.Equals("< None >", StringComparison.OrdinalIgnoreCase)) return "";
+                if (key.Length == 0 || key.Equals("< None >", StringComparison.OrdinalIgnoreCase))
+                { HkLog("cancelTaskHotkey 为空或 <None>: " + cfg); return ""; }
 
                 // 只支持键盘热键；类型不是 KeyboardMonitor 也照样尝试发送
                 return key;

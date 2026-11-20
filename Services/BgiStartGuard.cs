@@ -13,7 +13,18 @@ namespace SoulLink.Services
         public sealed class Ports
         {
             public Func<int, string, bool> IsRunning { get; init; } = (sessionId, exePath) => BgiTaskPreparer.HasRunningProcess(sessionId, exePath);
-            public Func<int, string, string> Hotkey { get; init; } = (sessionId, exePath) => BgiTaskPreparer.ReadCancelHotkey(exePath);
+            /// <summary>
+            /// 取「停止当前脚本」快捷键。
+            ///
+            /// ★★ 2.17.47：改成**直接从数据中心**读。★★
+            ///   原来走 BgiTaskPreparer.ReadCancelHotkey(exePath) —— 内部还要
+            ///   「遍历 Accounts 反查账号 → 再从 exePath 推 User\config.json → 正则抓 F12」，
+            ///   而数据中心（BgiDataCenter）本来就持有每个账号的 CancelTaskHotkey，
+            ///   界面上也是它在显示 F12。绕一圈既有两套解析、又容易因账号未绑定而读到空。
+            ///   现在只有一个真相来源。
+            /// </summary>
+            public Func<int, string, string> Hotkey { get; init; } = (sessionId, exePath) =>
+                BgiTaskPreparer.ReadCancelHotkeyFor(sessionId, exePath);
             public Action<int, string> StopScript { get; init; } = BgiTaskPreparer.SendHotkeyToSessionPublic;
             public Func<int, CancellationToken, Task<bool>> ScriptStopped { get; init; }
                 = (sid, ct) => BgiTaskPreparer.WaitForScriptStoppedAsync(sid, TimeSpan.FromSeconds(10), ct);
@@ -37,12 +48,21 @@ namespace SoulLink.Services
                 string hotkey = p.Hotkey(sessionId, exePath) ?? "";
                 if (hotkey.Length == 0)
                 {
-                    // 用户没填停止快捷键时直接关闭，不发送、不等待脚本停止。
-                    result.StopMethod = "kill";
-                    if (!await p.CloseProcesses(sessionId, ct).ConfigureAwait(false)
-                        || !await p.ConfirmExited(sessionId, ct).ConfigureAwait(false))
-                    { result.Ok=false;result.Message="BGI 未设置停止快捷键，直接关闭后仍未全部退出";return result; }
-                    result.Ok=true;result.Message="BGI 未设置停止快捷键，已直接关闭并确认退出";return result;
+                    // ★★ 2.17.47：不再降级为「直接杀进程」。★★
+                    //
+                    //   用户明确要求：必须先「停止当前脚本」，确认脚本停了**才能**关进程。
+                    //   原来是读到空快捷键就直接杀 —— 结果是 BGI 里的脚本被硬中断，
+                    //   可能留下半截状态（正在写的日志、正在做的动作、未收尾的流程）。
+                    //
+                    //   现在：读不到停止快捷键就**直接拒绝**，把原因抛给用户，
+                    //   让用户去 BGI 里设一个（通常是 F12），而不是悄悄降级。
+                    //   这符合用户原话：「这是执行逻辑，必须要去执行的步骤」。
+                    result.StopMethod = "none";
+                    result.Ok = false;
+                    result.Message = "读不到 BGI 的「停止当前脚本」快捷键，已阻止关闭和启动。";
+                    result.Message += "\n请在 BGI 设置里为「停止当前脚本」设置一个快捷键（如 F12）后重试。";
+                    result.Message += "\n（BGI 配置文件：" + exePath + " 同级的 User\\config.json）";
+                    return result;
                 }
                 BgiTaskPreparer._stopBaselineUtc = DateTime.UtcNow;
                 p.StopScript(sessionId, hotkey);

@@ -354,8 +354,13 @@
                                 BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" />
                         <Border x:Name="FocusRing" CornerRadius="11" BorderThickness="1"
                                 BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
-                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
-                                      VerticalAlignment="Center" />
+                        <!-- ★★ 2.17.47 修复：密码框内容不可见 / 无光标。★★
+                             这里原来写 Margin="{TemplateBinding Padding}" —— 而 PasswordBox 会把
+                             Padding 再应用一次到内部内容宿主，等于上下各叠 18px。
+                             在 RemoteAdminPage 那种 Height=27 的框里，可用高度算成负数，
+                             密码点和光标全被裁掉，只剩背景（焦点框却正常亮，能打字但看不见）。
+                             去掉这里的 Margin，Padding 交给 PasswordBox 自己处理。 -->
+                        <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" />
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsKeyboardFocused" Value="True">
