@@ -181,17 +181,41 @@ namespace SoulLink.Services
                 return new ViewLayoutResult(single, total0, vh);
             }
 
-            int cellW = Math.Max(1, (vw - Gap * (cols + 1)) / cols);
-            int cellH = Math.Max(1, (int)Math.Round(cellW / Aspect));
+            // ★★ 2.17.40：格子要**填满视口**，不能只按宽度推高度 ★★
+            //
+            //   用户实测（双列、2 个画面、视口约 1500x500）：
+            //     格子只有 430x242，高/视口 = 48% —— 下半截全空着，
+            //     看起来就是"双列模式没有自适应窗口大小"。
+            //
+            //   根因：只用了 `cellH = cellW / 16*9` 这一条式子。
+            //   宽屏时宽度富余、高度按比例算出来自然只有一半，
+            //   而下面的 maxCellH 只在"高度放不下"时才介入（缩），从不放大。
+            //
+            //   现在同时用两个约束取**较大**的那个（但都不超过可用空间）：
+            //     · 按宽度铺满：cellW = (vw - 间距) / 列数，cellH = cellW / 16*9
+            //     · 按高度铺满：cellH = (vh - 间距) / 行数，cellW = cellH * 16*9
+            //   取能填满更多区域的那一套，从而真正随窗口自适应。
+            int rowsTotal = Math.Max(1, (count + cols - 1) / cols);
+            int availW = Math.Max(1, (vw - Gap * (cols + 1)) / cols);
+            int availH = Math.Max(1, (vh - Gap * (rowsTotal + 1)) / rowsTotal);
 
-            // ★ 若一格的高度已经放不下两行（视口很矮），按高度反推宽度，
-            //   保证至少能看到完整的第一行，避免格子被裁成一条缝。
-            int maxCellH = Math.Max(1, (vh - Gap * 2) / 2);
-            if (cellH > maxCellH)
+            // ★ 关键：格子**宽不能超过 availW、高不能超过 availH**，
+            //   在这两个上限内尽量大（保持 16:9）。
+            //
+            //   先取"按宽度铺满"得到的高度；若高度超了 → 说明高度是瓶颈，
+            //   按高度反推宽度（此时宽度必然 ≤ availW）。
+            //   两种情况的最终宽高都**不会**越界 —— 越界会导致两列横向溢出，
+            //   那比"只占半屏"更糟（画面会被裁掉）。
+            int cellW = availW;
+            int cellH = Math.Max(1, (int)Math.Round(cellW / Aspect));
+            if (cellH > availH)
             {
-                cellH = maxCellH;
+                // 高度是瓶颈：按高度铺满，反推宽度
+                cellH = availH;
                 cellW = Math.Max(1, (int)Math.Round(cellH * Aspect));
             }
+            // （若 cellH 本来就没超过 availH，说明宽度是瓶颈，
+            //   当前 cellW 已经是 availW 上限，不能再放大 —— 保持原样即可。）
 
             var tiles = new List<TileRect>(count);
             for (int i = 0; i < count; i++)

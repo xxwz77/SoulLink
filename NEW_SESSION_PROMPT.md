@@ -34,8 +34,8 @@
 
 | 项目 | 值 |
 |---|---|
-| 标准版 | **2.17.39.0（已定版/可信版本）**，`dist/SoulLink.exe` |
-| **恢复节点** | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.39-reliable\`（源码+成品，222 条哈希全通过） |
+| 标准版 | **2.17.40.0（待定版）**，`dist/SoulLink.exe`（双列自适应修复） |
+| 可信版本 | **2.17.39.0** · 归档 `E:\SoulLink-SOURCE-ARCHIVE\v2.17.39-reliable\` |
 | git 标签 | `v2.17.39-reliable` → `055520d` |
 | 可信版本 | **2.17.19.0** · `dist/SoulLink-2.17.19.exe` · 归档 `v2.17.19-reliable` |
 | 大小 | 67,487,060 字节 |
