@@ -181,6 +181,10 @@ namespace SoulLink.Services
                     flow.LastRunAction = n.Title;
                     flow.LastActionResultAt = time;
 
+                    // ★ 2.17.31：今日成功/失败次数（按业务日自动重置）。
+                    //   必须在同一处累加，保证两个计数之和 = 今天真正执行的动作次数。
+                    flow.RecordRunResult(result.Ok, time);
+
                     if (checkpoint != null) await checkpoint(result).ConfigureAwait(false);
                 }
                 if (flow.ActionResults.TryGetValue(n.Id, out var actionResult) && actionResult.Ok)

@@ -1857,14 +1857,42 @@ namespace SoulLink.Views
 
             // 名称 + 说明
             var sp = new StackPanel { Margin = new Thickness(9, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
-            sp.Children.Add(new TextBlock
+
+            // 名称行：流程名 + 今日成功/失败次数（同一行，小字，颜色区分）
+            // ★ 2.17.31 用户要求："在流程名称后面，要小字显示今日成功次数与失败次数。
+            //   成功用绿色数字，失败用红色数字。"
+            var nameLine = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            nameLine.Children.Add(new TextBlock
             {
                 Text = f.DisplayName,
                 FontSize = 11.5,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = (Brush)FindResource("TextPrimary"),
-                TextTrimming = TextTrimming.CharacterEllipsis
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center
             });
+            //   ★ 顺序固定为「成功 → 失败」，数字用等宽感更强的小字号；
+            //     两个都是 0 时不显示（避免新流程一上来就挂两个 0 显得像报错）。
+            if (f.TodayOkCount > 0 || f.TodayFailCount > 0)
+            {
+                nameLine.Children.Add(new TextBlock
+                {
+                    Text = "  " + f.TodayOkCount,
+                    FontSize = 9.5, FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0)),   // 绿 = 今日成功次数
+                    VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = "今日成功 " + f.TodayOkCount + " 次"
+                });
+                nameLine.Children.Add(new TextBlock
+                {
+                    Text = " / " + f.TodayFailCount,
+                    FontSize = 9.5, FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x8B)),   // 红 = 今日失败次数
+                    VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = "今日失败 " + f.TodayFailCount + " 次"
+                });
+            }
+            sp.Children.Add(nameLine);
             sp.Children.Add(new TextBlock
             {
                 Text = AutomationSummary(f),

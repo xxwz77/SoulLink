@@ -36,6 +36,38 @@ namespace SoulLink.Models
         /// <summary>最近一次动作执行时刻（与 LastRunAt 区分：后者只在整轮收尾时更新）。</summary>
         public DateTime? LastActionResultAt { get; set; }
 
+        // ── 今日执行成功/失败次数（2.17.31）──────────────────────────────
+        //
+        //   用户要求："在流程名称后面，要小字显示今日成功次数与失败次数。
+        //   成功用绿色数字，失败用红色数字。"
+        //
+        //   ★ 必须按**业务日**重置，不能是累计值：RunCount 是累计的（重启也不清），
+        //     直接拿它显示"今日"是错的。
+        //   ★ 计数点在"每次动作真正执行完"，与 LastRunOk 同处写入，
+        //     这样成功/失败次数之和 = 今天真正跑过的动作次数。
+
+        /// <summary>计数所属业务日（yyyy-MM-dd）。换日时把下面两个计数清零。</summary>
+        public string StatDayKey { get; set; } = "";
+        /// <summary>今日执行成功次数。</summary>
+        public int TodayOkCount { get; set; }
+        /// <summary>今日执行失败次数。</summary>
+        public int TodayFailCount { get; set; }
+
+        /// <summary>
+        /// 记录一次执行结果（自动按业务日重置计数）。由 PlcScanEngine 每次动作执行后调用。
+        /// </summary>
+        public void RecordRunResult(bool ok, DateTime now)
+        {
+            string key = PlcLogic.DayKey(now, PlcLogic.HasEnd(this) ? PlcLogic.EndBoundaryHour(this) : 0);
+            if (!string.Equals(StatDayKey, key, StringComparison.Ordinal))
+            {
+                StatDayKey = key;
+                TodayOkCount = 0;
+                TodayFailCount = 0;
+            }
+            if (ok) TodayOkCount++; else TodayFailCount++;
+        }
+
         /// <summary>
         /// 正在等待注入通道时的提示（空 = 不在等待）。
         ///
