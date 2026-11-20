@@ -1,6 +1,15 @@
 # SoulLink 版本管理与回退
 
-> **2026-11-20 18:15 新版本 2.17.34（待定版）：模拟按键改为按键捕获录入（支持组合键）。**
+> **2026-11-20 18:30 新版本 2.17.35（待定版）：修按键捕获"点了没反应"。**
+> 交接文档：`docs/HANDOFF-2.17.35-20261120.md`
+> 当前 `dist/SoulLink.exe` = **2.17.35.0** · 67,482,714 字节
+> · SHA256 `87D956BA4C0793E012C317E72A780915FC5D860CC7E158C01F3DEC67201F345C`
+> 根因：2.17.34 用 `Border`（Decorator，非 Control）做捕获框，`Focus()` 拿不到键盘焦点
+> → `PreviewKeyDown` 根本不触发。改为 `TextBox` + 可编辑但拦截所有输入 +
+> `PreviewMouseLeftButtonDown` + 显式 `Keyboard.Focus`。
+> 用真实 WPF 探针验证：focused=True、KEYDOWN 正常、CAPTURED=CTRL+A。
+
+> **2026-11-20 18:15 版本 2.17.34（待定版）：模拟按键改为按键捕获录入。**
 > 交接文档：`docs/HANDOFF-2.17.34-20261120.md`
 > 当前 `dist/SoulLink.exe` = **2.17.34.0** · 67,482,250 字节
 > · SHA256 `4A5406DEB86DFB70F3EA0A59A73280EAB6F022F953B3D9D64F92FEB04625718B`

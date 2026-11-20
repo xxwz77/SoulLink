@@ -1144,23 +1144,36 @@ namespace SoulLink.Views
                     //   做法：一个只读样式的框（显示已录的按键），点它进入"监听"状态，
                     //   期间吞掉按键事件、把按下的修饰键 + 主键拼成 "CTRL+A" / "F12"，
                     //   抬起主键后结束并写回节点参数。Esc 取消，Backspace 清空。
-                    var keyBox = new Border
+                    // ★★ 2.17.35：改用 **TextBox** 而不是 Border ★★
+                    //
+                    //   用户实测："光标放上去会变手指，点击无反应，无法录入"。
+                    //   根因：Border 是 Decorator，不是 Control —— 虽然设了
+                    //   Focusable=true，`Focus()` 往往拿不到**键盘焦点**，
+                    //   于是 PreviewKeyDown 根本不会触发（光标变了、点击也进来了，
+                    //   但按键全被别的元素吃掉）。
+                    //
+                    //   TextBox 天生可聚焦、可收键盘输入，用它当"录入框"最稳。
+                    //   设为只读 + 隐藏插入符，让它看起来像普通显示框；
+                    //   真正的按键处理走 PreviewKeyDown（在只读 TextBox 上照样触发）。
+                    var keyBox = new TextBox
                     {
-                        MinHeight = 34, CornerRadius = new CornerRadius(8),
+                        MinHeight = 34,
                         Margin = new Thickness(0, 6, 0, 0),
-                        Background = new SolidColorBrush(Color.FromArgb(0x26, 0x00, 0x00, 0x00)),
-                        BorderThickness = new Thickness(1),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
-                        Cursor = Cursors.Hand,
-                        Focusable = true,
-                        Padding = new Thickness(10, 0, 10, 0)
+                        Style = (Style)FindResource("InlineTextBox"),
+                        // ★ 不用 IsReadOnly：只读 TextBox 在部分场景下不参与点击聚焦
+                        //   （表现为"光标是手、点了没反应"）。改为可编辑但**拦截所有输入**：
+                        //   PreviewTextInput / PreviewKeyDown 里一律 Handled，
+                        //   所以用户永远改不了文字，但焦点与按键事件都能正常到达。
+                        IsReadOnly = false,
+                        Cursor = Cursors.IBeam,
+                        FontSize = 12,
+                        TextAlignment = TextAlignment.Left,
+                        VerticalContentAlignment = VerticalAlignment.Center,
+                        Text = "",
+                        ToolTip = "点一下，然后直接按下要发送的按键（可组合键）；Backspace 清空，Esc 取消"
                     };
-                    var keyText = new TextBlock
-                    {
-                        FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
-                        Foreground = (Brush)FindResource("TextPrimary")
-                    };
-                    keyBox.Child = keyText;
+                    // 用 TextBox 的文字来显示状态，颜色靠 Foreground 区分。
+                    // （原来用 Border+TextBlock，改 TextBox 后这两个 helper 也跟着改。）
 
                     bool listening = false;
                     var pressedMods = new List<Key>();
@@ -1170,22 +1183,24 @@ namespace SoulLink.Views
                         string cur = node.Get(p.Key, p.Default);
                         if (listening)
                         {
-                            keyText.Text = "请按下要发送的按键…（Esc 取消）";
-                            keyText.Foreground = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
+                            keyBox.Text = "请按下要发送的按键…（Esc 取消）";
+                            keyBox.Foreground = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
                             keyBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
                         }
                         else if (string.IsNullOrEmpty(cur))
                         {
-                            keyText.Text = "点击这里，然后按下按键（可组合键）";
-                            keyText.Foreground = (Brush)FindResource("TextMuted");
+                            keyBox.Text = "点击这里，然后按下按键（可组合键）";
+                            keyBox.Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x9C, 0xC8));
                             keyBox.BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
                         }
                         else
                         {
-                            keyText.Text = cur;
-                            keyText.Foreground = (Brush)FindResource("TextPrimary");
+                            keyBox.Text = cur;
+                            keyBox.Foreground = (Brush)FindResource("TextPrimary");
                             keyBox.BorderBrush = new SolidColorBrush(Color.FromArgb(0x50, 0x41, 0xF0, 0xC0));
                         }
+                        // 只读框不能被编辑；把插入符藏到末尾也不显示
+                        keyBox.CaretIndex = keyBox.Text?.Length ?? 0;
                     }
 
                     string ModName(Key k) => k switch
@@ -1204,15 +1219,36 @@ namespace SoulLink.Views
                         Render();
                     }
 
-                    keyBox.MouseLeftButtonDown += (_, __) =>
+                    void StartListen()
                     {
                         listening = true;
                         pressedMods.Clear();
+                        // TextBox 必须先把键盘焦点真正拿过来，PreviewKeyDown 才会触发。
                         keyBox.Focus();
+                        Keyboard.Focus(keyBox);
                         Render();
+                    }
+
+                    // 用 PreviewMouseLeftButtonDown：TextBox 内部可能把普通
+                    // MouseLeftButtonDown 标记为已处理（用于定位插入符），冒到这里就没了。
+                    keyBox.PreviewMouseLeftButtonDown += (_, ev) =>
+                    {
+                        StartListen();
+                        ev.Handled = true;   // 别让 TextBox 自己处理（会尝试进入编辑态）
                     };
+                    keyBox.GotKeyboardFocus += (_, __) => { if (!listening) StartListen(); };
                     keyBox.LostKeyboardFocus += (_, __) => { if (listening) StopListen(); };
 
+                    // 拦掉一切"打字"来源，保证框里的内容只能由捕获逻辑写入
+                    keyBox.PreviewTextInput += (_, ev) => { ev.Handled = true; };
+                    // CommandManager 上挂：粘贴/剪切也不能污染捕获框
+                    keyBox.AddHandler(System.Windows.Input.CommandManager.PreviewExecutedEvent,
+                        new System.Windows.Input.ExecutedRoutedEventHandler((_, ev) =>
+                        {
+                            if (ev.Command == System.Windows.Input.ApplicationCommands.Paste
+                                || ev.Command == System.Windows.Input.ApplicationCommands.Cut)
+                                ev.Handled = true;
+                        }));
                     keyBox.PreviewKeyDown += (_, ev) =>
                     {
                         if (!listening) { ev.Handled = true; return; }   // 未在监听：吞掉，别让画布响应
@@ -1231,7 +1267,7 @@ namespace SoulLink.Views
                         {
                             if (!pressedMods.Contains(ev.Key)) pressedMods.Add(ev.Key);
                             // 只按了修饰键：实时预览 "CTRL +"
-                            keyText.Text = "请按下要发送的按键…（当前 " + string.Join("+", pressedMods.Select(ModName)) + "）";
+                            keyBox.Text = "请按下要发送的按键…（当前 " + string.Join("+", pressedMods.Select(ModName)) + "）";
                             return;
                         }
 
