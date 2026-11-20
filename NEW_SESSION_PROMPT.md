@@ -34,7 +34,7 @@
 
 | 项目 | 值 |
 |---|---|
-| 标准版 | **2.17.41.0（待定版）**，`dist/SoulLink.exe`（定时递增延时+复位周期） |
+| 标准版 | **2.17.44.0（待定版）**，`dist/SoulLink.exe`（撤销配置自动改写） |
 | 可信版本 | **2.17.39.0** · 归档 `E:\SoulLink-SOURCE-ARCHIVE\v2.17.39-reliable\` |
 | git 标签 | `v2.17.39-reliable` → `055520d` |
 | 可信版本 | **2.17.19.0** · `dist/SoulLink-2.17.19.exe` · 归档 `v2.17.19-reliable` |

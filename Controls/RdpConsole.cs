@@ -2196,7 +2196,20 @@ namespace SoulLink.Controls
                 return (false, ex.Message);
             }
 
-            // ── 0. 地址：配置优先，其次探测（环回地址无法靠会话号推算，见 HANDOFF 10.6）──
+            // ── 0. 地址：**完全按配置**（用户明确要求：填多少就是多少）──
+            //
+            //   ★★ 2.17.44：撤销 2.17.43 的"按实时会话号纠正地址"★★
+            //
+            //   用户原话："你不能修改我的配置地址啊，它会涉及别的服务，填多少就是多少"。
+            //
+            //   这条必须记住：RdpHost 不只是"内嵌 RDP 连哪"这一个用途，
+            //   它还可能被其它服务/流程引用。程序**无权擅自改写**用户的配置。
+            //   曾经为了让"账号重登后地址过期"自愈而自动纠写，属于越界。
+            //
+            //   现在的行为（与 2.17.42 及之前一致）：
+            //     · 配置有地址 → 就用它，原样使用，不纠正、不回写；
+            //     · 配置为空   → 才去探测（RdpHostProbe）。
+            //   地址是否过期由用户自己维护；程序只在**连接结果**上做判断。
             bool autoHost = string.IsNullOrWhiteSpace(account.RdpHost);
             string? probed = null;
             if (autoHost)
@@ -2206,12 +2219,16 @@ namespace SoulLink.Controls
             }
 
             string host = account.ResolveHost(sessionId, probed);
+            string hostSource = autoHost
+                ? (probed == null ? "自动探测（没找到）" : "自动探测")
+                : "手动配置";
+
             string user = account.EffectiveRdpUserName;
             string password = ConfigStore.GetPassword(account);
 
             SetStatus("准备会话 " + sessionId + " …");
             LogBus.Info("连接 RDP " + host + " ← " + user,
-                "会话 " + sessionId + (autoHost ? (probed == null ? "｜自动探测（没找到）" : "｜自动探测") : "｜手动配置"));
+                "会话 " + sessionId + "｜" + hostSource);
 
             // ── 1. 会话准备 ──
             // 只有目标**还连着（Active）**时才需要踢下线，否则 RDP 会新建空会话。
