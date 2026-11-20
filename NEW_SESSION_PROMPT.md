@@ -4,7 +4,8 @@
 
 接手 SoulLink 项目。请按顺序读这几份，再动手：
 
-1. `docs/HANDOFF-2.17.37-20261120.md` ← **最新交接（鼠标选图点选+自动换算，必读）**
+1. `docs/HANDOFF-2.17.38-20261120.md` ← **最新交接（鼠标选点：标记/回填/大图，必读）**
+   然后 `docs/HANDOFF-2.17.37-20261120.md`（鼠标选图点选+自动换算）
    然后 `docs/HANDOFF-2.17.36-20261120.md`（修饰键单录 + Esc 可录）
    然后 `docs/HANDOFF-2.17.35-20261120.md`（按键捕获修焦点）
    然后 `docs/HANDOFF-2.17.34-20261120.md`（按键捕获录入）
@@ -33,10 +34,10 @@
 
 | 项目 | 值 |
 |---|---|
-| 标准版 | **2.17.37.0（待定版）**，`dist/SoulLink.exe`（鼠标：选图点选+自动换算） |
+| 标准版 | **2.17.38.0（待定版）**，`dist/SoulLink.exe`（鼠标选点：标记/回填/大图） |
 | 可信版本 | **2.17.19.0** · `dist/SoulLink-2.17.19.exe` · 归档 `v2.17.19-reliable` |
-| 大小 | 67,484,823 字节 |
-| SHA256 | `2DFABAFDAF64B4104F5AEFBB4349977A47B419AE46A873B16B508A6E26A1AE32` |
+| 大小 | 67,487,060 字节 |
+| SHA256 | `7ED66631080A4028FE71D962B4036F507879ECA7ED68051A7B0E20198F4120D4` |
 | **恢复节点** | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.19-reliable\`（source/docs/成品/VERSION.txt/SHA256.txt/restore.ps1） |
 | 回归版备份 | `dist/SoulLink-2.17.17-before-ocxfix.exe`（**坏版本，别用**） |
 | 挂机版 | `dist/stable/` 仍 **2.17.4.0**，**全程未改动** |

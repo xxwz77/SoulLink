@@ -1359,29 +1359,35 @@ namespace SoulLink.Views
 
                 case FlowParamKind.CursorPick:
                 {
-                    // ★★ 2.17.37：图片点选坐标 ★★
+                    // ★★ 2.17.38：图片点选 —— 缩略图只做预览，点开**弹大窗**点选 ★★
                     //
-                    //   用户原话："鼠标xy，有点不方便，可以选择一张图片，在图片选择点击位置，
-                    //   然后根据目标账号分辨率，自动计算出坐标。比如选择一张游戏截图，可以算出坐标。"
+                    //   2.17.37 的三处问题（用户实测）：
+                    //     · 蓝色标记不跟随：pickMark 靠 Margin 定位，而 Image 是
+                    //       Stretch=Uniform + Left 对齐，图片实际显示区域 ≠ 元素区域，
+                    //       按比例算出的 Margin 必然对不上；
+                    //     · 坐标没自动填入：点击坐标取在 previewImg 上，点在留白区就
+                    //       return 了，而且写完节点没有刷新 X/Y 输入框；
+                    //     · 预览图太小（MaxHeight=240 挤在 220px 宽的面板里），根本瞄不准。
                     //
-                    //   流程：选图 → 图上点一下 → 存**归一化比例** pickX/pickY（0~1）→
-                    //   同时按目标分辨率算出像素预览 → 运行期再按实际分辨率换算。
-                    var previewBorder = new Border
+                    //   现在：缩略图只显示"当前点在哪"；点它打开大窗口，
+                    //   按尽量大的尺寸显示截图并点选，点完自动关闭，
+                    //   坐标写回节点、刷新 X/Y 输入框、缩略图上的标记也重画。
+                    var thumbBorder = new Border
                     {
-                        MinHeight = 60,
+                        MinHeight = 64,
                         Margin = new Thickness(0, 6, 0, 0),
                         CornerRadius = new CornerRadius(8),
                         Background = new SolidColorBrush(Color.FromArgb(0x22, 0x00, 0x00, 0x00)),
                         BorderThickness = new Thickness(1),
                         BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
-                        Padding = new Thickness(6),
-                        Cursor = Cursors.Cross
+                        Padding = new Thickness(4),
+                        Cursor = Cursors.Hand
                     };
-                    var previewGrid = new Grid();
-                    var previewImg = new Image { Stretch = Stretch.Uniform, MaxHeight = 240, HorizontalAlignment = HorizontalAlignment.Left };
-                    var pickMark = new System.Windows.Shapes.Ellipse
+                    var thumbGrid = new Grid();
+                    var thumbImg = new Image { Stretch = Stretch.Uniform, MaxHeight = 120 };
+                    var thumbMark = new System.Windows.Shapes.Ellipse
                     {
-                        Width = 14, Height = 14,
+                        Width = 12, Height = 12,
                         Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
                         StrokeThickness = 2,
                         Fill = new SolidColorBrush(Color.FromArgb(0x66, 0x4F, 0xE3, 0xFF)),
@@ -1390,24 +1396,33 @@ namespace SoulLink.Views
                         HorizontalAlignment = HorizontalAlignment.Left,
                         VerticalAlignment = VerticalAlignment.Top
                     };
-                    var emptyHint = new TextBlock
+                    var thumbHint = new TextBlock
                     {
-                        Text = "还没有选图。点「选择截图…」，然后在图上点一下要点击的位置。",
-                        FontSize = 10.5,
-                        TextWrapping = TextWrapping.Wrap,
+                        Text = "还没有选图。点「选择截图…」，再点这张缩略图放大后选点。",
+                        FontSize = 10.5, TextWrapping = TextWrapping.Wrap,
                         VerticalAlignment = VerticalAlignment.Center,
                         Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x9C, 0xC8))
                     };
-                    previewGrid.Children.Add(previewImg);
-                    previewGrid.Children.Add(pickMark);
-                    previewGrid.Children.Add(emptyHint);
-                    previewBorder.Child = previewGrid;
+                    var thumbTip = new TextBlock
+                    {
+                        Text = "点击图片放大选点",
+                        FontSize = 9.5,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        VerticalAlignment = VerticalAlignment.Bottom,
+                        Margin = new Thickness(0, 0, 4, 2),
+                        Foreground = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
+                        IsHitTestVisible = false,
+                        Visibility = Visibility.Collapsed
+                    };
+                    thumbGrid.Children.Add(thumbImg);
+                    thumbGrid.Children.Add(thumbMark);
+                    thumbGrid.Children.Add(thumbHint);
+                    thumbGrid.Children.Add(thumbTip);
+                    thumbBorder.Child = thumbGrid;
 
-                    // 坐标预览：图上比例 × 目标分辨率
                     var coordText = new TextBlock
                     {
-                        FontSize = 10.5,
-                        Margin = new Thickness(0, 6, 0, 0),
+                        FontSize = 10.5, Margin = new Thickness(0, 6, 0, 0),
                         TextWrapping = TextWrapping.Wrap,
                         Foreground = new SolidColorBrush(Color.FromRgb(0x9D, 0xFF, 0xE0))
                     };
@@ -1428,17 +1443,50 @@ namespace SoulLink.Views
                                 return (relay.ScreenWidth, relay.ScreenHeight);
                         }
                         catch { }
-                        return (1920, 1080);   // 拿不到就按 1080p 估算，并明确标注
+                        return (1920, 1080);
+                    }
+
+                    // 把 X/Y 两个输入框刷成节点里的值（用户指出的"没自动填入"）
+                    void SyncXYBoxes()
+                    {
+                        foreach (var ui in _propUi)
+                        {
+                            if (ui is TextBox tb && tb.Tag is string tag)
+                            {
+                                if (tag == "x" || tag == "y")
+                                    tb.Text = node.Get(tag, tag == "x" ? "960" : "540");
+                            }
+                        }
+                    }
+
+                    // 缩略图上画标记：用 Image 的**实际绘制区域**换算，而不是元素区域
+                    void PlaceThumbMark()
+                    {
+                        double nx = node.GetDouble("pickX", -1), ny = node.GetDouble("pickY", -1);
+                        if (thumbImg.Source == null || nx < 0 || nx > 1 || ny < 0 || ny > 1)
+                        {
+                            thumbMark.Visibility = Visibility.Collapsed;
+                            return;
+                        }
+                        double srcW = thumbImg.Source.Width, srcH = thumbImg.Source.Height;
+                        double boxW = thumbImg.ActualWidth, boxH = thumbImg.ActualHeight;
+                        if (srcW <= 0 || srcH <= 0 || boxW <= 0 || boxH <= 0) return;
+                        // Stretch=Uniform：按较小比例缩放，图片居中显示
+                        double scale = Math.Min(boxW / srcW, boxH / srcH);
+                        double drawW = srcW * scale, drawH = srcH * scale;
+                        double offX = (boxW - drawW) / 2.0, offY = (boxH - drawH) / 2.0;
+                        thumbMark.Margin = new Thickness(nx * drawW + offX - 6, ny * drawH + offY - 6, 0, 0);
+                        thumbMark.Visibility = Visibility.Visible;
                     }
 
                     void RenderPick()
                     {
                         string img = node.Get("image");
-                        double nx = node.GetDouble("pickX", -1), ny = node.GetDouble("pickY", -1);
                         bool hasImg = img.Length > 0 && File.Exists(img);
-                        emptyHint.Visibility = hasImg ? Visibility.Collapsed : Visibility.Visible;
-                        previewImg.Source = null;
-                        previewImg.Visibility = hasImg ? Visibility.Visible : Visibility.Collapsed;
+                        thumbHint.Visibility = hasImg ? Visibility.Collapsed : Visibility.Visible;
+                        thumbTip.Visibility = hasImg ? Visibility.Visible : Visibility.Collapsed;
+                        thumbImg.Source = null;
+                        thumbImg.Visibility = hasImg ? Visibility.Visible : Visibility.Collapsed;
                         if (hasImg)
                         {
                             try
@@ -1448,40 +1496,36 @@ namespace SoulLink.Views
                                 bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
                                 bmp.UriSource = new Uri(img, UriKind.Absolute);
                                 bmp.EndInit();
-                                previewImg.Source = bmp;
+                                thumbImg.Source = bmp;
                             }
-                            catch { emptyHint.Visibility = Visibility.Visible; }
+                            catch { thumbHint.Visibility = Visibility.Visible; }
                         }
                         var (tw, th) = TargetResolution();
+                        double nx = node.GetDouble("pickX", -1), ny = node.GetDouble("pickY", -1);
                         if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1)
                         {
-                            pickMark.Visibility = Visibility.Visible;
                             int px = (int)Math.Round(nx * tw), py = (int)Math.Round(ny * th);
                             coordText.Text = "将点击 (" + px + ", " + py + ") ［按 " + tw + "×" + th + " 换算］";
                         }
-                        else
-                        {
-                            pickMark.Visibility = Visibility.Collapsed;
-                            coordText.Text = hasImg ? "在图上点一下要点击的位置" : "";
-                        }
+                        else coordText.Text = hasImg ? "" : "";
+                        // 布局完成后才有 ActualWidth，这里排队一次
+                        Dispatcher.BeginInvoke(new Action(() => PlaceThumbMark()),
+                            System.Windows.Threading.DispatcherPriority.Loaded);
                     }
 
-                    // 图上点击 → 换算成归一化比例
-                    previewBorder.MouseLeftButtonDown += (_, ev) =>
+                    thumbImg.SizeChanged += (_, __) => PlaceThumbMark();
+
+                    // 点缩略图 → 打开大窗口点选
+                    thumbBorder.MouseLeftButtonDown += (_, __) =>
                     {
-                        if (previewImg.Source == null) return;
-                        var pt = ev.GetPosition(previewImg);
-                        if (previewImg.ActualWidth <= 0 || previewImg.ActualHeight <= 0) return;
-                        double nx = pt.X / previewImg.ActualWidth;
-                        double ny = pt.Y / previewImg.ActualHeight;
-                        if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
-                        node.SetDouble("pickX", Math.Round(nx, 5));
-                        node.SetDouble("pickY", Math.Round(ny, 5));
-                        var (tw, th) = TargetResolution();
-                        node.Set("x", ((int)Math.Round(nx * tw)).ToString());
-                        node.Set("y", ((int)Math.Round(ny * th)).ToString());
-                        MarkDirty();
-                        RenderPick();
+                        string img = node.Get("image");
+                        if (img.Length == 0 || !File.Exists(img)) return;
+                        OpenCursorPickWindow(node, img, p.Key, TargetResolution, () =>
+                        {
+                            MarkDirty();
+                            RenderPick();
+                            SyncXYBoxes();
+                        });
                     };
 
                     var btnRow2 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
@@ -1529,9 +1573,9 @@ namespace SoulLink.Views
 
                     RenderPick();
                     block.Children.Add(btnRow2);
-                    block.Children.Add(previewBorder);
+                    block.Children.Add(thumbBorder);
                     block.Children.Add(coordText);
-                    _propUi.Add(previewBorder);
+                    _propUi.Add(thumbBorder);
                     break;
                 }
 
@@ -1853,7 +1897,9 @@ namespace SoulLink.Views
                         CaretBrush = (Brush)FindResource("CyanBrush"),
                         Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
                         BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                        BorderThickness = new Thickness(1)
+                        BorderThickness = new Thickness(1),
+                        // ★ 2.17.38：把参数名挂在 Tag 上，图片点选后要回来刷新 X/Y 显示
+                        Tag = p.Key
                     };
                     tb.TextChanged += (_, __) =>
                     {
@@ -2251,6 +2297,183 @@ namespace SoulLink.Views
         /// ★ 必须和 ParseVk 保持同一套词表，否则界面录进去了、发送端解析不出来，
         ///   表现为"录了 F12 但按下去没反应"（这种静默失败最难查）。
         /// </summary>
+        /// <summary>
+        /// 打开大窗口点选坐标。点完**自动关闭**并把归一化比例写回节点。
+        ///
+        /// ★ 2.17.38：用户反馈"这个地方太小，点击图片应该展开大图，点击坐标自动关闭"。
+        ///
+        /// 设计要点：
+        ///   · 窗口按图片比例自适应，但不小于视口的 80%，保证能瞄得准；
+        ///   · 图上**实时预览**十字线与坐标（鼠标移动时就显示将要点哪）；
+        ///   · 单击即确认 → 写回 + 关闭；Esc 或「取消」按钮放弃（这里 Esc 是取消，
+        ///     因为它不是在录"按键"）；
+        ///   · 归一化比例是**相对图片原始像素**算的，与窗口缩放无关。
+        /// </summary>
+        private void OpenCursorPickWindow(FlowNode node, string imagePath, string key,
+            Func<(int w, int h)> targetResolution, Action onPicked)
+        {
+            Window win = null;
+            try
+            {
+                var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(imagePath, UriKind.Absolute);
+                bmp.EndInit();
+
+                double srcW = bmp.PixelWidth, srcH = bmp.PixelHeight;
+                var (tw, th) = targetResolution();
+
+                // 窗口尺寸：不超过屏幕 85%，保持图片比例
+                double maxW = SystemParameters.WorkArea.Width * 0.85;
+                double maxH = SystemParameters.WorkArea.Height * 0.85;
+                double scale = Math.Min(maxW / srcW, maxH / srcH);
+                if (scale > 1) scale = 1;   // 小图不放大
+                double winW = Math.Max(480, srcW * scale);
+                double winH = Math.Max(360, srcH * scale);
+
+                win = new Window
+                {
+                    Title = "在截图上点选要点击的位置（单击确认，Esc 取消）",
+                    Owner = Window.GetWindow(this),
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    Width = winW + 24,
+                    Height = winH + 90,
+                    Background = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x24)),
+                    ResizeMode = ResizeMode.CanResize,
+                    ShowInTaskbar = false
+                };
+
+                var root = new DockPanel();
+                var tip = new TextBlock
+                {
+                    Text = "在图上点一下要点击的位置（按 " + tw + "×" + th + " 换算）。单击即确认并关闭。",
+                    FontSize = 12,
+                    Margin = new Thickness(12, 10, 12, 8),
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD6, 0xF0))
+                };
+                DockPanel.SetDock(tip, Dock.Top);
+                root.Children.Add(tip);
+
+                var pickCanvas = new Canvas
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0B, 0x14)),
+                    ClipToBounds = true
+                };
+                var img = new Image { Source = bmp, Stretch = Stretch.Uniform };
+                pickCanvas.Children.Add(img);
+                // Image 撑满 canvas，点选坐标按 canvas 尺寸换算是准确的
+                img.Width = double.NaN; img.Height = double.NaN;
+                System.Windows.Controls.Canvas.SetLeft(img, 0); System.Windows.Controls.Canvas.SetTop(img, 0);
+
+                var cross = new System.Windows.Shapes.Ellipse
+                {
+                    Width = 18, Height = 18,
+                    Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
+                    StrokeThickness = 2,
+                    Fill = new SolidColorBrush(Color.FromArgb(0x50, 0x4F, 0xE3, 0xFF)),
+                    IsHitTestVisible = false,
+                    Visibility = Visibility.Collapsed
+                };
+                pickCanvas.Children.Add(cross);
+
+                var liveText = new TextBlock
+                {
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0x9D, 0xFF, 0xE0)),
+                    IsHitTestVisible = false
+                };
+                pickCanvas.Children.Add(liveText);
+
+                pickCanvas.SizeChanged += (_, __) => { LayoutCanvas(); };
+                void LayoutCanvas()
+                {
+                    // 图片按 Uniform 显示在 canvas 内，居中
+                    double cw = pickCanvas.ActualWidth, ch = pickCanvas.ActualHeight;
+                    if (cw <= 0 || ch <= 0) return;
+                    double s = Math.Min(cw / srcW, ch / srcH);
+                    double dw = srcW * s, dh = srcH * s;
+                    img.Width = dw; img.Height = dh;
+                    System.Windows.Controls.Canvas.SetLeft(img, (cw - dw) / 2.0);
+                    System.Windows.Controls.Canvas.SetTop(img, (ch - dh) / 2.0);
+                }
+
+                pickCanvas.MouseMove += (_, ev) =>
+                {
+                    var pt = ev.GetPosition(pickCanvas);
+                    if (!TryRatio(pt, out double nx, out double ny))
+                    { cross.Visibility = Visibility.Collapsed; liveText.Text = ""; return; }
+                    cross.Visibility = Visibility.Visible;
+                    System.Windows.Controls.Canvas.SetLeft(cross, pt.X - 9);
+                    System.Windows.Controls.Canvas.SetTop(cross, pt.Y - 9);
+                    int px = (int)Math.Round(nx * tw), py = (int)Math.Round(ny * th);
+                    liveText.Text = "(" + px + ", " + py + ")";
+                    System.Windows.Controls.Canvas.SetLeft(liveText, pt.X + 14);
+                    System.Windows.Controls.Canvas.SetTop(liveText, pt.Y + 10);
+                };
+
+                pickCanvas.MouseLeftButtonDown += (_, ev) =>
+                {
+                    var pt = ev.GetPosition(pickCanvas);
+                    if (!TryRatio(pt, out double nx, out double ny)) return;
+                    node.SetDouble("pickX", Math.Round(nx, 5));
+                    node.SetDouble("pickY", Math.Round(ny, 5));
+                    node.Set("x", ((int)Math.Round(nx * tw)).ToString());
+                    node.Set("y", ((int)Math.Round(ny * th)).ToString());
+                    onPicked?.Invoke();
+                    win.Close();   // ★ 点完自动关闭
+                };
+
+                bool TryRatio(Point pt, out double nx, out double ny)
+                {
+                    nx = ny = -1;
+                    double cw = pickCanvas.ActualWidth, ch = pickCanvas.ActualHeight;
+                    if (cw <= 0 || ch <= 0) return false;
+                    double s = Math.Min(cw / srcW, ch / srcH);
+                    double dw = srcW * s, dh = srcH * s;
+                    double offX = (cw - dw) / 2.0, offY = (ch - dh) / 2.0;
+                    if (pt.X < offX || pt.X > offX + dw || pt.Y < offY || pt.Y > offY + dh) return false;
+                    nx = (pt.X - offX) / dw;
+                    ny = (pt.Y - offY) / dh;
+                    return nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1;
+                }
+
+                var btnBar = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Margin = new Thickness(12, 8, 12, 10)
+                };
+                var btnCancel2 = new Button
+                {
+                    Style = (Style)FindResource("PillButton"),
+                    Height = 28, MinWidth = 72, Padding = new Thickness(12, 0, 12, 0),
+                    Content = "取消",
+                    Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF))
+                };
+                btnCancel2.Click += (_, __) => win.Close();
+                btnBar.Children.Add(btnCancel2);
+                DockPanel.SetDock(btnBar, Dock.Bottom);
+                root.Children.Add(btnBar);
+
+                root.Children.Add(pickCanvas);
+                DockPanel.SetDock(pickCanvas, Dock.Top);
+                win.Content = root;
+                win.PreviewKeyDown += (_, ev) => { if (ev.Key == Key.Escape) win.Close(); };
+                win.Loaded += (_, __) => { LayoutCanvas(); Dispatcher.BeginInvoke(new Action(LayoutCanvas)); };
+
+                win.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                try { win?.Close(); } catch { }
+                ThemedMessage.Info(Window.GetWindow(this), "打开选点窗口失败", ex.Message);
+            }
+        }
+
+
         private static string KeyNameOf(Key key, KeyEventArgs ev)
         {
             // 字母 / 数字：优先用**实际字符**，这样 Shift+1 录成 "!"、
