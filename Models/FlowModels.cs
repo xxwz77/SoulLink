@@ -319,6 +319,13 @@ namespace SoulLink.Models
         [JsonIgnore] public bool IsContact => Kind == FlowNodeKind.Trigger || Kind == FlowNodeKind.Condition;
         public string Get(string key, string fallback = "") => Params != null && Params.TryGetValue(key, out var v) ? v ?? fallback : fallback;
         public int GetInt(string key, int fallback) => int.TryParse(Get(key), out int v) ? v : fallback;
+        /// <summary>读小数参数（图片点选存的是归一化比例 0~1）。</summary>
+        public double GetDouble(string key, double fallback)
+            => double.TryParse(Get(key), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : fallback;
+        /// <summary>写小数参数（固定用 InvariantCulture，避免区域设置把小数点变成逗号）。</summary>
+        public void SetDouble(string key, double value)
+            => Set(key, value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture));
         public bool GetBool(string key, bool fallback)
         {
             string s = Get(key);

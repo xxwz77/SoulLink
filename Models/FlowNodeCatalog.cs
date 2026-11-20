@@ -26,7 +26,13 @@ namespace SoulLink.Models
         ///   原来是个普通 TextBox，用户必须知道格式（F12 / CTRL+A）才能用，
         ///   拼错一个字母就静默失败 —— 根本不能算"录入"。
         /// </summary>
-        KeyCapture = 10
+        KeyCapture = 10,
+        /// <summary>
+        /// 图片点选坐标：选一张截图 → 在图上点位置 → 存**归一化比例**，
+        /// 运行时按目标账号的实际分辨率换算成像素坐标。
+        /// 避免用户去猜 "960x540" 这种数字。
+        /// </summary>
+        CursorPick = 11
     }
     public sealed class FlowParamDef
     {
@@ -102,8 +108,28 @@ namespace SoulLink.Models
             D(FlowNodeType.ActStartOneDragon,FlowNodeKind.Action,"执行一条龙","清场后启动指定一条龙；不代表任务已跑完","\uE8FD",P("name","一条龙名称（可空）","",FlowParamKind.OneDragonPicker,"留空=页面选定",false));
             D(FlowNodeType.ActStartGroups,FlowNodeKind.Action,"执行配置组","先检查组名再清场，避免空参数先停止旧任务","\uE8FD",P("groups","配置组名","",FlowParamKind.ScriptGroupPicker,"从当前账号的 BGI 配置组中选择"));
             D(FlowNodeType.ActCloseGenshin,FlowNodeKind.Action,"关闭原神","关闭目标会话的 YuanShen.exe","\uE711");
-            D(FlowNodeType.ActMouseClick,FlowNodeKind.Action,"鼠标点击","先移动成功再点击；失败返回真实错误","\uE8B0",P("x","X","960",FlowParamKind.Number),P("y","Y","540",FlowParamKind.Number),P("button","按键","left",FlowParamKind.Select,"",true,"左键|left","右键|right","中键|middle"),P("count","点击次数","1",FlowParamKind.Number));
-            D(FlowNodeType.ActMouseMove,FlowNodeKind.Action,"鼠标移动","通过目标账号投送通道移动鼠标","\uE8B0",P("x","X","960",FlowParamKind.Number),P("y","Y","540",FlowParamKind.Number));
+            // ★★ 2.17.37：坐标改为"选一张截图 → 图上点选 → 按目标分辨率自动换算" ★★
+            //
+            //   用户原话："鼠标xy，有点不方便，可以选择一张图片，在图片选择点击位置，
+            //   然后根据目标账号分辨率，自动计算出坐标。比如选择一张游戏截图，可以算出坐标。"
+            //
+            //   存储方式：
+            //     image   —— 参照图路径（可为空；空则用旧的手填 x/y）
+            //     pickX/pickY —— 在参照图上点的位置，**归一化到 0~1**
+            //                    （存比例而不是像素：换一张同比例截图、或目标分辨率变了，
+            //                      坐标仍然对得上，这是"自动计算"的关键）
+            //     x/y     —— 旧字段保留：归一化坐标 × 目标分辨率 后写回，便于其它地方读取
+            //   CursorPick 是新的参数类型，只负责图片点选 + 换算预览。
+            D(FlowNodeType.ActMouseClick, FlowNodeKind.Action, "鼠标点击", "选一张截图，在图上点一下要点的位置；运行时按目标分辨率换算", "\uE8B0",
+                P("image", "参照截图", "", FlowParamKind.CursorPick, "选一张该账号当前画面的截图，然后在图上点要点击的位置"),
+                P("x", "X", "960", FlowParamKind.Number, "由上图自动换算；也可手动微调", false),
+                P("y", "Y", "540", FlowParamKind.Number, "由上图自动换算；也可手动微调", false),
+                P("button", "按键", "left", FlowParamKind.Select, "", true, "左键|left", "右键|right", "中键|middle"),
+                P("count", "点击次数", "1", FlowParamKind.Number));
+            D(FlowNodeType.ActMouseMove, FlowNodeKind.Action, "鼠标移动", "选一张截图，在图上点一下要移动到的位置", "\uE8B0",
+                P("image", "参照截图", "", FlowParamKind.CursorPick, "选一张该账号当前画面的截图，然后在图上点位置"),
+                P("x", "X", "960", FlowParamKind.Number, "由上图自动换算；也可手动微调", false),
+                P("y", "Y", "540", FlowParamKind.Number, "由上图自动换算；也可手动微调", false));
             D(FlowNodeType.ActKeyPress, FlowNodeKind.Action, "模拟按键", "点一下输入框，然后直接按下要发送的按键（支持组合键）", "\uE765",
                 P("keys", "按键", "", FlowParamKind.KeyCapture, "点一下输入框再按键；组合键直接一起按"),
                 P("times", "次数", "1", FlowParamKind.Number));

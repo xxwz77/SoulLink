@@ -553,12 +553,14 @@ namespace SoulLink.Services
                 {
                     case FlowNodeType.ActMouseMove:
                     {
-                        var r = await relay.MoveAsync(a.GetInt("x", 960), a.GetInt("y", 540)).ConfigureAwait(false);
-                        return (r?.Ok == true, r?.Ok == true ? "鼠标已移动" : r?.Message ?? "鼠标移动失败");
+                        var (mx, my) = ResolvePoint(a, relay);
+                        var r = await relay.MoveAsync(mx, my).ConfigureAwait(false);
+                        return (r?.Ok == true, r?.Ok == true ? "鼠标已移动到 " + mx + "," + my : r?.Message ?? "鼠标移动失败");
                     }
                     case FlowNodeType.ActMouseClick:
                     {
-                        int x = a.GetInt("x", 960), y = a.GetInt("y", 540), count = Math.Clamp(a.GetInt("count", 1), 1, 5);
+                        var (cx, cy) = ResolvePoint(a, relay);
+                        int x = cx, y = cy, count = Math.Clamp(a.GetInt("count", 1), 1, 5);
                         var moved = await relay.MoveAsync(x, y).ConfigureAwait(false);
                         if (moved?.Ok != true) return (false, moved?.Message ?? "点击前移动鼠标失败");
                         await Task.Delay(60, ScheduleRunnerHost.ShutdownCts.Token).ConfigureAwait(false);
@@ -580,6 +582,34 @@ namespace SoulLink.Services
                 return (false, "未知输入类型");
             }
             catch (Exception ex) { return (false, ex.Message); }
+        }
+
+        /// <summary>
+        /// 解析动作的目标像素坐标。
+        ///
+        /// ★★ 2.17.37：优先用"图片点选"的归一化比例 × 目标会话实际分辨率 ★★
+        ///
+        ///   用户在参照截图上点的位置会存成 0~1 的比例（pickX/pickY），
+        ///   这里乘以**目标会话当前的真实分辨率**（代理上报的 ScreenWidth/ScreenHeight），
+        ///   于是换机器、换分辨率、换截图都还能点对地方 —— 这正是用户要的"自动计算"。
+        ///
+        ///   没配截图时退回旧的手填 x/y，保持兼容。
+        /// </summary>
+        private static (int x, int y) ResolvePoint(FlowNode a, RelayClient? relay)
+        {
+            double nx = a.GetDouble("pickX", -1), ny = a.GetDouble("pickY", -1);
+            if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1)
+            {
+                int rw = relay?.ScreenWidth ?? 0, rh = relay?.ScreenHeight ?? 0;
+                if (rw <= 0 || rh <= 0) { rw = 1920; rh = 1080; }   // 拿不到分辨率时的兜底
+                int px = (int)Math.Round(nx * rw);
+                int py = (int)Math.Round(ny * rh);
+                // 夹到有效范围，避免点出屏幕
+                px = Math.Clamp(px, 0, rw - 1);
+                py = Math.Clamp(py, 0, rh - 1);
+                return (px, py);
+            }
+            return (a.GetInt("x", 960), a.GetInt("y", 540));
         }
 
         private static string TargetAccountId(FlowNode node, string flowAccountId, AppConfig cfg)

@@ -1357,6 +1357,184 @@ namespace SoulLink.Views
                     break;
                 }
 
+                case FlowParamKind.CursorPick:
+                {
+                    // ★★ 2.17.37：图片点选坐标 ★★
+                    //
+                    //   用户原话："鼠标xy，有点不方便，可以选择一张图片，在图片选择点击位置，
+                    //   然后根据目标账号分辨率，自动计算出坐标。比如选择一张游戏截图，可以算出坐标。"
+                    //
+                    //   流程：选图 → 图上点一下 → 存**归一化比例** pickX/pickY（0~1）→
+                    //   同时按目标分辨率算出像素预览 → 运行期再按实际分辨率换算。
+                    var previewBorder = new Border
+                    {
+                        MinHeight = 60,
+                        Margin = new Thickness(0, 6, 0, 0),
+                        CornerRadius = new CornerRadius(8),
+                        Background = new SolidColorBrush(Color.FromArgb(0x22, 0x00, 0x00, 0x00)),
+                        BorderThickness = new Thickness(1),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+                        Padding = new Thickness(6),
+                        Cursor = Cursors.Cross
+                    };
+                    var previewGrid = new Grid();
+                    var previewImg = new Image { Stretch = Stretch.Uniform, MaxHeight = 240, HorizontalAlignment = HorizontalAlignment.Left };
+                    var pickMark = new System.Windows.Shapes.Ellipse
+                    {
+                        Width = 14, Height = 14,
+                        Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
+                        StrokeThickness = 2,
+                        Fill = new SolidColorBrush(Color.FromArgb(0x66, 0x4F, 0xE3, 0xFF)),
+                        Visibility = Visibility.Collapsed,
+                        IsHitTestVisible = false,
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Top
+                    };
+                    var emptyHint = new TextBlock
+                    {
+                        Text = "还没有选图。点「选择截图…」，然后在图上点一下要点击的位置。",
+                        FontSize = 10.5,
+                        TextWrapping = TextWrapping.Wrap,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x9C, 0xC8))
+                    };
+                    previewGrid.Children.Add(previewImg);
+                    previewGrid.Children.Add(pickMark);
+                    previewGrid.Children.Add(emptyHint);
+                    previewBorder.Child = previewGrid;
+
+                    // 坐标预览：图上比例 × 目标分辨率
+                    var coordText = new TextBlock
+                    {
+                        FontSize = 10.5,
+                        Margin = new Thickness(0, 6, 0, 0),
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = new SolidColorBrush(Color.FromRgb(0x9D, 0xFF, 0xE0))
+                    };
+
+                    // 目标分辨率：从当前账号的注入通道拿实际值
+                    (int w, int h) TargetResolution()
+                    {
+                        try
+                        {
+                            string user = node.Get("user");
+                            if (user.Length == 0) user = _account?.UserName ?? "";
+                            var acct = _cfg?.Accounts?.FirstOrDefault(x =>
+                                string.Equals(SessionService.BareName(x.UserName), SessionService.BareName(user),
+                                              StringComparison.OrdinalIgnoreCase));
+                            var st = acct != null ? AccountStateCenter.Get(acct.Id) : null;
+                            var relay = st != null && st.SessionId > 0 ? RelayClient.FindBySession(st.SessionId) : null;
+                            if (relay != null && relay.ScreenWidth > 0 && relay.ScreenHeight > 0)
+                                return (relay.ScreenWidth, relay.ScreenHeight);
+                        }
+                        catch { }
+                        return (1920, 1080);   // 拿不到就按 1080p 估算，并明确标注
+                    }
+
+                    void RenderPick()
+                    {
+                        string img = node.Get("image");
+                        double nx = node.GetDouble("pickX", -1), ny = node.GetDouble("pickY", -1);
+                        bool hasImg = img.Length > 0 && File.Exists(img);
+                        emptyHint.Visibility = hasImg ? Visibility.Collapsed : Visibility.Visible;
+                        previewImg.Source = null;
+                        previewImg.Visibility = hasImg ? Visibility.Visible : Visibility.Collapsed;
+                        if (hasImg)
+                        {
+                            try
+                            {
+                                var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                                bmp.BeginInit();
+                                bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                                bmp.UriSource = new Uri(img, UriKind.Absolute);
+                                bmp.EndInit();
+                                previewImg.Source = bmp;
+                            }
+                            catch { emptyHint.Visibility = Visibility.Visible; }
+                        }
+                        var (tw, th) = TargetResolution();
+                        if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1)
+                        {
+                            pickMark.Visibility = Visibility.Visible;
+                            int px = (int)Math.Round(nx * tw), py = (int)Math.Round(ny * th);
+                            coordText.Text = "将点击 (" + px + ", " + py + ") ［按 " + tw + "×" + th + " 换算］";
+                        }
+                        else
+                        {
+                            pickMark.Visibility = Visibility.Collapsed;
+                            coordText.Text = hasImg ? "在图上点一下要点击的位置" : "";
+                        }
+                    }
+
+                    // 图上点击 → 换算成归一化比例
+                    previewBorder.MouseLeftButtonDown += (_, ev) =>
+                    {
+                        if (previewImg.Source == null) return;
+                        var pt = ev.GetPosition(previewImg);
+                        if (previewImg.ActualWidth <= 0 || previewImg.ActualHeight <= 0) return;
+                        double nx = pt.X / previewImg.ActualWidth;
+                        double ny = pt.Y / previewImg.ActualHeight;
+                        if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
+                        node.SetDouble("pickX", Math.Round(nx, 5));
+                        node.SetDouble("pickY", Math.Round(ny, 5));
+                        var (tw, th) = TargetResolution();
+                        node.Set("x", ((int)Math.Round(nx * tw)).ToString());
+                        node.Set("y", ((int)Math.Round(ny * th)).ToString());
+                        MarkDirty();
+                        RenderPick();
+                    };
+
+                    var btnRow2 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+                    var btnPick = new Button
+                    {
+                        Style = (Style)FindResource("PillButton"),
+                        Height = 26, MinWidth = 92, Padding = new Thickness(10, 0, 10, 0),
+                        Content = "选择截图…",
+                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0x4F, 0xE3, 0xFF)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x90, 0x4F, 0xE3, 0xFF))
+                    };
+                    btnPick.Click += (_, __) =>
+                    {
+                        var dlg = new Microsoft.Win32.OpenFileDialog
+                        {
+                            Title = "选择一张该账号当前画面的截图",
+                            Filter = "图片 (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|所有文件 (*.*)|*.*"
+                        };
+                        if (dlg.ShowDialog() != true) return;
+                        node.Set("image", dlg.FileName);
+                        node.Set("pickX", "");
+                        node.Set("pickY", "");
+                        MarkDirty();
+                        RenderPick();
+                    };
+                    btnRow2.Children.Add(btnPick);
+
+                    var btnClearPick = new Button
+                    {
+                        Style = (Style)FindResource("PillButton"),
+                        Height = 26, MinWidth = 72, Padding = new Thickness(10, 0, 10, 0),
+                        Margin = new Thickness(6, 0, 0, 0),
+                        Content = "清除选点",
+                        Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF))
+                    };
+                    btnClearPick.Click += (_, __) =>
+                    {
+                        node.Set("pickX", "");
+                        node.Set("pickY", "");
+                        MarkDirty();
+                        RenderPick();
+                    };
+                    btnRow2.Children.Add(btnClearPick);
+
+                    RenderPick();
+                    block.Children.Add(btnRow2);
+                    block.Children.Add(previewBorder);
+                    block.Children.Add(coordText);
+                    _propUi.Add(previewBorder);
+                    break;
+                }
+
                 case FlowParamKind.FilePath:
                 {
                     // 程序路径：可直接输入，也可用「浏览…」从磁盘选择
