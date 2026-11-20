@@ -138,7 +138,10 @@ namespace SoulLink.Services
                     states[n.Id] = new PlcNodeState { Value = input, Input = input, Output = false };
                     continue;
                 }
-                if (input && selected && (!previous || !flow.ActionResults.ContainsKey(n.Id) || (unknownResult && manual)))
+                // ★ 手动运行 = 用户点了「立即运行一次」：即使上一次已有结果（成功或失败），
+                //   也必须重新执行，否则失败过一次就再也点不动（原来只有"结果待确认"
+                //   允许被手动覆盖）。普通扫描仍然严格走上升沿，不会重复执行。
+                if (input && selected && (manual || !previous || !flow.ActionResults.ContainsKey(n.Id)))
                 {
                     flow.RunningActions[n.Id] = new FlowActionResult { Ok=false, At=time, Message="结果待确认" };
                     if (checkpoint != null) await checkpoint(new FlowActionResult { Ok = true, Message = "准备执行：" + n.Title }).ConfigureAwait(false);
@@ -205,8 +208,20 @@ namespace SoulLink.Services
                 try { signal = await read(n).ConfigureAwait(false); }
                 catch (Exception ex) { signal = new PlcSignal(false, false); r.Steps.Add(n.Title + "：读取失败 · " + ex.Message); }
                 bool live = signal.Available && (n.Negated ? !signal.Value : signal.Value);
-                if (!liveOnly && live && IsMomentary(n)) flow.SatisfiedContacts.Add(n.Id);
-                bool effective = !liveOnly && IsMomentary(n) && flow.SatisfiedContacts.Contains(n.Id) ? true : live;
+
+                // ★★ 「手动」触发**不参与**跨扫描的瞬时锁存。★★
+                //
+                //   瞬时锁存是为了"日志匹配/定时/间隔"这类**发生在扫描之外**的事件：
+                //   本次扫描没看到，也要留给下一轮，等其它条件凑齐。
+                //   但 TrigManual 的"事件"就是**这一次手动扫描本身**——
+                //   把它写进 SatisfiedContacts 后，手动触点永远没有"断开"的时机：
+                //   之后每次普通扫描都把它算成"满足"，动作节点的 PlcPower 一直是 true、
+                //   ActionResults 一直留着上一次的结果，于是再点「立即运行一次」
+                //   只会重复报上一次的失败（实测 2026-11-20 15:52：
+                //   弹窗仍是 02:28 的"该会话没有已连接的注入通道"，按键根本没再发出）。
+                bool latchable = IsMomentary(n) && n.Type != FlowNodeType.TrigManual;
+                if (!liveOnly && live && latchable) flow.SatisfiedContacts.Add(n.Id);
+                bool effective = !liveOnly && latchable && flow.SatisfiedContacts.Contains(n.Id) ? true : live;
                 signal = new PlcSignal(effective, signal.Available);
                 signals[n.Id] = signal;
                 var sources = flow.SourcesOf(n.Id).Where(states.ContainsKey).Select(id => states[id]).ToList();

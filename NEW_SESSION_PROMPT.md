@@ -4,7 +4,8 @@
 
 接手 SoulLink 项目。请按顺序读这几份，再动手：
 
-1. `docs/HANDOFF-2.17.19-20261120.md` ← **最新交接（定版轮），必读**
+1. `docs/HANDOFF-2.17.20-20261120.md` ← **最新交接（手动运行锁存修复），必读**
+   然后 `docs/HANDOFF-2.17.19-20261120.md`（RDP 控件修复 / 定版轮）
    ★ 重点看第 2 节（根因）、第 3 节（A/B 证据）、第 7 节（恢复节点）
 2. `docs/HANDOFF-2.17.18-20261120.md` ← 上一轮，**第 4 节是仍未解决的白带问题**
 3. `VERSIONING.md` ← 版本固定与回退规则（当前定版 2.17.19）
@@ -17,9 +18,10 @@
 
 | 项目 | 值 |
 |---|---|
-| 标准版 | **2.17.19.0（可信版本 / 恢复节点）**，`dist/SoulLink.exe` |
-| 大小 | 67,476,425 字节 |
-| SHA256 | `6BBEB9E1BB2FBCAFFFC61D8A10DB19CABA36515864999746E78AD4EB929DB723` |
+| 标准版 | **2.17.20.0（待定版）**，`dist/SoulLink.exe`（修「手动运行只生效一次」） |
+| 可信版本 | **2.17.19.0** · `dist/SoulLink-2.17.19.exe` · 归档 `v2.17.19-reliable` |
+| 大小 | 67,476,450 字节 |
+| SHA256 | `B8FF54A1D1BD8E3AACF38D2A99974026502F5799005A81FA64ACB9B0DF0230A0` |
 | **恢复节点** | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.19-reliable\`（source/docs/成品/VERSION.txt/SHA256.txt/restore.ps1） |
 | 回归版备份 | `dist/SoulLink-2.17.17-before-ocxfix.exe`（**坏版本，别用**） |
 | 挂机版 | `dist/stable/` 仍 **2.17.4.0**，**全程未改动** |
