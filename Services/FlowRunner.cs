@@ -61,6 +61,42 @@ namespace SoulLink.Services
                 DateTime time = DateTime.Now;
                 string stateBefore = System.Text.Json.JsonSerializer.Serialize(flow);
                 if (ScheduleRunnerHost.IsShuttingDown) return new RunResult { Message = "应用正在退出，已跳过扫描" };
+
+                // ★★ 2.17.33：通道门控 —— 先建立通道，**再做条件判断** ★★
+                //
+                //   用户实测反馈："运行条件没用跟随，运行条件应该在建立通道后进行判断。
+                //   现在是运行条件先判断，通道完成立刻执行。"
+                //
+                //   原来是先 ScanAsync（条件判定 + 动作执行），通道没就绪才在
+                //   RunInputAsync 里等 —— 这等于：
+                //     · 条件用的是**通道建立之前**的采样值；
+                //     · 通道一就绪就立刻把"当时判定通过"的动作补发出去。
+                //   对「定时·间隔」这种脉冲型触点尤其致命：间隔到点的脉冲
+                //   在通道还没好时就已经点亮并锁存（SatisfiedContacts / ContactPulseAt），
+                //   通道建好后立刻补执行一次 —— 这次执行并不代表"现在条件满足"。
+                //
+                //   正确语义：本流程要用到注入通道时，**先确保通道就绪**，
+                //   再在通道就绪的**当前时刻**重新判定条件；
+                //   判定不通过就什么都不做（不许补发）。
+                //
+                //   注意：只对"真的要用通道"的流程做门控（见 UsesInjection），
+                //   纯本地动作（等待/启动进程/关 BGI 等）不该被通道阻塞。
+                if (!manual && UsesInjection(flow))
+                {
+                    var gate = await EnsureChannelBeforeScanAsync(flow, sessionId, cfg).ConfigureAwait(false);
+                    if (!gate.Ready)
+                    {
+                        // 通道还没好：**本轮不判定条件、不执行动作**，
+                        // 只把等待态挂到流程上让界面显示黄灯 + 提示。
+                        flow.EnsurePlcModel();
+                        var skipped = new RunResult { Message = gate.Message };
+                        LastScanAt = DateTime.Now;
+                        return skipped;
+                    }
+                    // ★ 通道刚建立：必须重新取时间，让条件在"通道就绪之后"判定。
+                    time = DateTime.Now;
+                }
+
                 var r = await PlcScanEngine.ScanAsync(flow,
                     n => ReadContactAsync(n, flow, sessionId, cfg, manual, time),
                     n => WriteOutputAsync(n, flow, sessionId, cfg), manual,
@@ -74,6 +110,106 @@ namespace SoulLink.Services
                 return r;
             }
             finally { lock (Sync) Running.Remove(flow.Id); }
+        }
+
+        /// <summary>
+        /// 本流程是否**真的要用注入通道**（模拟按键 / 鼠标移动 / 点击 / 滚轮）。
+        ///
+        /// ★ 只有这类动作才需要通道门控；纯本地动作（等待、启动进程、关 BGI、
+        ///   启动一条龙……）不该因为通道没建好就整体卡住。
+        /// </summary>
+        private static bool UsesInjection(AutomationFlow flow)
+        {
+            foreach (var n in flow.Nodes)
+            {
+                if (n.Kind != FlowNodeKind.Action) continue;
+                if (n.Type == FlowNodeType.ActKeyPress || n.Type == FlowNodeType.ActMouseMove
+                    || n.Type == FlowNodeType.ActMouseClick || n.Type == FlowNodeType.ActMouseWheel)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 扫描前确保目标会话的注入通道就绪。
+        ///
+        /// 返回 Ready=false 表示"本轮跳过条件判定"：调用方**不得**执行任何动作，
+        /// 只把等待态挂到流程上（界面黄灯 + 提示）。
+        /// </summary>
+        private static async Task<(bool Ready, string Message)> EnsureChannelBeforeScanAsync(
+            AutomationFlow flow, int flowSessionId, AppConfig cfg)
+        {
+            // 找本流程里第一个注入类动作，取它的真实目标会话号（可能指定了别的账号）。
+            FlowNode? target = null;
+            foreach (var n in flow.Nodes)
+            {
+                if (n.Kind != FlowNodeKind.Action) continue;
+                if (n.Type == FlowNodeType.ActKeyPress || n.Type == FlowNodeType.ActMouseMove
+                    || n.Type == FlowNodeType.ActMouseClick || n.Type == FlowNodeType.ActMouseWheel)
+                { target = n; break; }
+            }
+            if (target == null) return (true, "");
+
+            string accountId = TargetAccountId(target, flow.AccountId, cfg);
+            var state = AccountStateCenter.Get(accountId) ?? AccountStateCenter.GetByUser(
+                cfg.Accounts.FirstOrDefault(a => a.Id == accountId)?.UserName ?? "");
+            int sid = TargetSessionId(target, flow.AccountId, flowSessionId, cfg);
+            if (sid <= 0) sid = state?.SessionId ?? 0;
+
+            // ★★ 会话不存在 ≠ 可以放行 ★★
+            //
+            //   实测（2026-11-20 17:16）：A2 的会话号取不到时这里直接 return(true)，
+            //   于是条件照样判定、动作照样执行 → "目标账号没有会话" 失败，
+            //   拦不住"先判定条件、通道完成再补执行"的问题。
+            //   没有会话就说明**通道不可能就绪**，必须挡住，
+            //   并且给出明确原因（而不是让动作层报一句听不懂的"没有会话"）。
+            if (sid <= 0)
+            {
+                string who = cfg.Accounts.FirstOrDefault(a => a.Id == accountId)?.UserName ?? accountId;
+                flow.WaitingChannel = "等待「" + who + "」的会话上线 / 通道建立…";
+                bool hasSession = state != null && state.HasSession;
+                return (false, hasSession
+                    ? "目标账号的会话号尚未就绪，本轮不判定条件（不会补发）"
+                    : "目标账号当前没有登录会话，本轮不判定条件（不会补发）");
+            }
+
+            var relay = RelayClient.FindBySession(sid);
+            if (relay != null && relay.IsConnected)
+            {
+                flow.WaitingChannel = "";
+                return (true, "");
+            }
+
+            flow.WaitingChannel = "等待注入通道建立（会话 " + sid + "）…";
+            FlowRunner.ReportChannelWait?.Invoke(target.Title, "等待注入通道建立…");
+            LogBus.Info("等待注入通道（门控）",
+                "「" + flow.DisplayName + "」本轮先不判定条件，等会话 " + sid + " 的通道就绪");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < ChannelWaitMs)
+            {
+                if (ScheduleRunnerHost.IsShuttingDown)
+                {
+                    flow.WaitingChannel = "";
+                    return (false, "应用正在退出，已取消等待通道");
+                }
+                await Task.Delay(250).ConfigureAwait(false);
+                relay = RelayClient.FindBySession(sid);
+                if (relay != null && relay.IsConnected)
+                {
+                    flow.WaitingChannel = "";
+                    FlowRunner.ReportChannelWait?.Invoke(target.Title, "");
+                    LogBus.Info("通道已就绪（门控）",
+                        "「" + flow.DisplayName + "」等待 " + sw.ElapsedMilliseconds + "ms 后开始判定条件");
+                    return (true, "");
+                }
+            }
+
+            flow.WaitingChannel = "";
+            FlowRunner.ReportChannelWait?.Invoke(target.Title, "");
+            return (false,
+                "等待注入通道超时（" + (ChannelWaitMs / 1000) + " 秒）：会话 " + sid
+                + " 仍未建立通道，本轮不判定条件（不会补发）");
         }
 
         internal static Task<PlcSignal> ReadPreviewContactAsync(FlowNode n, AutomationFlow flow, int sessionId, AppConfig cfg, DateTime time)

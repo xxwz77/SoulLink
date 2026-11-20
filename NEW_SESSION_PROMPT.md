@@ -4,7 +4,8 @@
 
 接手 SoulLink 项目。请按顺序读这几份，再动手：
 
-1. `docs/HANDOFF-2.17.32-20261120.md` ← **最新交接（失败也封盘的 bug + 今日完成按钮），必读**
+1. `docs/HANDOFF-2.17.33-20261120.md` ← **最新交接（通道门控：先建通道再判条件），必读**
+   然后 `docs/HANDOFF-2.17.32-20261120.md`（失败也封盘的 bug + 今日完成按钮）
    然后 `docs/HANDOFF-2.17.31-20261120.md`（今日成功/失败次数）
    然后 `docs/HANDOFF-2.17.30-20261120.md`（等待注入通道：黄灯+保持提示）
    然后 `docs/HANDOFF-2.17.29-20261120.md`（END 今日完成橙色 + 可清除）
@@ -28,10 +29,10 @@
 
 | 项目 | 值 |
 |---|---|
-| 标准版 | **2.17.32.0（待定版）**，`dist/SoulLink.exe`（失败封盘修复 + 今日完成按钮） |
+| 标准版 | **2.17.33.0（待定版）**，`dist/SoulLink.exe`（通道门控：先建通道再判条件） |
 | 可信版本 | **2.17.19.0** · `dist/SoulLink-2.17.19.exe` · 归档 `v2.17.19-reliable` |
-| 大小 | 67,479,949 字节 |
-| SHA256 | `E6687697C8F0278B529E7D526BA8455C9B8F319EB532A38046A8987DA04D399D` |
+| 大小 | 67,481,036 字节 |
+| SHA256 | `0ACBE853FB4C5EB242AE77E9651F8F6C69C24294DAAA0D928DC7576808342993` |
 | **恢复节点** | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.19-reliable\`（source/docs/成品/VERSION.txt/SHA256.txt/restore.ps1） |
 | 回归版备份 | `dist/SoulLink-2.17.17-before-ocxfix.exe`（**坏版本，别用**） |
 | 挂机版 | `dist/stable/` 仍 **2.17.4.0**，**全程未改动** |
