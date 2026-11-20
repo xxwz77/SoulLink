@@ -1170,7 +1170,7 @@ namespace SoulLink.Views
                         TextAlignment = TextAlignment.Left,
                         VerticalContentAlignment = VerticalAlignment.Center,
                         Text = "",
-                        ToolTip = "点一下，然后直接按下要发送的按键（可组合键）；Backspace 清空，Esc 取消"
+                        ToolTip = "点一下，然后直接按下要发送的按键；可单按 CTRL/SHIFT/ALT，也可组合键"
                     };
                     // 用 TextBox 的文字来显示状态，颜色靠 Foreground 区分。
                     // （原来用 Border+TextBlock，改 TextBox 后这两个 helper 也跟着改。）
@@ -1183,7 +1183,7 @@ namespace SoulLink.Views
                         string cur = node.Get(p.Key, p.Default);
                         if (listening)
                         {
-                            keyBox.Text = "请按下要发送的按键…（Esc 取消）";
+                            keyBox.Text = "请按下要发送的按键…（可单按 CTRL/SHIFT/ALT，或按「取消」退出）";
                             keyBox.Foreground = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
                             keyBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
                         }
@@ -1249,12 +1249,18 @@ namespace SoulLink.Views
                                 || ev.Command == System.Windows.Input.ApplicationCommands.Cut)
                                 ev.Handled = true;
                         }));
+                    // 本次监听里是否已经按过"主键"（决定修饰键松开时怎么处理）
+                    bool sawMainKey = false;
+                    DateTime lastModDownAt = DateTime.MinValue;
+
                     keyBox.PreviewKeyDown += (_, ev) =>
                     {
                         if (!listening) { ev.Handled = true; return; }   // 未在监听：吞掉，别让画布响应
                         ev.Handled = true;
 
-                        if (ev.Key == Key.Escape) { StopListen(); return; }
+                        // ★★ 2.17.36：Esc 不再承担"取消"，改成可正常录入的按键 ★★
+                        //   用户原话："esc 需要增加一个单独按钮，因为现在 esc 是退出"。
+                        //   取消改由旁边的「取消」按钮负责（见下方）。
 
                         // 退格 = 清空已录按键
                         if (ev.Key == Key.Back)
@@ -1266,12 +1272,16 @@ namespace SoulLink.Views
                         if (mod.Length > 0)
                         {
                             if (!pressedMods.Contains(ev.Key)) pressedMods.Add(ev.Key);
+                            lastModDownAt = DateTime.Now;
                             // 只按了修饰键：实时预览 "CTRL +"
-                            keyBox.Text = "请按下要发送的按键…（当前 " + string.Join("+", pressedMods.Select(ModName)) + "）";
+                            keyBox.Text = "请按下要发送的按键…（当前 " + string.Join("+", pressedMods.Select(ModName))
+                                + (ev.Key == Key.LeftCtrl || ev.Key == Key.RightCtrl
+                                    ? "，松开即可只录 CTRL）" : "）");
                             return;
                         }
 
                         // 主键：拼成 CTRL+ALT+X 这类串，交给 RelayAgent.ParseVk 解析
+                        sawMainKey = true;
                         var parts = new List<string>();
                         foreach (var k in pressedMods) parts.Add(ModName(k));
                         parts.Add(KeyNameOf(ev.Key, ev));
@@ -1282,8 +1292,67 @@ namespace SoulLink.Views
                         StopListen();
                     };
 
+                    // ★★ 修饰键**单独录入**：松开时若没按过任何主键，就把这个修饰键本身录进去 ★★
+                    //   用户原话："shift ctrl 无法单独录入"。
+                    //   原来只按修饰键永远只是"预览"，必须再按一个主键才能结束 ——
+                    //   于是根本录不进单独的 SHIFT / CTRL / ALT。
+                    keyBox.PreviewKeyUp += (_, ev) =>
+                    {
+                        if (!listening) { ev.Handled = true; return; }
+                        ev.Handled = true;
+
+                        string mod = ModName(ev.Key);
+                        if (mod.Length == 0) return;
+                        if (sawMainKey) return;                     // 组合键已在 KeyDown 里处理
+                        if (pressedMods.Count != 1) return;         // 同时按住多个修饰键时不算（避免误录）
+                        if ((DateTime.Now - lastModDownAt).TotalMilliseconds < 30) return;  // 与组合键的快速按下区分
+
+                        node.Set(p.Key, mod);
+                        MarkDirty();
+                        StopListen();
+                    };
+
                     Render();
                     block.Children.Add(keyBox);
+
+                    // ★ 2.17.36：独立的「取消 / 清空」按钮 ★
+                    //   原来靠 Esc 退出监听，等于把 Esc 这个按键"占用"了，
+                    //   用户就没法把 Esc 本身录进去（而 Esc 恰恰是常用的关闭键）。
+                    //   现在取消交给按钮，Esc 变成可以正常录入的按键。
+                    var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+                    var btnCancel = new Button
+                    {
+                        Style = (Style)FindResource("PillButton"),
+                        Height = 24, MinWidth = 60, Padding = new Thickness(9, 0, 9, 0),
+                        Content = "取消录入",
+                        Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+                        ToolTip = "退出按键监听（不改变已录内容）"
+                    };
+                    btnCancel.Click += (_, __) => StopListen();
+                    btnRow.Children.Add(btnCancel);
+
+                    var btnClear = new Button
+                    {
+                        Style = (Style)FindResource("PillButton"),
+                        Height = 24, MinWidth = 60, Padding = new Thickness(9, 0, 9, 0),
+                        Margin = new Thickness(6, 0, 0, 0),
+                        Content = "清空",
+                        Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+                        ToolTip = "清掉已录的按键"
+                    };
+                    btnClear.Click += (_, __) =>
+                    {
+                        node.Set(p.Key, "");
+                        MarkDirty();
+                        listening = false;
+                        pressedMods.Clear();
+                        Render();
+                    };
+                    btnRow.Children.Add(btnClear);
+                    block.Children.Add(btnRow);
+
                     _propUi.Add(keyBox);
                     break;
                 }
