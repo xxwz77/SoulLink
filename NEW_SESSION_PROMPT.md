@@ -34,11 +34,12 @@
 
 | 项目 | 值 |
 |---|---|
-| 标准版 | **2.17.38.0（待定版）**，`dist/SoulLink.exe`（鼠标选点：标记/回填/大图） |
+| 标准版 | **2.17.38.0（已定版/可信版本）**，`dist/SoulLink.exe` |
 | 可信版本 | **2.17.19.0** · `dist/SoulLink-2.17.19.exe` · 归档 `v2.17.19-reliable` |
 | 大小 | 67,487,060 字节 |
 | SHA256 | `7ED66631080A4028FE71D962B4036F507879ECA7ED68051A7B0E20198F4120D4` |
-| **恢复节点** | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.19-reliable\`（source/docs/成品/VERSION.txt/SHA256.txt/restore.ps1） |
+| **恢复节点** | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.38-reliable\`（216 条哈希全通过） |
+| 上一可信版 | `E:\SoulLink-SOURCE-ARCHIVE\v2.17.19-reliable\` |
 | 回归版备份 | `dist/SoulLink-2.17.17-before-ocxfix.exe`（**坏版本，别用**） |
 | 挂机版 | `dist/stable/` 仍 **2.17.4.0**，**全程未改动** |
 | 项目路径 | `E:\Documents\deepseek-harness\SoulLink` |
