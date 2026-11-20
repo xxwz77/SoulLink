@@ -77,6 +77,11 @@ tools/*
 !tools/layout-check
 !tools/layout-check/LayoutCheck.cs
 !tools/layout-check/LayoutCheck.csproj
+# Broker 独立安装器（源码入库，构建产物忽略）—— 2.17.45 起它同时支持
+# SoulLink.exe 与 SoulLink-Stable.exe 两个身份，必须跟主程序一起演进。
+!tools/broker-setup
+!tools/broker-setup/Program.cs
+!tools/broker-setup/SoulLink.BrokerSetup.csproj
 # ── 本地构建 / 发布 / 备份产物（体积大，不入库；2026-11-20 补）────────────
 # 为什么补：git add -A 会把 7.4 GB 的 dist-*/backups/artifacts/releases 全吞进去。
 dist-*/
