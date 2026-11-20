@@ -141,7 +141,26 @@ namespace SoulLink.Services
                 // ★ 手动运行 = 用户点了「立即运行一次」：即使上一次已有结果（成功或失败），
                 //   也必须重新执行，否则失败过一次就再也点不动（原来只有"结果待确认"
                 //   允许被手动覆盖）。普通扫描仍然严格走上升沿，不会重复执行。
-                if (input && selected && (manual || !previous || !flow.ActionResults.ContainsKey(n.Id)))
+                //
+                // ★★ 2.17.24 修「失败一次后永久卡死」★★
+                //
+                //   原来只有"成功"的结果会阻止重复执行 —— 但实际上**失败**也会：
+                //   失败结果写进 ActionResults 后，只要触点一直为真（input=true）、
+                //   PlcPower 一直是 true（previous=true），
+                //   `!previous || !ContainsKey` 这两条就永远为 false → 动作再也不会执行。
+                //   而上面那行只在 `!input || !selected` 时才清掉失败结果，
+                //   可「定时·间隔」这类触点几乎一直是真（瞬时信号有 2 秒保留窗口，
+                //   间隔 ≤2 秒时每轮读到都算真）→ 永远等不到那个"断开"的时机。
+                //
+                //   实测（2026-11-20 16:40，真实引擎 + 真实流程，连扫 8 轮）：
+                //     每轮都是 msg="动作失败；断开后可重试"，PlcPower 恒 True，
+                //     ActionResults 恒为 1 条失败记录，Triggered 恒 False。
+                //     用户看到的正是"点了没反应 / 自动执行不动了"。
+                //
+                //   现在：**失败的结果不阻挡下一次执行**（每轮扫描重试，直到成功）。
+                //   成功结果仍然阻挡，严格走上沿，不会重复执行。
+                bool lastFailed = flow.ActionResults.TryGetValue(n.Id, out var lastRes) && !lastRes.Ok;
+                if (input && selected && (manual || lastFailed || !previous || !flow.ActionResults.ContainsKey(n.Id)))
                 {
                     flow.RunningActions[n.Id] = new FlowActionResult { Ok=false, At=time, Message="结果待确认" };
                     if (checkpoint != null) await checkpoint(new FlowActionResult { Ok = true, Message = "准备执行：" + n.Title }).ConfigureAwait(false);
@@ -152,6 +171,16 @@ namespace SoulLink.Services
                     r.Triggered = true;
                     r.Steps.Add("执行「" + n.Title + "」：" + result.Message);
                     r.Message = result.Ok ? "已执行：" + n.Title : "执行失败：" + n.Title + " · " + result.Message;
+
+                    // ★ 2.17.23：状态灯要显示"执行成功=绿 / 执行失败=红"，
+                    //   所以每次动作执行完就把结果记到流程上（不只等整轮收尾）。
+                    //   原来只有 complete 分支才写 LastRunAt/RunCount，失败路径什么都不留，
+                    //   界面只能看到一个永远不会变的状态。
+                    flow.LastRunOk = result.Ok;
+                    flow.LastRunError = result.Ok ? "" : (result.Message ?? "");
+                    flow.LastRunAction = n.Title;
+                    flow.LastActionResultAt = time;
+
                     if (checkpoint != null) await checkpoint(result).ConfigureAwait(false);
                 }
                 if (flow.ActionResults.TryGetValue(n.Id, out var actionResult) && actionResult.Ok)

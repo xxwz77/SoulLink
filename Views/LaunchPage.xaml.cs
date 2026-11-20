@@ -1718,31 +1718,23 @@ namespace SoulLink.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // 暂停灰 / END 琥珀 / 正在自动跑 = 青绿 / 未启用或从未跑 = 深灰。
+            // ★★ 2.17.23 状态灯按用户指定的四色语义 ★★
             //
-            // ★★ 2.17.22 修「执行的时候没用亮绿灯」★★
+            //   蓝 = 等待（流程已启用，正在等条件/等待触发）
+            //   黄 = 暂停（被暂停或未启用；有 END 且今日已完成也归这一档）
+            //   绿 = 执行成功（最近一次真正执行的动作成功了）
+            //   红 = 执行失败（最近一次真正执行的动作失败了）
             //
-            //   原来判定的是「触点实时值为真」（f.RuntimeStates 里的 contact 节点），
-            //   但这盏灯几乎永远是灭的，原因有两个：
-            //     ① TrigInterval 的脉冲只"亮"一瞬间：FlowRunner.ReadContactAsync 里
-            //        脉冲时刻记进 ContactPulseAt，2 秒内重复读取才算 true，之后就 false；
-            //        而界面每 3 秒才刷一次，采样几乎必然落在"假"的那一帧上。
-            //     ② 更致命：流程账号是主用户（lummy），而「仅管理挂机账号」开着时
-            //        excluded=true 直接返回中性灰 —— 无论跑没跑都不亮。
-            //        （用户实测：3 个流程 RunCount 已到几百，灯始终是灰的。）
-            //
-            //   现在按"这个流程此刻是否处于可自动执行状态"来着色：
-            //     暂停/未启用 → 灰蓝；今日已完成（有 END）→ 琥珀；
-            //     启用且今天还能跑 → 青绿（= 它会自己动，不需要手点）。
-            //   「仅管理挂机账号」不再影响这盏灯：它是**控制状态**，不是挂机目标的运行数据。
+            //   判定顺序按"最新鲜的事实"来：暂停 > 有结果 > 无结果=等待。
+            //   「仅管理挂机账号」不再影响这盏灯：它是**控制状态**，不是挂机目标的运行数据
+            //   （原来 excluded 直接返回灰，导致主用户永远看不到灯，见 2.17.22 交接）。
             bool excluded = !AccountScope.Allows(OwnerUserNameOf(f));
             var today = f.TodayRunState();
-            Color dotColor = paused ? Color.FromRgb(0x8B,0x9C,0xC8)
-                : f.IsDailyComplete ? Color.FromRgb(0xFF,0xB1,0x4D)
-                // ★ 只连了「手动」触点 = 绝不会自己跑：青色不够，必须与"自动跑"区分开，
-                //   否则用户看到绿点却怎么等都不执行（正是本次反馈的现象）。
-                : f.NeedsManualTrigger ? Color.FromRgb(0x4F,0xE3,0xFF)
-                : today.WillRun ? Color.FromRgb(0x41,0xF0,0xC0) : Color.FromRgb(0x65,0x75,0x91);
+            Color dotColor =
+                paused ? Color.FromRgb(0xFF, 0xC4, 0x6B)              // 黄 = 暂停 / 未启用
+                : f.LastRunOk == false ? Color.FromRgb(0xFF, 0x6B, 0x8B)   // 红 = 上次执行失败
+                : f.LastRunOk == true ? Color.FromRgb(0x41, 0xF0, 0xC0)    // 绿 = 上次执行成功
+                : Color.FromRgb(0x4F, 0xE3, 0xFF);                     // 蓝 = 等待（还没执行过）
 
             var dot = new Ellipse
             {
@@ -1910,18 +1902,41 @@ namespace SoulLink.Views
             int outs = f.Nodes.Count(n => n.Kind == FlowNodeKind.Action);
             string structure = contacts + " 个条件 · " + outs + " 个动作";
 
-            // ★ 2.17.22：这里必须显示「今日会不会自己跑」。
-            //   用户反馈"添加任务之后需要手动按一次开关才会自动执行"——
-            //   卡片上原来对主用户只显示结构，"要不要手点"完全看不出来。
-            //   这不是挂机目标的运行数据（触点满足数才是），而是控制状态，主用户也要显示。
-            string state = f.TodayRunState().Text;
+            // ★ 2.17.23：摘要第一优先显示"上次执行结果"，与灯色一一对应：
+            //   绿=成功 / 红=失败 / 蓝=等待（还没执行过）/ 黄=暂停。
+            string state = DescribeLastRun(f);
 
-            // 主用户（被全局排除）不显示**运行数据**（触点满足数）
+            // 主用户（被全局排除）不显示**触点实时满足数**（那是挂机目标的运行数据），
+            // 但"上次执行成功还是失败"是控制状态，必须给出来。
             if (!AccountScope.Allows(OwnerUserNameOf(f)))
                 return structure + " · " + state;
 
             int lit = f.RuntimeStates.Count(kv => kv.Value.Value && f.FindNode(kv.Key)?.IsContact == true);
             return contacts + " 个条件（满足 " + lit + "） · " + outs + " 个动作 · " + state;
+        }
+
+        /// <summary>
+        /// 用一句话描述"上一次执行是什么结果"，措辞与状态灯颜色严格对应：
+        /// 绿=执行成功 / 红=执行失败 / 蓝=等待 / 黄=暂停。
+        /// </summary>
+        private static string DescribeLastRun(AutomationFlow f)
+        {
+            if (f.Paused) return "暂停中" + (string.IsNullOrWhiteSpace(f.PauseReason) ? "" : "（" + f.PauseReason + "）");
+            if (!f.Enabled) return "暂停：流程未启用";
+
+            string when = f.LastActionResultAt?.ToString("HH:mm:ss") ?? "";
+            string action = string.IsNullOrWhiteSpace(f.LastRunAction) ? "" : "「" + f.LastRunAction + "」";
+
+            if (f.LastRunOk == true)
+                return "执行成功" + action + (when.Length > 0 ? " · " + when : "");
+            if (f.LastRunOk == false)
+                return "执行失败" + action + "：" + (string.IsNullOrWhiteSpace(f.LastRunError) ? "未提供原因" : f.LastRunError)
+                       + (when.Length > 0 ? " · " + when : "");
+
+            // 还没执行过 → 等待。顺带说清"它会不会自己跑"。
+            return f.NeedsManualTrigger
+                ? "等待：只连了「手动」触点，点「立即运行一次」才执行"
+                : "等待：条件满足时自动执行";
         }
 
         /// <summary>取流程所属账号的用户名（找不到返回空，视为不在管理范围内）。</summary>

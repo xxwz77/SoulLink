@@ -20,6 +20,22 @@ namespace SoulLink.Models
         public DateTime? LastRunAt { get; set; }
         public int RunCount { get; set; }
 
+        /// <summary>
+        /// 最近一次**真正执行了动作**的结果（成功/失败）。空 = 还没执行过。
+        ///
+        /// ★ 2.17.23：状态灯要区分"执行成功=绿 / 执行失败=红"，
+        ///   而原来的 RunCount 只在"整轮收尾"时才加，失败路径根本不写任何结果，
+        ///   界面无从判断上一次是成功还是失败。
+        ///   这里在**每次动作执行后**就落盘，与 RunCount 的含义分开。
+        /// </summary>
+        public bool? LastRunOk { get; set; }
+        /// <summary>最近一次执行失败的原因（成功时清空）。</summary>
+        public string LastRunError { get; set; } = "";
+        /// <summary>最近一次执行里被执行的动作标题（用于提示）。</summary>
+        public string LastRunAction { get; set; } = "";
+        /// <summary>最近一次动作执行时刻（与 LastRunAt 区分：后者只在整轮收尾时更新）。</summary>
+        public DateTime? LastActionResultAt { get; set; }
+
         /// <summary>2 = 单出口 PLC 扫描模型；旧配置在加载/打开时迁移。</summary>
         public int EngineVersion { get; set; } = 1;
         /// <summary>本轮运行状态格式；1=按业务日持久化，0=需要保守迁移。</summary>
