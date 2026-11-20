@@ -450,6 +450,47 @@
         <Setter Property="BorderBrush" Value="Transparent" />
     </Style>
 
+    <!-- ★ 2.17.25 胶囊按钮：hover 只加亮边框，**不覆盖 Background**。
+         为什么需要：IconButton 派生自 GhostButton，它的 Trigger 在 IsMouseOver 时
+         会把 Bg 的 Background 直接替换成 ButtonBorder，于是
+         "自动运行=绿 / 已停止=灰" 这种**状态色**一悬停就看不见了。 -->
+    <Style x:Key="PillButton" TargetType="Button">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource NoFocusVisual}" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="10.5" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bg" CornerRadius="13"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          RecognizesAccessKey="True" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bg" Property="Opacity" Value="0.82" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bg" Property="Opacity" Value="0.65" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bg" Property="Opacity" Value="0.35" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="WindowButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
         <Setter Property="FocusVisualStyle" Value="{StaticResource NoFocusVisual}" />
         <Setter Property="Width" Value="44" />

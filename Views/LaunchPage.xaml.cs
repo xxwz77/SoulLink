@@ -1769,17 +1769,33 @@ namespace SoulLink.Views
             // 按钮组
             var btns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
 
+            // ★★ 2.17.25：「自动运行」开关与「手动触发」按钮必须一眼分开 ★★
+            //
+            //   原来两个按钮都是 \uE768（播放），只是 ToolTip 不同
+            //   （"恢复"/"暂停" vs "立即运行一次"），用户实测分不清，
+            //   也分不清"这个流程到底会不会自己跑"。
+            //
+            //   现在：
+            //     · 自动开关 = 带文字的胶囊开关（"自动运行"/"已停止"），
+            //       开=绿色实心、关=灰色空心 —— 它表示的是一个**持续状态**；
+            //     · 手动触发 = 单独的闪电图标 + "运行一次"文字，
+            //       永远表示**一次性的立即执行**，与开关状态互不影响。
             var btnPause = new Button
             {
-                Style = (Style)FindResource("IconButton"),
-                Width = 26, Height = 26,
-                Content = new TextBlock
-                {
-                    Text = paused ? "\uE768" : "\uE769",
-                    FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                    FontSize = 10
-                },
-                ToolTip = paused ? "恢复" : "暂停",
+                // ★ 用 PillButton：IconButton 的模板在 hover 时会把 Background 覆盖掉，
+                //   "开=绿/关=灰"的状态色就看不见了。
+                Style = (Style)FindResource("PillButton"),
+                Height = 26, MinWidth = 78, Padding = new Thickness(9, 0, 9, 0),
+                Content = BuildAutoSwitchContent(!paused),
+                Background = new SolidColorBrush(paused
+                    ? Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)
+                    : Color.FromArgb(0x30, 0x41, 0xF0, 0xC0)),
+                BorderBrush = new SolidColorBrush(paused
+                    ? Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)
+                    : Color.FromArgb(0x90, 0x41, 0xF0, 0xC0)),
+                ToolTip = paused
+                    ? "自动运行：已停止。点击恢复——之后会按条件自动执行，不需要再点。".Replace("恢复", "开启")
+                    : "自动运行：开启中。条件满足时自动执行；点击可停止（停止后只能手动运行一次）。",
                 Tag = f
             };
             btnPause.Click += (_, __) =>
@@ -1791,17 +1807,16 @@ namespace SoulLink.Views
             };
             btns.Children.Add(btnPause);
 
+            // 手动触发：闪电图标 + 「运行一次」，表示"现在就跑一遍"（一次性）。
+            // 与上面的自动开关是两个维度：停止状态下也能用，用来验证流程是否正常。
             var btnRun = new Button
             {
-                Style = (Style)FindResource("IconButton"),
-                Width = 26, Height = 26,
-                Content = new TextBlock
-                {
-                    Text = "\uE768", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10
-                },
-                ToolTip = "立即运行一次",
+                Style = (Style)FindResource("PillButton"),
+                Height = 26, MinWidth = 78, Padding = new Thickness(9, 0, 9, 0),
+                Content = BuildRunOnceContent(),
+                ToolTip = "手动触发：立即执行一次（不影响「自动运行」开关）",
                 Tag = f,
-                Margin = new Thickness(4, 0, 0, 0)
+                Margin = new Thickness(6, 0, 0, 0)
             };
             btnRun.Click += async (_, __) => await RunFlowNowAsync(f);
             btns.Children.Add(btnRun);
@@ -1915,6 +1930,47 @@ namespace SoulLink.Views
             return contacts + " 个条件（满足 " + lit + "） · " + outs + " 个动作 · " + state;
         }
 
+        /// <summary>「自动运行」开关的按钮内容：图标 + 文字，开=绿、关=灰。</summary>
+        private static FrameworkElement BuildAutoSwitchContent(bool on)
+        {
+            var sp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            sp.Children.Add(new TextBlock
+            {
+                Text = on ? "\uE769" : "\uE768",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(on ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0x8B, 0x9C, 0xC8))
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text = on ? "自动运行" : "已停止",
+                FontSize = 10.5, Margin = new Thickness(5, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(on ? Color.FromRgb(0x9D, 0xFF, 0xE0) : Color.FromRgb(0x8B, 0x9C, 0xC8))
+            });
+            return sp;
+        }
+
+        /// <summary>「运行一次」按钮的内容：闪电图标 + 文字（中性色，不表示持续状态）。</summary>
+        private static FrameworkElement BuildRunOnceContent()
+        {
+            var sp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            sp.Children.Add(new TextBlock
+            {
+                Text = "\uE945",   // LightningBolt：一次性触发
+                FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD6, 0xF0))
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text = "运行一次",
+                FontSize = 10.5, Margin = new Thickness(5, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD6, 0xF0))
+            });
+            return sp;
+        }
         /// <summary>
         /// 用一句话描述"上一次执行是什么结果"，措辞与状态灯颜色严格对应：
         /// 绿=执行成功 / 红=执行失败 / 蓝=等待 / 黄=暂停。
@@ -1981,7 +2037,13 @@ namespace SoulLink.Views
                     Name = account.UserName + " 自动化",
                     // ★ 记录创建时间：定时触发器据此判断"这个时间点是否属于本流程"，
                     //   避免"10:00 新建 04:00 的流程，当天立刻补跑"。
-                    CreatedAt = DateTime.Now
+                    CreatedAt = DateTime.Now,
+                    // ★★ 2.17.25：新建 = 自动运行已开启 ★★
+                    //   用户要求"新建跟重启就要自动跑，除非用户暂停或者删除"。
+                    //   这两个字段本来就是默认值，这里显式写出来是为了让意图可见，
+                    //   避免以后有人改默认值又把"新建即暂停"带回来。
+                    Enabled = true,
+                    Paused = false
                 };
 
                 // ★ 用户要求：只有点了保存才真正入库，
