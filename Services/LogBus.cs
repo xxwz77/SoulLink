@@ -32,6 +32,11 @@ namespace SoulLink.Services
             }
         }
 
+        /// <summary>
+        /// ★ 2.17.51（.NET 11 迁移）：原来每次求值都 new 一个画刷。
+        ///   WPF 绑定会对同一属性反复求值，日志列表越长重复分配越多。
+        ///   颜色是常量，改成冻结的静态实例，像素结果完全一致。
+        /// </summary>
         [System.Text.Json.Serialization.JsonIgnore]
         public System.Windows.Media.Brush TextColor
         {
@@ -39,13 +44,26 @@ namespace SoulLink.Services
             {
                 switch (Level)
                 {
-                    case LogLevel.Ok: return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x9D, 0xFF, 0xE0));
-                    case LogLevel.Warn: return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0xDC, 0x9E));
-                    case LogLevel.Error: return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0xB4, 0xC4));
-                    case LogLevel.Run: return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xBF, 0xE9, 0xFF));
-                    default: return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC8, 0xD6, 0xF0));
+                    case LogLevel.Ok: return OkBrush;
+                    case LogLevel.Warn: return WarnBrush;
+                    case LogLevel.Error: return ErrorBrush;
+                    case LogLevel.Run: return RunBrush;
+                    default: return DefaultBrush;
                 }
             }
+        }
+
+        private static readonly System.Windows.Media.SolidColorBrush OkBrush = MakeFrozen(0x9D, 0xFF, 0xE0);
+        private static readonly System.Windows.Media.SolidColorBrush WarnBrush = MakeFrozen(0xFF, 0xDC, 0x9E);
+        private static readonly System.Windows.Media.SolidColorBrush ErrorBrush = MakeFrozen(0xFF, 0xB4, 0xC4);
+        private static readonly System.Windows.Media.SolidColorBrush RunBrush = MakeFrozen(0xBF, 0xE9, 0xFF);
+        private static readonly System.Windows.Media.SolidColorBrush DefaultBrush = MakeFrozen(0xC8, 0xD6, 0xF0);
+
+        private static System.Windows.Media.SolidColorBrush MakeFrozen(byte r, byte g, byte b)
+        {
+            var brush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
         }
 
         [System.Text.Json.Serialization.JsonIgnore]

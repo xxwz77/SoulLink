@@ -293,9 +293,19 @@ namespace SoulLink.Models
             : ("（" + DisplayName + "）");
 
         /// <summary>提示后缀颜色。</summary>
+        ///
+        /// ★ 2.17.51（.NET 11 迁移）：原来在 getter 里每次 new 一个画刷，
+        ///   而 WPF 绑定会对同一属性反复求值。颜色是常量，冻成静态只读即可，
+        ///   像素结果完全一致（同色同 alpha），只是不再重复分配。
         [JsonIgnore]
-        public System.Windows.Media.Brush SessionTagBrush
-            => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x88, 0x99, 0xB8));
+        public System.Windows.Media.Brush SessionTagBrush { get; } = FrozenColor(0x88, 0x99, 0xB8);
+
+        private static System.Windows.Media.SolidColorBrush FrozenColor(byte r, byte g, byte b)
+        {
+            var brush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
 
         /// <summary>RDP 登录名：没单独填就用 Windows 用户名</summary>
         [JsonIgnore]

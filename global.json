@@ -1,19 +1,27 @@
 {
   // ★ 锁定构建用的 .NET SDK 版本。
-  //   背景：本机同时装了 8 / 9 / 10 / 11 四套 SDK，不锁的话装个 11.0.2xx
-  //   就会自动切过去，构建环境悄悄变化，排查问题时无法复现。
+  //   本机装了 8 / 9 / 10 / 11 四套 SDK，不锁的话会悄悄漂移，排查时无法复现。
   //
-  //   rollForward=latestPatch：只允许 11.0.1xx 这一档（11.0.100 / 11.0.101 ...），
-  //   不会自动跳到 11.0.2xx 或 12.0。需要升档时手动改这里。
+  //   ★ 为什么是 10.0.403 而不是 11.x：
+  //     项目最初迁到 net11，编译和运行都正常，但**单文件发布有回归**：
+  //     .NET 11 的 WPF 混合模式程序集 DirectWriteForwarder.dll 被重写
+  //     （从 526KB 缩到 203KB，CLR 目录位置也变了），打包进单文件后
+  //     加载会抛 BadImageFormatException，进程在 Application 构造时直接退出。
+  //     最小复现：全新的空 WPF 工程，net8/net10 单文件都正常，只有 net11 崩。
+  //     官方文档也说 IncludeAllContentForSelfExtract 只是"兼容模式、不推荐、
+  //     未来可能移除"，所以不能拿它当正式方案。
+  //     → 结论：目标框架用 net10.0（LTS，支持到 2028-11），SDK 用 10.0.403。
+  //     等 .NET 11 修好这个回归（或改用框架依赖发布）再考虑升级。
   //
-  //   allowPrerelease=false：绝不解析到 rc / preview 版 SDK
-  //   （之前装过 11.0.100-rc.3，已卸载，这条是防止再混进来）。
+  //   rollForward=latestFeature：允许 10.0.4xx 这一档内的小版本前进，
+  //   但不会跳到 11.x。需要换大版本时手动改这里。
+  //   allowPrerelease=false：绝不解析到 rc / preview 版 SDK。
   //
   //   ★ 这个文件只影响"编译这个仓库的机器"，不会被打进 exe，
   //     对 SoulLink 的最终用户没有任何影响。
   "sdk": {
-    "version": "11.0.100",
-    "rollForward": "latestPatch",
+    "version": "10.0.403",
+    "rollForward": "latestFeature",
     "allowPrerelease": false
   }
 }
