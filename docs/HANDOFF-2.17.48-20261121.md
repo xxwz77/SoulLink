@@ -144,10 +144,10 @@ ALL PASSED
 | 项目 | 值 |
 |---|---|
 | 版本 | **2.17.48.0** |
-| 构建 | `dist\SoulLink-2.17.48.exe` · 67,500,340 字节 |
+| 成品 | **`dist\SoulLink.exe` = 2.17.48.0** · 67,500,340 字节（已替换） |
 | SHA256 | `6F4BBE5D181A007AD895CE6D76731006C73A5E7DCABB5A4030872DA5621765AA` |
 | 暂存目录 | `artifacts\dist-2.17.48\`（含 7za.exe / tools / broker 脚本） |
-| `dist\SoulLink.exe` | **仍是 2.17.47**（被正在运行的实例占用，未能覆盖） |
+| 旧版留档 | `dist\SoulLink-2.17.47-before-inputfix.exe`（原 `SoulLink.exe`，改名保留） |
 
 **构建命令（照抄）：**
 ```bat
@@ -159,9 +159,20 @@ dotnet publish -c Release -r win-x64 --self-contained true ^
 ```
 
 > 本次 `dotnet publish -o dist` 直接失败（MSB4018 GenerateBundle）——
-> 因为 `dist\SoulLink.exe` 正被 PID 135920 打开。文件锁不会报"被占用"，
+> 因为 `dist\SoulLink.exe` 正被正在运行的实例打开。文件锁不会报"被占用"，
 > 而是打包阶段重试后抛 `GenerateBundle` 异常。
 > **下次发布前先关掉正在跑的实例，或直接输出到暂存目录再拷。**
+>
+> **已完成的替换流程（运行中的 exe 也能安全换掉）：**
+> ```powershell
+> Rename-Item dist\SoulLink.exe SoulLink-2.17.47-before-inputfix.exe   # 运行中的文件可以改名
+> Copy-Item artifacts\dist-2.17.48\SoulLink.exe dist\SoulLink.exe     # 再放新文件
+> ```
+> Windows 允许重命名正在运行的 exe（它的映射在内存里），只是不允许覆盖/删除。
+> 这样连"必须先关掉用户正在用的实例"都省了 —— 旧实例继续跑旧代码，下次启动即新版。
+> **注意：改名后旧实例的 `Environment.ProcessPath` 会失效，AppIdentity 取不到名字时回退 "SoulLink"，
+> 也就是它仍占着 SoulLink 的单实例互斥体 —— 下次启动会走"唤起已有窗口"分支，
+> 需要用户在旧实例托盘菜单里退出，新版本才会真正生效。**
 
 ---
 
