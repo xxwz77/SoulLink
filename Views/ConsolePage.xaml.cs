@@ -2554,6 +2554,8 @@ namespace SoulLink.Views
                 transition = new LogoffTransitionWindow(ViewportHost, row.Account.Caption, () => ReferenceEquals(_viewing, row));
                 await transition.FadeInAsync();
 
+                // SetInputMode 现在是同步直达的"退出"分支（不再等管道），
+                // 退出路径永远当场完成，不会让注销流程卡在这里。
                 try { row.Console?.SetInputMode(ConsoleInputMode.Pointer); } catch { }
                 try { row.Console?.Disconnect(); } catch { }
 

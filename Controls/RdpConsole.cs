@@ -1136,56 +1136,110 @@ namespace SoulLink.Controls
         }
 
         /// <summary>切换输入模式。进入自由视角前会先确认一切就绪。</summary>
-        public (bool ok, string message) SetInputMode(ConsoleInputMode mode)
+        public void SetInputMode(ConsoleInputMode mode)
         {
+            // ★★ 这里曾经是同步方法，内部用 GetAwaiter().GetResult() 等管道探测，
+            //   CheckUsableAsync 串行发 4 个 relay 请求、每条故障超时 4.25s ——
+            //   代理假死（TCP 还在、对端不响应）时会把 UI 线程按住十几秒，
+            //   而调用它的正是热键"解锁退出"这条救命通道。
+            //   现在：热点路径（退出/已就绪）同步直达，只有"需要重新探测"才异步。
             InputTrace.Write("SET_MODE", "请求切换模式 会话=" + CurrentSessionId + " target=" + mode
                 + " 当前=" + InputMode + " _captured=" + _captured
                 + " _inputUsable=" + _inputUsable + " Input=" + TraceId(Input)
                 + " relayConnected=" + (Input?.Relay.IsConnected) + " 调用方=" + InputTrace.Caller(3));
+
+            var (done, ok, message) = TrySetInputModeNow(mode);
+            if (done)
+            {
+                if (!ok) InputActivity?.Invoke(this, message);
+                return;
+            }
+
+            // 只可能是 FreeLook 且 _inputUsable 为 false：放到后台探测，UI 永不阻塞
+            SetInputModeAsync(mode);
+        }
+
+        /// <summary>
+        /// 能当场决定的部分。返回 done=false 表示"需要异步探测"。
+        /// 退出（Pointer）分支永远 done=true —— 无论如何都要让人能挣脱。
+        /// </summary>
+        private (bool done, bool ok, string message) TrySetInputModeNow(ConsoleInputMode mode)
+        {
             if (mode == InputMode && (mode != ConsoleInputMode.FreeLook || _captured))
-                return (true, mode == ConsoleInputMode.FreeLook ? "已进入自由视角" : "已切回指针模式");
-            if (mode == ConsoleInputMode.FreeLook)
+                return (true, true, mode == ConsoleInputMode.FreeLook ? "已进入自由视角" : "已切回指针模式");
+
+            if (mode != ConsoleInputMode.FreeLook)
             {
-                // ★ 相对注入不可用时不能吞掉本机鼠标，但也不能被一个"过期缓存"永久挡住。
-                //   _inputUsable 只在代理首次探测时写过一次；之后 StopInputAsync 会置 false，
-                //   而代理重连后没有任何地方恢复它 —— 曾导致"热键收到了却进不去"。
-                //   这里：管道连通但标志为 false 时，当场重新探测一次。
-                if (!IsConnected || Input == null || !Input.Relay.IsConnected)
-                {
-                    const string unavailable = "相对输入通道尚未连接，不能进入自由视角。请等待「注入就绪」。";
-                    InputActivity?.Invoke(this, unavailable);
-                    Debug("拒绝进入自由视角：通道未连接");
-                    return (false, unavailable);
-                }
-                if (!_inputUsable)
-                {
-                    Debug("输入标志为 false，当场重新探测一次");
-                    try
-                    {
-                        var (usable, why) = Input.CheckUsableAsync().GetAwaiter().GetResult();
-                        _inputUsable = usable;
-                        Debug("重新探测结果 usable=" + usable + " · " + why);
-                    }
-                    catch (Exception ex) { Debug("重新探测异常：" + ex.Message); }
-                }
-                if (!_inputUsable)
-                {
-                    const string unavailable = "相对输入通道尚未就绪，不能进入自由视角。请点「重新连接」后再试。";
-                    InputActivity?.Invoke(this, unavailable);
-                    Debug("拒绝进入自由视角：探测后仍不可用");
-                    return (false, unavailable);
-                }
-                if (!BeginCapture("手动切换"))
-                    return (false, "画面不在可用状态，无法进入自由视角");
-            }
-            else
-            {
+                // ★ 退出无条件放行（原语义保留）：不检查连接、不检查标志。
                 ReleaseCapture("手动切换");
+                InputMode = mode;
+                InputModeChanged?.Invoke(this, mode);
+                return (true, true, "已切回指针模式");
             }
+
+            // 相对注入不可用时不能吞掉本机鼠标，但也不能被一个"过期缓存"永久挡住。
+            if (!IsConnected || Input == null || !Input.Relay.IsConnected)
+                return (true, false, "相对输入通道尚未连接，不能进入自由视角。请等待「注入就绪」。");
+
+            if (!_inputUsable)
+            {
+                Debug("输入标志为 false，转后台探测");
+                return (false, false, "");
+            }
+
+            if (!BeginCapture("手动切换"))
+                return (true, false, "画面不在可用状态，无法进入自由视角");
 
             InputMode = mode;
             InputModeChanged?.Invoke(this, mode);
-            return (true, mode == ConsoleInputMode.FreeLook ? "已进入自由视角" : "已切回指针模式");
+            return (true, true, "已进入自由视角");
+        }
+
+        /// <summary>后台探测后完成进入自由视角；探测期间 UI 线程可以做任何事。</summary>
+        private async void SetInputModeAsync(ConsoleInputMode mode)
+        {
+            bool usable = false;
+            string why = "";
+            var probing = Input;
+
+            try
+            {
+                if (probing == null) return;
+                (usable, why) = await probing.CheckUsableAsync().ConfigureAwait(true);
+            }
+            catch (Exception ex) { why = "异常：" + ex.Message; }
+            Debug("重新探测结果 usable=" + usable + " · " + why);
+
+            if (_disposed) return;
+
+            // ★ 探测期间通道可能被替换、会话可能切走、用户可能已经放弃进入：
+            //   结果只对"发起探测的那条通道"有效，否则会把旧结论写进新状态。
+            if (!ReferenceEquals(Input, probing))
+            {
+                Debug("探测结果作废：通道已更换");
+                return;
+            }
+            if (mode != ConsoleInputMode.FreeLook)
+            {
+                Debug("探测结果作废：用户已切回指针模式");
+                return;
+            }
+
+            _inputUsable = usable;
+            if (!usable)
+            {
+                InputActivity?.Invoke(this, "相对输入通道尚未就绪，不能进入自由视角。请点「重新连接」后再试。");
+                Debug("拒绝进入自由视角：探测后仍不可用");
+                return;
+            }
+            if (InputMode == ConsoleInputMode.FreeLook && _captured) return;
+            if (!BeginCapture("异步探测完成"))
+            {
+                InputActivity?.Invoke(this, "画面不在可用状态，无法进入自由视角");
+                return;
+            }
+            InputMode = mode;
+            InputModeChanged?.Invoke(this, mode);
         }
 
         private bool BeginCapture(string reason)
@@ -1361,9 +1415,8 @@ namespace SoulLink.Controls
                 InputActivity?.Invoke(this, "画面尚未连接，无法进入自由视角");
                 return;
             }
-            var (ok, message) = SetInputMode(target);
-            Debug("热键切换结果 ok=" + ok + " message=" + message + " captured=" + _captured + " mode=" + InputMode);
-            if (!ok && _captured) ReleaseCapture("热键兜底");
+            SetInputMode(target);
+            Debug("热键切换结果 captured=" + _captured + " mode=" + InputMode);
         }
 
         private void ReleaseCapture(string reason)

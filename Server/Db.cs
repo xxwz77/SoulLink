@@ -17,7 +17,17 @@ public sealed class Db
 
     public Db(string dbPath)
     {
-        _connStr = "Data Source=" + dbPath;
+        var csb = new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            // ★ 连接池：原来是"每个方法 new 一个连接"，高频接口（心跳 / 房间列表）
+            //   在并发下反复做打开-关闭，既慢又容易撞 SQLITE_BUSY。
+            Pooling = true,
+            // 命令超时，同时作为 SQLITE_BUSY 的等待上限（秒）
+            DefaultTimeout = 10
+        };
+        _connStr = csb.ToString();
         Init();
     }
 
@@ -25,12 +35,32 @@ public sealed class Db
     {
         var c = new SqliteConnection(_connStr);
         c.Open();
+        // ★ busy_timeout 是**连接级**设置，不随库文件持久化，每个连接都要设。
+        //   原来是 0：两个请求同时写就直接抛 "database is locked"。
+        using var pragma = c.CreateCommand();
+        pragma.CommandText = "PRAGMA busy_timeout=5000;";
+        pragma.ExecuteNonQuery();
         return c;
     }
 
     private void Init()
     {
         using var c = Open();
+
+        // ★ WAL：读写互不阻塞（原来的默认 rollback journal 下，
+        //   一个写事务会把所有读挡在外面）。journal_mode 是持久化到库文件里的，
+        //   这里设一次即可；synchronous=NORMAL 在 WAL 下是业界推荐的折中。
+        using (var mode = c.CreateCommand())
+        {
+            mode.CommandText = "PRAGMA journal_mode=WAL;";
+            mode.ExecuteScalar();
+        }
+        using (var sync = c.CreateCommand())
+        {
+            sync.CommandText = "PRAGMA synchronous=NORMAL;";
+            sync.ExecuteNonQuery();
+        }
+
         using var cmd = c.CreateCommand();
         cmd.CommandText = @"
 CREATE TABLE IF NOT EXISTS Devices (
@@ -64,6 +94,9 @@ CREATE TABLE IF NOT EXISTS Seats (
     LastSeenAt TEXT NOT NULL DEFAULT '',   -- 心跳时间，用于判定掉线
     PRIMARY KEY (RoomId, SeatIndex)
 );
+
+-- ★ 心跳按 DeviceCode 定位座位，没有索引会退化成全表扫描
+CREATE INDEX IF NOT EXISTS IX_Seats_Device ON Seats(DeviceCode);
 
 CREATE TABLE IF NOT EXISTS Departs (
     DeviceCode TEXT PRIMARY KEY,
@@ -126,7 +159,13 @@ CREATE TABLE IF NOT EXISTS Departs (
     public void InsertRoom(RoomRow r)
     {
         using var c = Open();
+        InsertRoomCore(c, null, r);
+    }
+
+    private static void InsertRoomCore(SqliteConnection c, SqliteTransaction? tx, RoomRow r)
+    {
         using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = @"INSERT INTO Rooms
             (Id,Code,Title,Kind,OwnerDevice,PairId,PairRole,Departed,CreatedAt,LastActiveAt)
             VALUES($i,$code,$t,$k,$o,$p,$pr,$d,$cr,$la)";
@@ -143,6 +182,117 @@ CREATE TABLE IF NOT EXISTS Departs (
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>
+    /// 成对建两个房间（含初始座位），**单个事务**。
+    /// ★ 原来是 big/small 两条独立 INSERT 再各建座位：中途失败会留下
+    ///   "只有大号房"的半成品，而 CreatePair 的存在性检查是按 PairId 判定的，
+    ///   半成品会让用户既建不了新的、也用不了旧的。
+    /// </summary>
+    public void InsertRoomPair(RoomRow big, RoomRow small, int seatsEach)
+    {
+        using var c = Open();
+        using var tx = c.BeginTransaction();
+
+        InsertRoomCore(c, tx, big);
+        InsertRoomCore(c, tx, small);
+        for (int i = 0; i < seatsEach; i++)
+        {
+            UpsertSeatCore(c, tx, new SeatRow { RoomId = big.Id, SeatIndex = i });
+            UpsertSeatCore(c, tx, new SeatRow { RoomId = small.Id, SeatIndex = i });
+        }
+
+        tx.Commit();
+    }
+
+    /// <summary>
+    /// 入座：查重 → 原子占用空位 → 满了才追加新座位，全程一个事务。
+    /// ★ 原来是"查座位 → 在内存里挑 → 写回"，两个人同时 join 会抢到同一个
+    ///   SeatIndex，后写的那条直接把先来的人覆盖掉。
+    /// </summary>
+    public (int seatIndex, bool alreadyIn) OccupySeat(string roomId, string device, string displayName, string roleName)
+    {
+        using var c = Open();
+        using var tx = c.BeginTransaction();
+        string now = DateTime.UtcNow.ToString("O");
+
+        // ① 已经在本房：只更新显示信息，沿用原座位
+        using (var q = c.CreateCommand())
+        {
+            q.Transaction = tx;
+            q.CommandText = @"SELECT SeatIndex FROM Seats
+                              WHERE RoomId=$r AND DeviceCode=$d AND Online=1 LIMIT 1";
+            q.Parameters.AddWithValue("$r", roomId);
+            q.Parameters.AddWithValue("$d", device);
+            var found = q.ExecuteScalar();
+            if (found != null && found != DBNull.Value)
+            {
+                int idx = Convert.ToInt32(found);
+                using var u = c.CreateCommand();
+                u.Transaction = tx;
+                u.CommandText = @"UPDATE Seats SET DisplayName=$n, RoleName=$rn, LastSeenAt=$t
+                                  WHERE RoomId=$r AND SeatIndex=$i";
+                u.Parameters.AddWithValue("$n", displayName);
+                u.Parameters.AddWithValue("$rn", roleName);
+                u.Parameters.AddWithValue("$t", now);
+                u.Parameters.AddWithValue("$r", roomId);
+                u.Parameters.AddWithValue("$i", idx);
+                u.ExecuteNonQuery();
+                tx.Commit();
+                return (idx, true);
+            }
+        }
+
+        // ② 原子占用第一个空位：条件写，抢输的一方影响行数为 0
+        using (var q = c.CreateCommand())
+        {
+            q.Transaction = tx;
+            q.CommandText = @"UPDATE Seats
+                              SET DeviceCode=$d, DisplayName=$n, Online=1, RoleName=$rn, LastSeenAt=$t
+                              WHERE RoomId=$r AND SeatIndex = (
+                                  SELECT SeatIndex FROM Seats
+                                  WHERE RoomId=$r AND Online=0 AND DeviceCode=''
+                                  ORDER BY SeatIndex LIMIT 1)";
+            q.Parameters.AddWithValue("$d", device);
+            q.Parameters.AddWithValue("$n", displayName);
+            q.Parameters.AddWithValue("$rn", roleName);
+            q.Parameters.AddWithValue("$t", now);
+            q.Parameters.AddWithValue("$r", roomId);
+
+            if (q.ExecuteNonQuery() > 0)
+            {
+                using var g = c.CreateCommand();
+                g.Transaction = tx;
+                g.CommandText = @"SELECT SeatIndex FROM Seats
+                                  WHERE RoomId=$r AND DeviceCode=$d AND Online=1 LIMIT 1";
+                g.Parameters.AddWithValue("$r", roomId);
+                g.Parameters.AddWithValue("$d", device);
+                int idx = Convert.ToInt32(g.ExecuteScalar() ?? 0);
+                tx.Commit();
+                return (idx, false);
+            }
+        }
+
+        // ③ 没有空位：追加一个（Max+1），同样在事务内，避免并发拿到同一个号
+        int next;
+        using (var m = c.CreateCommand())
+        {
+            m.Transaction = tx;
+            m.CommandText = "SELECT COALESCE(MAX(SeatIndex), -1) + 1 FROM Seats WHERE RoomId=$r";
+            m.Parameters.AddWithValue("$r", roomId);
+            next = Convert.ToInt32(m.ExecuteScalar() ?? 0);
+        }
+
+        UpsertSeatCore(c, tx, new SeatRow
+        {
+            RoomId = roomId, SeatIndex = next, DeviceCode = device,
+            DisplayName = displayName, Online = true, RoleName = roleName,
+            LastSeenAt = DateTime.UtcNow
+        });
+
+        tx.Commit();
+        return (next, false);
+    }
+
     public List<RoomRow> ListRooms()
     {
         var list = new List<RoomRow>();
@@ -152,6 +302,43 @@ CREATE TABLE IF NOT EXISTS Departs (
         using var rd = cmd.ExecuteReader();
         while (rd.Read()) list.Add(ReadRoom(rd));
         return list;
+    }
+
+    /// <summary>
+    /// 房间 + 座位**一次查完**。
+    /// ★ 原来的 ListRooms 里每个房间再查一次 ListSeats（1 + N 次往返），
+    ///   而这个接口被每个客户端每 5 秒拉一次 —— 客户端数 × 房间数 × 2。
+    ///   这里改成两条查询（房间一条、座位一条），再在内存里归组，
+    ///   往返次数与房间数无关。
+    /// </summary>
+    public (List<RoomRow> rooms, Dictionary<string, List<SeatRow>> seatsByRoom) ListRoomsWithSeats()
+    {
+        var rooms = new List<RoomRow>();
+        var seats = new Dictionary<string, List<SeatRow>>(StringComparer.Ordinal);
+
+        using var c = Open();
+
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "SELECT * FROM Rooms ORDER BY CreatedAt";
+            using var rd = cmd.ExecuteReader();
+            while (rd.Read()) rooms.Add(ReadRoom(rd));
+        }
+
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "SELECT * FROM Seats ORDER BY RoomId, SeatIndex";
+            using var rd = cmd.ExecuteReader();
+            while (rd.Read())
+            {
+                var s = ReadSeat(rd);
+                if (!seats.TryGetValue(s.RoomId, out var bucket))
+                    seats[s.RoomId] = bucket = new List<SeatRow>();
+                bucket.Add(s);
+            }
+        }
+
+        return (rooms, seats);
     }
 
     public RoomRow? FindRoomByCode(string code)
@@ -243,25 +430,32 @@ CREATE TABLE IF NOT EXISTS Departs (
         cmd.CommandText = "SELECT * FROM Seats WHERE RoomId=$r ORDER BY SeatIndex";
         cmd.Parameters.AddWithValue("$r", roomId);
         using var rd = cmd.ExecuteReader();
-        while (rd.Read())
-            list.Add(new SeatRow
-            {
-                RoomId = roomId,
-                SeatIndex = (int)rd.GetInt64(rd.GetOrdinal("SeatIndex")),
-                DeviceCode = rd.GetString(rd.GetOrdinal("DeviceCode")),
-                DisplayName = rd.GetString(rd.GetOrdinal("DisplayName")),
-                Online = rd.GetInt64(rd.GetOrdinal("Online")) != 0,
-                RoleName = rd.GetString(rd.GetOrdinal("RoleName")),
-                LastSeenAt = DateTime.TryParse(rd.GetString(rd.GetOrdinal("LastSeenAt")), out var ls)
-                    ? ls : DateTime.UtcNow
-            });
+        while (rd.Read()) list.Add(ReadSeat(rd));
         return list;
     }
+
+    private static SeatRow ReadSeat(SqliteDataReader rd) => new()
+    {
+        RoomId = rd.GetString(rd.GetOrdinal("RoomId")),
+        SeatIndex = (int)rd.GetInt64(rd.GetOrdinal("SeatIndex")),
+        DeviceCode = rd.GetString(rd.GetOrdinal("DeviceCode")),
+        DisplayName = rd.GetString(rd.GetOrdinal("DisplayName")),
+        Online = rd.GetInt64(rd.GetOrdinal("Online")) != 0,
+        RoleName = rd.GetString(rd.GetOrdinal("RoleName")),
+        LastSeenAt = DateTime.TryParse(rd.GetString(rd.GetOrdinal("LastSeenAt")), out var ls)
+            ? ls : DateTime.UtcNow
+    };
 
     public void UpsertSeat(SeatRow s)
     {
         using var c = Open();
+        UpsertSeatCore(c, null, s);
+    }
+
+    private static void UpsertSeatCore(SqliteConnection c, SqliteTransaction? tx, SeatRow s)
+    {
         using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = @"INSERT INTO Seats(RoomId,SeatIndex,DeviceCode,DisplayName,Online,RoleName,LastSeenAt)
             VALUES($r,$i,$d,$n,$o,$rn,$ls)
             ON CONFLICT(RoomId,SeatIndex) DO UPDATE SET
@@ -274,6 +468,23 @@ CREATE TABLE IF NOT EXISTS Departs (
         cmd.Parameters.AddWithValue("$rn", s.RoleName);
         cmd.Parameters.AddWithValue("$ls", (s.LastSeenAt == default ? DateTime.UtcNow : s.LastSeenAt).ToString("O"));
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 一次 UPDATE 刷新某设备在所有房间的心跳。
+    /// ★ 原来 Heartbeat 是"列出全部房间 → 每个房间查一次座位 → 命中才写"，
+    ///   成本随房间数线性增长，而心跳是每个客户端每 10 秒一次的固定开销。
+    ///   这里直接按 DeviceCode 命中（有主键/普通索引即可），与房间数无关。
+    /// </summary>
+    public int TouchSeatsForDevice(string deviceCode)
+    {
+        using var c = Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"UPDATE Seats SET LastSeenAt=$t
+                            WHERE DeviceCode=$d AND Online=1";
+        cmd.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("O"));
+        cmd.Parameters.AddWithValue("$d", deviceCode);
+        return cmd.ExecuteNonQuery();
     }
 
     /// <summary>更新某设备在房间里的心跳时间。</summary>

@@ -19,11 +19,14 @@ public sealed class Lobby
     public List<RoomDto> ListRooms(string myDevice)
     {
         var result = new List<RoomDto>();
+        var (rooms, seatsByRoom) = _db.ListRoomsWithSeats();
 
-        foreach (var r in _db.ListRooms())
+        foreach (var r in rooms)
         {
             var dto = ToDto(r);
-            dto.Seats = _db.ListSeats(r.Id)
+            dto.Seats = (seatsByRoom.TryGetValue(r.Id, out var seats)
+                    ? seats
+                    : new List<SeatRow>())
                 .Select(s => new SeatDto
                 {
                     Index = s.SeatIndex,
@@ -154,12 +157,9 @@ public sealed class Lobby
             PairRole = "small"
         };
 
-        _db.InsertRoom(big);
-        _db.InsertRoom(small);
-
-        // 同样：建房不自动上线
-        for (int i = 0; i < 2; i++) _db.UpsertSeat(new SeatRow { RoomId = big.Id, SeatIndex = i });
-        for (int i = 0; i < 2; i++) _db.UpsertSeat(new SeatRow { RoomId = small.Id, SeatIndex = i });
+        // ★ 成对插入必须原子：半成品（只有大号房）会让存在性检查
+        //   （按 PairId 判定）误判，用户既建不了新的也用不了旧的。
+        _db.InsertRoomPair(big, small, seatsEach: 2);
 
         return (true, "成对房间已创建", ToDto(big), ToDto(small));
     }
@@ -185,35 +185,17 @@ public sealed class Lobby
             }
         }
 
-        var seats = _db.ListSeats(room.Id);
+        string shown = displayName.Length > 0 ? displayName : device;
 
-        // 已在房间
-        var mine = seats.FirstOrDefault(s => s.DeviceCode == device && s.Online);
-        if (mine != null)
-        {
-            mine.DisplayName = displayName.Length > 0 ? displayName : device;
-            if (roleName.Length > 0) mine.RoleName = roleName;
-            _db.UpsertSeat(mine);
-            TouchRoom(room.Id);
-            return (true, "已在该房间中", GetRoom(room.Id, device));
-        }
-
-        // 找空位；没有就加
-        int idx = -1;
-        foreach (var s in seats)
-            if (!s.Online && s.DeviceCode == "") { idx = s.SeatIndex; break; }
-
-        if (idx < 0) idx = seats.Count == 0 ? 0 : seats.Max(s => s.SeatIndex) + 1;
-
-        _db.UpsertSeat(new SeatRow
-        {
-            RoomId = room.Id, SeatIndex = idx, DeviceCode = device,
-            DisplayName = displayName.Length > 0 ? displayName : device,
-            Online = true, RoleName = roleName
-        });
+        // ★ 查重 + 占位 + 追加座位全在一个事务里完成。
+        //   原来是"查座位 → 内存挑位 → 写回"，两个人同时 join 会抢到同一个
+        //   SeatIndex，后写的把先来的覆盖掉（表现为"我明明进来了却被挤掉"）。
+        var (idx, alreadyIn) = _db.OccupySeat(room.Id, device, shown, roleName);
 
         TouchRoom(room.Id);
-        return (true, "已上线到「" + room.Title + "」", GetRoom(room.Id, device));
+        return (true, alreadyIn
+            ? "已在该房间中"
+            : "已上线到「" + room.Title + "」· 座位 " + (idx + 1), GetRoom(room.Id, device));
     }
 
     public bool Leave(string roomId, string device)
@@ -385,15 +367,9 @@ public sealed class Lobby
     /// </summary>
     public void Heartbeat(string device)
     {
-        foreach (var r in _db.ListRooms())
-        {
-            var seats = _db.ListSeats(r.Id);
-            if (seats.Any(s => s.Online &&
-                    string.Equals(s.DeviceCode, device, StringComparison.OrdinalIgnoreCase)))
-            {
-                _db.TouchSeat(r.Id, device);
-            }
-        }
+        // ★ 原来这里是"遍历所有房间 × 查各自的座位"，心跳延迟随房间数线性增长。
+        //   现在一条 UPDATE 解决，代价与房间数无关。
+        _db.TouchSeatsForDevice(device);
     }
 
     /// <summary>把心跳超时的座位标记为离线。</summary>
