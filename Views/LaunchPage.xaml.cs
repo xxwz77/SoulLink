@@ -34,6 +34,8 @@ namespace SoulLink.Views
         ///   （用户反馈："为什么还要按刷新才能看到变绿灯"）。
         /// </summary>
         private System.Windows.Threading.DispatcherTimer? _sessionTimer;
+        /// <summary>自动化卡片的 1 秒轻量刷新（只为状态灯的颜色交替）。</summary>
+        private System.Windows.Threading.DispatcherTimer? _automationTimer;
         private bool _refreshingSessions;
 
         private void UpdateResponsiveLayout()
@@ -119,6 +121,24 @@ namespace SoulLink.Views
                     StartStatusFollowFor(_logSession);
                 }
             };
+            // ★★ 2.17.27：状态灯需要更快的刷新节奏 ★★
+            //
+            //   会话列表 3 秒一轮够用，但"执行成功闪绿 → 回蓝"这件事如果也按 3 秒来，
+            //   绿色可能整个保鲜期（6 秒）里只被采样到 1~2 次，甚至刚好错过。
+            //   这里单独开一个 1 秒的**轻量**刷新：只重建自动化卡片，
+            //   不查会话、不查进程（开销只是一次 WPF 元素重建，卡片数很少）。
+            _automationTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _automationTimer.Tick += (_, __) =>
+            {
+                if (!IsVisible) return;
+                RefreshAutomationList();
+            };
+            Loaded += (_, __) => _automationTimer?.Start();
+            Unloaded += (_, __) => _automationTimer?.Stop();
+
             // ★ 定时器启动不能只靠 Loaded：UserControl 在页面切换时
             //   会触发 Unloaded 停表，再切回来 Loaded 不一定再触发，
             //   导致定时器永久停摆（表现：状态/会话列表都不再刷新）。
@@ -147,6 +167,8 @@ namespace SoulLink.Views
             // 确保定时器在运行（页面切回来时 Loaded 不一定触发）
             if (_sessionTimer != null && !_sessionTimer.IsEnabled)
                 _sessionTimer.Start();
+            if (_automationTimer != null && !_automationTimer.IsEnabled)
+                _automationTimer.Start();
             RefreshSessions();
             RefreshAutomationList();
         }
@@ -1709,6 +1731,31 @@ namespace SoulLink.Views
             catch { }
         }
 
+        /// <summary>
+        /// 执行结果（绿/红）在灯上保留多久。超过就回到蓝色等待态。
+        ///
+        /// ★ 用户要求"根据状态交替才对"：每轮执行完闪一下绿/红再回蓝，
+        ///   才能看出"这轮跑过了、现在又在等下一轮"。
+        ///
+        /// ★★ 取值必须**短于界面刷新周期**，否则灯会一直停在绿/红 ★★
+        ///
+        ///   这条踩过两次，记清楚：
+        ///     · 第一次取 6 秒 —— 比执行间隔（2s/3s）还长，每轮扫描时上一次结果
+        ///       仍然"新鲜" → 永远绿；
+        ///     · 第二次取 1.5 秒 —— 比执行间隔短了，但仍**大于界面 1 秒的重建周期**，
+        ///       每次重建都恰好落在保鲜期内 → 实测仍是"焊死"（见探针 12 秒采样）。
+        ///
+        ///   正确关系是：**保鲜期 < 刷新周期 < 执行间隔**。
+        ///   这里取 700ms：界面每 1 秒重建一次，于是必然出现
+        ///   "这次看到绿/红、下次看到蓝" 的交替（实测 2s/3s 间隔都能交替）。
+        /// </summary>
+        private const double LastResultHoldMs = 700;
+
+        /// <summary>执行结果是否还在"保鲜期"内（决定灯显示绿/红还是蓝）。</summary>
+        private static bool IsResultFresh(AutomationFlow f)
+            => f.LastActionResultAt.HasValue
+               && (DateTime.Now - f.LastActionResultAt.Value).TotalMilliseconds <= LastResultHoldMs;
+
         private Border BuildAutomationCard(AutomationFlow f, Account account)
         {
             bool paused = f.Paused || !f.Enabled;
@@ -1718,23 +1765,30 @@ namespace SoulLink.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // ★★ 2.17.23 状态灯按用户指定的四色语义 ★★
+            // ★★ 2.17.27 状态灯：绿/红只是"刚执行完的闪光"，之后必须回到蓝 ★★
             //
-            //   蓝 = 等待（流程已启用，正在等条件/等待触发）
-            //   黄 = 暂停（被暂停或未启用；有 END 且今日已完成也归这一档）
-            //   绿 = 执行成功（最近一次真正执行的动作成功了）
-            //   红 = 执行失败（最近一次真正执行的动作失败了）
+            //   蓝 = 等待（常态；流程已启用，正在等条件）
+            //   黄 = 暂停（被暂停或未启用）
+            //   绿 = 执行成功（**刚刚**执行完，闪过即回蓝）
+            //   红 = 执行失败（**刚刚**执行失败，闪过即回蓝）
             //
-            //   判定顺序按"最新鲜的事实"来：暂停 > 有结果 > 无结果=等待。
-            //   「仅管理挂机账号」不再影响这盏灯：它是**控制状态**，不是挂机目标的运行数据
-            //   （原来 excluded 直接返回灰，导致主用户永远看不到灯，见 2.17.22 交接）。
+            //   ★ 用户实测反馈："等变绿之后没变回蓝色，一直显示执行成功。
+            //     应该根据状态交替才对。"
+            //     根因是 2.17.23 把 LastRunOk 当成**持久状态**直接决定颜色，
+            //     执行成功一次就永远停在绿色，看不出"这一轮跑完了、又回到等待"。
+            //
+            //   现在给结果加"保鲜期"：只显示 LastResultHoldMs 以内的结果，
+            //   超过就回到蓝色等待态 —— 这样灯会随每一轮执行**交替闪烁**，
+            //   而不是一块焊死的颜色。
             bool excluded = !AccountScope.Allows(OwnerUserNameOf(f));
             var today = f.TodayRunState();
+            bool resultFresh = f.LastActionResultAt.HasValue
+                && (DateTime.Now - f.LastActionResultAt.Value).TotalMilliseconds <= LastResultHoldMs;
             Color dotColor =
-                paused ? Color.FromRgb(0xFF, 0xC4, 0x6B)              // 黄 = 暂停 / 未启用
-                : f.LastRunOk == false ? Color.FromRgb(0xFF, 0x6B, 0x8B)   // 红 = 上次执行失败
-                : f.LastRunOk == true ? Color.FromRgb(0x41, 0xF0, 0xC0)    // 绿 = 上次执行成功
-                : Color.FromRgb(0x4F, 0xE3, 0xFF);                     // 蓝 = 等待（还没执行过）
+                paused ? Color.FromRgb(0xFF, 0xC4, 0x6B)                        // 黄 = 暂停 / 未启用
+                : (resultFresh && f.LastRunOk == false) ? Color.FromRgb(0xFF, 0x6B, 0x8B)  // 红 = 刚失败
+                : (resultFresh && f.LastRunOk == true) ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 绿 = 刚成功
+                : Color.FromRgb(0x4F, 0xE3, 0xFF);                              // 蓝 = 等待（常态）
 
             var dot = new Ellipse
             {
@@ -1983,11 +2037,18 @@ namespace SoulLink.Views
             string when = f.LastActionResultAt?.ToString("HH:mm:ss") ?? "";
             string action = string.IsNullOrWhiteSpace(f.LastRunAction) ? "" : "「" + f.LastRunAction + "」";
 
-            if (f.LastRunOk == true)
+            // ★ 2.17.27：与灯一致 —— 结果只在保鲜期内显示，之后回到"等待"，
+            //   这样灯和文字会随每一轮执行交替变化，而不是焊死在某一次结果上。
+            bool fresh = IsResultFresh(f);
+            if (fresh && f.LastRunOk == true)
                 return "执行成功" + action + (when.Length > 0 ? " · " + when : "");
-            if (f.LastRunOk == false)
+            if (fresh && f.LastRunOk == false)
                 return "执行失败" + action + "：" + (string.IsNullOrWhiteSpace(f.LastRunError) ? "未提供原因" : f.LastRunError)
                        + (when.Length > 0 ? " · " + when : "");
+
+            // 有过结果但已过期：说明刚刚跑过一轮，现在又在等下一轮
+            if (f.LastRunOk.HasValue && when.Length > 0)
+                return "等待下一次 · 上次" + (f.LastRunOk == true ? "成功" : "失败") + " " + when;
 
             // 还没执行过 → 等待。顺带说清"它会不会自己跑"。
             return f.NeedsManualTrigger
