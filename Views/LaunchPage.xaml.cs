@@ -474,7 +474,18 @@ namespace SoulLink.Views
 
         private sealed class OverviewRow
         {
+            /// <summary>界面上显示的名字，含备注名，形如 "A2 · 山客"。</summary>
             public string User = "";
+            /// <summary>
+            /// 真实 Windows 用户名（不含备注名）。
+            /// ★★ 2.17.49：所有查表都必须用它。★★
+            ///   原来直接拿 <see cref="User"/> 去调 AccountStateCenter.GetByUser，
+            ///   而那是 "A2 · 山客" 这种展示串 —— 查不到 → accountState 为 null →
+            ///   bound 判定成 false → 界面把**已绑定**的账号写成「BGI 未绑定」
+            ///   （用户实测截图：A2 · 山客 / A3 · 玄月 都显示未绑定）。
+            ///   用 Split('·') 临时拆也不可靠：备注名本身可能带 '·'。
+            /// </summary>
+            public string UserName = "";
             public int SessionId;
             public string Group = "—";
             public string Round = "";
@@ -549,7 +560,7 @@ namespace SoulLink.Views
                                     string shown = string.IsNullOrWhiteSpace(rm)
                                         ? s.UserName : (s.UserName + " · " + rm);
 
-                                    var row = new OverviewRow { User = shown, SessionId = s.Id };
+                                    var row = new OverviewRow { User = shown, UserName = s.UserName, SessionId = s.Id };
 
                                     var card = new System.Windows.Controls.Border
                                     {
@@ -679,6 +690,7 @@ namespace SoulLink.Views
                             row.User = string.IsNullOrWhiteSpace(rm)
                                 ? vm.Session.UserName
                                 : (vm.Session.UserName + " · " + rm);
+                            row.UserName = vm.Session.UserName;   // ★ 真实用户名，查表只用它
                             break;
                         }
                     }
@@ -696,8 +708,7 @@ namespace SoulLink.Views
                             try
                             {
                                 // 从该账号配置的 BGI 路径推断今天是否有日志
-                                string uname = row.User.Split('·')[0].Trim();
-                                string bgiExe = LoadBgiPath(uname);
+                                string bgiExe = LoadBgiPath(row.UserName);
                                 if (!string.IsNullOrEmpty(bgiExe))
                                     ranToday = !string.IsNullOrEmpty(BgiLogWatcher.FindTodayLog(bgiExe));
                             }
@@ -714,8 +725,7 @@ namespace SoulLink.Views
                         //   现在结构性字段（任务名/配置组/路线/轮次）由 BgiLogCenter 的
                         //   单遍扫描增量维护（它从文件头扫到尾巴，不会漏掉"只在任务开始时
                         //   写一次"的行），这里只做一次结构拷贝。
-                        string uname0 = row.User.Split('·')[0].Trim();
-                        var snap0 = BgiLogCenter.SnapshotByUser(uname0);
+                        var snap0 = BgiLogCenter.SnapshotByUser(row.UserName);
                         var st0 = new BgiStatus();
                         if (snap0 != null)
                         {
@@ -735,7 +745,9 @@ namespace SoulLink.Views
                         {
                             try
                             {
-                                var accountState = AccountStateCenter.GetByUser(row.User);
+                                // ★ 必须用真实用户名查：row.User 是 "A2 · 山客" 这种展示串，
+                                //   拿它查永远 null → bound=false → 已绑定也被写成「BGI 未绑定」。
+                                var accountState = AccountStateCenter.GetByUser(row.UserName);
                                 if (accountState != null)
                                 {
                                     // ★ 当前配置组只认 AccountState.CurrentGroup。

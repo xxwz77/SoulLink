@@ -232,7 +232,17 @@ namespace SoulLink.Services
                 return _states.TryGetValue(accountId, out var s) ? s : null;
         }
 
-        /// <summary>按用户名取（很多调用方只有用户名）。</summary>
+        /// <summary>
+        /// 按用户名取（很多调用方只有用户名）。
+        ///
+        /// ★★ 2.17.49：兼容"展示名"。★★
+        ///   界面上的行标题是 "A2 · 山客"（用户名 + 备注名），
+        ///   曾经有调用方直接把这个串传进来 —— 精确比较永远不命中，
+        ///   拿到的 null 被当成"未绑定"，于是**已绑定的账号显示「BGI 未绑定」**
+        ///   （用户实测截图：A2 · 山客 / A3 · 玄月 都写未绑定）。
+        ///   这里做一层兜底：精确匹配不到时，再按分隔符切成候选名逐个比。
+        ///   这是**防御**，不是鼓励传展示名 —— 调用方仍应传真实用户名。
+        /// </summary>
         public static AccountState? GetByUser(string userName)
         {
             if (string.IsNullOrWhiteSpace(userName)) return null;
@@ -241,8 +251,27 @@ namespace SoulLink.Services
                 foreach (var s in _states.Values)
                     if (string.Equals(s.UserName, userName, StringComparison.OrdinalIgnoreCase))
                         return s;
+
+                // 展示名兜底："A2 · 山客" / "A2 山客" / "A2·山客" 都取第一段。
+                string bare = BareName(userName);
+                if (bare.Length > 0 && !string.Equals(bare, userName, StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var s in _states.Values)
+                        if (string.Equals(s.UserName, bare, StringComparison.OrdinalIgnoreCase))
+                            return s;
+                }
             }
             return null;
+        }
+
+        /// <summary>把 "A2 · 山客" 这类展示串还原成 Windows 用户名（取第一个分隔符之前）。</summary>
+        internal static string BareName(string shown)
+        {
+            string s = (shown ?? "").Trim();
+            if (s.Length == 0) return "";
+            int cut = s.IndexOfAny(new[] { '·', '\u00B7', '\u30FB' });
+            if (cut < 0) cut = s.IndexOf(' ');
+            return cut > 0 ? s.Substring(0, cut).Trim() : s;
         }
 
         /// <summary>全部快照（只读副本）。</summary>
