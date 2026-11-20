@@ -224,8 +224,18 @@
                                 BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" />
                         <Border x:Name="FocusRing" CornerRadius="11" BorderThickness="1"
                                 BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
-                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
-                                      VerticalAlignment="Center" />
+                        <!-- ★★ 2.17.48：GlassTextBox 与 PasswordBox 同款的双层内边距坑。★★
+                             原来这里写 Margin="{TemplateBinding Padding}"，而样式本身已有
+                             Padding="12,9"，TextBox 内部又把 Padding 应用一次 ——
+                             高度 27 的框（远程管理页「新增用户」）可用高度算成 0，
+                             昵称 / Windows 用户名整块不可见，只剩一个空胶囊
+                             （用户实测反馈「昵称用户名不可见」）。
+                             去掉这层 Margin，Padding 交给 TextBox 自己处理。
+                             ★ 同时补 HorizontalAlignment="Stretch"：内容宿主不拉伸时
+                               只有文字那么宽，点右侧空白不进焦点（等于"点不到输入框"）。 -->
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      VerticalAlignment="Center"
+                                      HorizontalAlignment="Stretch" />
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsKeyboardFocused" Value="True">

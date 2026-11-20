@@ -1837,7 +1837,34 @@ namespace SoulLink.Views
                     string cur = node.Get(p.Key);
                     foreach (ComboBoxItem it in combo.Items)
                         if ((it.Tag as string) == cur) { it.IsSelected = true; break; }
-                    if (combo.SelectedIndex < 0 && combo.Items.Count > 0) combo.SelectedIndex = 0;
+                    // ★★ 2.17.48：默认选中「本账号」后必须把值写回节点参数。★★
+                    //   原来只 combo.SelectedIndex = 0，而 SelectionChanged 是**之后**才挂上的，
+                    //   于是界面显示「A2 山客」，节点里 user 仍是空串。
+                    //   紧随其后的「配置组名 / 一条龙」拿着空 user 去读 BGI 目录，
+                    //   永远读不到东西 —— 用户看到的就是「配置组下拉只有一个（未选择）」，
+                    //   而且手动改目标用户也没反应（图3 的根因）。
+                    bool matchedSaved = combo.SelectedIndex >= 0;
+                    if (!matchedSaved && cur.Length > 0)
+                    {
+                        // ★ 已保存的账号不在候选里（未绑定 / 已从配置删除）：
+                        //   必须原样保留并选中，**不能**悄悄改成列表里的第一个账号 ——
+                        //   那等于把用户的流程静默改到别人的会话上去执行。
+                        var keep = new ComboBoxItem { Content = cur, Tag = cur };
+                        combo.Items.Add(keep);
+                        keep.IsSelected = true;
+                    }
+                    else if (!matchedSaved && combo.Items.Count > 0)
+                    {
+                        // 全新节点：默认选中第一个候选，并写回参数，
+                        // 让紧随其后的「配置组名 / 一条龙」能按这个账号读目录。
+                        combo.SelectedIndex = 0;
+                        if (combo.SelectedItem is ComboBoxItem auto && (auto.Tag as string ?? "") != cur)
+                        {
+                            node.Set(p.Key, auto.Tag as string ?? "");
+                            var captured = node;
+                            Dispatcher.InvokeAsync(() => { if (Canvas.SelectedNode == captured) ShowPropPanel(captured); });
+                        }
+                    }
 
                     combo.SelectionChanged += (_, __) =>
                     {
@@ -1845,6 +1872,7 @@ namespace SoulLink.Views
                         {
                             node.Set(p.Key, it.Tag as string ?? "");
                             MarkDirty(); Canvas.Redraw();
+                            // 同一账号只重建一次，避免 A/B 切换时递归刷新
                             Dispatcher.InvokeAsync(() => ShowPropPanel(node));
                         }
                     };
@@ -1904,10 +1932,39 @@ namespace SoulLink.Views
                     };
                     combo.Items.Add(new ComboBoxItem { Content = "（未选择）", Tag = "" });
                     string savedGroup = node.Get(p.Key).Trim().Trim('"');
-                    var groupNames = ListBgiConfigs("ScriptGroup", node.Get("user")).ToList();
+                    string groupUser = node.Get("user").Trim();
+                    var groupNames = ListBgiConfigs("ScriptGroup", groupUser).ToList();
                     if (savedGroup.Length > 0 && !groupNames.Contains(savedGroup, StringComparer.OrdinalIgnoreCase)) groupNames.Insert(0, savedGroup);
                     foreach (var n in groupNames)
                         combo.Items.Add(new ComboBoxItem { Content = n, Tag = n });
+
+                    // ★★ 2.17.48：读不到配置组时必须**说清为什么**。★★
+                    //   用户原话：「未能从数据中心获取配置组名称」—— 原来是静默只剩一个
+                    //   「（未选择）」，用户完全不知道是账号没选、账号没绑 BGI 路径，
+                    //   还是 BGI 目录下真的没有 ScriptGroup。三种情况分开提示。
+                    if (groupNames.Count == 0)
+                    {
+                        var data = BgiDataCenter.Get(string.IsNullOrWhiteSpace(groupUser) ? _account.UserName : groupUser);
+                        string why;
+                        if (string.IsNullOrWhiteSpace(groupUser) && string.IsNullOrWhiteSpace(_account.UserName))
+                            why = "先在上面选择「目标用户」。";
+                        else if (string.IsNullOrWhiteSpace(data.ExePath))
+                            why = "账号「" + (string.IsNullOrWhiteSpace(groupUser) ? _account.UserName : groupUser)
+                                + "」还没有绑定 BetterGI 路径，读不到配置组。请用下面的「选择 BGI 程序…」指定。";
+                        else if (data.ScriptGroups.Count == 0)
+                            why = "已读取 " + data.RootPath + "\\User\\ScriptGroup，但里面没有 *.json 配置组。";
+                        else
+                            why = data.Error;
+
+                        block.Children.Add(new TextBlock
+                        {
+                            Text = "未能从数据中心获取配置组名称：" + why,
+                            FontSize = 10,
+                            TextWrapping = TextWrapping.Wrap,
+                            Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xB4, 0x7A)),
+                            Margin = new Thickness(0, 6, 0, 0)
+                        });
+                    }
 
                     string cur = node.Get(p.Key);
                     foreach (ComboBoxItem it in combo.Items)

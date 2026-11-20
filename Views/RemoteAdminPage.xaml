@@ -16,7 +16,7 @@
             <Button Grid.Column="1" x:Name="BtnRefresh" Style="{StaticResource GhostButton}" Padding="10,3" Click="BtnRefresh_Click" Content="刷新" FontSize="10.5" />
         </Grid>
         <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="330" /></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="360" /><ColumnDefinition Width="360" /></Grid.ColumnDefinitions>
             <Grid Grid.Column="0">
                 <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="120" /></Grid.RowDefinitions>
                 <Border Grid.Row="0" Style="{StaticResource GlassCard}" Padding="10,8" Margin="0,0,6,5">
@@ -43,7 +43,7 @@
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <TextBlock Text="RDP Wrapper" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimary}" />
-                            <TextBox Grid.Column="1" x:Name="WrapDirBox" Style="{StaticResource GlassTextBox}" Margin="8,0,0,0" Height="24" FontSize="10" FontFamily="{StaticResource MonoFont}" VerticalContentAlignment="Center" />
+                            <TextBox Grid.Column="1" x:Name="WrapDirBox" Style="{StaticResource GlassTextBox}" Margin="8,0,0,0" Height="26" Padding="8,0,8,0" FontSize="10" FontFamily="{StaticResource MonoFont}" VerticalContentAlignment="Center" />
                             <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
                                 <Button x:Name="BtnBrowseWrap" Style="{StaticResource GhostButton}" Padding="8,3" Click="BtnBrowseWrap_Click" Content="选择" />
                                 <Button x:Name="BtnRestoreWrap" Style="{StaticResource GhostButton}" Padding="8,3" Margin="4,0,0,0" Click="BtnRestoreWrap_Click" Content="恢复" />
@@ -70,18 +70,32 @@
                     </Grid>
                 </Border>
             </Grid>
+            <!-- ★★ 2.17.48：右侧「新增用户」改成可滚动 + 卡片自带输入框度量。★★
+                 用户反馈（原文）：「昵称用户名不可见，将右侧内容调大至整个框。恢复输入可见性。」
+                 根因三层（都已实测复现）：
+                   ① GlassTextBox 的模板对 PART_ContentHost 又套了一次 Margin={TemplateBinding Padding}，
+                      而 ScrollViewer 是 VerticalAlignment=Center —— 高度 27、Padding 上下 9 时
+                      内容区被压成 0，文字整块消失（只剩空胶囊）。这是本项目第 2 次踩同一个坑
+                      （2.17.47 修的是 PasswordBox 的同款写法）。
+                   ② 该模板的 ScrollViewer 没写 HorizontalAlignment=Stretch，
+                      点文字右边的空白没有反应（只有字符那几像素能点）。
+                   ③ 右栏写死 330 宽，并塞了 4 个输入框 + 6 个勾选 + 按钮，
+                      窗口高 820 时要靠面板撑开，底部按钮容易被裁。
+                 改法：右栏 330→360（整块卡片占满这一列），输入框改 Height=34 并统一 10,0 内边距，
+                 整块套 ScrollViewer（内容超出可滚，不裁按钮）。 -->
             <Border Grid.Column="1" Style="{StaticResource GlassCard}" Padding="12,9" Margin="6,0,0,5">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
                 <StackPanel>
                     <TextBlock Text="新增用户" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
                     <TextBlock Text="直接创建 Windows 账户和连接配置" FontSize="9.5" Foreground="{DynamicResource TextMuted}" Margin="0,2,0,6" />
-                    <TextBox x:Name="NewNickBox" Style="{StaticResource GlassTextBox}" Height="27" FontSize="10.5" VerticalContentAlignment="Center" TextChanged="NewField_TextChanged" />
-                    <TextBlock Text="昵称（可留空，与用户名相同）" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,2,0,4" />
-                    <TextBox x:Name="NewUserBox" Style="{StaticResource GlassTextBox}" Height="27" FontSize="10.5" VerticalContentAlignment="Center" FontFamily="{StaticResource MonoFont}" TextChanged="NewField_TextChanged" />
-                    <TextBlock Text="Windows 用户名" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,2,0,4" />
-                    <PasswordBox x:Name="NewPwdBox" Style="{StaticResource GlassPasswordBox}" Height="27" FontSize="10.5" VerticalContentAlignment="Center" PasswordChanged="NewPassword_Changed" />
-                    <TextBlock Text="密码（至少 6 位，不含用户名）" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,2,0,4" />
-                    <PasswordBox x:Name="NewPwd2Box" Style="{StaticResource GlassPasswordBox}" Height="27" FontSize="10.5" VerticalContentAlignment="Center" PasswordChanged="NewPassword_Changed" />
-                    <TextBlock Text="再次输入密码" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,2,0,4" />
+                    <TextBox x:Name="NewNickBox" Style="{StaticResource GlassTextBox}" Padding="10,0,10,0" Height="34" FontSize="12" VerticalContentAlignment="Center" TextChanged="NewField_TextChanged" />
+                    <TextBlock Text="昵称（可留空，与用户名相同）" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,3,0,6" />
+                    <TextBox x:Name="NewUserBox" Style="{StaticResource GlassTextBox}" Padding="10,0,10,0" Height="34" FontSize="12" VerticalContentAlignment="Center" FontFamily="{StaticResource MonoFont}" TextChanged="NewField_TextChanged" />
+                    <TextBlock Text="Windows 用户名" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,3,0,6" />
+                    <PasswordBox x:Name="NewPwdBox" Style="{StaticResource GlassPasswordBox}" Padding="10,0,10,0" Height="34" FontSize="12" VerticalContentAlignment="Center" PasswordChanged="NewPassword_Changed" />
+                    <TextBlock Text="密码（至少 6 位，不含用户名）" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,3,0,6" />
+                    <PasswordBox x:Name="NewPwd2Box" Style="{StaticResource GlassPasswordBox}" Padding="10,0,10,0" Height="34" FontSize="12" VerticalContentAlignment="Center" PasswordChanged="NewPassword_Changed" />
+                    <TextBlock Text="再次输入密码" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,3,0,6" />
                     <TextBlock x:Name="NewValidText" FontSize="9.5" Foreground="#FFFFB4B4" TextWrapping="Wrap" Margin="0,2,0,4" />
                     <CheckBox x:Name="NewRemoteCheck" Style="{StaticResource GlassCheckBox}" Content="允许远程登录" IsChecked="True" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewAdminCheck" Style="{StaticResource GlassCheckBox}" Content="管理员权限" FontSize="10" Margin="0,2,0,2" />
@@ -89,8 +103,9 @@
                     <CheckBox x:Name="NewHideCheck" Style="{StaticResource GlassCheckBox}" Content="登录界面隐藏" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewConfigCheck" Style="{StaticResource GlassCheckBox}" Content="同时创建 SoulLink 连接配置" IsChecked="True" FontSize="10" Margin="0,2,0,4" />
                     <TextBlock x:Name="NewHostText" FontSize="9" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,0,0,5" />
-                    <Button x:Name="BtnCreateUser" Style="{StaticResource PrimaryButton}" Padding="12,5" HorizontalAlignment="Stretch" Click="CreateUser_Click" Content="创建用户" FontSize="10.5" />
+                    <Button x:Name="BtnCreateUser" Style="{StaticResource PrimaryButton}" Padding="12,6" HorizontalAlignment="Stretch" Click="CreateUser_Click" Content="创建用户" FontSize="11" Margin="0,4,0,2" />
                 </StackPanel>
+                </ScrollViewer>
             </Border>
         </Grid>
     </Grid>
