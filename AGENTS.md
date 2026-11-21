@@ -18,3 +18,15 @@
 
 - 未授权不得触碰 `dist/stable/SoulLink-Stable.exe`（挂机测试版）。
 - 未授权不得使用 A1 / A4 账号。
+
+## 性能约束（必读 docs/RELEASE-RULES.md §10-11）
+
+1. **新增周期任务走 `TickHub`**，不要新建 `DispatcherTimer`。
+   6 个独立 1 秒定时器曾让空闲 CPU 达到 27%。
+2. **页面可见性**：`SetActivePage` 只切 Visibility，**不触发 Loaded/Unloaded**。
+   只在该页可见时需要的东西，必须实现 `OnPageActivated/OnPageDeactivated`。
+3. **诊断代码**：取句柄数用 `GetProcessHandleCount`，不要用 `Process.HandleCount`
+   （后者每次 3~5ms，挂在 1Hz 循环里自己就吃掉 20% CPU）。
+4. **句柄增长要观察 >15 分钟才能定性**，启动爬坡是正常的。
+5. **产物超过 5 MB 先问为什么**：`sl-rescue` 和 `BrokerSetup` 曾因自包含
+   各自膨胀到 33 MB，改为框架依赖后分别是 72 KB / 1.16 MB。
