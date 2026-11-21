@@ -2238,6 +2238,7 @@ namespace SoulLink.Controls
             int connection = System.Threading.Interlocked.Increment(ref _connectionGeneration);
             _ = StopInputAsync();
 
+
             Account = account;
             CaptureOnClick = App.Config.Settings.RdpCaptureOnClick;
             if (CaptureOnClick) ReleasePointerCapture();
@@ -2457,6 +2458,11 @@ namespace SoulLink.Controls
                             catch (Exception ex) { Debug("账号校验失败: " + ex.Message); }
 
                             SetStatus("已连接 · 会话 " + activeSessionId + " · " + account.UserName);
+
+                // ★ 事件触发：RDP **连接成功之后**才查会话。
+                //   连接过程中会话状态还在变，那时查没有意义；
+                //   连上之后会话号已确定，此时刷新最准确。
+                try { Services.AccountStateCenter.Kick(App.Config, "RDP 连接成功 会话" + activeSessionId); } catch { }
                             LogBus.Ok("RDP 已连上 " + account.Caption,
                                 "地址 " + host + " · 耗时 " + sw.ElapsedMilliseconds + " ms");
                             // ★ 连接成功后**不再直接投送**：投送统一由会话监控负责
@@ -2972,7 +2978,10 @@ namespace SoulLink.Controls
                 // ★ ConfigureAwait(false)：投送包含 schtasks 建任务 + 等代理连回管道，
                 //   最长 20 秒。若回到 UI 线程继续，界面会在这段时间无法响应
                 //   （用户实测：多账号自动投送时卡死）。后续对控件的操作会显式切回 UI。
+                // ★ 事件触发：投送前后会话状态会变（代理起来、通道建立）。
+                try { Services.AccountStateCenter.Kick(App.Config, "投送开始 会话" + sessionId); } catch { }
                 var (ok, msg) = await relay.DeployAsync(account).ConfigureAwait(false);
+                try { Services.AccountStateCenter.Kick(App.Config, "投送" + (ok ? "成功" : "失败") + " 会话" + sessionId); } catch { }
                 InputTrace.Write("DEPLOY_RESULT", "会话=" + sessionId + " ok=" + ok
                     + " AgentPid=" + relay.AgentPid + " BrokerBacked=" + relay.BrokerBacked
                     + " IsConnected=" + relay.IsConnected + " msg=" + msg

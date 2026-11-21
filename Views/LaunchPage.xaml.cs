@@ -33,9 +33,9 @@ namespace SoulLink.Views
         ///   停在启动台时账号上下线看不到变化，必须手动点刷新或切页才更新
         ///   （用户反馈："为什么还要按刷新才能看到变绿灯"）。
         /// </summary>
-        private System.Windows.Threading.DispatcherTimer? _sessionTimer;
+        private IDisposable? _sessionSub;
         /// <summary>自动化卡片的 1 秒轻量刷新（只为状态灯的颜色交替）。</summary>
-        private System.Windows.Threading.DispatcherTimer? _automationTimer;
+        private IDisposable? _automationSub;
         private bool _refreshingSessions;
 
         private void UpdateResponsiveLayout()
@@ -94,66 +94,62 @@ namespace SoulLink.Views
             ActionList.ItemsSource = _actions;
             SessionList.ItemsSource = _sessions;
 
-            _sessionTimer = new System.Windows.Threading.DispatcherTimer
+            // ★ 改用统一节拍（TickHub）：3 秒一跳。
+            //   原来每个页面各建 DispatcherTimer，各自唤醒 Dispatcher，
+            //   线程池因此长期处于自旋状态（空闲 CPU 偏高的主因之一）。
+            _sessionSub = Services.TickHub.Register("LaunchPage.Session", 3, () =>
             {
-                Interval = TimeSpan.FromSeconds(3)
-            };
-            _sessionTimer.Tick += (_, __) =>
+            // 只在本页可见时刷新，切走就跳过，省开销
+            if (!IsVisible) return;
+            RefreshSessions();
+            // 自动化卡片也跟随刷新，否则必须切页才能看到状态/名称变化。
+            RefreshAutomationList();
+            // 右侧原始日志：跟随点击的会话
+            if (_follower == null) RefreshSelectedLog();
+            // 左侧：主会话显示总览，其它账号显示单账号状态
+            if (_logSession != null && _logSession.IsConsoleSession)
             {
-                // 只在本页可见时刷新，切走就跳过，省开销
-                if (!IsVisible) return;
-                RefreshSessions();
-                // 自动化卡片也跟随刷新，否则必须切页才能看到状态/名称变化。
-                RefreshAutomationList();
-                // 右侧原始日志：跟随点击的会话
-                if (_follower == null) RefreshSelectedLog();
-                // 左侧：主会话显示总览，其它账号显示单账号状态
-                if (_logSession != null && _logSession.IsConsoleSession)
-                {
-                    // ★ 每轮都调用 RefreshOverview：它内部会比对"当前会话集合"
-                    //   与已有卡片，账号增删/会话号变化（注销重登会换号）时自动重建，
-                    //   否则出现过一次卡片后就再也不重建，新登录的账号永远不显示。
-                    RefreshOverview();
-                    if (_overviewRows.Count > 0) UpdateOverviewTexts();
-                }
-                else if (_statusFollower == null && _logSession != null)
-                {
-                    StartStatusFollowFor(_logSession);
-                }
-            };
+                // ★ 每轮都调用 RefreshOverview：它内部会比对"当前会话集合"
+                //   与已有卡片，账号增删/会话号变化（注销重登会换号）时自动重建，
+                //   否则出现过一次卡片后就再也不重建，新登录的账号永远不显示。
+                RefreshOverview();
+                if (_overviewRows.Count > 0) UpdateOverviewTexts();
+            }
+            else if (_statusFollower == null && _logSession != null)
+            {
+                StartStatusFollowFor(_logSession);
+            }
+            });
             // ★★ 2.17.27：状态灯需要更快的刷新节奏 ★★
             //
             //   会话列表 3 秒一轮够用，但"执行成功闪绿 → 回蓝"这件事如果也按 3 秒来，
             //   绿色可能整个保鲜期（6 秒）里只被采样到 1~2 次，甚至刚好错过。
             //   这里单独开一个 1 秒的**轻量**刷新：只重建自动化卡片，
             //   不查会话、不查进程（开销只是一次 WPF 元素重建，卡片数很少）。
-            _automationTimer = new System.Windows.Threading.DispatcherTimer
+            // ★ 改用统一节拍（TickHub）：1 秒一跳，只重建自动化卡片。
+            _automationSub = Services.TickHub.Register("LaunchPage.Automation", 1, () =>
             {
-                Interval = TimeSpan.FromSeconds(1)
-            };
-            _automationTimer.Tick += (_, __) =>
-            {
-                if (!IsVisible) return;
-                // ★ 2.17.45：内容没变就不重建卡片。
-                //   原来每秒无条件 Children.Clear() + 重建全部卡片，
-                //   WPF 每秒都要重新测量/排版/生成字形，即使流程状态一个字都没变。
-                string sig = AutomationSignature();
-                if (sig == _automationSignature) return;
-                _automationSignature = sig;
-                RefreshAutomationList();
-            };
-            Loaded += (_, __) => _automationTimer?.Start();
-            Unloaded += (_, __) => _automationTimer?.Stop();
+            if (!IsVisible) return;
+            // ★ 2.17.45：内容没变就不重建卡片。
+            //   原来每秒无条件 Children.Clear() + 重建全部卡片，
+            //   WPF 每秒都要重新测量/排版/生成字形，即使流程状态一个字都没变。
+            string sig = AutomationSignature();
+            if (sig == _automationSignature) return;
+            _automationSignature = sig;
+            RefreshAutomationList();
+            });
+            Loaded += (_, __) => { };
+            Unloaded += (_, __) => { };
 
             // ★ 定时器启动不能只靠 Loaded：UserControl 在页面切换时
             //   会触发 Unloaded 停表，再切回来 Loaded 不一定再触发，
             //   导致定时器永久停摆（表现：状态/会话列表都不再刷新）。
             //   改成 Loaded + Activate 双保险，并让 Activate 每次都确保启动。
-            Loaded += (_, __) => _sessionTimer?.Start();
+            Loaded += (_, __) => { };
             Unloaded += (_, __) =>
             {
-                _sessionTimer?.Stop();
-                // 页面卸载时停止跟随，避免后台一直持有文件句柄
+                // TickHub 自行管理节拍，这里只处理跟随器
+                // （页面卸载时停止跟随，避免后台一直持有文件句柄）
                 StopFollower();
                 StopStatusFollower();
             };
@@ -170,11 +166,7 @@ namespace SoulLink.Views
         public void Activate()
         {
             ReloadActions();
-            // 确保定时器在运行（页面切回来时 Loaded 不一定触发）
-            if (_sessionTimer != null && !_sessionTimer.IsEnabled)
-                _sessionTimer.Start();
-            if (_automationTimer != null && !_automationTimer.IsEnabled)
-                _automationTimer.Start();
+            // TickHub 自行管理节拍，无需手动启停。
             RefreshSessions();
             RefreshAutomationList();
         }
@@ -217,7 +209,16 @@ namespace SoulLink.Views
             else UpdateCommandPreview(null);
         }
 
-        public void RefreshSessions()
+        /// <param name="force">
+        /// true = 用户主动点击刷新，**强制重新查询系统**（起 query.exe + qwinsta）。
+        /// false = 定时刷新，优先复用 AccountStateCenter 的快照，省资源。
+        ///
+        /// ★ 为什么要区分：
+        ///   定时刷新每几秒一次，走快照足够（快照本身就是后台查来的）。
+        ///   而用户点"刷新"就是想立刻看到最新状态 —— 如果还拿旧快照，
+        ///   按钮看起来"点了没反应"（实测快照 5 秒内就直接复用，完全不查系统）。
+        /// </param>
+        public void RefreshSessions(bool force = false)
         {
             // ★ 防重入：定时器 3 秒触发一次，而一次查询要 ~30ms；
             //   若上次还没回来就再发，会堆积请求并让列表反复重建（闪烁）。
@@ -235,14 +236,27 @@ namespace SoulLink.Views
                     //   本页原来每 3 秒自己 query user + 枚举 BGI 进程，
                     //   与其他页面重复。快照太旧时才自己查。
                     List<SessionInfo> all;
-                    var snap = AccountStateCenter.Sessions;
-                    bool fresh = snap.Count > 0
-                        && (DateTime.Now - AccountStateCenter.LastRefresh).TotalSeconds < 5;
-                    if (fresh) all = snap;
-                    else all = await SessionService.QueryAsync().ConfigureAwait(false);
+                    if (force)
+                    {
+                        // 用户主动点击：真查一次系统，并让状态中心也走一轮快档，
+                        // 这样其他页面（数据中心/会话页）同时拿到最新数据。
+                        try { await AccountStateCenter.ForceRefreshAsync(App.Config).ConfigureAwait(false); }
+                        catch { }
+                        all = AccountStateCenter.Sessions;
+                        if (all == null || all.Count == 0)
+                            all = await SessionService.QueryAsync().ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var snap = AccountStateCenter.Sessions;
+                        bool fresh = snap.Count > 0
+                            && (DateTime.Now - AccountStateCenter.LastRefresh).TotalSeconds < 5;
+                        if (fresh) all = snap;
+                        else all = await SessionService.QueryAsync().ConfigureAwait(false);
+                    }
 
                     var users = SessionService.FilterUsers(all); // 总览是导航入口，主用户必须始终可见
-                    await Dispatcher.InvokeAsync(() => ApplySessions(users));
+                    await Dispatcher.InvokeAsync(async () => await ApplySessions(users)).Task.Unwrap();
                 }
                 catch { }
                 finally { _refreshingSessions = false; }
@@ -254,7 +268,7 @@ namespace SoulLink.Views
         /// ★ 原来每次 RefreshSessions 都先 _sessions.Clear() 再全量重建，
         ///   定时刷新时会造成明显闪烁，而且选中项会丢失。
         /// </summary>
-        private void ApplySessions(List<SessionInfo> users)
+        private async Task ApplySessions(List<SessionInfo> users)
         {
             try
             {
@@ -286,8 +300,17 @@ namespace SoulLink.Views
                         foreach (var kv in BgiLogWatcher.Discover())
                             bgiTimes[kv.Key] = kv.Value.LastWrite;
 
-                    // 以“能连通活代理”为准，避免残留管道让状态反复跳动。
-                    channelSessions = BgiLogWatcher.DiscoverLiveAgentSessions();
+                    // 以"能连通活代理"为准，避免残留管道让状态反复跳动。
+                    //
+                    // ★★ 必须在后台线程执行。★★
+                    //   DiscoverLiveAgentSessions 内部要枚举全部命名管道，
+                    //   系统管道数正常时几毫秒；但第三方软件泄漏管道时
+                    //   （实测累积到 3 万个）单次枚举要数秒。
+                    //   本方法由 3 秒定时器经 Dispatcher.InvokeAsync 回到 UI 线程调用，
+                    //   在这里同步枚举会直接把界面冻住（实测点击无响应、
+                    //   主线程 100% + UIAutomation 事件积压）。
+                    channelSessions = await System.Threading.Tasks.Task.Run(
+                        () => BgiLogWatcher.DiscoverLiveAgentSessions()).ConfigureAwait(true);
                 }
                 catch
                 {
@@ -2440,7 +2463,7 @@ namespace SoulLink.Views
             catch { }
         }
 
-        private void RefreshSessions_Click(object sender, RoutedEventArgs e) => RefreshSessions();
+        private void RefreshSessions_Click(object sender, RoutedEventArgs e) => RefreshSessions(force: true);
 
         /// <summary>列表项绑定不会自动感知属性变化，这里就地重建一次以刷新显示。</summary>
         private void RefreshBadges()

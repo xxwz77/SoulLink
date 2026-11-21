@@ -174,6 +174,7 @@ namespace SoulLink.Services
             = new Dictionary<string, AccountState>(StringComparer.OrdinalIgnoreCase);
 
         private static System.Threading.Timer? _timer;
+        private static AppConfig? _timerConfig;
         private static int _refreshing;
         private static DateTime _lastRefresh = DateTime.MinValue;
 
@@ -201,6 +202,7 @@ namespace SoulLink.Services
                 {
                     SyncAccounts(cfg);
                     if (_timer != null) return;
+                    _timerConfig = cfg;
                     _timer = new System.Threading.Timer(_ => RefreshOnce(cfg), null,
                         dueTime: 200, period: RefreshMs);
                 }
@@ -297,6 +299,30 @@ namespace SoulLink.Services
         /// <summary>强制刷新一次（测试或需要立即拿到最新值时用）。</summary>
         public static void RefreshNow(AppConfig cfg) => RefreshOnce(cfg);
 
+        /// <summary>
+        /// 用户主动刷新：强制真查一次系统会话，并把后续切成快档一小段时间。
+        ///
+        /// ★ 与 RefreshNow 的区别：这个方法在后台线程执行、可 await，
+        ///   调用方（界面）不会因此卡住；而 RefreshNow 是同步的。
+        /// ★ 内部等待"上一轮若正在跑"最多一小会儿，保证拿到的是点击之后的数据。
+        /// </summary>
+        public static async System.Threading.Tasks.Task ForceRefreshAsync(AppConfig cfg)
+        {
+            try
+            {
+                // 让状态中心进入快档（覆盖"用户刚点了刷新、接下来几秒还在看"的场景）
+                Kick(cfg, "用户主动刷新");
+
+                // 等正在跑的那一轮结束（最多 3 秒），再补一轮，确保数据在点击之后
+                var deadline = DateTime.UtcNow.AddSeconds(3);
+                while (Volatile.Read(ref _refreshing) == 1 && DateTime.UtcNow < deadline)
+                    await System.Threading.Tasks.Task.Delay(50).ConfigureAwait(false);
+
+                await System.Threading.Tasks.Task.Run(() => RefreshOnce(cfg)).ConfigureAwait(false);
+            }
+            catch { }
+        }
+
         // ── 内部 ──────────────────────────────────────────────────────
 
         /// <summary>让账号列表与配置保持一致。</summary>
@@ -353,6 +379,82 @@ namespace SoulLink.Services
             catch { return ""; }
         }
 
+        // ── 会话检测策略：事件驱动 + 慢速兜底 ──────────────────────────
+        //
+        // ★★ 为什么不是周期高频：★★
+        //   每轮都要起 query.exe + qwinsta 两个子进程（实测各约 50ms），
+        //   并持续产生句柄（探针实测 +3~7 个/轮）。24 小时挂机时这是纯浪费——
+        //   会话状态绝大部分时间根本不变。
+        //
+        // ★★ 实际使用节奏（用户描述）：★★
+        //   启动 → 连 RDP → 投送 → 进入挂机；
+        //   之后状态长期不变，唯一需要的是「发现掉线」。
+        //
+        //   所以：
+        //     · 启动时            → 查一次
+        //     · RDP 重连 / 新登录  → 立刻查一次（事件触发）
+        //     · 需要判断在线状态时 → 按需查（RefreshNow）
+        //     · 其余时间          → 慢速兜底（默认 30 秒），只用来发现掉线
+        //
+        //   面板显示不依赖这个频率：它读的是快照，30 秒更新一次完全够用。
+
+        /// <summary>兜底轮询间隔（毫秒）。仅用于发现掉线，不做高频刷新。</summary>
+        private const int IdleRefreshMs = 30000;
+        /// <summary>启动后的快档持续时间：连 RDP、投送都发生在这段时间里。</summary>
+        private const int StartupFastMs = 1000;
+        private static readonly TimeSpan StartupFastWindow = TimeSpan.FromSeconds(60);
+        private static DateTime _startedAt = DateTime.MinValue;
+        /// <summary>事件触发的窗口：触发后这段时间内保持快档。</summary>
+        private static DateTime _lastKickAt = DateTime.MinValue;
+        private static readonly TimeSpan KickFastWindow = TimeSpan.FromSeconds(20);
+
+        /// <summary>
+        /// 事件触发：RDP 重连、新登录、投送前后调一次。
+        /// 会立刻查一轮，并把后续 20 秒切成快档，覆盖"登录后状态还在变"的窗口期。
+        /// </summary>
+        public static void Kick(AppConfig? cfg, string reason)
+        {
+            try
+            {
+                _lastKickAt = DateTime.UtcNow;
+                if (RefreshMs != StartupFastMs) ApplyInterval(StartupFastMs);
+                var c = cfg ?? _timerConfig;
+                if (c != null) RefreshNow(c);
+                App.AppendErrorLog("AccountStateCenter: 事件触发刷新",
+                    new InvalidOperationException(reason));
+            }
+            catch { }
+        }
+
+        /// <summary>切换轮询周期（仅在变化时重建定时器）。</summary>
+        private static void ApplyInterval(int newMs)
+        {
+            try
+            {
+                lock (_sync)
+                {
+                    if (newMs == RefreshMs) return;
+                    var cfg = _timerConfig;
+                    _timer?.Dispose();
+                    RefreshMs = newMs;
+                    _timer = new System.Threading.Timer(_ => { var c = _timerConfig; if (c != null) RefreshOnce(c); },
+                        null, dueTime: newMs, period: newMs);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>根据当前所处阶段决定兜底周期。</summary>
+        private static int DesiredIdleInterval()
+        {
+            var now = DateTime.UtcNow;
+            if (_startedAt != DateTime.MinValue && (now - _startedAt) < StartupFastWindow)
+                return StartupFastMs;
+            if (_lastKickAt != DateTime.MinValue && (now - _lastKickAt) < KickFastWindow)
+                return StartupFastMs;
+            return IdleRefreshMs;
+        }
+
         /// <summary>刷新一轮。单轮不重入，避免卡住时堆叠。</summary>
         private static void RefreshOnce(AppConfig cfg)
         {
@@ -381,6 +483,15 @@ namespace SoulLink.Services
                 __tQuery = __sw.ElapsedMilliseconds - __s1;
                 lock (_sync) _sessions = sessions;
 
+                // ★ 按阶段决定兜底周期：启动/事件触发后走快档，其余时间走慢档。
+                try
+                {
+                    if (_startedAt == DateTime.MinValue) _startedAt = DateTime.UtcNow;
+                    int want = DesiredIdleInterval();
+                    if (want != RefreshMs) ApplyInterval(want);
+                }
+                catch { }
+
                 // ② 一次枚举 BGI 进程（所有账号共用）
                 Dictionary<int, BgiLogWatcher.Instance> bgi;
                 try { bgi = BgiLogWatcher.Discover(); }
@@ -393,7 +504,9 @@ namespace SoulLink.Services
 
                 // 一次枚举进程（内存枚举，约 20ms）；流程触点不再各自启动 tasklist。
                 var __s3 = __sw.ElapsedMilliseconds;
-                ProcessOwnerSnapshot.Refresh();
+                // ★ 按需刷新：只有启用中的流程真的用到「进程检查」时才枚举全进程。
+                //   否则每秒遍历 550 个进程纯属浪费，且会持续产生句柄。
+                if (ProcessOwnerSnapshot.IsNeeded(cfg)) ProcessOwnerSnapshot.Refresh();
                 __tProc = __sw.ElapsedMilliseconds - __s3;
 
                 // ★ BGI 日志：唯一读取点。只在**已绑定**的账号上做 IO，
