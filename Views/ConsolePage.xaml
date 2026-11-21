@@ -74,10 +74,10 @@
                                 Margin="6,0,0,0" Click="BtnReconnect_Click" ToolTip="重新连接">
                             <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11.5" />
                         </Button>
-                        <!-- 全屏：只显示当前 RDP 画面，顶部浮出退出菜单 -->
+                        <!-- 全屏：只显示当前 RDP 画面，鼠标移到屏幕顶部呼出菜单 -->
                         <Button x:Name="BtnFullScreen" Style="{StaticResource GhostButton}" Padding="8,5"
                                 Margin="6,0,0,0" Click="BtnFullScreen_Click"
-                                ToolTip="全屏（F11 切换，Esc 退出）">
+                                ToolTip="全屏（F11 进入 / 退出；鼠标移到屏幕顶部呼出菜单）">
                             <TextBlock Text="&#xE740;" FontFamily="Segoe MDL2 Assets" FontSize="11.5" />
                         </Button>
                         <Button x:Name="BtnDisconnect" Style="{StaticResource GhostButton}" Padding="8,5"

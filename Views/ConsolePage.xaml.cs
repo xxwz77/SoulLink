@@ -63,6 +63,20 @@ namespace SoulLink.Views
         public ConsolePage()
         {
             InitializeComponent();
+
+            // F11 全屏开关（见 _fsKeyHook 注释）。
+            try
+            {
+                _fsKeyHook = new LowLevelKeyboardHook
+                {
+                    Spec = HotkeySpec.Parse("F11"),
+                    CanTrigger = () => IsVisible,
+                    Pressed = () => Dispatcher.BeginInvoke(new Action(ToggleFullScreen)),
+                };
+                if (!_fsKeyHook.Install()) _fsKeyHook = null;
+            }
+            catch (Exception ex) { App.AppendErrorLog("ConsolePage.F11Hook", ex); }
+
             Loaded += (_, __) =>
             {
                 var window = Window.GetWindow(this);
@@ -142,7 +156,12 @@ namespace SoulLink.Views
                     catch { }
                 };
             };
-            Unloaded += (_, __) => { _shieldWatch?.Stop(); _shieldWatch = null; };
+            Unloaded += (_, __) =>
+            {
+                _shieldWatch?.Stop();
+                _shieldWatch = null;
+                try { _fsKeyHook?.Dispose(); _fsKeyHook = null; } catch { }
+            };
             Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
 
             // ★ WindowsFormsHost 是独立 HWND，**不受 WPF Visibility 控制**：
@@ -2731,11 +2750,52 @@ namespace SoulLink.Views
         private WindowStyle _preFullScreenStyle = WindowStyle.None;
         private ResizeMode _preFullScreenResize = ResizeMode.CanResize;
         private Thickness _preFullScreenMargin;
+        private double _preFsLeft = double.NaN;
+        private double _preFsTop;
+        private double _preFsWidth = double.NaN;
+        private double _preFsHeight;
+        private bool _preFsTopmost;
+        private System.Windows.Shell.WindowChrome? _chrome;
+
+        /// <summary>
+        /// F11 全屏开关：本机低级键盘钩子。
+        /// ★ 必须用 LL 钩子而不是 WPF KeyDown——键盘焦点常在 RDP 的子 HWND 里，
+        ///   WPF 的键盘事件收不到。CanTrigger 绑定本页可见性：其它应用里 F11 原样透传。
+        /// </summary>
+        private LowLevelKeyboardHook? _fsKeyHook;
 
         private void BtnFullScreen_Click(object sender, RoutedEventArgs e)
         {
             if (_isFullScreen) ExitFullScreen();
             else EnterFullScreen();
+        }
+
+        /// <summary>F11 全屏开关。本机 LL 钩子在子 HWND 持有焦点时也能收到键。</summary>
+        private void ToggleFullScreen()
+        {
+            if (_viewing?.Console == null) return;   // 没有正在查看的画面时不动作
+            if (_isFullScreen) ExitFullScreen();
+            else EnterFullScreen();
+        }
+
+        /// <summary>若处于全屏则立即退出（供切页 / 关闭等外部场景调用）。</summary>
+        public void ExitFullScreenIfActive()
+        {
+            if (_isFullScreen) ExitFullScreen();
+        }
+
+        // 全屏用的最小 Win32 通道。
+        // ★ WPF 的 Left/Top/Width/Height 是 DIP 且被 WindowChrome 的隐形
+        //   WS_THICKFRAME 外扩一圈（4K/150% 下 +26px），永远差一点盖不满。
+        //   进入全屏后用 SetWindowPos 直接下物理像素矩形，一次到位。
+        private static class FsNative
+        {
+            [System.Runtime.InteropServices.DllImport("user32.dll")]
+            public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+                int x, int y, int cx, int cy, uint flags);
+            public const uint SWP_NOZORDER = 0x0004;
+            public const uint SWP_NOACTIVATE = 0x0010;
+            public const uint SWP_FRAMECHANGED = 0x0020;
         }
 
         private void EnterFullScreen()
@@ -2748,7 +2808,15 @@ namespace SoulLink.Views
                 _preFullScreenState = win.WindowState;
                 _preFullScreenStyle = win.WindowStyle;
                 _preFullScreenResize = win.ResizeMode;
+                _preFsTopmost = win.Topmost;
                 if (win.Content is FrameworkElement root) _preFullScreenMargin = root.Margin;
+
+                // ★ 显式记住几何：退出时若之前是 Normal，必须回到原位置原尺寸。
+                //   旧实现退出时只调 WindowState=Normal，窗口会停留在全屏大小上。
+                _preFsLeft = win.Left;
+                _preFsTop = win.Top;
+                _preFsWidth = win.Width;
+                _preFsHeight = win.Height;
 
                 _isFullScreen = true;
 
@@ -2759,11 +2827,44 @@ namespace SoulLink.Views
                 win.WindowStyle = WindowStyle.None;
                 win.ResizeMode = ResizeMode.NoResize;
                 if (win.Content is FrameworkElement r) r.Margin = new Thickness(0);
+
+                // 主窗口 chrome（标题栏 / 侧栏 / 内边距）全部收纳。
+                var mw = MainWindowRef ?? win as MainWindow;
+                mw?.SetChromeFullscreen(true);
+
+                // ★ 真·全屏：盖住任务栏。
+                //   旧实现铺 VirtualScreen（跨全部显示器，且任务栏依然浮在上面）。
+                //   改为「当前显示器整屏矩形 + Topmost」，物理像素换算成 DIP。
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(win).EnsureHandle();
+                double sx = 1.0, sy = 1.0;
+                var target = System.Windows.PresentationSource.FromVisual(win)?.CompositionTarget;
+                if (target != null)
+                {
+                    var m = target.TransformFromDevice;
+                    sx = m.M11;
+                    sy = m.M22;
+                }
+                var scr = System.Windows.Forms.Screen.FromHandle(hwnd).Bounds;   // 物理像素
+                win.Topmost = true;                                   // 压住任务栏（退出还原）
+                SoulLink.Services.WindowCorners.RemoveRounded(hwnd);  // 直角（圆角在全屏下四角漏底）
+
+                // ★ 隐形缩放边框会让窗口比显示器大出一圈（1.5 DPI 下 6 DIP 边框
+                //   + DWM 悬边 ≈ 26px）。全屏时归零，退出恢复——否则 GetWindowRect
+                //   永远比显示器宽，任务栏边缘还会露缝。
+                _chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(win);
+                if (_chrome != null) _chrome.ResizeBorderThickness = new Thickness(0);
                 win.WindowState = WindowState.Normal;
-                win.Left = SystemParameters.VirtualScreenLeft;
-                win.Top = SystemParameters.VirtualScreenTop;
-                win.Width = SystemParameters.VirtualScreenWidth;
-                win.Height = SystemParameters.VirtualScreenHeight;
+                win.Left = scr.Left / sx;
+                win.Top = scr.Top / sy;
+                win.Width = Math.Round(scr.Width / sx);
+                win.Height = Math.Round(scr.Height / sy);
+                // ★ 物理像素强制覆盖：WPF DIP + 隐形边框会差 ~26px，这里一次到位
+                FsNative.SetWindowPos(hwnd, IntPtr.Zero, scr.Left, scr.Top, scr.Width, scr.Height,
+                    FsNative.SWP_NOZORDER | FsNative.SWP_NOACTIVATE | FsNative.SWP_FRAMECHANGED);
+
+                // ★ 全屏铺满：拉伸模式（SmartSizing + 连接前已开的 EnableZoom）
+                //   由控件按客户区自动放大铺满，远端分辨率不动——ApplyStretchRefit
+                //   随 WM_SIZE 生效，这里无需额外调用。
 
                 // 顶部标签条让位给画面
                 if (TopBar != null) TopBar.Visibility = Visibility.Collapsed;
@@ -2777,7 +2878,8 @@ namespace SoulLink.Views
                 Dispatcher.BeginInvoke(new Action(ApplyLayout),
                     System.Windows.Threading.DispatcherPriority.Loaded);
 
-                Debug("进入全屏");
+                Debug("进入全屏 " + scr.Width + "x" + scr.Height
+                      + " dpi=" + sx.ToString("0.##"));
             }
             catch (Exception ex) { App.AppendErrorLog("EnterFullScreen", ex); }
         }
@@ -2799,9 +2901,27 @@ namespace SoulLink.Views
                 {
                     win.WindowStyle = _preFullScreenStyle;
                     win.ResizeMode = _preFullScreenResize;
-                    win.WindowState = WindowState.Normal;
-                    if (win.Content is FrameworkElement r) r.Margin = _preFullScreenMargin;
+
+                    // ★ 先还原几何再还原窗口状态：
+                    //   之前是 Normal → 显式回到原位置原尺寸（旧实现漏了这步）；
+                    //   之前是 Maximized → 先 Normal 再 Maximized，用 WPF 自记的还原边界。
+                    if (_preFullScreenState == WindowState.Normal && !double.IsNaN(_preFsWidth))
+                    {
+                        win.WindowState = WindowState.Normal;
+                        win.Left = _preFsLeft;
+                        win.Top = _preFsTop;
+                        win.Width = _preFsWidth;
+                        win.Height = _preFsHeight;
+                    }
                     win.WindowState = _preFullScreenState;
+
+                    win.Topmost = _preFsTopmost;
+                    if (_chrome != null) _chrome.ResizeBorderThickness = new Thickness(6);   // 恢复隐形缩放边框
+                    if (win.Content is FrameworkElement r) r.Margin = _preFullScreenMargin;
+
+                    var hwnd = new System.Windows.Interop.WindowInteropHelper(win).Handle;
+                    SoulLink.Services.WindowCorners.ApplyRounded(hwnd);   // 恢复 DWM 圆角
+                    (MainWindowRef ?? win as MainWindow)?.SetChromeFullscreen(false);
                 }
 
                 if (TopBar != null) TopBar.Visibility = Visibility.Visible;

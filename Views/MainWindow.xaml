@@ -35,9 +35,10 @@
                      看起来就是「圆角窗口里套了个方框」。圆角完全交给 DWM。 -->
 
                 <!-- ★ 顶部留 10px：DWM 圆角半径约 8px，内容顶到边缘会把角盖成方形 -->
-                <Grid Margin="20,10,20,16">
+                <!-- ChromeGrid / TitleRow：RDP 全屏时由 SetChromeFullscreen 收纳为零 -->
+                <Grid x:Name="ChromeGrid" Margin="20,10,20,16">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="64" />
+                        <RowDefinition x:Name="TitleRow" Height="64" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
