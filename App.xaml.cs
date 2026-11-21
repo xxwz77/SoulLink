@@ -217,6 +217,33 @@ namespace SoulLink
             // 清理上次被强杀时遗留的投送任务与临时文件（正常退出会自行删除）。
             try { Services.LaunchSweeper.Sweep(); } catch { }
 
+            // ★ 2.21.2：启动时按设置清理过期的备份与缓存。
+            //   放后台线程：清理 872 MB 级目录可能要几秒，不能挡启动。
+            //   只在「用户设了限制」时才动，不限制就完全跳过（避免误删）。
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    int keep = Config.Settings.BgiBackupKeep;
+                    if (keep > 0)
+                    {
+                        int n1 = Services.BgiUpdater.PruneBackups(keep);
+                        int n2 = Services.RouteUpdater.PruneBackups(keep);
+                        if (n1 + n2 > 0)
+                            LogBus.Info("启动清理：旧备份", "共清理 " + (n1 + n2) + " 份");
+                    }
+
+                    int days = Config.Settings.RouteCacheKeepDays;
+                    if (days > 0)
+                    {
+                        int n3 = Services.RouteUpdater.PruneCache(days);
+                        if (n3 > 0)
+                            LogBus.Info("启动清理：过期缓存", n3 + " 个文件（超过 " + days + " 天）");
+                    }
+                }
+                catch { }
+            });
+
             var parsed = CommandLine.Parse(StartArgs);
             QuietStart = parsed.WantsQuiet;
 

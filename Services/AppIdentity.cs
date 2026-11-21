@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 
 namespace SoulLink.Services
@@ -25,12 +26,132 @@ namespace SoulLink.Services
         /// <summary>身份名（用于管道、互斥体、目录名、任务名）。</summary>
         public static string Name => _name.Value;
 
-        /// <summary>配置目录：%LOCALAPPDATA%\&lt;身份&gt;</summary>
-        public static string ConfigDir =>
+        // ═══════════════════════════════════════════════════════════════════
+        //  ★★ 2.20.0：数据目录从 %LOCALAPPDATA% 改到「exe 所在目录」★★
+        //
+        //  用户诉求：C 盘小的机器负担太重（实测 BGI 备份一项就 872 MB）。
+        //
+        //  新策略（按优先级）：
+        //    ① 环境变量 SOULLINK_DATA_DIR 显式指定           —— 最优先，便于测试/迁移
+        //    ② exe 同目录下的 data\（可写就用它）             —— 默认行为
+        //    ③ 回退到 %LOCALAPPDATA%\<身份>\                  —— 装在 Program Files 时
+        //
+        //  为什么①存在：用户可能想把数据放到别的盘（比如 D:\SoulLinkData）。
+        //  为什么③存在：exe 若装在 C:\Program Files\，普通用户没有写权限，
+        //    DataDir 会抛异常或写失败，必须有个安全的落点。
+        //
+        //  ★ 老数据不会自动迁移：旧目录里的东西还在原地，新目录是空的。
+        //    这是刻意的——自动搬 872 MB 有风险（中途断电、权限、文件被占用），
+        //    交给用户自己决定。设置页有「打开数据目录」按钮，搬不搬一目了然。
+        // ═══════════════════════════════════════════════════════════════════
+
+        /// <summary>exe 所在目录（真实位置，不是 %TEMP% 解压目录）。</summary>
+        public static string ExeDir
+        {
+            get
+            {
+                try
+                {
+                    string? p = Environment.ProcessPath;
+                    if (!string.IsNullOrEmpty(p))
+                    {
+                        string? d = Path.GetDirectoryName(p);
+                        if (!string.IsNullOrEmpty(d)) return d!;
+                    }
+                }
+                catch { }
+
+                // 回退：非单文件时两者相同；单文件时 BaseDirectory 指向解压目录，
+                // 但 ProcessPath 一般都能拿到，走到这里说明已被裁剪。
+                try { return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar); }
+                catch { return "."; }
+            }
+        }
+
+        private static readonly Lazy<string> _dataDir = new Lazy<string>(ResolveDataDir);
+
+        /// <summary>数据目录（配置、日志、BGI 备份都在这里）。</summary>
+        public static string DataDir => _dataDir.Value;
+
+        /// <summary>是否处于「便携模式」（数据在 exe 旁边）。</summary>
+        public static bool IsPortable
+        {
+            get
+            {
+                try
+                {
+                    return string.Equals(
+                        Path.GetFullPath(DataDir).TrimEnd(Path.DirectorySeparatorChar),
+                        Path.GetFullPath(Path.Combine(ExeDir, "data")).TrimEnd(Path.DirectorySeparatorChar),
+                        StringComparison.OrdinalIgnoreCase);
+                }
+                catch { return false; }
+            }
+        }
+
+        /// <summary>旧版数据目录（%LOCALAPPDATA%\身份），仅用于提示用户老数据在哪。</summary>
+        public static string LegacyConfigDir =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Name);
 
+        private static string ResolveDataDir()
+        {
+            // ① 环境变量显式指定
+            try
+            {
+                string? env = Environment.GetEnvironmentVariable("SOULLINK_DATA_DIR");
+                if (!string.IsNullOrWhiteSpace(env))
+                {
+                    string full = Path.GetFullPath(env!.Trim());
+                    TryCreateWritable(full);
+                    return full;
+                }
+            }
+            catch { }
+
+            // ② exe 同目录\data
+            try
+            {
+                string portable = Path.Combine(ExeDir, "data");
+                if (TryCreateWritable(portable)) return portable;
+            }
+            catch { }
+
+            // ③ 回退 %LOCALAPPDATA%\身份
+            string legacy = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Name);
+            try { Directory.CreateDirectory(legacy); } catch { }
+            return legacy;
+        }
+
+        /// <summary>
+        /// 建目录并**实际写入一个探针文件**确认可写。
+        ///
+        /// ★ 只调 Directory.CreateDirectory 判断不出来：「装在 Program Files 下」
+        ///   时，管理员运行时能建目录，但普通用户运行时写文件会被 UAC 虚拟化
+        ///   或直接拒绝。必须真写一次才知道能不能用。
+        /// </summary>
+        private static bool TryCreateWritable(string dir)
+        {
+            try
+            {
+                Directory.CreateDirectory(dir);
+                string probe = Path.Combine(dir, ".write-probe");
+                File.WriteAllText(probe, "ok");
+                File.Delete(probe);
+                return true;
+            }
+            catch
+            {
+                try { Debug.WriteLine("[AppIdentity] 数据目录不可写：" + dir); } catch { }
+                return false;
+            }
+        }
+
+        /// <summary>配置目录（= DataDir，保留旧名字以免改动过大）。</summary>
+        public static string ConfigDir => DataDir;
+
         /// <summary>单实例互斥体名。</summary>
-        public static string MutexName => @"Global\" + Name + ".SingleInstance.v1";
+        public static string MutexName => @"Global" + Name + ".SingleInstance.v1";
 
         /// <summary>主 IPC 管道名。</summary>
         public static string IpcPipeName => Name + ".IPC.v1";
@@ -44,7 +165,7 @@ namespace SoulLink.Services
         /// <summary>SYSTEM 任务名前缀。</summary>
         public static string TaskPrefix => Name + "Run_";
 
-        /// <summary>临时工作目录。</summary>
+        /// <summary>临时工作目录（仍放 %TEMP%，因为是一次性中间产物）。</summary>
         public static string TempRoot => Path.Combine(Path.GetTempPath(), Name);
 
         /// <summary>

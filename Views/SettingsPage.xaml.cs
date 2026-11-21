@@ -115,6 +115,7 @@ namespace SoulLink.Views
             FallbackCheck.IsChecked = App.Config.Settings.AllowCurrentSessionFallback;
             OnlyAutomationCheck.IsChecked = App.Config.Settings.OnlyAutomationAccounts;
             ConfigPathText.Text = ConfigStore.ConfigPath;
+            ShowDataDirInfo();
 
             // 联机大厅服务器地址
             try
@@ -693,6 +694,12 @@ namespace SoulLink.Views
             App.Config.Settings.AllowRemoteInvoke = RemoteCheck.IsChecked == true;
             App.Config.Settings.AllowCurrentSessionFallback = FallbackCheck.IsChecked == true;
             App.Config.Settings.OnlyAutomationAccounts = OnlyAutomationCheck.IsChecked == true;
+
+            // ★ 2.21.0：备份保留次数。空 = 0 = 不限制。
+            App.Config.Settings.BgiBackupKeep = ReadBackupKeep();
+            // ★ 2.21.2：缓存保留天数。空 = 0 = 不限制。
+            App.Config.Settings.RouteCacheKeepDays = ReadCacheKeepDays();
+
             ConfigStore.Save(App.Config);
             RefreshAccounts(); RebuildBgiPathList(); _ = RefreshAutoStartAsync();
             if (Application.Current?.MainWindow is MainWindow window)
@@ -847,6 +854,344 @@ namespace SoulLink.Views
             }
             catch (Exception ex) { AutoStartStatus.Text = "操作失败：" + ex.Message; }
             finally { _autoStartBusy = false; }
+        }
+
+        /// <summary>
+        /// 显示数据目录位置与占用。
+        ///
+        /// ★ 2.20.0：数据目录从 %LOCALAPPDATA% 改到 exe 同目录下。
+        ///   老用户的旧数据仍在 C 盘旧位置，这里主动提示，并给出旧目录路径，
+        ///   免得用户以为配置丢了。
+        /// </summary>
+        private void ShowDataDirInfo()
+        {
+            try
+            {
+                string dir = AppIdentity.DataDir;
+                if (AppIdentity.IsPortable)
+                {
+                    DataDirModeText.Text = "数据目录：程序所在文件夹（便携模式）";
+                }
+                else
+                {
+                    DataDirModeText.Text =
+                        "数据目录：%LOCALAPPDATA%（程序目录不可写，已自动回退）。"
+                        + "想放到程序旁边请把 SoulLink 移到有写权限的文件夹。";
+                }
+
+                // 占用统计：BGI 备份 + 路线更新备份（两个都会无限增长）
+                try
+                {
+                    int keep = App.Config.Settings.BgiBackupKeep;
+                    long bgi = Services.BgiUpdater.GetBackupSize();
+                    long route = 0;
+                    try { route = Services.RouteUpdater.GetBackupSize(); } catch { }
+
+                    long cache = 0;
+                    try { cache = Services.RouteUpdater.GetCacheSize(); } catch { }
+
+                    string mode = keep > 0 ? ("保留最近 " + keep + " 次") : "不限制";
+                    int days = App.Config.Settings.RouteCacheKeepDays;
+                    string cacheMode = days > 0 ? (days + " 天") : "不限制";
+
+                    string txt = "BGI 备份 " + FormatSize(bgi) + "（" + mode + "）"
+                               + "   ·   路线备份 " + FormatSize(route) + "（" + mode + "）"
+                               + "   ·   包缓存 " + FormatSize(cache) + "（" + cacheMode + "）";
+                    StorageUsageText.Text = txt;
+                }
+                catch { StorageUsageText.Text = ""; }
+
+                // 旧数据迁移：只在「旧目录有数据」且「新旧不是同一个位置」时显示
+                try
+                {
+                    var plan = Services.DataMigration.Inspect();
+                    if (plan.CanMigrate)
+                    {
+                        LegacyDataHint.Text = plan.LegacyDir + "\n"
+                            + "共 " + plan.LegacyFiles.ToString("N0") + " 个文件 / "
+                            + Services.DataMigration.FormatSize(plan.LegacyBytes) + "。\n"
+                            + "复制到当前数据目录（不会删除旧数据，也不会覆盖已存在的文件）。";
+                        LegacyDataPanel.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        LegacyDataPanel.Visibility = Visibility.Collapsed;
+                    }
+                }
+                catch { LegacyDataPanel.Visibility = Visibility.Collapsed; }
+
+                // 备份保留次数（空 = 不限制）
+                try
+                {
+                    int keep = App.Config.Settings.BgiBackupKeep;
+                    BackupKeepBox.Text = keep > 0 ? keep.ToString() : "";
+                }
+                catch { }
+
+                // 路线包缓存保留天数（空 = 不限制）
+                try
+                {
+                    int days = App.Config.Settings.RouteCacheKeepDays;
+                    CacheKeepBox.Text = days > 0 ? days.ToString() : "";
+                }
+                catch { }
+            }
+            catch
+            {
+                DataDirModeText.Text = "";
+            }
+        }
+
+        private static string FormatSize(long bytes)
+        {
+            if (bytes >= 1024L * 1024 * 1024) return (bytes / 1024.0 / 1024 / 1024).ToString("F1") + " GB";
+            if (bytes >= 1024 * 1024) return (bytes / 1024.0 / 1024).ToString("F1") + " MB";
+            if (bytes >= 1024) return (bytes / 1024.0).ToString("F1") + " KB";
+            return bytes + " B";
+        }
+
+        /// <summary>
+        /// 读取「备份保留次数」输入框。
+        /// ★ 留空 = 0 = 不限制，这是用户明确要求的行为。
+        /// </summary>
+        private int ReadBackupKeep()
+        {
+            try
+            {
+                string t = (BackupKeepBox.Text ?? "").Trim();
+                if (t.Length == 0) return 0;                 // 空 = 不限制
+                if (int.TryParse(t, out int v) && v > 0) return v;
+                return 0;
+            }
+            catch { return 0; }
+        }
+
+        /// <summary>
+        /// 备份保留次数输入框失焦时立即保存。
+        /// ★ 不只依赖 Option_Changed：用户可能只改了个数字就切走，
+        ///   不打任何开关的话那次修改就白填了。
+        /// </summary>
+        private void BackupKeepBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            try
+            {
+                int keep = ReadBackupKeep();
+                if (App.Config.Settings.BgiBackupKeep != keep)
+                {
+                    App.Config.Settings.BgiBackupKeep = keep;
+                    ConfigStore.Save(App.Config);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>读取「缓存保留天数」。留空 = 0 = 不限制。</summary>
+        private int ReadCacheKeepDays()
+        {
+            try
+            {
+                string t = (CacheKeepBox.Text ?? "").Trim();
+                if (t.Length == 0) return 0;
+                if (int.TryParse(t, out int v) && v > 0) return v;
+                return 0;
+            }
+            catch { return 0; }
+        }
+
+        /// <summary>
+        /// 缓存天数输入框失焦即保存。
+        /// ★ 和备份次数同理：用户可能只改个数字就切走。
+        /// </summary>
+        private void CacheKeepBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            try
+            {
+                int days = ReadCacheKeepDays();
+                if (App.Config.Settings.RouteCacheKeepDays != days)
+                {
+                    App.Config.Settings.RouteCacheKeepDays = days;
+                    ConfigStore.Save(App.Config);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>手动清理路线包缓存（按天）。</summary>
+        private void PruneCache_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                int days = ReadCacheKeepDays();
+                if (days <= 0)
+                {
+                    MessageBox.Show(
+                        "当前设置为「不限制」，不会自动清理缓存。\n\n"
+                        + "如果确实想清理，请先在左边填入要保留的天数（比如 30）。",
+                        "清理缓存", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                int n = Services.RouteUpdater.PruneCache(days);
+                ShowDataDirInfo();
+                MessageBox.Show(
+                    n > 0 ? ("已清理 " + n + " 个超过 " + days + " 天的缓存文件。")
+                          : ("没有超过 " + days + " 天的缓存文件。"),
+                    "清理缓存", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("清理失败：" + ex.Message, "清理缓存",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        /// <summary>手动清理旧备份。</summary>
+        private void PruneBackups_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                int keep = ReadBackupKeep();
+                if (keep <= 0)
+                {
+                    MessageBox.Show(
+                        "当前设置为「不限制」，不会自动清理任何备份。\n\n"
+                        + "如果确实想清理，请先在左边填入要保留的次数（比如 3）。",
+                        "清理旧备份", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                int nBgi = Services.BgiUpdater.PruneBackups(keep);
+                int nRoute = 0;
+                try { nRoute = Services.RouteUpdater.PruneBackups(keep); } catch { }
+
+                ShowDataDirInfo();
+                int total = nBgi + nRoute;
+                MessageBox.Show(
+                    total > 0
+                        ? ("已清理 " + total + " 份旧备份（BGI " + nBgi + " 份，路线 " + nRoute + " 份），"
+                           + "每项保留最近 " + keep + " 次。")
+                        : ("没有需要清理的旧备份（每项保留最近 " + keep + " 次）。"),
+                    "清理旧备份", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("清理失败：" + ex.Message, "清理旧备份",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        /// <summary>打开旧版数据目录，让用户先看一眼再决定是否迁移。</summary>
+        private void OpenLegacy_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string dir = AppIdentity.LegacyConfigDir;
+                if (System.IO.Directory.Exists(dir))
+                    Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true });
+                else
+                    MessageBox.Show("旧数据目录已不存在：" + dir, "打开旧目录",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("打开失败：" + ex.Message, "打开旧目录",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        /// <summary>
+        /// 把旧版数据迁移到当前数据目录。
+        ///
+        /// ★ 复制而非移动：旧数据保留，用户确认新的能用之后自己删。
+        ///   宁可多占一份空间，也不能让用户丢失唯一一份数据。
+        /// ★ 迁移在后台线程跑，完成后回到 UI 线程刷新并询问是否删旧目录。
+        /// </summary>
+        private async void MigrateLegacy_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var plan = Services.DataMigration.Inspect();
+                if (!plan.CanMigrate)
+                {
+                    MessageBox.Show(plan.Reason, "迁移", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                var confirm = MessageBox.Show(
+                    "将把以下数据复制到当前数据目录：\n\n"
+                    + "来源：" + plan.LegacyDir + "\n"
+                    + "目标：" + plan.TargetDir + "\n"
+                    + "共 " + plan.LegacyFiles.ToString("N0") + " 个文件 / "
+                    + Services.DataMigration.FormatSize(plan.LegacyBytes) + "\n\n"
+                    + "· 复制，不移动：旧数据会保留\n"
+                    + "· 不覆盖已存在的文件\n"
+                    + "· 完成后可以自己决定是否删除旧目录\n\n"
+                    + "现在开始吗？",
+                    "迁移旧数据", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (confirm != MessageBoxResult.Yes) return;
+
+                MigrateProgressText.Visibility = Visibility.Visible;
+                MigrateProgressText.Text = "正在准备…";
+
+                var progress = new Progress<string>(s =>
+                {
+                    try { MigrateProgressText.Text = s; } catch { }
+                });
+
+                var result = await Task.Run(() =>
+                    Services.DataMigration.Migrate(progress, System.Threading.CancellationToken.None));
+
+                // ★ 2.21.1：迁移过来的老格式备份（目录形态）顺手转成 zip，
+                //   否则「改压缩包」这个改动对老用户等于没生效。
+                if (result.Ok)
+                {
+                    try
+                    {
+                        MigrateProgressText.Text = "正在把旧格式备份转成压缩包…";
+                        string conv = await Task.Run(() =>
+                            Services.DataMigration.ConvertNewDirBackups(progress,
+                                System.Threading.CancellationToken.None));
+                        if (!string.IsNullOrEmpty(conv)) result.Message += "\n" + conv;
+                    }
+                    catch { }
+                }
+
+                MigrateProgressText.Text = result.Message;
+                ShowDataDirInfo();
+
+                if (result.Ok)
+                {
+                    var clean = MessageBox.Show(
+                        result.Message + "\n\n现在删除旧数据目录吗？\n"
+                        + "（建议先重启程序确认配置都在，再删除）\n\n"
+                        + "旧目录：" + plan.LegacyDir,
+                        "迁移完成", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (clean == MessageBoxResult.Yes)
+                    {
+                        var del = Services.DataMigration.DeleteLegacy();
+                        MessageBox.Show(del.Message, "删除旧数据",
+                            MessageBoxButton.OK,
+                            del.Ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                        ShowDataDirInfo();
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(result.Message, "迁移失败",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("迁移出错：" + ex.Message, "迁移",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally
+            {
+                try { MigrateProgressText.Visibility = Visibility.Collapsed; } catch { }
+            }
         }
 
         private void OpenConfig_Click(object sender, RoutedEventArgs e)

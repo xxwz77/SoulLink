@@ -293,9 +293,19 @@ namespace SoulLink.Models
             : ("（" + DisplayName + "）");
 
         /// <summary>提示后缀颜色。</summary>
+        ///
+        /// ★ 2.17.51（.NET 11 迁移）：原来在 getter 里每次 new 一个画刷，
+        ///   而 WPF 绑定会对同一属性反复求值。颜色是常量，冻成静态只读即可，
+        ///   像素结果完全一致（同色同 alpha），只是不再重复分配。
         [JsonIgnore]
-        public System.Windows.Media.Brush SessionTagBrush
-            => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x88, 0x99, 0xB8));
+        public System.Windows.Media.Brush SessionTagBrush { get; } = FrozenColor(0x88, 0x99, 0xB8);
+
+        private static System.Windows.Media.SolidColorBrush FrozenColor(byte r, byte g, byte b)
+        {
+            var brush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
 
         /// <summary>RDP 登录名：没单独填就用 Windows 用户名</summary>
         [JsonIgnore]
@@ -323,6 +333,24 @@ namespace SoulLink.Models
         /// <summary>服务端发起的动作也执行（CLI / IPC 调用）</summary>
         public bool AllowRemoteInvoke { get; set; } = true;
         public bool MinimizeToTray { get; set; } = true;
+
+        /// <summary>
+        /// BGI 备份每个账号保留几次。
+        ///
+        /// ★ 2.20.0：<b>0 = 不限制</b>（保留全部历史备份）。
+        ///   默认 3。设为 0 后程序永不自动删备份，由用户自己管理，
+        ///   适合「想留完整版本历史」或「备份放在大容量盘上」的场景。
+        /// </summary>
+        public int BgiBackupKeep { get; set; } = 3;
+
+        /// <summary>
+        /// 路线更新下载的云端包缓存保留天数。
+        ///
+        /// ★ 2.21.2：<b>0 = 不限制</b>（永不自动清）。默认 30 天。
+        ///   缓存删了可以重新下载，所以按天清理是安全的；
+        ///   但给一个较长的默认值（30 天），避免用户想回档时包没了。
+        /// </summary>
+        public int RouteCacheKeepDays { get; set; } = 30;
         public string LastExportPath { get; set; } = "";
         /// <summary>自动化编辑器首次打开时显示引导动画；用户勾选“不再弹出”后置为 false。</summary>
         public bool ShowFlowGuide { get; set; } = true;

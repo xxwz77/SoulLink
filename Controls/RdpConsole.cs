@@ -29,7 +29,9 @@ namespace SoulLink.Controls
         /// <summary>version 11（再备选）</summary>
         public const string ClsidV11 = "{A0C63C30-F08D-4AB4-907C-34905D770C7D}";
 
-        private static string[] CandidateClsids => new[] { ClsidV9, ClsidV10, ClsidV11 };
+        // ★ 2.17.51（.NET 11 迁移）：原来每次访问都 new 一个数组，每重连一遍就多分配一次。
+        //   候选表是常量，缓存成静态只读即可（3 个 CLSID 全程不变）。
+        private static readonly string[] CandidateClsids = { ClsidV9, ClsidV10, ClsidV11 };
 
         private readonly WindowsFormsHost _host = new WindowsFormsHost();
         private RdpAxHost? _ax;

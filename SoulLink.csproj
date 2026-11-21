@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net11.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
@@ -13,7 +13,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- ★ 版本号唯一来源：改这里即可，FileVersion/AssemblyVersion 自动派生。
          历史教训：标签打到 v1.4.3 而这里仍是 1.4.1，标题栏一直显示旧版本。 -->
-    <Version>2.17.50</Version>
+    <Version>3.0.0</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 多用户挂机中控台</AssemblyTitle>
@@ -32,6 +32,13 @@
          不排除就会被默认通配符编译进来，造成和主树里同名类型重复定义（2.17.45 发布时踩过）。 -->
     <DefaultItemExcludes>$(DefaultItemExcludes);tools\**;releases\**;backups\**;Server\**;dist-server\**;dist-server-win\**</DefaultItemExcludes>
     <ApplicationIcon Condition="Exists('Assets\soullink.ico')">Assets\soullink.ico</ApplicationIcon>
+
+    <!-- ★★ 2.19.0：改为「框架依赖 + 单文件」发布，要求用户安装 .NET 11 桌面运行时。
+         runtimeconfig 里写 rollForward=LatestMajor，
+         意思是「装了任何 >= 11 的桌面运行时都能跑」，不要求版本号精确匹配。
+         好处：用户装了 .NET 12 / 13 也不会因为版本对不上而启动失败。
+         代价：跨大版本有理论上的兼容风险 —— WPF 应用实际不会出事。 -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
 
   <ItemGroup Condition="Exists('Assets\soullink.ico')">
@@ -64,7 +71,7 @@
   <ItemGroup>
     <Content Include="tools\broker-*.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
 
-    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="11.0.0" />
   </ItemGroup>
 
   <!-- ★ 自带 7za.exe（官方 7-Zip 命令行工具，1.2 MB）

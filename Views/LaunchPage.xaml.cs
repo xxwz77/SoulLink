@@ -2515,27 +2515,32 @@ namespace SoulLink.Views
             }
         }
 
-        /// <summary>下次执行的文字颜色：暂停→灰，临期→青，其余→次要色。</summary>
+        /// <summary>
+        /// 下次执行的文字颜色：暂停→灰，临期→青，其余→次要色。
+        ///
+        /// ★ 2.17.51（.NET 11 迁移）：原来每次求值都 new 一个画刷。
+        ///   颜色只有 4 种且恒定，改为复用冻结的静态实例，像素结果不变。
+        ///   注意灰/淡蓝两档随主题走，所以按 IsDark 各备一份。
+        /// </summary>
         public System.Windows.Media.Brush NextRunBrush
         {
             get
             {
                 if (!HasSchedule) return System.Windows.Media.Brushes.Transparent;
-                if (SchedulePaused)
-                    return new System.Windows.Media.SolidColorBrush(
-                        ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85));
+                bool dark = ThemeManager.IsDark;
+                if (SchedulePaused) return dark ? NextRunMutedDark : NextRunMutedLight;
                 var next = Services.ScheduleCalculator.NextRun(Model.Schedule);
-                if (next == null)
-                    return new System.Windows.Media.SolidColorBrush(
-                        ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85));
+                if (next == null) return dark ? NextRunMutedDark : NextRunMutedLight;
                 var span = next.Value - DateTime.Now;
-                if (span.TotalMinutes <= 10)
-                    return new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromRgb(0x41, 0xF0, 0xC0));   // 快到了：绿
-                return new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(0xB4, 0xC2, 0xE8));       // 常态：淡蓝
+                if (span.TotalMinutes <= 10) return NextRunSoon;   // 快到了：绿
+                return NextRunNormal;                              // 常态：淡蓝
             }
         }
+
+        private static readonly System.Windows.Media.SolidColorBrush NextRunMutedDark = ActionVm.Frozen(0x8B, 0x9C, 0xC8);
+        private static readonly System.Windows.Media.SolidColorBrush NextRunMutedLight = ActionVm.Frozen(0x6B, 0x60, 0x85);
+        private static readonly System.Windows.Media.SolidColorBrush NextRunSoon = ActionVm.Frozen(0x41, 0xF0, 0xC0);
+        private static readonly System.Windows.Media.SolidColorBrush NextRunNormal = ActionVm.Frozen(0xB4, 0xC2, 0xE8);
 
         /// <summary>暂停按钮图标：未暂停显示暂停⏸，已暂停显示播放▶。</summary>
         public string PauseGlyph => SchedulePaused ? "\uE768" : "\uE769";
@@ -2553,22 +2558,26 @@ namespace SoulLink.Views
         public string ScheduleToggleText => SchedulePaused ? "定时已停" : "定时生效";
 
         /// <summary>定时开关的文字颜色。</summary>
-        public System.Windows.Media.Brush ScheduleToggleFg => new System.Windows.Media.SolidColorBrush(
-            SchedulePaused
-                ? System.Windows.Media.Color.FromRgb(0x8B, 0x9C, 0xC8)
-                : System.Windows.Media.Color.FromRgb(0x9D, 0xFF, 0xE0));
+        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
+        public System.Windows.Media.Brush ScheduleToggleFg
+            => SchedulePaused ? ToggleFgPaused : ToggleFgActive;
 
         /// <summary>定时开关的底色：生效=青绿半透，已停=灰半透。</summary>
-        public System.Windows.Media.Brush ScheduleToggleBg => new System.Windows.Media.SolidColorBrush(
-            SchedulePaused
-                ? System.Windows.Media.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)
-                : System.Windows.Media.Color.FromArgb(0x30, 0x41, 0xF0, 0xC0));
+        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
+        public System.Windows.Media.Brush ScheduleToggleBg
+            => SchedulePaused ? ToggleBgPaused : ToggleBgActive;
 
         /// <summary>定时开关的描边。</summary>
-        public System.Windows.Media.Brush ScheduleToggleBorder => new System.Windows.Media.SolidColorBrush(
-            SchedulePaused
-                ? System.Windows.Media.Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)
-                : System.Windows.Media.Color.FromArgb(0x90, 0x41, 0xF0, 0xC0));
+        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
+        public System.Windows.Media.Brush ScheduleToggleBorder
+            => SchedulePaused ? ToggleBorderPaused : ToggleBorderActive;
+
+        private static readonly System.Windows.Media.SolidColorBrush ToggleFgPaused = ActionVm.Frozen(0x8B, 0x9C, 0xC8);
+        private static readonly System.Windows.Media.SolidColorBrush ToggleFgActive = ActionVm.Frozen(0x9D, 0xFF, 0xE0);
+        private static readonly System.Windows.Media.SolidColorBrush ToggleBgPaused = ActionVm.FrozenArgb(0x22, 0xFF, 0xFF, 0xFF);
+        private static readonly System.Windows.Media.SolidColorBrush ToggleBgActive = ActionVm.FrozenArgb(0x30, 0x41, 0xF0, 0xC0);
+        private static readonly System.Windows.Media.SolidColorBrush ToggleBorderPaused = ActionVm.FrozenArgb(0x40, 0xFF, 0xFF, 0xFF);
+        private static readonly System.Windows.Media.SolidColorBrush ToggleBorderActive = ActionVm.FrozenArgb(0x90, 0x41, 0xF0, 0xC0);
 
         /// <summary>把时间格式化成"今天 04:00:00 / 明天 04:01:00 / 11-18 04:02:00"。</summary>
         private static string FormatNext(DateTime t)
@@ -2607,30 +2616,48 @@ namespace SoulLink.Views
             }
         }
 
+        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
         public Brush BadgeBg
         {
             get
             {
                 switch (Model.Kind)
                 {
-                    case ActionKind.Close: return new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0x6B, 0x8B));
-                    case ActionKind.Restart: return new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xC4, 0x6B));
-                    default: return new SolidColorBrush(Color.FromArgb(0x33, 0x41, 0xF0, 0xC0));
+                    case ActionKind.Close: return BadgeBgClose;
+                    case ActionKind.Restart: return BadgeBgRestart;
+                    default: return BadgeBgLaunch;
                 }
             }
         }
 
+        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
         public Brush BadgeFg
         {
             get
             {
                 switch (Model.Kind)
                 {
-                    case ActionKind.Close: return new SolidColorBrush(Color.FromRgb(0xFF, 0xB4, 0xC4));
-                    case ActionKind.Restart: return new SolidColorBrush(Color.FromRgb(0xFF, 0xDC, 0x9E));
-                    default: return new SolidColorBrush(Color.FromRgb(0x9D, 0xFF, 0xE0));
+                    case ActionKind.Close: return BadgeFgClose;
+                    case ActionKind.Restart: return BadgeFgRestart;
+                    default: return BadgeFgLaunch;
                 }
             }
+        }
+
+        private static readonly SolidColorBrush BadgeBgClose = FrozenArgb(0x33, 0xFF, 0x6B, 0x8B);
+        private static readonly SolidColorBrush BadgeBgRestart = FrozenArgb(0x33, 0xFF, 0xC4, 0x6B);
+        private static readonly SolidColorBrush BadgeBgLaunch = FrozenArgb(0x33, 0x41, 0xF0, 0xC0);
+        private static readonly SolidColorBrush BadgeFgClose = Frozen(0xFF, 0xB4, 0xC4);
+        private static readonly SolidColorBrush BadgeFgRestart = Frozen(0xFF, 0xDC, 0x9E);
+        private static readonly SolidColorBrush BadgeFgLaunch = Frozen(0x9D, 0xFF, 0xE0);
+
+        internal static SolidColorBrush Frozen(byte r, byte g, byte b) => FrozenArgb(0xFF, r, g, b);
+
+        internal static SolidColorBrush FrozenArgb(byte a, byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+            brush.Freeze();
+            return brush;
         }
 
         public void Refresh()

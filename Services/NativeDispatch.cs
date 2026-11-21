@@ -394,7 +394,14 @@ namespace SoulLink.Services
         private const int WM_MOUSEACTIVATE = 0x0021;
         private const int WM_GETOBJECT = 0x003D;
 
-        public object Ocx { get; private set; }
+        /// <summary>
+        /// 创建出来的 ActiveX 实例；控件尚未创建或创建失败时为 null。
+        ///
+        /// ★ 2.17.51（.NET 11 迁移）：BCL 给 AxHost.GetOcx() 标了可空返回，
+        ///   而 AttachInterfaces 的失败分支本来就赋 null，这里的可空标注
+        ///   只是把既有事实写进类型，运行期行为不变。
+        /// </summary>
+        public object? Ocx { get; private set; }
 
         /// <summary>控件创建完成（句柄就绪）</summary>
         public event Action<RdpAxHost>? Ready;
@@ -423,7 +430,7 @@ namespace SoulLink.Services
             if (disposing)
             {
                 var ocx = Ocx;
-                Ocx = null!;
+                Ocx = null;
                 if (ocx != null && System.Runtime.InteropServices.Marshal.IsComObject(ocx))
                 {
                     try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(ocx); } catch { }

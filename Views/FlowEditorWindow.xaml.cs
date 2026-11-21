@@ -2089,8 +2089,8 @@ namespace SoulLink.Views
             try
             {
                 string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  [菜单] " + action + Environment.NewLine;
-                string dir = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SoulLink");
+                // ★ 2.21.1：跟随数据目录
+                string dir = SoulLink.Services.AppIdentity.DataDir;
                 System.IO.Directory.CreateDirectory(dir);
                 System.IO.File.AppendAllText(System.IO.Path.Combine(dir, "flow-menu.log"), line);
             }
