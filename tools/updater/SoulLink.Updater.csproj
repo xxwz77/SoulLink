@@ -9,7 +9,7 @@
     <RootNamespace>SoulLink.Updater</RootNamespace>
     <AssemblyName>SoulLink.Updater</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>3.2.6</Version>
+    <Version>3.2.7</Version>
     <RollForward>LatestMajor</RollForward>
     <NoWarn>$(NoWarn);CS8618</NoWarn>
   </PropertyGroup>

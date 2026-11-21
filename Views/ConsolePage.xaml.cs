@@ -2761,7 +2761,7 @@ namespace SoulLink.Views
         /// ★ 3.2.4：从 6 放宽到 12 —— 6px 太苛刻，实测用户很难命中，
         ///   配合"窗口激活"判定失效，导致全屏后完全呼不出菜单。
         /// </summary>
-        private const double FullScreenHotZone = 12;
+        private const double FullScreenHotZone = 24;   // 3.2.7：12→24，更接近任务栏自动隐藏手感
 
         private System.Windows.Threading.DispatcherTimer? _fullScreenMenuWatch;
         private DateTime _fullScreenMenuHideAt = DateTime.MinValue;
@@ -3053,40 +3053,45 @@ namespace SoulLink.Views
                     sy = m.M22;
                 }
                 var scr = System.Windows.Forms.Screen.FromHandle(hwnd).Bounds;   // 物理像素
-                win.Topmost = true;                                   // 压住任务栏（退出还原）
-                SoulLink.Services.WindowCorners.RemoveRounded(hwnd);  // 直角（圆角在全屏下四角漏底）
 
-                // ★ 隐形缩放边框会让窗口比显示器大出一圈（1.5 DPI 下 6 DIP 边框
-                //   + DWM 悬边 ≈ 26px）。全屏时归零，退出恢复——否则 GetWindowRect
-                //   永远比显示器宽，任务栏边缘还会露缝。
+                // ★★★ 3.2.7：几何只设一次，避免"顶部空一块再全屏"的两段式跳变 ★★★
+                //
+                //   踩过两次坑，都在这里：
+                //     ① 原来先 SetWindowPos 再归零 ResizeBorderThickness →
+                //        客户区 = 整屏 + 那圈边框 → 画面比屏幕大。
+                //     ② 后来又加 `win.Width = scr.Width / sx`（DIP）与物理像素混用 →
+                //        窗口被改大 26px，再靠"自检 + 二次校正"救回来 →
+                //        用户看到「先空一块、再全屏」。
+                //   现在：**先归零边框，再一次性 SetWindowPos**，之后不再碰 WPF 的
+                //   Width/Height（收到 WM_SIZE 它会自己同步，额外赋值只会打架）。
                 _chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(win);
                 if (_chrome != null) _chrome.ResizeBorderThickness = new Thickness(0);
+
                 win.WindowState = WindowState.Normal;
-                win.Left = scr.Left / sx;
-                win.Top = scr.Top / sy;
-                win.Width = Math.Round(scr.Width / sx);
-                win.Height = Math.Round(scr.Height / sy);
-                // ★ 物理像素强制覆盖：WPF DIP + 隐形边框会差 ~26px，这里一次到位
                 FsNative.SetWindowPos(hwnd, IntPtr.Zero, scr.Left, scr.Top, scr.Width, scr.Height,
-                    FsNative.SWP_NOZORDER | FsNative.SWP_NOACTIVATE | FsNative.SWP_FRAMECHANGED);
+                    FsNative.SWP_NOZORDER | FsNative.SWP_NOACTIVATE);
+
+                // 几何稳定后再改层级与 DWM（不触发尺寸重排）
+                win.Topmost = true;
+                SoulLink.Services.WindowCorners.RemoveRounded(hwnd);
 
                 // ★ 全屏铺满：拉伸模式（SmartSizing + 连接前已开的 EnableZoom）
-                //   由控件按客户区自动放大铺满，远端分辨率不动——ApplyStretchRefit
-                //   随 WM_SIZE 生效，这里无需额外调用。
+                //   由控件按客户区自动放大铺满，远端分辨率不动。
 
-                // 顶部标签条让位给画面
+                // ★★ 3.2.7：进入全屏**不主动显示菜单条** ★★
+                //   用户原话：「或许一开始就不应该显示顶栏，顶栏是退出用的。」
+                //   原来进入时先撑开菜单占 46px，3 秒后再收起 ——
+                //   既造成"顶部空一块"，又多一次 RDP 尺寸变更。
+                //   现在菜单一开始就是 0 高，鼠标移到顶部时热区看门狗自然撑开。
+                SetFullScreenMenuRowImmediate(false);
                 if (TopBar != null) TopBar.Visibility = Visibility.Collapsed;
 
-
-
-                // 先露出菜单 3 秒，让用户知道入口在哪。
-                SetFullScreenMenuVisible(true);
-                _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(3);
                 EnsureFullScreenMenuWatch(true);
 
+                // 强制本帧落定（TopBar 隐藏 + 菜单 0 高 + RDP 新尺寸一起生效），
+                // 只走一次布局，不再排队第二次。
+                UpdateLayout();
                 ApplyLayout();
-                Dispatcher.BeginInvoke(new Action(ApplyLayout),
-                    System.Windows.Threading.DispatcherPriority.Loaded);
 
                 Debug("进入全屏 " + scr.Width + "x" + scr.Height
                       + " dpi=" + sx.ToString("0.##"));
@@ -3109,15 +3114,19 @@ namespace SoulLink.Views
                 SetFullScreenMenuVisible(false);
 
 
+                // ★★★ 3.2.7：退出全屏顺序 —— 先几何，最后才恢复窗口样式 ★★★
+                //
+                //   用户反馈「退出好像还是会变两次位置」。
+                //   原因：WindowStyle 从 None 变回 SingleBorderWindow 时，
+                //   非客户区（标题栏/边框）重新出现，Windows 会按"当前客户区"
+                //   重算一次窗口外框 —— 这是第 1 次位移；
+                //   紧接着再设 Left/Top/Width/Height —— 第 2 次位移。
+                //   所以必须**先几何、后样式**，让样式引发的重算基于已正确的几何。
                 var win = Window.GetWindow(this);
                 if (win != null)
                 {
-                    win.WindowStyle = _preFullScreenStyle;
-                    win.ResizeMode = _preFullScreenResize;
-
-                    // ★ 先还原几何再还原窗口状态：
-                    //   之前是 Normal → 显式回到原位置原尺寸（旧实现漏了这步）；
-                    //   之前是 Maximized → 先 Normal 再 Maximized，用 WPF 自记的还原边界。
+                    // ① 先恢复几何（此时 WindowStyle 仍是 None，无非客户区干扰）
+                    win.Topmost = _preFsTopmost;
                     if (_preFullScreenState == WindowState.Normal && !double.IsNaN(_preFsWidth))
                     {
                         win.WindowState = WindowState.Normal;
@@ -3126,25 +3135,36 @@ namespace SoulLink.Views
                         win.Width = _preFsWidth;
                         win.Height = _preFsHeight;
                     }
-                    win.WindowState = _preFullScreenState;
+                    else
+                    {
+                        win.WindowState = _preFullScreenState;
+                    }
 
-                    win.Topmost = _preFsTopmost;
-                    if (_chrome != null) _chrome.ResizeBorderThickness = new Thickness(6);   // 恢复隐形缩放边框
-                    if (win.Content is FrameworkElement r) r.Margin = _preFullScreenMargin;
+                    // ② 再恢复边框与样式（非客户区回来，但几何已就位）
+                    if (_chrome != null) _chrome.ResizeBorderThickness = new Thickness(6);
+                    win.ResizeMode = _preFullScreenResize;
+                    win.WindowStyle = _preFullScreenStyle;
+
+                    // ③ 其余恢复（不改几何，不会引起位置跳变）
+                    if (win.Content is FrameworkElement re) re.Margin = _preFullScreenMargin;
+                    if (TopBar != null) TopBar.Visibility = Visibility.Visible;
+                    (MainWindowRef ?? win as MainWindow)?.SetChromeFullscreen(false);
 
                     var hwnd = new System.Windows.Interop.WindowInteropHelper(win).Handle;
-                    SoulLink.Services.WindowCorners.ApplyRounded(hwnd);   // 恢复 DWM 圆角
-                    (MainWindowRef ?? win as MainWindow)?.SetChromeFullscreen(false);
+                    SoulLink.Services.WindowCorners.ApplyRounded(hwnd);
                 }
 
-                if (TopBar != null) TopBar.Visibility = Visibility.Visible;
-
+                // ④ 只走一次布局（原来这里还排队第二次 ApplyLayout，
+                //    那正是"退出时重排好几次"的来源，已删）。
+                UpdateLayout();
                 ApplyLayout();
+
+                // ⑤ 保护层状态延后一拍：它只影响遮罩显隐，不参与画面布局，
+                //    放同步路径里会让上面的布局白做一次。
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    ApplyLayout();
-                    UpdateShield();
-                }), System.Windows.Threading.DispatcherPriority.Loaded);
+                    try { UpdateShield(); } catch { }
+                }), System.Windows.Threading.DispatcherPriority.Background);
 
                 Debug("退出全屏");
             }
@@ -3161,8 +3181,9 @@ namespace SoulLink.Views
                     _fullScreenMenuWatch = null;
                     return;
                 }
+                // 3.2.7：120→60ms（每拍只读一次光标位置，开销可忽略）
                 _fullScreenMenuWatch ??= new System.Windows.Threading.DispatcherTimer
-                { Interval = TimeSpan.FromMilliseconds(120) };
+                { Interval = TimeSpan.FromMilliseconds(60) };
                 _fullScreenMenuWatch.Tick -= OnFullScreenMenuTick;
                 _fullScreenMenuWatch.Tick += OnFullScreenMenuTick;
                 _fullScreenMenuWatch.Start();
@@ -3191,19 +3212,38 @@ namespace SoulLink.Views
                 if (inHotZone)
                 {
                     SetFullScreenMenuVisible(true);
-                    _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(2);
+                    _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(0.3);
                     return;
                 }
 
                 // 菜单显示中且鼠标停在菜单上 → 保持
                 if (_fullScreenMenuVisible && y >= 0 && y <= FullScreenMenuHeight)
                 {
-                    _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(2);
+                    _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(0.3);
                     return;
                 }
 
                 if (_fullScreenMenuVisible && DateTime.UtcNow >= _fullScreenMenuHideAt)
                     SetFullScreenMenuVisible(false);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 只设菜单条占位高度与可见性，**不触发 ApplyLayout**。
+        /// 用于进入全屏时先让布局落定，再与其它元素一起刷新。
+        /// </summary>
+        private void SetFullScreenMenuRowImmediate(bool visible)
+        {
+            try
+            {
+                _fullScreenMenuVisible = visible;
+                if (FullScreenMenuBar != null)
+                    FullScreenMenuBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+                if (FullScreenMenuRow != null)
+                    FullScreenMenuRow.Height = visible
+                        ? new GridLength(FullScreenMenuHeight)
+                        : new GridLength(0);
             }
             catch { }
         }
@@ -3223,7 +3263,11 @@ namespace SoulLink.Views
                         ? new GridLength(FullScreenMenuHeight)
                         : new GridLength(0);
 
-                ApplyLayout();   // RDP 宿主尺寸变了，立刻重排
+                // ★ 3.2.7：立刻强制布局，让 RDP 宿主尺寸在本帧内就位。
+                //   原来直接 ApplyLayout()，但 RDP 原生窗口要等布局跑完才知道新尺寸，
+                //   中间会空一拍 —— 用户感知就是"菜单慢慢出来/慢慢隐藏"。
+                UpdateLayout();
+                ApplyLayout();
             }
             catch (Exception ex) { App.AppendErrorLog("SetFullScreenMenuVisible", ex); }
         }

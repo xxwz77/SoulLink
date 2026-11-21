@@ -3239,10 +3239,21 @@ namespace SoulLink.Controls
         private System.Windows.Threading.DispatcherTimer? _stretchRefit;
 
         /// <summary>
-        /// 拉伸模式下的重新铺满（防抖 200ms）。
+        /// 拉伸模式下的重新铺满。
         ///
         /// 只重新应用 SmartSizing，**不调用 UpdateSessionDisplaySettings**：
         /// 用户明确要求「不改远端分辨率，只有本地显示缩放」。
+        ///
+        /// ★★ 3.2.7：防抖从 200ms 降到 16ms（约一帧）★★
+        ///   用户实测「隐藏顶栏很慢」：
+        ///     日志显示 WPF 布局本身只要 6~9ms，
+        ///     真正的延迟来自这里 —— 每次尺寸变化都要**干等 200ms**
+        ///     才重新铺满，肉眼看就是"点下去过一会儿才动"。
+        ///   200ms 原本是为了拖动窗口时合并多次 SizeChanged。
+        ///   但顶栏显隐、全屏切换这类**单次、明确**的尺寸变化，
+        ///   等 200ms 纯属浪费。改成约一帧后：
+        ///     · 拖动窗口仍能合并（16ms 内多次 SizeChanged 只跑最后一次）
+        ///     · 顶栏显隐立刻生效
         /// </summary>
         private void ScheduleStretchRefit()
         {
@@ -3254,7 +3265,7 @@ namespace SoulLink.Controls
                 if (mode != 1 && mode != 3) return;
 
                 _stretchRefit ??= new System.Windows.Threading.DispatcherTimer
-                { Interval = TimeSpan.FromMilliseconds(200) };
+                { Interval = TimeSpan.FromMilliseconds(16) };
                 _stretchRefit.Tick -= OnStretchRefitTick;
                 _stretchRefit.Tick += OnStretchRefitTick;
                 _stretchRefit.Stop();
