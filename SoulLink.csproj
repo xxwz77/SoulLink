@@ -6,7 +6,7 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>15.0</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>SoulLink</RootNamespace>
     <AssemblyName>SoulLink</AssemblyName>
