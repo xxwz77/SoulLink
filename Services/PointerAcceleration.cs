@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -41,7 +42,7 @@ namespace SoulLink.Services
             MouseThreshold2 = 0
         };
 
-        private static readonly object Gate = new object();
+        private static readonly Lock Gate = new();
         private static int _ownerCount;
         private static int _generation;
         private static MOUSE_PARAMS _saved;

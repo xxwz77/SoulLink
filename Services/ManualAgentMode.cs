@@ -24,7 +24,7 @@ namespace SoulLink.Services
     {
         /// <summary>正在等待手动代理的通道（会话号 → 通道）。</summary>
         private static readonly Dictionary<int, RelayClient> Waiting = new Dictionary<int, RelayClient>();
-        private static readonly object Gate = new object();
+        private static readonly Lock Gate = new();
         private static CancellationTokenSource? _cts;
 
         /// <summary>

@@ -13,7 +13,7 @@ namespace SoulLink.Services
         private readonly Func<SessionInput> _input;
         private readonly Func<double> _sensitivity;
         private readonly Action<string>? _diagnostic;
-        private readonly object _sync = new();
+        private readonly Lock _sync = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly AutoResetEvent _wake = new(false);
         private readonly Task _worker;

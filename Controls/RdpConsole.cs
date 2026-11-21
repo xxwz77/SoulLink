@@ -8,6 +8,7 @@ using System.Windows.Forms.Integration;
 using System.Windows.Input;
 using SoulLink.Models;
 using SoulLink.Services;
+using System.Threading;
 
 namespace SoulLink.Controls
 {
@@ -459,7 +460,7 @@ namespace SoulLink.Controls
         private int _captureCenterY;
         private RawMouseInput? _rawInput;
         private LookInputQueue? _lookQueue;
-        private readonly object _lookQueueSync = new();
+        private readonly Lock _lookQueueSync = new();
         private int _lastMoveX = int.MinValue;
         private int _lastMoveY = int.MinValue;
 

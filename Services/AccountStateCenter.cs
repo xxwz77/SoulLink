@@ -169,7 +169,7 @@ namespace SoulLink.Services
     /// </summary>
     public static class AccountStateCenter
     {
-        private static readonly object _sync = new object();
+        private static readonly Lock _sync = new();
         private static readonly Dictionary<string, AccountState> _states
             = new Dictionary<string, AccountState>(StringComparer.OrdinalIgnoreCase);
 

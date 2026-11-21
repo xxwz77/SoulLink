@@ -87,7 +87,7 @@ namespace SoulLink.Services
             }
         }
 
-        private static readonly object LogLock = new object();
+        private static readonly Lock LogLock = new();
 
         public static void IpcLog(string text)
         {

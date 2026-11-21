@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -78,7 +79,7 @@ namespace SoulLink.Services
         [GeneratedRegex(@"取消执行配置组\s*[:：]\s*""(?<g>[^""]+)""", RegexOptions.Compiled)]
         private static partial Regex RxCancel();
 
-        private readonly object _sync = new object();
+        private readonly Lock _sync = new();
 
         /// <summary>清空（跨天/换文件时调用）。</summary>
         public void Reset()

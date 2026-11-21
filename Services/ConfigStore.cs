@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using SoulLink.Core;
 using SoulLink.Models;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -83,7 +84,7 @@ namespace SoulLink.Services
             catch { }
         }
 
-        private static readonly object ConfigIo = new();
+        private static readonly Lock ConfigIo = new();
 
         public static AppConfig Load()
         {

@@ -24,7 +24,7 @@ namespace SoulLink.Services
     public static class RouteUpdateSchedulerHost
     {
         private static RouteUpdateScheduler? _instance;
-        private static readonly object Lock = new object();
+        private static readonly Lock Lock = new();
 
         public static void StartOnce()
         {
@@ -55,7 +55,7 @@ namespace SoulLink.Services
         public const int TickSeconds = 5;
 
         private readonly System.Windows.Threading.DispatcherTimer _timer;
-        private readonly object _sync = new object();
+        private readonly Lock _sync = new();
         private bool _running;
         private bool _disposed;
         private bool _startupCleaned;

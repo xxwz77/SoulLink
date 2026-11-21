@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -91,7 +92,7 @@ namespace SoulLink.Services
         private static HashSet<int> LastLiveSessions = new HashSet<int>();
         /// <summary>每个会话最后一次被确认活着的时刻（去抖用）。</summary>
         private static readonly Dictionary<int, DateTime> LastLiveAt = new Dictionary<int, DateTime>();
-        private static readonly object LiveStateGate = new object();
+        private static readonly Lock LiveStateGate = new();
 
         public static HashSet<int> DiscoverLiveAgentSessions()
         {
@@ -666,7 +667,7 @@ namespace SoulLink.Services
     public sealed class LogFollower : IDisposable
     {
         private readonly FileSystemWatcher _watcher;
-        private readonly object _sync = new object();
+        private readonly Lock _sync = new();
         private readonly System.Windows.Threading.Dispatcher _dispatcher;
         private readonly Action<string> _onNewLines;
         private long _offset;

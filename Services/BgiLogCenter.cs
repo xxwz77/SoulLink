@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using SoulLink.Models;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -120,7 +121,7 @@ namespace SoulLink.Services
             }
         }
 
-        private static readonly object Sync = new();
+        private static readonly Lock Sync = new();
         private static readonly Dictionary<string, Entry> Entries = new(StringComparer.OrdinalIgnoreCase);
         private static Dictionary<int, BgiLogWatcher.Instance> _instances = new();
         private static DateTime _instancesAt = DateTime.MinValue;

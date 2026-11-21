@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -12,7 +13,7 @@ namespace SoulLink.Services
     /// <summary>每轮只执行一次 tasklist，所有流程共享只读进程/所有者快照。</summary>
     public static class ProcessOwnerSnapshot
     {
-        private static readonly object Sync = new();
+        private static readonly Lock Sync = new();
         private static ProcessOwnerRecord[] _items = Array.Empty<ProcessOwnerRecord>();
         public static bool Available { get; private set; }
         public static DateTime CapturedAt { get; private set; } = DateTime.MinValue;
@@ -77,7 +78,7 @@ namespace SoulLink.Services
         /// </summary>
         public static class SessionUsers
         {
-            private static readonly object Gate = new();
+            private static readonly Lock Gate = new();
             private static Dictionary<int, string> _map = new();
 
             public static IReadOnlyDictionary<int, string> Current { get { lock (Gate) return _map; } }

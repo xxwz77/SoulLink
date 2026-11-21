@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -27,7 +28,7 @@ namespace SoulLink.Services
         ///   表现为"只投上一个通道，另一个进重建队列"（实测多次）。
         ///   锁住整个"判定 + 生成"过程，保证并发投送只生成一次。
         /// </summary>
-        private static readonly object ResolveGate = new object();
+        private static readonly Lock ResolveGate = new();
 
         /// <summary>返回可用于投送的代理 exe 路径；失败时退回原 exe（保持旧行为）。</summary>
         public static string Resolve()

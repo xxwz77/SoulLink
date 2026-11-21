@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -67,7 +68,7 @@ namespace SoulLink.Services
     /// </summary>
     public static partial class DailyStatsCache
     {
-        private static readonly object _sync = new object();
+        private static readonly Lock _sync = new();
         private static readonly Dictionary<string, DailyStats> _map
             = new Dictionary<string, DailyStats>(StringComparer.OrdinalIgnoreCase);
 

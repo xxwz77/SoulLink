@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using System.Threading;
 
 namespace SoulLink.Controls
 {
@@ -121,7 +122,7 @@ namespace SoulLink.Controls
         ///   视觉与原来一致（呼吸节奏略缓，肉眼几乎无差）。
         /// </summary>
         private static readonly Dictionary<(Color, int), RadialGradientBrush> HaloCache = new();
-        private static readonly object HaloGate = new();
+        private static readonly Lock HaloGate = new();
 
         private static RadialGradientBrush HaloBrush(Color color)
         {

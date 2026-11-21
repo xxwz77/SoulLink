@@ -309,7 +309,7 @@ namespace SoulLink.Relay
         private static RelayHotkeyReceiver? _hotkeys;
         private static NamedPipeClientStream? _eventPipe;
         private static StreamWriter? _eventWriter;
-        private static readonly object EventWriteLock = new object();
+        private static readonly Lock EventWriteLock = new();
         private static readonly System.Collections.Concurrent.BlockingCollection<string> HotkeyEvents
             = new(128);
         private static Task? _eventSender;
@@ -352,7 +352,7 @@ namespace SoulLink.Relay
 
         private static string _logPath = "";
         private static readonly StringBuilder LogBuf = new StringBuilder();
-        private static readonly object LogLock = new object();
+        private static readonly Lock LogLock = new();
 
         private static void Log(string msg)
         {

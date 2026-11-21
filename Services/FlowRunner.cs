@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using SoulLink.Models;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -22,7 +23,7 @@ namespace SoulLink.Services
         public static event Action<string, string>? ReportChannelWait;
         public static DateTime? LastScanAt { get; private set; }
         private static readonly HashSet<string> Running = new(StringComparer.OrdinalIgnoreCase);
-        private static readonly object Sync = new();
+        private static readonly Lock Sync = new();
 
         public sealed class RunResult
         {

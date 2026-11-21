@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using SoulLink.Models;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -26,7 +27,7 @@ namespace SoulLink.Services
     public static class ScheduleRunnerHost
     {
         private static ScheduleRunner? _instance;
-        private static readonly object _lock = new object();
+        private static readonly Lock _lock = new();
 
         /// <summary>
         /// 全局取消：应用退出时置位。
@@ -63,7 +64,7 @@ namespace SoulLink.Services
         private readonly System.Windows.Threading.DispatcherTimer _timer;
         private readonly Func<AppConfig> _configGetter;
         private readonly HashSet<string> _running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private readonly object _sync = new object();
+        private readonly Lock _sync = new();
         private bool _disposed;
         private readonly HashSet<string> _invalidLogged = new(StringComparer.OrdinalIgnoreCase);
 

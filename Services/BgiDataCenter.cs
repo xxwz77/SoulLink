@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SoulLink.Models;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -36,7 +37,7 @@ namespace SoulLink.Services
     /// </summary>
     public static class BgiDataCenter
     {
-        private static readonly object Sync = new();
+        private static readonly Lock Sync = new();
         private static readonly Dictionary<string, BgiAccountData> Cache = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>每个账号上次算出的 Stamp（命中就不用再扫目录）。</summary>
         private static readonly Dictionary<string, string> _stamps = new(StringComparer.OrdinalIgnoreCase);

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using SoulLink.Models;
+using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -57,7 +58,7 @@ namespace SoulLink.Services
     /// </summary>
     public static class BgiPathResolver
     {
-        private static readonly object _sync = new object();
+        private static readonly Lock _sync = new();
 
         /// <summary>
         /// 解析某个用户的 BGI 路径。会顺带把新发现的路径并入配置（调用方负责持久化）。
@@ -70,7 +71,7 @@ namespace SoulLink.Services
         // ★ 实测：Resolve 占 UI 相关 CPU 的 3.5%。它被 BgiDataCenter.Get
         //   在界面刷新里每个账号每 3 秒调一次，而每次都要枚举进程 + 建对象。
         //   1 秒缓存足够：BGI 的启动/退出本来就是秒级事件。
-        private static readonly object _cacheSync = new object();
+        private static readonly Lock _cacheSync = new();
         private static readonly Dictionary<string, (BgiPathInfo Info, DateTime At)> _cache
             = new(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(1);
