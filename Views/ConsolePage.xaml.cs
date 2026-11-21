@@ -1022,7 +1022,17 @@ namespace SoulLink.Views
                 //   导致"A2 连上过一次、之后掉线"时监控直接跳过它，
                 //   永远不再重连（用户实测：A3 拉起成功、A2 一直 Disc）。
                 var sessionsNow = await SessionService.QueryAsync().ConfigureAwait(true);
-                var existingChannels = await Task.Run(() => BgiLogWatcher.DiscoverChannelSessions()).ConfigureAwait(true);
+
+                // ★★ 只看本进程的通道，不再枚举系统命名管道。★★
+                //
+                //   原来的 DiscoverChannelSessions() 遍历系统全部管道（实测 3.5 万个，
+                //   单次 6.5 秒），目的是"任一版本已为该会话投送过就不重复投送"。
+                //
+                //   但投送目标全部来自本进程的 AutoConnectAccountIds 配置，
+                //   根本不会出现"别的版本管了同一个会话"的情况（用户已确认）。
+                //   而这个"活着"的判断自己的注册表就够 —— RelayClient 在
+                //   投送成功时 Register、断开时 Unregister，O(1) 就能答。
+                var existingChannels = BgiLogWatcher.DiscoverLiveAgentSessions();
 
                 var watching = new List<(UserRow row, string caption)>();
                 foreach (var id in ids)

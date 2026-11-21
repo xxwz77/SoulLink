@@ -99,7 +99,10 @@ namespace SoulLink.Views
             catch { }
             Loaded += (_, __) => ThemeManager.Apply();
             Closing += MainWindow_Closing;
-            StateChanged += (_, __) => UpdateMaxGlyph();
+            StateChanged += (_, __) => { UpdateMaxGlyph(); SyncUiVisible(); };
+            // ★ 最小化到托盘走的是 Hide()，它**不触发 StateChanged**，
+            //   必须单独监听 IsVisibleChanged，否则"隐藏后还在重绘"的 bug 又回来了。
+            IsVisibleChanged += (_, __) => SyncUiVisible();
 
             SelfSessionText.Text = "Session " + SessionService.CurrentSessionId;
             SelfUserText.Text = SessionService.CurrentUser;
@@ -1078,6 +1081,21 @@ namespace SoulLink.Views
                 return;
             }
             try { DragMove(); } catch { }
+        }
+
+        /// <summary>
+        /// 把当前窗口的可见性告诉状态中心。
+        /// ★ 隐藏时它会停止通知 UI（但仍继续刷新数据，否则挂机自动化会停），
+        ///   恢复时立刻强制刷一轮，保证用户回来看到的是真实状态而不是旧数据。
+        /// </summary>
+        private void SyncUiVisible()
+        {
+            try
+            {
+                bool visible = IsVisible && WindowState != WindowState.Minimized;
+                Services.AccountStateCenter.SetUiVisible(visible);
+            }
+            catch { }
         }
 
         private void BtnMin_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;

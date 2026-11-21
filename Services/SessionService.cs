@@ -53,6 +53,17 @@ namespace SoulLink.Services
         /// <summary>调用 query user，返回当前机器上的全部交互式会话。</summary>
         public static async Task<List<SessionInfo>> QueryAsync()
         {
+            // ★★ 首选：WTSEnumerateSessions（原生 API，不起子进程）★★
+            //
+            //   每次 Process.Start 会在 .NET 里留下约 0.6 个命名管道句柄
+            //   （实测：重定向读流 60 次 +36，不重定向 60 次 +38，GC 也不回收）。
+            //   状态中心启动窗口是 1 Hz，等于每天 10 万个句柄；
+            //   系统管道总数一旦到几万，任何遍历 \\.\pipe\ 的代码都会慢到数秒。
+            //   WTS API 不创建进程，零泄漏，且快约 500 倍。
+            var viaWts = TryQueryViaWts();
+            if (viaWts != null && viaWts.Count > 0) return viaWts;
+
+            // ── 以下为兜底：WTS 不可用时退回子进程 ──
             var list = new List<SessionInfo>();
 
             // ★ 2.17.45：先试 qwinsta —— 它**一次**就给出会话号 + 真实大小写的用户名
@@ -101,6 +112,40 @@ namespace SoulLink.Services
             //   所以这只是显示问题，不影响自动连接/投送）。
             try { ApplyRealCasing(list); } catch { }
             return list;
+        }
+
+        /// <summary>
+        /// 用 WTSEnumerateSessions 读会话。失败返回 null（调用方退回子进程）。
+        ///
+        /// ★ 返回的 UserName 是**真实大小写**，正好解决了原来
+        ///   query user 输出小写（a1/a2）需要再起 qwinsta 校正的问题 ——
+        ///   一条 API 就把两件事都办了。
+        /// </summary>
+        private static List<SessionInfo>? TryQueryViaWts()
+        {
+            try
+            {
+                var raw = WtsSessionQuery.Enumerate();
+                if (raw == null || raw.Count == 0) return null;
+
+                var list = new List<SessionInfo>(raw.Count);
+                foreach (var r in raw)
+                {
+                    list.Add(new SessionInfo
+                    {
+                        UserName = r.UserName,
+                        SessionName = r.Station,
+                        Id = r.Id,
+                        State = NormalizeState(r.State),
+                        // WTS 不直接给空闲时长/登录时间；这两个字段只用于显示，
+                        // 原来也是宽松解析、经常为空，这里留空不影响任何逻辑。
+                        IdleTime = "",
+                        LogonTime = "",
+                    });
+                }
+                return list;
+            }
+            catch { return null; }
         }
 
         /// <summary>

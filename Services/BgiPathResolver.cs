@@ -431,13 +431,36 @@ namespace SoulLink.Services
             InvalidateCache(userName);
         }
 
-        /// <summary>该用户是否处于手动指定状态。</summary>
+        /// <summary>
+        /// 该用户是否处于「已绑定」状态（= 可以读取日志）。
+        ///
+        /// ★ 判据有两条，任意一条成立即算绑定：
+        ///   ① 用户点过「从进程取」或输入框回车 → BgiPinnedUsers 有这个用户
+        ///   ② BgiPaths 里已经有该用户的**非空路径**
+        ///
+        /// ★ 为什么加第 ② 条：
+        ///   原来只看 ①，导致「配置里明明填了路径」却显示「未绑定」——
+        ///   用户完全无法理解（实测 A1/A2/A3/A4 全部这样）。
+        ///   既然界面上填了地址就意味着想用它，那它就是绑定。
+        ///   BgiPaths 只有在用户显式填写或 Pin() 时才会写入，
+        ///   自动探测不会污染它（见本文件顶部关于 2.17.45 的说明）。
+        /// </summary>
         public static bool IsPinned(string userName)
         {
+            if (string.IsNullOrWhiteSpace(userName)) return false;
             try
             {
-                return App.Config.Settings.BgiPinnedUsers
-                    .Contains(userName, StringComparer.OrdinalIgnoreCase);
+                var s = App.Config.Settings;
+                if (s.BgiPinnedUsers != null
+                    && s.BgiPinnedUsers.Contains(userName, StringComparer.OrdinalIgnoreCase))
+                    return true;
+
+                // 填了有效路径也算绑定
+                if (s.BgiPaths != null && s.BgiPaths.TryGetValue(userName, out var path)
+                    && !string.IsNullOrWhiteSpace(path))
+                    return true;
+
+                return false;
             }
             catch { return false; }
         }

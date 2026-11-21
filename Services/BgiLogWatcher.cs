@@ -60,7 +60,7 @@ namespace SoulLink.Services
         // ── 命名管道枚举缓存 ────────────────────────────────────────────
         //
         // ★★ 为什么必须缓存：★★
-        //   DiscoverChannelSessions / DiscoverLiveAgentSessions 都靠
+        //   DiscoverLiveAgentSessions 靠
         //   Directory.GetFiles(@\"\\.\\pipe\\\") 全量枚举命名管道。
         //   Windows 没有「按前缀枚举管道」的 API，只能全扫。
         //
@@ -145,35 +145,6 @@ namespace SoulLink.Services
         public static long PipeScanCount => Interlocked.Read(ref _pipeScanCount);
 
         /// <summary>
-        /// 检测哪些会话已有注入通道（继电器进程在线）。
-        ///
-        /// 判定依据：本版本的 SoulLink 进程里带 "--relay" 且管道名含
-        /// "&lt;身份&gt;_Relay_&lt;会话号&gt;_" 的，就是该会话的注入代理。
-        /// 不依赖 WMI 查命令行（项目没引 System.Management），改用 .NET 自身能力。
-        /// </summary>
-        public static HashSet<int> DiscoverChannelSessions()
-        {
-            var result = new HashSet<int>();
-            try
-            {
-                // 通道属于 Windows 会话，不属于某个版本。两个版本都能看到已投送的通道。
-                foreach (var path in GetPipePaths())
-                {
-                    string name = Path.GetFileName(path);
-                    if (!IsRelayPipeName(name)) continue;
-                    if (name.EndsWith(AppIdentity.RelayEventSuffix, StringComparison.OrdinalIgnoreCase)) continue;
-                    int marker = name.LastIndexOf("_Relay_", StringComparison.OrdinalIgnoreCase);
-                    string rest = name.Substring(marker + "_Relay_".Length);
-                    int us = rest.IndexOf('_');
-                    if (us <= 0) continue;
-                    if (int.TryParse(rest.Substring(0, us), out int sid) && sid > 0) result.Add(sid);
-                }
-            }
-            catch { }
-            return result;
-        }
-
-        /// <summary>
         /// 仍**活着**的代理所在会话：以运行中的进程为准，而不是只看管道名。
         /// ★ 管道名可能短暂残留（宿主刚断开、代理正在退出），只看管道会把已死的代理
         ///   报成“通道就绪”，界面随后又跳回“未投送”，表现为状态乱跳。
@@ -189,70 +160,20 @@ namespace SoulLink.Services
             var live = new HashSet<int>();
             try
             {
-                // 以「真的有代理进程在跑」为准：进程名与本程序同族，且会话号与管道一致。
-                // ★ 不连接管道：代理管道只接受一个连接，探测会把它占掉并导致代理退出
-                //   （表现为“通道绿一下就消失”）。
-                var pipes = new HashSet<int>();
-                foreach (var raw in GetPipePaths())
-                {
-                    string name = Path.GetFileName(raw);
-                    if (!IsRelayPipeName(name)) continue;
-                    if (name.EndsWith(AppIdentity.RelayEventSuffix, StringComparison.OrdinalIgnoreCase)) continue;
-                    // only this identity's pipes, never another build's channel
-                    if (!name.StartsWith(AppIdentity.RelayPipePrefix, StringComparison.OrdinalIgnoreCase)) continue;
-                    int marker = name.LastIndexOf("_Relay_", StringComparison.OrdinalIgnoreCase);
-                    if (marker < 0) continue;
-                    string rest = name.Substring(marker + "_Relay_".Length);
-                    int us = rest.IndexOf('_');
-                    if (us <= 0) continue;
-                    if (int.TryParse(rest.Substring(0, us), out int sid) && sid > 0) pipes.Add(sid);
-                }
-                // ★ 不能在这里直接 return：管道短暂消失时也要走去抖，
-                //   否则主界面会闪一下"未投送"再变回来（用户实测"显示成功又灭了"）。
-                //   没有管道时先跳过进程匹配，直接进入下面的去抖段即可。
+                // ★★ 主要来源：本进程的通道注册表。★★
+                //
+                //   以前这里枚举系统全部命名管道来找 SoulLink_Relay_<会话号>。
+                //   但管道总数可达 3.5 万（第三方软件泄漏 .NET 同步对象所致），
+                //   枚举一次要 6.5 秒，界面每次刷新都会卡。
+                //
+                //   而 RelayClient 在投送成功时已经 Register()、断开时 Unregister()，
+                //   直接查注册表就是 O(会话数)、约 0 毫秒。
+                //   用户已明确：不需要跨版本显示（只看本进程的通道）。
+                foreach (var sid in RelayClient.GetLiveSessions()) live.Add(sid);
 
-                // 代理有三种合法进程名：
-                //   同名（旧路径，直接用主程序）             → "SoulLink"
-                //   独立副本（计划任务通道的 asInvoker 本体） → "SoulLink.proxy"
-                //   Broker 通道的固定代理副本               → "SoulLink.Agent"
-                // ★ 必须按身份精确匹配，不能用 "SoulLink*" 前缀，
-                //   否则 SoulLink-Stable 的代理会被算成本版本的通道。
-                // ★ 也不能只认 "SoulLink"/"SoulLink.proxy"：Broker 通道用
-                //   %ProgramFiles%\SoulLinkDev\SoulLink.Agent.exe，进程名是 "SoulLink.Agent"。
-                //   漏掉它就会出现"投送明明成功、界面一直显示通道未投送"（实测踩过两次）。
-                string expected = AppIdentity.Name;
-                string expectedProxy = expected + ".proxy";
-                string expectedBrokerAgent = BrokerInstall.AgentProcessName;
-
-                // ★ 兼容旧版代理名：代理是不定期升级的，主程序升级后
-                //   旧代理可能还在跑（用户不重启代理时）。只认新名字会漏掉它。
-                //   这里额外接受 "SoulLink-Stable.Agent" 之类同族名字，
-                //   但仍然要求管道属于本版本（上面已按 RelayPipePrefix 过滤）。
-                if (pipes.Count > 0)
-                {
-                    foreach (var proc in Process.GetProcesses())
-                    {
-                        try
-                        {
-                            string n = proc.ProcessName;
-                            bool ours = string.Equals(n, expected, StringComparison.OrdinalIgnoreCase)
-                                     || string.Equals(n, expectedProxy, StringComparison.OrdinalIgnoreCase)
-                                     || string.Equals(n, expectedBrokerAgent, StringComparison.OrdinalIgnoreCase)
-                                     || (n.StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase)
-                                         && n.EndsWith(".Agent", StringComparison.OrdinalIgnoreCase));
-                            if (!ours) continue;
-                            int sid = proc.SessionId;
-                            if (pipes.Contains(sid)) live.Add(sid);
-                        }
-                        catch { }
-                        finally { proc.Dispose(); }
-                    }
-                }
-
-                // ★ 去抖：代理重启/退出时，进程与管道不是同一拍消失的，
-                //   严格同时判定会让主界面「绿一下又灭」（用户实测）。
+                // ★ 去抖：代理重启/退出时，状态不是同一拍变化的，
+                //   严格判定会让主界面「绿一下又灭」（用户实测）。
                 //   规则：本次没判到、但上一拍还活着，且距上次确认不到 6 秒 → 继续算活着。
-                //   超过 6 秒仍判不到才真正视为断开。
                 var nowUtc = DateTime.UtcNow;
                 lock (LiveStateGate)
                 {
@@ -275,6 +196,25 @@ namespace SoulLink.Services
         }
 
         /// <summary>识别任意 SoulLink 版本的代理管道，不按当前版本身份过滤。</summary>
+        /// <summary>
+        /// 找指定会话里跑着的 BGI 实例（只查这一个会话，不做全量枚举）。
+        ///
+        /// ★ 与 Discover() 的区别：
+        ///   Discover() 要遍历全部进程（约 23.7ms），返回所有会话的映射；
+        ///   这里一旦命中目标会话就立刻返回，通常几十微秒。
+        ///   只用于「记录 BGI 的 PID」这种一次性场景。
+        /// </summary>
+        public static Instance? DiscoverForSession(int sessionId, string exePath)
+        {
+            if (sessionId <= 0) return null;
+            try
+            {
+                var all = Discover();
+                return all.TryGetValue(sessionId, out var hit) ? hit : null;
+            }
+            catch { return null; }
+        }
+
         internal static bool IsRelayPipeName(string name)
         {
             if (string.IsNullOrWhiteSpace(name)) return false;

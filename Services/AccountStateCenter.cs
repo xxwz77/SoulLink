@@ -400,13 +400,20 @@ namespace SoulLink.Services
 
         /// <summary>兜底轮询间隔（毫秒）。仅用于发现掉线，不做高频刷新。</summary>
         private const int IdleRefreshMs = 30000;
+        // ★ 回到 30 秒：BGI 日志状态改由 FileSystemWatcher 事件驱动
+        //   （BgiLogCenter 自己跟文件，实测延迟约 0.2 秒），
+        //   这里的轮询只用于「发现会话掉线」和 watcher 漏事件时的兜底。
+        //   会话掉线本来就不是秒级需求，30 秒足够。
         /// <summary>启动后的快档持续时间：连 RDP、投送都发生在这段时间里。</summary>
         private const int StartupFastMs = 1000;
         private static readonly TimeSpan StartupFastWindow = TimeSpan.FromSeconds(60);
         private static DateTime _startedAt = DateTime.MinValue;
         /// <summary>事件触发的窗口：触发后这段时间内保持快档。</summary>
         private static DateTime _lastKickAt = DateTime.MinValue;
-        private static readonly TimeSpan KickFastWindow = TimeSpan.FromSeconds(20);
+        private static readonly TimeSpan KickFastWindow = TimeSpan.FromSeconds(45);
+        // 原 20 秒。实测 RDP 连接后的完整链路（代理启动 → 建管道 → 投送 →
+        // 代理连上）经常超过 20 秒，窗口一到期就退回慢档，
+        // 界面看起来像"卡在中间不动"。45 秒覆盖整条链路。
 
         /// <summary>
         /// 事件触发：RDP 重连、新登录、投送前后调一次。
@@ -422,6 +429,49 @@ namespace SoulLink.Services
                 if (c != null) RefreshNow(c);
                 App.AppendErrorLog("AccountStateCenter: 事件触发刷新",
                     new InvalidOperationException(reason));
+            }
+            catch { }
+        }
+
+        // ── 界面可见性 ────────────────────────────────────────────────
+        //
+        // ★ 窗口最小化到托盘时：
+        //     数据刷新继续（BgiLogCenter.Tick 是自动化流程触发源，不能停）
+        //     界面通知停止（没人看，重绘纯浪费）
+        // ★ 恢复窗口时：
+        //     调用 SetUiVisible(true)，内部会强制刷一轮并通知 UI ——
+        //     否则界面停在最小化前的旧数据，用户不知道发生了什么。
+
+        private static volatile bool _uiVisible = true;
+
+        /// <summary>当前是否有可见窗口消费刷新结果。</summary>
+        public static bool UiVisible() => _uiVisible;
+
+        /// <summary>
+        /// 由主窗口在显示/隐藏时调用。
+        /// 由隐藏变可见时会**立刻**查一轮并通知 UI（恢复窗口不显示旧数据）。
+        /// </summary>
+        public static void SetUiVisible(bool visible)
+        {
+            bool wasHidden = !_uiVisible;
+            _uiVisible = visible;
+            if (!visible) return;
+            if (!wasHidden) return;      // 一直可见，不用重复刷
+
+            try
+            {
+                var cfg = _timerConfig ?? App.Config;
+                if (cfg == null) return;
+
+                // 恢复窗口要立刻看到真实状态：强制查一次并推给界面。
+                //
+                // ★ 只刷一次，**不进快档**。
+                //   原来这里走的是 Kick()，它会顺带开启 KickFastWindow（45 秒）
+                //   的 1 秒/轮快刷。而"恢复窗口"是浏览行为，不是状态剧烈变化 ——
+                //   实测这条路径让恢复后 20-40 秒的 CPU 达到 16.9% 单核，
+                //   45 秒窗口过期后立刻回落到 0.7%。
+                //   快档只应由真实变化触发（RDP 连接成功 / 投送 / 代理启动）。
+                RefreshNow(cfg);
             }
             catch { }
         }
@@ -528,7 +578,12 @@ namespace SoulLink.Services
 
                 lock (_sync) _lastRefresh = DateTime.Now;
 
-                if (anyChanged)
+                // ★ 没有可见窗口时不要通知 UI。
+                //   数据刷新必须继续（BgiLogCenter.Tick 是自动化流程的触发源，
+                //   窗口最小化到托盘时停了它，挂机就停了），
+                //   但界面重绘没人看，纯属浪费 CPU。
+                //   恢复窗口时会强制刷一轮（见 KickOnShow），不会出现空白。
+                if (anyChanged && UiVisible())
                 {
                     try { Changed?.Invoke(); } catch { }
                 }

@@ -107,6 +107,37 @@ namespace SoulLink.Services
             LiveRegistry.TryRemove(sessionId, out _);
         }
 
+        /// <summary>
+        /// 当前本进程里**仍然连着**的通道所在会话号。
+        ///
+        /// ★ 这是替代「枚举命名管道」的正确做法：
+        ///   投送成功时会 Register()、断开时 Unregister()，
+        ///   所以这里 O(会话数) 就能拿到答案，不需要遍历系统全部管道。
+        ///   实测系统管道数可达 3.5 万，枚举一次要 6.5 秒，
+        ///   而本方法耗时约 0。
+        ///
+        /// ★ 局限：只看本进程。别的 SoulLink 实例（如挂机版）投送的通道
+        ///   不在这里 —— 用户明确表示不需要跨版本显示。
+        /// </summary>
+        public static HashSet<int> GetLiveSessions()
+        {
+            var set = new HashSet<int>();
+            try
+            {
+                foreach (var kv in LiveRegistry)
+                {
+                    try
+                    {
+                        if (kv.Value != null && kv.Value.IsConnected && kv.Key > 0)
+                            set.Add(kv.Key);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return set;
+        }
+
         /// <summary>按会话号找在线通道；没有或已断开则返回 null。</summary>
         public static RelayClient? FindBySession(int sessionId)
         {
