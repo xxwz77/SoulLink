@@ -489,29 +489,48 @@ namespace SoulLink.Models
         /// </summary>
         public static class EffectTierLevel
         {
-            /// <summary>高：全部保留。</summary>
+            /// <summary>
+            /// 高：动态背景 **跟随显示器刷新率（最高 60fps）** + 呼吸灯，全部保留。
+            ///
+            /// ★ 3.0.1：原来高档是写死的 30fps。用户反馈「动画卡卡的」——
+            ///   30fps 对缓慢流动的粒子/丝带确实能看出顿挫。
+            ///   现在改为 0 间隔 = 每帧都推进，由 CompositionTarget.Rendering
+            ///   的天然节奏驱动（60Hz 屏就是 60fps，144Hz 屏也按刷新率走）。
+            /// </summary>
             public const int High = 0;
-            /// <summary>中：动态背景降到 10fps，保留呼吸灯（默认，推荐）。</summary>
+            /// <summary>
+            /// 中（默认，推荐）：**背景仍在动**，30fps，保留呼吸灯。
+            ///
+            /// ★ 3.0.1：从 10fps 提到 30fps。10fps 的流动背景视觉上明显卡顿，
+            ///   而 30fps 已经是「流畅」的公认门槛。CPU 代价靠降低单帧复杂度
+            ///   （DreamScene.Detail = 1）来抵消，而不是靠砍帧率。
+            /// </summary>
             public const int Medium = 1;
-            /// <summary>低：全部静止。</summary>
+            /// <summary>低：背景与呼吸灯全部静止（画面冻结，最省电）。</summary>
             public const int Low = 2;
 
             /// <summary>
-            /// 动态背景的帧间隔（毫秒）。0 = 不播放（静止画面）。
+            /// 动态背景的帧间隔（毫秒）。**0 = 每帧都推进（跟随显示器刷新率）**。
             ///
-            /// ★ 2.17.46：原来「中」档直接关掉背景动画（Backdrop(tier) => tier &lt;= High），
-            ///   等于中档和低档只差一个呼吸灯，档位断层。用户反馈「中画质应该还会动」。
-            ///
-            ///   之所以当初只能做成"关"，是因为旧渲染每帧 1.0 ms（2560×1368 实测），
-            ///   30fps 就要吃掉 60% 单核。2.17.46 把每帧压到 0.29 ms（丝带/画刷/几何
-            ///   全部缓存），10fps 只要 ~3% 单核 —— 中档终于放得下动画了。
+            /// 历史：
+            ///   2.17.46 —— 中档从"关动画"改成 10fps，解决了档位断层；
+            ///   3.0.1   —— 高档 30→60fps、中档 10→30fps，并修掉帧节奏抖动
+            ///              （见 AuroraBackdrop.OnFrame 的差一帧推进）。
+            ///              同时靠 DreamScene.Detail 降低中档单帧成本，
+            ///              而不是靠砍帧率省 CPU —— 砍帧率换来的是观感损失。
             /// </summary>
             public static int BackdropFrameMs(int tier) => tier switch
             {
-                High => 33,     // 30fps
-                Medium => 100,  // 10fps：还在动，但成本是三十分之一的量级
+                High => 0,      // 0 = 每帧推进，跟随显示器刷新（60fps / 144fps）
+                Medium => 33,   // 30fps：流畅门槛
                 _ => 0,         // 低档：完全静止
             };
+
+            /// <summary>
+            /// 是否「每帧推进」（对应 BackdropFrameMs = 0 的动态档）。
+            /// ★ 低档也是 0，所以不能只看该值，必须配合 <see cref="Backdrop"/> 判断。
+            /// </summary>
+            public static bool EveryFrame(int tier) => BackdropFrameMs(tier) == 0;
 
             /// <summary>是否播放动态背景（中/高都播，低档静止）。</summary>
             public static bool Backdrop(int tier) => BackdropFrameMs(tier) > 0;
