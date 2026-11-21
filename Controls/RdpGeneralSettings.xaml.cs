@@ -41,6 +41,15 @@ namespace SoulLink.Controls
    GlobalHotkey.SetSpec(HotkeySpec.Parse(App.Config.Settings.LockHotkey));
    GlobalHotkey.Recorded -= OnHotkey;
    GlobalHotkey.Recorded += OnHotkey;
+
+   // ★ 3.2.4：全屏热键（可自定义，避免 F11 被 RDP/游戏吞掉后进得去出不来）
+   FullScreenHotkeyRecorder.SetSpec(HotkeySpec.Parse(App.Config.Settings.FullScreenHotkey));
+   FullScreenHotkeyRecorder.Recorded -= OnFullScreenHotkey;
+   FullScreenHotkeyRecorder.Recorded += OnFullScreenHotkey;
+
+   ExitFullScreenHotkeyRecorder.SetSpec(HotkeySpec.Parse(App.Config.Settings.ExitFullScreenHotkey));
+   ExitFullScreenHotkeyRecorder.Recorded -= OnExitFullScreenHotkey;
+   ExitFullScreenHotkeyRecorder.Recorded += OnExitFullScreenHotkey;
    CaptureClickCheck.Checked -= Capture_Changed;
    CaptureClickCheck.Unchecked -= Capture_Changed;
    CaptureClickCheck.Checked += Capture_Changed;
@@ -135,6 +144,24 @@ namespace SoulLink.Controls
    if (_loading || spec == null) return;
    App.Config.Settings.LockHotkey = spec.ToString();
    Save();
+  }
+
+  /// <summary>进/出全屏热键。改完立刻让所有已打开的画面重新装钩子。</summary>
+  private void OnFullScreenHotkey(HotkeySpec? spec)
+  {
+   if (_loading || spec == null) return;
+   App.Config.Settings.FullScreenHotkey = spec.ToString();
+   Save();
+   SoulLink.Views.ConsolePage.NotifyFullScreenHotkeysChanged();
+  }
+
+  /// <summary>退出全屏备用热键（全屏下的逃生通道）。</summary>
+  private void OnExitFullScreenHotkey(HotkeySpec? spec)
+  {
+   if (_loading || spec == null) return;
+   App.Config.Settings.ExitFullScreenHotkey = spec.ToString();
+   Save();
+   SoulLink.Views.ConsolePage.NotifyFullScreenHotkeysChanged();
   }
   private static System.Collections.Generic.IEnumerable<RdpConsole> FindConsoles(DependencyObject root)
   {

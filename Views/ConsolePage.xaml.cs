@@ -64,18 +64,20 @@ namespace SoulLink.Views
         {
             InitializeComponent();
 
-            // F11 全屏开关（见 _fsKeyHook 注释）。
-            try
-            {
-                _fsKeyHook = new LowLevelKeyboardHook
-                {
-                    Spec = HotkeySpec.Parse("F11"),
-                    CanTrigger = () => IsVisible,
-                    Pressed = () => Dispatcher.BeginInvoke(new Action(ToggleFullScreen)),
-                };
-                if (!_fsKeyHook.Install()) _fsKeyHook = null;
-            }
-            catch (Exception ex) { App.AppendErrorLog("ConsolePage.F11Hook", ex); }
+            // 全屏热键（均可在「RDP 通用设置」里改）。
+            //
+            // ★★ 3.2.4：必须有两条逃生通道 ★★
+            //   实测：全屏后 F11 有概率被 RDP 控件抢走（RDP 自己的键盘处理
+            //   在某些时刻会先于本机 LL 钩子），用户"进去了出不来"；
+            //   而顶栏热区又要求窗口激活，两条通道同时失效。
+            //   现在：
+            //     · FullScreenHotkey（默认 F11）——进/出全屏
+            //     · ExitFullScreenHotkey（默认 Esc）——全屏时无条件退出，
+            //       非全屏完全不拦截（不吞键）
+            //   两者都走本机 LL 钩子（RDP 子 HWND 持焦点时 WPF 收不到键盘事件）。
+            InstallFullScreenHooks();
+            FullScreenHotkeysChanged -= OnFullScreenHotkeysChanged;
+            FullScreenHotkeysChanged += OnFullScreenHotkeysChanged;
 
             Loaded += (_, __) =>
             {
@@ -161,6 +163,8 @@ namespace SoulLink.Views
                 _shieldWatch?.Stop();
                 _shieldWatch = null;
                 try { _fsKeyHook?.Dispose(); _fsKeyHook = null; } catch { }
+                try { _fsEscHook?.Dispose(); _fsEscHook = null; } catch { }
+                try { FullScreenHotkeysChanged -= OnFullScreenHotkeysChanged; } catch { }
             };
             Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
 
@@ -2740,8 +2744,12 @@ namespace SoulLink.Views
         /// <summary>菜单条高度（DIP）。</summary>
         private const double FullScreenMenuHeight = 46;
 
-        /// <summary>鼠标距顶部多少像素以内算"想用菜单"。</summary>
-        private const double FullScreenHotZone = 6;
+        /// <summary>
+        /// 鼠标距顶部多少像素以内算"想用菜单"。
+        /// ★ 3.2.4：从 6 放宽到 12 —— 6px 太苛刻，实测用户很难命中，
+        ///   配合"窗口激活"判定失效，导致全屏后完全呼不出菜单。
+        /// </summary>
+        private const double FullScreenHotZone = 12;
 
         private System.Windows.Threading.DispatcherTimer? _fullScreenMenuWatch;
         private DateTime _fullScreenMenuHideAt = DateTime.MinValue;
@@ -2763,6 +2771,71 @@ namespace SoulLink.Views
         ///   WPF 的键盘事件收不到。CanTrigger 绑定本页可见性：其它应用里 F11 原样透传。
         /// </summary>
         private LowLevelKeyboardHook? _fsKeyHook;
+
+        /// <summary>全屏时的 Esc 逃生通道。只在全屏生效，非全屏不吞键。</summary>
+        private LowLevelKeyboardHook? _fsEscHook;
+
+        /// <summary>全局设置里的全屏热键改了 → 所有画面重新装钩子。</summary>
+        public static void NotifyFullScreenHotkeysChanged()
+        {
+            try { FullScreenHotkeysChanged?.Invoke(); } catch { }
+        }
+        private static event Action? FullScreenHotkeysChanged;
+
+        /// <summary>设置里改了全屏热键 → 重新装钩子（必须在 UI 线程）。</summary>
+        private void OnFullScreenHotkeysChanged()
+        {
+            try
+            {
+                if (Dispatcher.CheckAccess()) InstallFullScreenHooks();
+                else Dispatcher.BeginInvoke(new Action(InstallFullScreenHooks));
+            }
+            catch { }
+        }
+
+        /// <summary>按当前配置（重新）安装两个全屏热键钩子。</summary>
+        private void InstallFullScreenHooks()
+        {
+            try { _fsKeyHook?.Dispose(); _fsKeyHook = null; } catch { }
+            try { _fsEscHook?.Dispose(); _fsEscHook = null; } catch { }
+
+            try
+            {
+                string toggleKey = App.Config.Settings.FullScreenHotkey;
+                var toggleSpec = HotkeySpec.Parse(toggleKey);
+                if (toggleSpec != null)
+                {
+                    _fsKeyHook = new LowLevelKeyboardHook
+                    {
+                        Spec = toggleSpec,
+                        CanTrigger = () => IsVisible,
+                        Pressed = () => Dispatcher.BeginInvoke(new Action(ToggleFullScreen)),
+                    };
+                    if (!_fsKeyHook.Install()) _fsKeyHook = null;
+                }
+            }
+            catch (Exception ex) { App.AppendErrorLog("ConsolePage.FullScreenHook", ex); }
+
+            try
+            {
+                string exitKey = App.Config.Settings.ExitFullScreenHotkey;
+                var exitSpec = HotkeySpec.Parse(exitKey);
+                // 与开关热键相同时不再重复装（同一键会被两个钩子各吞一次）
+                if (exitSpec != null && !string.Equals(exitKey, App.Config.Settings.FullScreenHotkey, StringComparison.OrdinalIgnoreCase))
+                {
+                    _fsEscHook = new LowLevelKeyboardHook
+                    {
+                        Spec = exitSpec,
+                        // ★ 全屏时**不问窗口是否激活**：焦点常在 RDP 子 HWND 里，
+                        //   问 IsActive 会让逃生通道在最需要时失效。
+                        CanTrigger = () => _isFullScreen && IsVisible,
+                        Pressed = () => Dispatcher.BeginInvoke(new Action(ExitFullScreen)),
+                    };
+                    if (!_fsEscHook.Install()) _fsEscHook = null;
+                }
+            }
+            catch (Exception ex) { App.AppendErrorLog("ConsolePage.ExitFullScreenHook", ex); }
+        }
 
         private void BtnFullScreen_Click(object sender, RoutedEventArgs e)
         {
@@ -2963,12 +3036,17 @@ namespace SoulLink.Views
             {
                 if (!_isFullScreen) { EnsureFullScreenMenuWatch(false); return; }
                 var win = Window.GetWindow(this);
-                if (win == null || !win.IsActive) return;
+                // ★★ 3.2.4 修「鼠标移到顶部呼不出退出栏」★★
+                //   原来这里要求 win.IsActive —— 但全屏时焦点常在 RDP 的子 HWND 里，
+                //   用户点到别的应用后 IsActive 也会变 false，于是**永远不会响应**，
+                //   表现为"进去了出不来"。只看窗口是否可见即可。
+                if (win == null || !win.IsVisible) return;
 
                 var cursor = System.Windows.Forms.Cursor.Position;
                 var topLeft = PointToScreen(new Point(0, 0));
                 double y = cursor.Y - topLeft.Y;
 
+                // 热区放宽到 12px（6px 太苛刻，手抖就错过）
                 bool inHotZone = y >= -FullScreenHotZone && y <= FullScreenHotZone;
                 if (inHotZone)
                 {

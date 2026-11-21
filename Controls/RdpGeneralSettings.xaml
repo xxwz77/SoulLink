@@ -39,6 +39,35 @@
       <ctl:HotkeyRecorder Grid.Column="1" x:Name="GlobalHotkey" Style="{StaticResource GhostButton}" Width="180" Height="36" />
      </Grid>
 
+     <!-- ★★ 3.2.4：全屏热键开放配置 ★★
+          原来 F11 写死在代码里，而它**有概率被 RDP 控件抢走**（RDP 自己的键盘处理
+          在某些时刻先于本机 LL 钩子），用户反映"进去了出不来"。
+          现在两个键都可以自己改：
+            · 进/出全屏：默认 F11
+            · 退出全屏：默认 Esc，只在全屏时生效（非全屏不吞键），作为最后逃生通道 -->
+     <Grid Margin="0,14,0,0">
+      <Grid.ColumnDefinitions>
+       <ColumnDefinition Width="*" />
+       <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="进入/退出全屏的热键" Style="{StaticResource Label}" VerticalAlignment="Center"
+                 ToolTip="默认 F11。若全屏后按它没反应（被 RDP 或游戏吞掉），换成别的组合键，例如 Ctrl+Alt+F" />
+      <ctl:HotkeyRecorder Grid.Column="1" x:Name="FullScreenHotkeyRecorder" Style="{StaticResource GhostButton}" Width="180" Height="36" />
+     </Grid>
+
+     <Grid Margin="0,10,0,0">
+      <Grid.ColumnDefinitions>
+       <ColumnDefinition Width="*" />
+       <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="退出全屏的备用热键" Style="{StaticResource Label}" VerticalAlignment="Center"
+                 ToolTip="默认 Escape。只在全屏时生效，按下立刻退出全屏；非全屏时原样透传给画面，不拦截。" />
+      <ctl:HotkeyRecorder Grid.Column="1" x:Name="ExitFullScreenHotkeyRecorder" Style="{StaticResource GhostButton}" Width="180" Height="36" />
+     </Grid>
+
+     <TextBlock Text="全屏模式下按键会送给 RDP 画面，若某个键按了没反应（例如 F11 被游戏占用），换一个即可。备用热键是全屏下的最后逃生通道，建议保留默认的 Esc。"
+                Style="{StaticResource Caption}" Margin="2,8,0,0" TextWrapping="Wrap" />
+
      <!-- ── 保护层边框 ─────────────────────────────────────────────
           ★ 锁定态时才出现，框住 RDP 画布。默认色故意与焦点边框区分开，
             否则用户会误以为"保护层没生效、只是焦点高亮"。

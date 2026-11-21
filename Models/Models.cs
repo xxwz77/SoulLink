@@ -475,6 +475,21 @@ namespace SoulLink.Models
         public double LookSensitivity { get; set; } = 4.0;
         /// <summary>鼠标锁定开关热键，例如 "Ctrl+Alt+Q"</summary>
         public string LockHotkey { get; set; } = "Ctrl+Alt+Q";
+
+        /// <summary>
+        /// 进入/退出 RDP 全屏的热键，默认 F11。
+        /// ★ 3.2.4：原来写死在 ConsolePage 里，用户无法改。
+        ///   而 F11 有概率被 RDP 控件自己的键盘处理抢走，导致"进去了出不来"；
+        ///   开放成可配置后，用户可以换成 RDP 不吞的组合键。
+        /// </summary>
+        public string FullScreenHotkey { get; set; } = "F11";
+
+        /// <summary>
+        /// 退出全屏的兜底热键，默认 Escape。
+        /// ★ 只在全屏时生效，非全屏完全不拦截（不吞键）。
+        ///   这是最后一条逃生通道：即使 F11 被 RDP 吞掉，Esc 也能退出来。
+        /// </summary>
+        public string ExitFullScreenHotkey { get; set; } = "Escape";
         /// <summary>0=跟随系统 1=浅色 2=深色</summary>
         public int ThemeMode { get; set; } = 0;
         /// <summary>true=点击 RDP 画面才接收键鼠，移出画面立即释放</summary>
