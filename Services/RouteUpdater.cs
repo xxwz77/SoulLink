@@ -32,17 +32,84 @@ namespace SoulLink.Services
         /// </summary>
         private static readonly SemaphoreSlim DownloadGate = new SemaphoreSlim(1, 1);
 
-        /// <summary>云端包缓存目录（%LOCALAPPDATA%\SoulLink\route-cache）。</summary>
+        /// <summary>
+        /// 云端包缓存目录（<see cref="AppIdentity.DataDir"/>\route-cache）。
+        ///
+        /// ★ 2.21.1：跟随数据目录，不再写死 %LOCALAPPDATA%。
+        ///   路线更新的下载包动辄几十 MB，压在 C 盘是用户明确反馈过的问题。
+        /// </summary>
         public static string CacheRoot
         {
             get
             {
-                string dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "SoulLink", "route-cache");
+                string dir = Path.Combine(AppIdentity.DataDir, "route-cache");
                 Directory.CreateDirectory(dir);
                 return dir;
             }
+        }
+
+        /// <summary>
+        /// 路线更新备份目录（<see cref="AppIdentity.DataDir"/>\route-backups）。
+        ///
+        /// ★ 2.21.1：新增。之前这个路径在两处内联拼 %LOCALAPPDATA%，
+        ///   既没跟随数据目录，也**没有任何清理机制**——每次更新路线都往
+        ///   这里堆一份完整旧目录，只增不减。实测单次几十 MB 到上百 MB。
+        /// </summary>
+        public static string BackupRoot
+        {
+            get
+            {
+                string dir = Path.Combine(AppIdentity.DataDir, "route-backups");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+        }
+
+        /// <summary>
+        /// 清理旧的路线更新备份，保留最近 <paramref name="keep"/> 个（&lt;=0 = 不限制）。
+        ///
+        /// ★ 2.21.1 新增。之前完全没有清理，是「数据目录无限膨胀」的第二个来源
+        ///   （第一个是 bgi-backups）。
+        /// ★ 按目录名排序即可：名字是 yyyyMMdd_HHmmss_xxx，字典序就是时间序。
+        /// </summary>
+        public static int PruneBackups(int keep)
+        {
+            if (keep <= 0) return 0;
+            int removed = 0;
+            try
+            {
+                string root = BackupRoot;
+                if (!Directory.Exists(root)) return 0;
+
+                var dirs = Directory.GetDirectories(root);
+                if (dirs.Length <= keep) return 0;
+
+                Array.Sort(dirs, StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < dirs.Length - keep; i++)
+                {
+                    try { Directory.Delete(dirs[i], recursive: true); removed++; }
+                    catch { /* 被占用：下次再说 */ }
+                }
+            }
+            catch { }
+            return removed;
+        }
+
+        /// <summary>路线备份当前占用（字节），给设置页显示。</summary>
+        public static long GetBackupSize()
+        {
+            try
+            {
+                string root = BackupRoot;
+                if (!Directory.Exists(root)) return 0;
+                long sum = 0;
+                foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    try { sum += new FileInfo(f).Length; } catch { }
+                }
+                return sum;
+            }
+            catch { return 0; }
         }
 
         // ══════════ 进度回报 ══════════
@@ -239,9 +306,9 @@ namespace SoulLink.Services
                     //   批量更新时多个目标在同一秒执行，若只用时间戳会撞成同一个目录，
                     //   第二个目标 Move 失败 → 退化成直接删除，旧文件就再也回不来了
                     //   （2.15.0 开发期实测踩到）。
+                    // ★ 2.21.1：改走 BackupRoot（跟随数据目录）
                     string bakRoot = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "SoulLink", "route-backups",
+                        BackupRoot,
                         DateTime.Now.ToString("yyyyMMdd_HHmmss") + "_"
                         + Path.GetFileName(targetRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
                         + "_" + Guid.NewGuid().ToString("N").Substring(0, 4));
@@ -297,9 +364,9 @@ namespace SoulLink.Services
                 {
                     try
                     {
+                        // ★ 2.21.1：改走 BackupRoot（跟随数据目录）
                         string bak2 = Path.Combine(
-                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                            "SoulLink", "route-backups",
+                            BackupRoot,
                             DateTime.Now.ToString("yyyyMMdd_HHmmss") + "_"
                             + FolderName(targetRoot) + "_stale_" + Guid.NewGuid().ToString("N").Substring(0, 4));
                         Directory.CreateDirectory(Path.GetDirectoryName(bak2) ?? bak2);

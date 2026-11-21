@@ -633,6 +633,58 @@ namespace SoulLink.Services
             return removed;
         }
 
+        /// <summary>
+        /// 把 2.20.0 之前的「目录形态」旧备份迁移成 zip。
+        ///
+        /// ★ 2.21.1 新增。老用户的数据目录里可能还留着
+        ///   User_yyyyMMdd_HHmmss\ 这种未压缩目录（实测单个 80~130 MB）。
+        ///   迁移时即使全部复制过去，这些目录也不会自动变成 zip。
+        ///
+        /// 做法：逐个目录打包成同名 .zip，成功后再删原目录。
+        /// 失败（被占用）就保留原样，下次再试。
+        /// </summary>
+        public static int ConvertLegacyDirsToZip(IProgress<string>? progress = null, CancellationToken ct = default)
+        {
+            int converted = 0;
+            try
+            {
+                string root = BackupRoot;
+                if (!Directory.Exists(root)) return 0;
+
+                foreach (var acct in Directory.GetDirectories(root))
+                {
+                    foreach (var snap in Directory.GetDirectories(acct, "User_*"))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        try
+                        {
+                            string zip = snap.TrimEnd(Path.DirectorySeparatorChar) + ".zip";
+                            if (File.Exists(zip))
+                            {
+                                // 已有同名 zip：说明之前转过但没删掉原目录
+                                Directory.Delete(snap, recursive: true);
+                                converted++;
+                                continue;
+                            }
+
+                            progress?.Report("正在压缩：" + Path.GetFileName(snap));
+                            ZipDir(snap, zip, ct);
+                            if (File.Exists(zip) && new FileInfo(zip).Length > 0)
+                            {
+                                Directory.Delete(snap, recursive: true);
+                                converted++;
+                            }
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch { /* 单个失败不影响其他 */ }
+                    }
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { }
+            return converted;
+        }
+
         /// <summary>当前备份总占用（字节），给设置页显示。</summary>
         public static long GetBackupSize()
         {
@@ -699,46 +751,22 @@ namespace SoulLink.Services
         }
 
         /// <summary>
-        /// 备份时要跳过的「纯资源」扩展名。
+        /// 把一个目录**完整**打包成 zip。
         ///
-        /// ★ 2.21.0 实测数据（4 个账号各一次备份）：
-        ///     原始 163.98 MB → 整包压缩 95.67 MB（63.9%，8.2 秒）
-        ///   原因：BGI 的 User 目录里约一半体积是已经自身压缩过的位图
-        ///   （PNG 7.46 MB + ICO 4.63 MB），zip 对它们几乎无效，
-        ///   白白消耗 CPU 和打包时间。
+        /// ★ 2.21.1：去掉了 2.21.0 里的「跳过纯资源文件」优化。
         ///
-        ///   跳过这些之后：
-        ///     A1 89.14 MB → 13.70 MB   （8.2s → 2.6s）
-        ///     A2 25.52 MB →  3.86 MB   （1.5s → 0.9s）
-        ///     A3 22.96 MB →  3.28 MB   （2.3s → 0.7s）
-        ///     A4 26.36 MB →  4.38 MB   （3.0s → 1.0s）
-        ///   整体缩小到 1/3 左右，速度还快 2~3 倍。
+        ///   那个优化的理由是「图片/字体已压缩，打包它们浪费空间」——
+        ///   数据上确实成立（4 个账号合计 95.67 MB → 33.80 MB）。
+        ///   但它违背了一条更基本的要求：
         ///
-        /// ★ 为什么跳过是**安全**的：
-        ///   备份的目的是「BGI 升级出问题时能还原用户的配置和脚本」。
-        ///   而这些位图/图标是**脚本自带的资产**，本来就随脚本一起分发，
-        ///   丢失可以从原始脚本包重新获取；真正不可再生的是
-        ///   JSON 配置（路径、任务序列、账号）、INI、脚本源码和 .bak。
-        ///   这些一个不漏。
+        ///   **备份就应该备份完整，用户恢复后必须能直接用。**
         ///
-        ///   ⚠ 如果将来发现用户确实需要完整资源，把这里改成空数组即可，
-        ///     或者加一个「完整备份」开关。
-        /// </summary>
-        private static readonly string[] SkippedBackupExtensions =
-        {
-            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg",
-            ".ttf", ".otf", ".woff", ".woff2",     // 字体：BGI 自带点阵字体，可再生
-            ".mp3", ".wav", ".ogg", ".mp4", ".webm",
-            ".zip", ".7z", ".rar", ".gz",          // 二级压缩包，本来就不该再压
-            ".dll", ".exe", ".pdb", ".so", ".dylib",
-        };
-
-        /// <summary>
-        /// 把一个目录打包成 zip（跳过纯资源文件，见 <see cref="SkippedBackupExtensions"/>）。
+        ///   少了资源文件的备份，恢复出来是一个「能看不能跑」的残缺目录，
+        ///   用户还得自己去找原始脚本包补齐 —— 那这次备份就失去意义了。
+        ///   省下的 60 MB 不值得让人冒「恢复不完整」的风险。
         ///
         /// ★ 路径用相对路径存进包，解压时能还原成 User\... 的目录结构。
-        /// ★ 用 Optimal 而不是 SmallestSize：实测两者体积只差 0.3%（16.31 vs 16.26 MB），
-        ///   但打包时间几乎一样，不值得为 0.05 MB 换更慢的解压。
+        /// ★ 用 Optimal：实测与 SmallestSize 只差 0.3%，不值得为那点体积换更慢的解压。
         /// </summary>
         private static void ZipDir(string srcDir, string zipPath, CancellationToken ct)
         {
@@ -757,20 +785,6 @@ namespace SoulLink.Services
                     try
                     {
                         string full = Path.GetFullPath(file);
-
-                        // 跳过可再生的大体积资源
-                        string ext = Path.GetExtension(full);
-                        if (ext.Length > 0)
-                        {
-                            bool skip = false;
-                            foreach (var s in SkippedBackupExtensions)
-                            {
-                                if (string.Equals(ext, s, StringComparison.OrdinalIgnoreCase))
-                                { skip = true; break; }
-                            }
-                            if (skip) continue;
-                        }
-
                         string rel = full.Substring(baseFull.Length)
                             .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
@@ -784,32 +798,23 @@ namespace SoulLink.Services
                         }
                     }
                     catch (OperationCanceledException) { throw; }
-                    catch { /* 单个文件读不到（被占用）就跳过，不要整包失败 */ }
+                    catch { /* 单个文件读不到（被占用）就跳过，不让整包失败 */ }
                 }
 
-                // ★ 留一份说明在包里，用户解压时知道少了什么、为什么少
+                // ★ 备份清单：让用户解压后一眼看清这是什么时候、从哪备的
                 try
                 {
                     var note = zip.CreateEntry("_备份说明.txt",
                         System.IO.Compression.CompressionLevel.Optimal);
                     using (var w = new StreamWriter(note.Open(), new System.Text.UTF8Encoding(false)))
                     {
-                        w.WriteLine("SoulLink BGI 配置备份");
+                        w.WriteLine("SoulLink BGI 配置备份（完整）");
                         w.WriteLine("备份时间：" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
                         w.WriteLine("源目录：" + srcDir);
                         w.WriteLine();
-                        w.WriteLine("本备份包含：");
-                        w.WriteLine("  · JSON 配置（路径、任务序列、账号等）");
-                        w.WriteLine("  · INI / TXT / MD / LOG");
-                        w.WriteLine("  · JS 脚本源码");
-                        w.WriteLine("  · .bak 历史备份");
-                        w.WriteLine();
-                        w.WriteLine("本备份**不包含**：");
-                        w.WriteLine("  PNG / JPG / ICO 等图片、字体、音视频、DLL/EXE、压缩包。");
-                        w.WriteLine("  这些是脚本自带的资源文件，可从原始脚本包重新获取，");
-                        w.WriteLine("  重复打包只会让备份体积膨胀数倍。");
-                        w.WriteLine();
-                        w.WriteLine("如需完整还原，请用原始脚本包补齐资源文件。");
+                        w.WriteLine("本备份包含源目录的**全部文件**（配置、脚本、图片、字体等）。");
+                        w.WriteLine("恢复方式：把本压缩包解压回 BGI 的 User 目录即可，");
+                        w.WriteLine("        或先解压到别处再把内容覆盖回去。");
                     }
                 }
                 catch { }

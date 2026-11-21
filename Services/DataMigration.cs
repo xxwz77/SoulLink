@@ -221,6 +221,26 @@ namespace SoulLink.Services
             }
         }
 
+        /// <summary>
+        /// 迁移完成后把旧目录里的**目录形态备份**转成 zip。
+        ///
+        /// ★ 2.21.1 新增。老用户的 bgi-backups 里是一堆 User_xxx\ 目录，
+        ///   即使全部复制到新目录也不会自动变成压缩包。
+        ///   这里在迁移后顺手转一遍，否则「改 zip」对老用户等于没生效。
+        ///
+        /// ★ 只转换已经在新数据目录里的，旧目录保持原样直到用户确认删除。
+        /// </summary>
+        public static string ConvertNewDirBackups(IProgress<string>? progress = null,
+                                                  CancellationToken ct = default)
+        {
+            try
+            {
+                int n = BgiUpdater.ConvertLegacyDirsToZip(progress, ct);
+                return n > 0 ? ("已把 " + n + " 份旧格式备份转成压缩包。") : "";
+            }
+            catch { return ""; }
+        }
+
         /// <summary>迁移完成后清理旧目录（用户手动触发，二次确认过才调）。</summary>
         public static Result DeleteLegacy()
         {

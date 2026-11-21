@@ -877,11 +877,17 @@ namespace SoulLink.Views
                         + "想放到程序旁边请把 SoulLink 移到有写权限的文件夹。";
                 }
 
-                // 占用统计
+                // 占用统计：BGI 备份 + 路线更新备份（两个都会无限增长）
                 try
                 {
-                    long backup = Services.BgiUpdater.GetBackupSize();
-                    string txt = "BGI 备份占用 " + FormatSize(backup) + "（每个账号保留最近 3 次）";
+                    int keep = App.Config.Settings.BgiBackupKeep;
+                    long bgi = Services.BgiUpdater.GetBackupSize();
+                    long route = 0;
+                    try { route = Services.RouteUpdater.GetBackupSize(); } catch { }
+
+                    string mode = keep > 0 ? ("每账号保留最近 " + keep + " 次") : "不限制（保留全部）";
+                    string txt = "BGI 备份 " + FormatSize(bgi) + "   ·   路线备份 " + FormatSize(route)
+                               + "   ·   " + mode;
                     StorageUsageText.Text = txt;
                 }
                 catch { StorageUsageText.Text = ""; }
@@ -978,11 +984,17 @@ namespace SoulLink.Views
                     return;
                 }
 
-                int n = Services.BgiUpdater.PruneBackups(keep);
+                int nBgi = Services.BgiUpdater.PruneBackups(keep);
+                int nRoute = 0;
+                try { nRoute = Services.RouteUpdater.PruneBackups(keep); } catch { }
+
                 ShowDataDirInfo();
+                int total = nBgi + nRoute;
                 MessageBox.Show(
-                    n > 0 ? ("已清理 " + n + " 份旧备份，每账号保留最近 " + keep + " 次。")
-                          : ("没有需要清理的旧备份（每账号保留最近 " + keep + " 次）。"),
+                    total > 0
+                        ? ("已清理 " + total + " 份旧备份（BGI " + nBgi + " 份，路线 " + nRoute + " 份），"
+                           + "每项保留最近 " + keep + " 次。")
+                        : ("没有需要清理的旧备份（每项保留最近 " + keep + " 次）。"),
                     "清理旧备份", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
@@ -1052,6 +1064,21 @@ namespace SoulLink.Views
 
                 var result = await Task.Run(() =>
                     Services.DataMigration.Migrate(progress, System.Threading.CancellationToken.None));
+
+                // ★ 2.21.1：迁移过来的老格式备份（目录形态）顺手转成 zip，
+                //   否则「改压缩包」这个改动对老用户等于没生效。
+                if (result.Ok)
+                {
+                    try
+                    {
+                        MigrateProgressText.Text = "正在把旧格式备份转成压缩包…";
+                        string conv = await Task.Run(() =>
+                            Services.DataMigration.ConvertNewDirBackups(progress,
+                                System.Threading.CancellationToken.None));
+                        if (!string.IsNullOrEmpty(conv)) result.Message += "\n" + conv;
+                    }
+                    catch { }
+                }
 
                 MigrateProgressText.Text = result.Message;
                 ShowDataDirInfo();

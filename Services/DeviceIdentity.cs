@@ -18,9 +18,9 @@ namespace SoulLink.Services
         {
             get
             {
-                string dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "SoulLink");
+                // ★ 2.21.1：跟随数据目录。device.json 是设备码，
+                //   和数据一起搬走才对——换了目录但设备码变了的体验很怪。
+                string dir = AppIdentity.DataDir;
                 Directory.CreateDirectory(dir);
                 return Path.Combine(dir, "device.json");
             }
