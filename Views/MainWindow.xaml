@@ -67,7 +67,19 @@
                                 <Ellipse Width="9" Height="9" Fill="#FFFFFFFF" />
                             </Grid>
                             <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
+                                    <!-- ★ 挂机验证版标识：只有非默认身份才显示。
+                                         没有它时两个窗口标题都是 SoulLink，分不清哪个在挂机
+                                         （实测用户会点到错误的窗口操作）。 -->
+                                    <Border x:Name="IdentityBadge" Visibility="Collapsed"
+                                            CornerRadius="5" Padding="6,1" Margin="7,0,0,0"
+                                            VerticalAlignment="Center"
+                                            Background="#2AFFB020" BorderBrush="#55FFB020" BorderThickness="1">
+                                        <TextBlock Text="挂机版" FontSize="9.5"
+                                                   Foreground="#FFFFC24D" />
+                                    </Border>
+                                </StackPanel>
                                 <!-- 版本号：点击检查更新；有新版时变琥珀色并显示红点 -->
                                 <!-- ★ 用 Button 而不是 StackPanel+MouseLeftButtonUp：
                                      本窗口是自定义标题栏（WindowChrome），标题栏区域默认

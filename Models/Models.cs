@@ -545,12 +545,25 @@ namespace SoulLink.Models
 
             /// <summary>
             /// 是否「每帧推进」（对应 BackdropFrameMs = 0 的动态档）。
-            /// ★ 低档也是 0，所以不能只看该值，必须配合 <see cref="Backdrop"/> 判断。
+            /// ★ 高档按显示器刷新率推进，所以间隔是 0；
+            ///   但低档的间隔也是 0（表示"永不推进"），两者必须靠档位本身区分。
             /// </summary>
-            public static bool EveryFrame(int tier) => BackdropFrameMs(tier) == 0;
+            public static bool EveryFrame(int tier) => tier == High;
 
-            /// <summary>是否播放动态背景（中/高都播，低档静止）。</summary>
-            public static bool Backdrop(int tier) => BackdropFrameMs(tier) > 0;
+            /// <summary>
+            /// 是否播放动态背景（中/高都播，低档静止）。
+            ///
+            /// ★★ 2026-11-21 修复 ★★
+            ///   原来写的是 `BackdropFrameMs(tier) > 0`，但高档的 FrameMs 是 0
+            ///   （表示"每帧推进"），于是高档被判成"不播动画" ——
+            ///   表现为「选了高（完整动效）却只有静态背景、画面一动不动」。
+            ///
+            ///   根因是 0 这个值承担了两种相反含义：
+            ///     High → 0 = 间隔为零，每帧都推
+            ///     Low  → 0 = 永不推进
+            ///   所以判断必须看档位本身，不能再从间隔值反推。
+            /// </summary>
+            public static bool Backdrop(int tier) => tier == High || tier == Medium;
 
             /// <summary>呼吸灯是否脉冲（低档时保持静态点亮）。</summary>
             public static bool GlowPulse(int tier) => tier <= Medium;

@@ -94,7 +94,12 @@ namespace SoulLink.Views
             try
             {
                 if (!string.Equals(AppIdentity.Name, "SoulLink", StringComparison.OrdinalIgnoreCase))
+                {
                     Title = "SoulLink · 挂机验证版";
+                    // 左上角同时挂可见标识 —— 标题栏文字在最大化时容易被忽略，
+                    // 而两个程序的操作按钮几乎一样，靠这个一眼区分。
+                    if (IdentityBadge != null) IdentityBadge.Visibility = Visibility.Visible;
+                }
             }
             catch { }
             Loaded += (_, __) => ThemeManager.Apply();

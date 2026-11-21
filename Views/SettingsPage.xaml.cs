@@ -537,6 +537,11 @@ namespace SoulLink.Views
         {
             try
             {
+                // ★ 初始化时不要写盘：RefreshAll 里设 SelectedIndex 会触发本方法，
+                //   而下拉框默认索引是 0（高），会把用户原本的低档设置覆盖成高档
+                //   （实测踩过：配置从 2 变成 0，用户没动过设置）。
+                if (_loading) return;
+
                 int tier = Math.Clamp(EffectTierCombo.SelectedIndex, 0, 2);
                 App.Config.Settings.EffectTier = tier;
                 EffectTierHint.Text = DescribeTier(tier);
