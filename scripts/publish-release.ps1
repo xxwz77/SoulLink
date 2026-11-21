@@ -22,7 +22,9 @@ param(
     # 临时覆盖 docs/RELEASE-NOTES.md
     [string]$Notes = "",
     # 系统代理可用时使用（默认直连）
-    [switch]$UseProxy
+    [switch]$UseProxy,
+    # 指定产物目录（默认 dist）。用于测试时推送未覆盖 dist 的构建。
+    [string]$DistDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,7 +51,7 @@ Write-Host "  SoulLink 云端发布" -ForegroundColor Cyan
 Write-Host "  版本：$version"
 Write-Host ""
 
-$dist = Join-Path $root "dist"
+$dist = if ($DistDir) { (Resolve-Path $DistDir).Path } else { Join-Path $root "dist" }
 if (-not (Test-Path -LiteralPath $dist)) {
     throw "找不到 $dist，请先运行 build.bat 生成发布产物"
 }
