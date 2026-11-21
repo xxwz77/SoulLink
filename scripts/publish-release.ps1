@@ -157,7 +157,11 @@ foreach ($f in $files) {
     Copy-Item -LiteralPath $f.Full -Destination $dst -Force
 }
 
-$zipPath = Join-Path $pkgDir "update.zip"
+# ★ 更新包名带版本号：内容与文件名一一对应，永不覆盖。
+#   这样 CDN 缓存多久都是正确的 —— 不存在「清单是新的、包是旧的」。
+#   文件名用户看不到（下载到临时目录解压后即删），不影响快捷方式。
+$zipName = "update-$version.zip"
+$zipPath = Join-Path $pkgDir $zipName
 & $seven a -tzip -mx=5 "$zipPath" "$stage\*" -r | Out-Null
 if (-not (Test-Path -LiteralPath $zipPath)) { throw "打包失败" }
 
@@ -197,7 +201,7 @@ if (-not $Notes) {
 $manifest = [ordered]@{
     version     = $version
     notes       = $Notes
-    file        = "update.zip"
+    file        = $zipName
     size        = $zipBytes.Length
     sha256      = $sha256
     publishedAt = (Get-Date).ToString("yyyy-MM-ddTHH:mm:sszzz")
@@ -399,9 +403,9 @@ function Clear-CdnCache([string[]]$paths) {
 # ---------- 上传：先 exe，再清单 ----------
 Write-Host "  开始上传…" -ForegroundColor Cyan
 
-Put-CosObject "$keyPrefix/update.zip" $zipBytes "application/zip"
+Put-CosObject "$keyPrefix/$zipName" $zipBytes "application/zip"
 
-$probeUrl = "$cdnBase/update.zip"
+$probeUrl = "$cdnBase/$zipName"
 $ok = $false
 for ($i = 1; $i -le 5; $i++) {
     try {
@@ -444,7 +448,33 @@ try {
 } catch {
     Write-Warning "  文件清单写入失败：$($_.Exception.Message)"
 }
-Clear-CdnCache @("$cdnBase/latest.json", "$cdnBase/update.zip")
+# ★ 只刷新清单。版本化的 zip 内容不可变，无需 purge。
+# ★ 清理历史遗留的固定名包。它内容是旧的，留着只会让人误以为是最新版。
+#   版本化包（update-<ver>.zip）不受影响。
+try {
+    $delClient = New-Http
+    $delClient.Timeout = [TimeSpan]::FromSeconds(20)
+    $st2 = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 60
+    $en2 = [Math]::Min([long]$script:session.expiredTime, $st2 + 3600)
+    $kt2 = "$st2;$en2"
+    $sk2 = Get-HmacHex $script:sk $kt2
+    $sp2 = "/$keyPrefix/update.zip"
+    $hv2 = "host=$(Encode-Part $cosHost)"
+    $hs2 = "delete" + [char]10 + $sp2 + [char]10 + [char]10 + $hv2 + [char]10
+    $sig2 = Get-HmacHex $sk2 ("sha1" + [char]10 + $kt2 + [char]10 + (Get-Sha1Hex $hs2) + [char]10)
+    $auth2 = "q-sign-algorithm=sha1&q-ak=$($script:ak)&q-sign-time=$kt2&q-key-time=$kt2&q-header-list=host&q-url-param-list=&q-signature=$sig2"
+    $reqDel = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Delete, "https://$cosHost$sp2")
+    [void]$reqDel.Headers.TryAddWithoutValidation("Authorization", $auth2)
+    [void]$reqDel.Headers.TryAddWithoutValidation("x-cos-security-token", $script:token)
+    $respDel = $delClient.SendAsync($reqDel).GetAwaiter().GetResult()
+    $codeDel = [int]$respDel.StatusCode
+    if ($codeDel -eq 204 -or $codeDel -eq 200) { Write-Host "  已删除历史固定名包 update.zip" -ForegroundColor DarkGray }
+    elseif ($codeDel -eq 404) { Write-Host "  历史固定名包不存在，跳过" -ForegroundColor DarkGray }
+    else { Write-Warning "  清理历史包失败：HTTP $codeDel" }
+} catch {
+    Write-Warning "  清理历史包失败：$($_.Exception.Message)"
+}
+Clear-CdnCache @("$cdnBase/latest.json")
 
 Write-Host ""
 try {

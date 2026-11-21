@@ -19,8 +19,8 @@ namespace SoulLink.Services
     public static class CloudUpdater
     {
         // ── 发布位置（客户端不展示，不要拼进任何 UI 文案）──
-        private const string ManifestUrl = "https://cdn.example.invalid/SoulLink/latest.json";
-        private const string PackageUrl  = "https://cdn.example.invalid/SoulLink/update.zip";
+        private const string BaseUrl     = "https://cdn.example.invalid/SoulLink/";
+        private const string ManifestUrl = BaseUrl + "latest.json";
 
         private static readonly HttpClient Http = CreateHttp();
 
@@ -170,16 +170,23 @@ namespace SoulLink.Services
             if (string.IsNullOrWhiteSpace(m.Sha256))
                 throw new InvalidOperationException("安装包缺少校验信息");
 
+            // ★ 包名来自清单（形如 update-3.1.3.zip）：内容与文件名一一对应，
+            //   不会被覆盖，所以 CDN 缓存多久都是正确的那一份。
+            //   ★ 先校验再使用，防止清单被篡改成 "../xxx" 逃出临时目录。
+            if (string.IsNullOrWhiteSpace(m.File)
+                || m.File.Contains("..") || m.File.Contains('/') || m.File.Contains('\\'))
+                throw new InvalidOperationException("更新包名无效");
+
             string dir = Path.Combine(Path.GetTempPath(), "SoulLinkUpdate");
             Directory.CreateDirectory(dir);
-            string dest = Path.Combine(dir, "update.zip");
+            string dest = Path.Combine(dir, Path.GetFileName(m.File));
 
             if (File.Exists(dest))
             {
                 try { File.Delete(dest); } catch { }
             }
 
-            string url = PackageUrl + "?t=" + DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            string url = BaseUrl + Uri.EscapeDataString(m.File);
             using var resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
                                        .ConfigureAwait(false);
             resp.EnsureSuccessStatusCode();
