@@ -1,0 +1,69 @@
+工作区整理：17.8 GB → 507 MB，建立整洁规范
+
+长期开发积累到 17,781 MB，而真正的源码只有几 MB。这次清理把
+历史产物、一次性实验目录、散落截图全部清掉，并把容易失控的地方
+写成规则（docs/WORKSPACE-RULES.md），避免再次变乱。
+
+── 删除的内容 ──
+
+  releases        9,100 MB   历史发布包（164 个 exe + 27 个 zip）
+  artifacts       4,021 MB   70+ 个测试构建目录
+  dist-cpuexp     1,984 MB   CPU 实验产物
+  tools           1,881 MB   → 4.3 MB
+  backups           944 MB   → 122 MB（只留 1 份源码备份）
+  Server            568 MB   → 0.1 MB（bin/obj）
+  bin/obj/out 等    704 MB
+
+  tools 里的问题尤其突出：
+    · layout-check 有 107 个 bin 目录共 472 MB，源码只有 1.8 MB
+    · 12 个 focus-flash-* 实验目录各 63 MB，累计 700 MB
+    · 根目录散落 100+ 张验证截图、一个 4 MB 的 ilspycmd.nupkg
+
+── 归档的成果 ──
+
+docs/research/  33 个文件 0.4 MB，新建 README.md 索引：
+  · RDP / 远程桌面架构研究   9 篇
+  · 交接与状态文档           9 篇
+  · 变更记录与版本规范      12 篇
+  · 其它                     2 篇
+
+原来这些散在 releases/、项目根、research/ 三处，
+现在统一收在 docs/research/。
+
+── 源码备份 ──
+
+backups/source-20261121-205138.zip  122.5 MB
+  343 个源码文件（含 Views/Services/Controls/Models/Relay/Server/
+  Theme/scripts/docs/tools 子项目与根目录配置）
+
+旧的 6 个备份（source-20261120-*.zip 等，共 821 MB）已删。
+规则：backups 只留最近一份，新备份做好后删旧的。
+
+── 建立的规范 ──
+
+docs/WORKSPACE-RULES.md（202 行）+ AGENTS.md 摘要：
+
+  1. 构建产物不入库也不囤积 —— bin/obj 不进 git，但也不该留在磁盘
+  2. 一次性实验目录当场删 —— 只放 .cs 与 .csproj，跑完删整个目录
+  3. 截图进 %TEMP% —— 曾经散落 100+ 张验证截图
+  4. backups 只留最近一份
+  5. 研究/交接文档统一放 docs/research/ 并登记索引
+  6. tools 只保留能构建的源码（7za / broker-setup / rescue / updater）
+
+  健康标准：工作区 < 1 GB、tools < 50 MB、backups 1 个 zip、
+           根目录 .md < 5 个、bin/obj 0 个
+
+── 根目录清理 ──
+
+13 个散落的 .md 已归档到 docs/research 并从根目录删除
+（BROKER-TESTING / CHANGELOG-* / HANDOFF* / HANDOVER* /
+  NEW_SESSION_PROMPT / PERF-BRANCH-PLAN / VERSIONING）。
+
+根目录现在只剩 AGENTS.md 与 README.md。
+
+── 未动的 ──
+
+dist/          245.9 MB  当前产物
+dist/stable/   挂机验证版 3.1.5（完好）
+docs/          123.8 MB
+research/      6 MB      外部参考资料
