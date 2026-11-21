@@ -333,6 +333,15 @@ namespace SoulLink.Models
         /// <summary>服务端发起的动作也执行（CLI / IPC 调用）</summary>
         public bool AllowRemoteInvoke { get; set; } = true;
         public bool MinimizeToTray { get; set; } = true;
+
+        /// <summary>
+        /// BGI 备份每个账号保留几次。
+        ///
+        /// ★ 2.20.0：<b>0 = 不限制</b>（保留全部历史备份）。
+        ///   默认 3。设为 0 后程序永不自动删备份，由用户自己管理，
+        ///   适合「想留完整版本历史」或「备份放在大容量盘上」的场景。
+        /// </summary>
+        public int BgiBackupKeep { get; set; } = 3;
         public string LastExportPath { get; set; } = "";
         /// <summary>自动化编辑器首次打开时显示引导动画；用户勾选“不再弹出”后置为 false。</summary>
         public bool ShowFlowGuide { get; set; } = true;

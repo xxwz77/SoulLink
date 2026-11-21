@@ -218,8 +218,29 @@
                             <TextBlock x:Name="ConfigPathText" Style="{StaticResource Mono}" TextWrapping="Wrap" />
                             <TextBlock x:Name="StorageUsageText" Style="{StaticResource Caption}" Margin="0,8,0,0"
                                        TextWrapping="Wrap" />
-                            <TextBlock x:Name="LegacyDataHint" Style="{StaticResource Caption}" Margin="0,6,0,0"
-                                       TextWrapping="Wrap" Visibility="Collapsed" />
+                            <!-- ★ 2.21.0：旧版数据迁移。只在检测到旧目录有数据时显示 -->
+                            <Border x:Name="LegacyDataPanel" Visibility="Collapsed" Margin="0,10,0,0"
+                                    Background="#22FFC46B" CornerRadius="8" Padding="12,10">
+                                <StackPanel>
+                                    <TextBlock Text="检测到旧版本的数据" FontWeight="SemiBold"
+                                               Foreground="#FFFFC46B" FontSize="11.5" />
+                                    <TextBlock x:Name="LegacyDataHint" Style="{StaticResource Caption}"
+                                               Margin="0,4,0,0" TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <Button Style="{StaticResource PrimaryButton}" Padding="14,7"
+                                                Click="MigrateLegacy_Click">
+                                            <TextBlock Text="迁移到当前目录" FontSize="11.5" FontWeight="SemiBold" />
+                                        </Button>
+                                        <Button Style="{StaticResource GhostButton}" Padding="14,7" Margin="8,0,0,0"
+                                                Click="OpenLegacy_Click">
+                                            <TextBlock Text="打开旧目录看看" FontSize="11.5" />
+                                        </Button>
+                                    </StackPanel>
+                                    <TextBlock x:Name="MigrateProgressText" Style="{StaticResource Caption}"
+                                               Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+                                </StackPanel>
+                            </Border>
+
                             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                                 <Button Style="{StaticResource GhostButton}" Padding="14,8" Click="OpenConfig_Click">
                                     <TextBlock Text="打开数据目录" FontSize="11.5" />
@@ -230,8 +251,20 @@
                                 <Button Style="{StaticResource GhostButton}" Padding="14,8" Margin="8,0,0,0" Click="Import_Click">
                                     <TextBlock Text="导入配置" FontSize="11.5" />
                                 </Button>
-                                <Button Style="{StaticResource GhostButton}" Padding="14,8" Margin="8,0,0,0" Click="PruneBackups_Click">
-                                    <TextBlock Text="清理旧备份" FontSize="11.5" />
+                            </StackPanel>
+
+                            <!-- ★ 2.21.0：备份保留次数。留空 = 不限制 -->
+                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                <TextBlock Text="BGI 备份保留" Style="{StaticResource Caption}"
+                                           VerticalAlignment="Center" />
+                                <TextBox x:Name="BackupKeepBox" Width="64" Margin="8,0,0,0"
+                                         VerticalContentAlignment="Center" TextAlignment="Center"
+                                         LostFocus="BackupKeepBox_LostFocus" />
+                                <TextBlock Text="次（留空 = 不限制，保留全部历史）" Style="{StaticResource Caption}"
+                                           VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="10,0,0,0"
+                                        Click="PruneBackups_Click">
+                                    <TextBlock Text="立即清理" FontSize="11.5" />
                                 </Button>
                             </StackPanel>
                         </StackPanel>
