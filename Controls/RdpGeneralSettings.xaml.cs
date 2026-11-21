@@ -155,11 +155,20 @@ namespace SoulLink.Controls
    SoulLink.Views.ConsolePage.NotifyFullScreenHotkeysChanged();
   }
 
-  /// <summary>退出全屏备用热键（全屏下的逃生通道）。</summary>
+  /// <summary>退出全屏备用热键（可选）。spec 为 null = 用户清空 → 不钩任何键。</summary>
   private void OnExitFullScreenHotkey(HotkeySpec? spec)
   {
-   if (_loading || spec == null) return;
-   App.Config.Settings.ExitFullScreenHotkey = spec.ToString();
+   if (_loading) return;
+   App.Config.Settings.ExitFullScreenHotkey = spec?.ToString() ?? "";
+   Save();
+   SoulLink.Views.ConsolePage.NotifyFullScreenHotkeysChanged();
+  }
+
+  /// <summary>清空备用热键：不钩任何键（默认就是空的）。</summary>
+  private void ExitFullScreenHotkeyClear_Click(object sender, RoutedEventArgs e)
+  {
+   ExitFullScreenHotkeyRecorder.SetSpec(null);
+   App.Config.Settings.ExitFullScreenHotkey = "";
    Save();
    SoulLink.Views.ConsolePage.NotifyFullScreenHotkeysChanged();
   }

@@ -37,7 +37,7 @@
          与 build.bat 里主程序的处理保持一致。 -->
     <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
 
-    <Version>3.2.4</Version>
+    <Version>3.2.5</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 一键救援</AssemblyTitle>

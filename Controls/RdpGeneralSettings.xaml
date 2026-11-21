@@ -59,13 +59,18 @@
       <Grid.ColumnDefinitions>
        <ColumnDefinition Width="*" />
        <ColumnDefinition Width="Auto" />
+       <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
-      <TextBlock Grid.Column="0" Text="退出全屏的备用热键" Style="{StaticResource Label}" VerticalAlignment="Center"
-                 ToolTip="默认 Escape。只在全屏时生效，按下立刻退出全屏；非全屏时原样透传给画面，不拦截。" />
-      <ctl:HotkeyRecorder Grid.Column="1" x:Name="ExitFullScreenHotkeyRecorder" Style="{StaticResource GhostButton}" Width="180" Height="36" />
+      <TextBlock Grid.Column="0" Text="退出全屏的备用热键（可选）" Style="{StaticResource Label}" VerticalAlignment="Center"
+                 ToolTip="默认留空 = 不启用，全屏时只有上面那个键能进出。想加一条退路就自己录一个——注意别和游戏常用键冲突（Esc 在游戏里是菜单键，不建议）。" />
+      <ctl:HotkeyRecorder Grid.Column="1" x:Name="ExitFullScreenHotkeyRecorder" Style="{StaticResource GhostButton}" Width="150" Height="36" />
+      <Button Grid.Column="2" x:Name="ExitFullScreenHotkeyClear" Content="清除"
+              Style="{StaticResource GhostButton}" Padding="10,6" Margin="6,0,0,0" VerticalAlignment="Center"
+              ToolTip="清空 = 不钩任何键"
+              Click="ExitFullScreenHotkeyClear_Click" />
      </Grid>
 
-     <TextBlock Text="全屏模式下按键会送给 RDP 画面，若某个键按了没反应（例如 F11 被游戏占用），换一个即可。备用热键是全屏下的最后逃生通道，建议保留默认的 Esc。"
+     <TextBlock Text="★ 默认不占用 Esc —— 游戏里 Esc 是菜单/取消键，被拦截会导致游戏没法用。若你想给自己留一条额外的退出退路，再自己录一个（例如 Ctrl+Shift+Q）。两个热键都只在全屏时生效，非全屏一律原样送给画面，绝不拦截。"
                 Style="{StaticResource Caption}" Margin="2,8,0,0" TextWrapping="Wrap" />
 
      <!-- ── 保护层边框 ─────────────────────────────────────────────

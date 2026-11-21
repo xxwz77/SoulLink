@@ -485,11 +485,19 @@ namespace SoulLink.Models
         public string FullScreenHotkey { get; set; } = "F11";
 
         /// <summary>
-        /// 退出全屏的兜底热键，默认 Escape。
-        /// ★ 只在全屏时生效，非全屏完全不拦截（不吞键）。
-        ///   这是最后一条逃生通道：即使 F11 被 RDP 吞掉，Esc 也能退出来。
+        /// 退出全屏的热键（可选，留空 = 不启用）。
+        ///
+        /// ★★ 3.2.4 修正 ★★
+        ///   最初我把默认值定成 "Escape" —— 那是**错的**。
+        ///   游戏里 Esc 是高频键（菜单/取消/暂停），全屏时被钩子吞掉等于游戏没法玩。
+        ///   用户明确指出：「必须是自定义，游戏需要 esc，你怎么不跟我商量？」
+        ///
+        ///   现在的规则：
+        ///     · **默认留空 = 完全不钩任何键**，全屏只靠 FullScreenHotkey 一个键进出；
+        ///     · 想要额外的退出键，由用户自己在设置里录（可录 Esc，也可录别的）；
+        ///     · 任何热键都只在全屏时生效，非全屏一律原样透传给画面，绝不吞键。
         /// </summary>
-        public string ExitFullScreenHotkey { get; set; } = "Escape";
+        public string ExitFullScreenHotkey { get; set; } = "";
         /// <summary>0=跟随系统 1=浅色 2=深色</summary>
         public int ThemeMode { get; set; } = 0;
         /// <summary>true=点击 RDP 画面才接收键鼠，移出画面立即释放</summary>

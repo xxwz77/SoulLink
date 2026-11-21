@@ -106,6 +106,17 @@ namespace SoulLink.Services
                 // 2.14.0 只有单目标字段 RouteUpdatePath；2.15 起是多目标 + 云端 + 定时。
                 if (cfg.Settings.RouteUpdate.MigrateFromLegacy(cfg.Settings)) migrated = true;
 
+                // ★★ 3.2.4 修正：清掉误设的 Esc 备用热键 ★★
+                //   3.2.4 第一版把「退出全屏备用热键」默认写成了 "Escape"，
+                //   而游戏里 Esc 是菜单/取消键，全屏时被钩子吞掉会让游戏没法用。
+                //   用户明确指出这是设计错误（「必须是自定义，游戏需要 esc」）。
+                //   现在默认留空；已落盘的旧值必须清掉，否则升级后照样吞键。
+                if (string.Equals(cfg.Settings.ExitFullScreenHotkey, "Escape", StringComparison.OrdinalIgnoreCase))
+                {
+                    cfg.Settings.ExitFullScreenHotkey = "";
+                    migrated = true;
+                }
+
                 foreach (var flow in cfg.Automations)
                 {
                     if (flow.EngineVersion < 2)
