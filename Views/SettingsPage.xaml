@@ -267,6 +267,21 @@
                                     <TextBlock Text="立即清理" FontSize="11.5" />
                                 </Button>
                             </StackPanel>
+
+                            <!-- ★ 2.21.2：路线包缓存按天过期 -->
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <TextBlock Text="路线包缓存保留" Style="{StaticResource Caption}"
+                                           VerticalAlignment="Center" />
+                                <TextBox x:Name="CacheKeepBox" Width="64" Margin="8,0,0,0"
+                                         VerticalContentAlignment="Center" TextAlignment="Center"
+                                         LostFocus="CacheKeepBox_LostFocus" />
+                                <TextBlock Text="天（留空 = 不限制；缓存删了可重新下载）" Style="{StaticResource Caption}"
+                                           VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="10,0,0,0"
+                                        Click="PruneCache_Click">
+                                    <TextBlock Text="立即清理" FontSize="11.5" />
+                                </Button>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </StackPanel>

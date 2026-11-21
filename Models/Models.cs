@@ -342,6 +342,15 @@ namespace SoulLink.Models
         ///   适合「想留完整版本历史」或「备份放在大容量盘上」的场景。
         /// </summary>
         public int BgiBackupKeep { get; set; } = 3;
+
+        /// <summary>
+        /// 路线更新下载的云端包缓存保留天数。
+        ///
+        /// ★ 2.21.2：<b>0 = 不限制</b>（永不自动清）。默认 30 天。
+        ///   缓存删了可以重新下载，所以按天清理是安全的；
+        ///   但给一个较长的默认值（30 天），避免用户想回档时包没了。
+        /// </summary>
+        public int RouteCacheKeepDays { get; set; } = 30;
         public string LastExportPath { get; set; } = "";
         /// <summary>自动化编辑器首次打开时显示引导动画；用户勾选“不再弹出”后置为 false。</summary>
         public bool ShowFlowGuide { get; set; } = true;

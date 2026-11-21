@@ -697,6 +697,8 @@ namespace SoulLink.Views
 
             // ★ 2.21.0：备份保留次数。空 = 0 = 不限制。
             App.Config.Settings.BgiBackupKeep = ReadBackupKeep();
+            // ★ 2.21.2：缓存保留天数。空 = 0 = 不限制。
+            App.Config.Settings.RouteCacheKeepDays = ReadCacheKeepDays();
 
             ConfigStore.Save(App.Config);
             RefreshAccounts(); RebuildBgiPathList(); _ = RefreshAutoStartAsync();
@@ -885,9 +887,16 @@ namespace SoulLink.Views
                     long route = 0;
                     try { route = Services.RouteUpdater.GetBackupSize(); } catch { }
 
-                    string mode = keep > 0 ? ("每账号保留最近 " + keep + " 次") : "不限制（保留全部）";
-                    string txt = "BGI 备份 " + FormatSize(bgi) + "   ·   路线备份 " + FormatSize(route)
-                               + "   ·   " + mode;
+                    long cache = 0;
+                    try { cache = Services.RouteUpdater.GetCacheSize(); } catch { }
+
+                    string mode = keep > 0 ? ("保留最近 " + keep + " 次") : "不限制";
+                    int days = App.Config.Settings.RouteCacheKeepDays;
+                    string cacheMode = days > 0 ? (days + " 天") : "不限制";
+
+                    string txt = "BGI 备份 " + FormatSize(bgi) + "（" + mode + "）"
+                               + "   ·   路线备份 " + FormatSize(route) + "（" + mode + "）"
+                               + "   ·   包缓存 " + FormatSize(cache) + "（" + cacheMode + "）";
                     StorageUsageText.Text = txt;
                 }
                 catch { StorageUsageText.Text = ""; }
@@ -916,6 +925,14 @@ namespace SoulLink.Views
                 {
                     int keep = App.Config.Settings.BgiBackupKeep;
                     BackupKeepBox.Text = keep > 0 ? keep.ToString() : "";
+                }
+                catch { }
+
+                // 路线包缓存保留天数（空 = 不限制）
+                try
+                {
+                    int days = App.Config.Settings.RouteCacheKeepDays;
+                    CacheKeepBox.Text = days > 0 ? days.ToString() : "";
                 }
                 catch { }
             }
@@ -967,6 +984,67 @@ namespace SoulLink.Views
                 }
             }
             catch { }
+        }
+
+        /// <summary>读取「缓存保留天数」。留空 = 0 = 不限制。</summary>
+        private int ReadCacheKeepDays()
+        {
+            try
+            {
+                string t = (CacheKeepBox.Text ?? "").Trim();
+                if (t.Length == 0) return 0;
+                if (int.TryParse(t, out int v) && v > 0) return v;
+                return 0;
+            }
+            catch { return 0; }
+        }
+
+        /// <summary>
+        /// 缓存天数输入框失焦即保存。
+        /// ★ 和备份次数同理：用户可能只改个数字就切走。
+        /// </summary>
+        private void CacheKeepBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            try
+            {
+                int days = ReadCacheKeepDays();
+                if (App.Config.Settings.RouteCacheKeepDays != days)
+                {
+                    App.Config.Settings.RouteCacheKeepDays = days;
+                    ConfigStore.Save(App.Config);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>手动清理路线包缓存（按天）。</summary>
+        private void PruneCache_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                int days = ReadCacheKeepDays();
+                if (days <= 0)
+                {
+                    MessageBox.Show(
+                        "当前设置为「不限制」，不会自动清理缓存。\n\n"
+                        + "如果确实想清理，请先在左边填入要保留的天数（比如 30）。",
+                        "清理缓存", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                int n = Services.RouteUpdater.PruneCache(days);
+                ShowDataDirInfo();
+                MessageBox.Show(
+                    n > 0 ? ("已清理 " + n + " 个超过 " + days + " 天的缓存文件。")
+                          : ("没有超过 " + days + " 天的缓存文件。"),
+                    "清理缓存", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("清理失败：" + ex.Message, "清理缓存",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         /// <summary>手动清理旧备份。</summary>

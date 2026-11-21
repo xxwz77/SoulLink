@@ -95,6 +95,61 @@ namespace SoulLink.Services
             return removed;
         }
 
+        /// <summary>
+        /// 按天数清理云端包缓存。保留最近 <paramref name="keepDays"/> 天内下载的包。
+        ///
+        /// ★ 2.21.2 新增。route-cache 存的是「下载下来的更新包」，
+        ///   一次几十 MB，此前**没有任何过期机制**——下载过的包永远留着。
+        ///   这和备份不同：缓存删了可以重新下载，所以按天清理是安全的。
+        ///
+        /// ★ keepDays &lt;= 0 表示不限制（不清）。
+        /// ★ 判断依据用 LastWriteTimeUtc：缓存文件的写入时间就是下载时间。
+        ///   不用 LastAccessTime——Windows 默认可能关闭最后访问时间更新，
+        ///   而且我们也不希望"用户看了一眼"就延长缓存寿命。
+        /// </summary>
+        public static int PruneCache(int keepDays)
+        {
+            if (keepDays <= 0) return 0;
+
+            int removed = 0;
+            try
+            {
+                var root = new DirectoryInfo(CacheRoot);
+                if (!root.Exists) return 0;
+
+                DateTime cutoff = DateTime.UtcNow.AddDays(-keepDays);
+
+                foreach (var f in root.GetFiles("*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        if (f.LastWriteTimeUtc < cutoff) { f.Delete(); removed++; }
+                    }
+                    catch { /* 正在下载/被占用：下次再清 */ }
+                }
+
+                // 顺手删空目录（下载时可能建过时间戳子目录）
+                foreach (var d in root.GetDirectories())
+                {
+                    try { if (!d.EnumerateFileSystemInfos().Any()) d.Delete(); } catch { }
+                }
+            }
+            catch { }
+            return removed;
+        }
+
+        /// <summary>缓存当前占用（字节），给设置页显示。</summary>
+        public static long GetCacheSize()
+        {
+            try
+            {
+                var root = new DirectoryInfo(CacheRoot);
+                if (!root.Exists) return 0;
+                return root.GetFiles("*", SearchOption.AllDirectories).Sum(f => { try { return f.Length; } catch { return 0L; } });
+            }
+            catch { return 0; }
+        }
+
         /// <summary>路线备份当前占用（字节），给设置页显示。</summary>
         public static long GetBackupSize()
         {
