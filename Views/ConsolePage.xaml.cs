@@ -164,6 +164,8 @@ namespace SoulLink.Views
                 _shieldWatch = null;
                 try { _fsKeyHook?.Dispose(); _fsKeyHook = null; } catch { }
                 try { _fsEscHook?.Dispose(); _fsEscHook = null; } catch { }
+                try { _fsMouseToggleHook?.Dispose(); _fsMouseToggleHook = null; } catch { }
+                try { _fsMouseExitHook?.Dispose(); _fsMouseExitHook = null; } catch { }
                 try { FullScreenHotkeysChanged -= OnFullScreenHotkeysChanged; } catch { }
             };
             Loaded += (_, __) => { SyncBusyOverlaySize(); SyncShieldSize(); };
@@ -2410,6 +2412,16 @@ namespace SoulLink.Views
                 Dispatcher.InvokeAsync(() =>
                 {
                     if (!ReferenceEquals(row, _viewing)) return;
+
+                    // ★★ 3.2.6：自由视角切换后**重挂全屏热键钩子** ★★
+                    //   实测故障：全屏 → 开自由视角 → 关自由视角 → F11 再也退不出。
+                    //   原因：自由视角会改变焦点归属（RDP 子 HWND / 目标会话接收器
+                    //   参与抢键），本机 LL 钩子的先后顺序被打乱，虽然 IsHooked 仍为
+                    //   true，但回调不再命中原有热键。
+                    //   Windows 的 LL 钩子链按安装顺序排队，重挂才能回到链首
+                    //   （LowLevelKeyboardHook.Rearm 的注释也是这个意思）。
+                    try { InstallFullScreenHooks(); } catch { }
+
                     if (!visible)
                     {
                         return;
@@ -2772,8 +2784,13 @@ namespace SoulLink.Views
         /// </summary>
         private LowLevelKeyboardHook? _fsKeyHook;
 
-        /// <summary>全屏时的 Esc 逃生通道。只在全屏生效，非全屏不吞键。</summary>
+        /// <summary>全屏时的退出热键（键盘版）。只在全屏生效，非全屏不吞键。</summary>
         private LowLevelKeyboardHook? _fsEscHook;
+
+        /// <summary>全屏热键的**鼠标版**（侧键等）。WH_MOUSE_LL。</summary>
+        private LowLevelMouseHook? _fsMouseToggleHook;
+        /// <summary>退出全屏热键的鼠标版。</summary>
+        private LowLevelMouseHook? _fsMouseExitHook;
 
         /// <summary>全局设置里的全屏热键改了 → 所有画面重新装钩子。</summary>
         public static void NotifyFullScreenHotkeysChanged()
@@ -2793,48 +2810,164 @@ namespace SoulLink.Views
             catch { }
         }
 
-        /// <summary>按当前配置（重新）安装两个全屏热键钩子。</summary>
+        /// <summary>
+        /// 本页当前是否应当响应全屏热键。
+        ///
+        /// ★★ 3.2.6 修正（第二次）★★
+        ///   第一次改成 Visibility == Visible 仍然失效，原因：
+        ///   本页真实可见性由三层叠加决定 ——
+        ///     ① MainWindow 的 PageConsole 容器（SetActivePage 切这个）
+        ///     ② 本页内部的 ViewPage / ConfigPage（点和面切换）
+        ///     ③ 本页自身
+        ///   而且 IsVisible 要求整条视觉树都可见；全屏 + 自由视角切换时
+        ///   会有瞬时折叠，导致钩子"装了但 canTrigger=false"，按键直接被丢弃
+        ///   （HotkeyMatcher.Key 第 102 行：!canTrigger 就 return false，连匹配都不算）。
+        ///
+        ///   现在改为：**只要本进程窗口没最小化、且本页加载过就允许触发**。
+        ///   理由：这个钩子只在「控制台页」这一份 ConsolePage 上安装，
+        ///   而它的作用就是全屏开关 —— 没有其它窗口会因此误触发。
+        ///   宁可多响应一点，也不能在全屏里按不动。
+        /// </summary>
+        private bool IsPageUsable()
+        {
+            try
+            {
+                if (!IsLoaded) return false;
+                var win = Window.GetWindow(this);
+                if (win == null) return false;
+                if (win.WindowState == WindowState.Minimized) return false;
+                // 全屏时（本页主导）一定允许；非全屏时也允许，交给下面的额外约束
+                if (_isFullScreen) return true;
+                // 非全屏：要求本页确实是当前显示的页（含内部 ViewPage 判断）
+                return Visibility == Visibility.Visible
+                       && ViewPage != null && ViewPage.Visibility == Visibility.Visible;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// 按当前配置（重新）安装全屏热键。
+        ///
+        /// ★★ 3.2.6：键盘键和鼠标键走**两套不同的钩子** ★★
+        ///   用户实测反馈：「鼠标侧键5，无论是否启用自由视角，均不生效快捷键」。
+        ///   根因：原来只装了 LowLevelKeyboardHook(WH_KEYBOARD_LL)，
+        ///   而 HotkeySpec 支持鼠标键（X1/X2…），录进去后钩子永远收不到事件，
+        ///   装是"成功"的（IsHooked=True），按键却完全无效 —— 静默失效最难查。
+        ///
+        ///   现在按 spec.IsMouse 分派：
+        ///     · 键盘键 → LowLevelKeyboardHook（原有行为）
+        ///     · 鼠标键 → LowLevelMouseHook(WH_MOUSE_LL) + HotkeySpec.MatchesMouse
+        ///   WH_MOUSE_LL 能收到侧键（WM_XBUTTONDOWN），不会吞掉普通移动/点击，
+        ///   只在命中热键时返回 true 吞掉该次事件。
+        /// </summary>
         private void InstallFullScreenHooks()
         {
             try { _fsKeyHook?.Dispose(); _fsKeyHook = null; } catch { }
             try { _fsEscHook?.Dispose(); _fsEscHook = null; } catch { }
+            try { _fsMouseToggleHook?.Dispose(); _fsMouseToggleHook = null; } catch { }
+            try { _fsMouseExitHook?.Dispose(); _fsMouseExitHook = null; } catch { }
 
-            try
-            {
-                string toggleKey = App.Config.Settings.FullScreenHotkey;
-                var toggleSpec = HotkeySpec.Parse(toggleKey);
-                if (toggleSpec != null)
-                {
-                    _fsKeyHook = new LowLevelKeyboardHook
-                    {
-                        Spec = toggleSpec,
-                        CanTrigger = () => IsVisible,
-                        Pressed = () => Dispatcher.BeginInvoke(new Action(ToggleFullScreen)),
-                    };
-                    if (!_fsKeyHook.Install()) _fsKeyHook = null;
-                }
-            }
-            catch (Exception ex) { App.AppendErrorLog("ConsolePage.FullScreenHook", ex); }
+            string toggleKey = App.Config.Settings.FullScreenHotkey;
+            string exitKey = App.Config.Settings.ExitFullScreenHotkey;
+            var toggleSpec = HotkeySpec.Parse(toggleKey);
+            var exitSpec = HotkeySpec.Parse(exitKey);
 
-            try
+            // 同一个键不重复装（否则一次按下会触发两次）
+            bool exitIsSameAsToggle = exitSpec != null
+                && string.Equals(exitKey, toggleKey, StringComparison.OrdinalIgnoreCase);
+
+            // ── ① 进入/退出全屏 ─────────────────────────────────────
+            if (toggleSpec != null)
             {
-                string exitKey = App.Config.Settings.ExitFullScreenHotkey;
-                var exitSpec = HotkeySpec.Parse(exitKey);
-                // 与开关热键相同时不再重复装（同一键会被两个钩子各吞一次）
-                if (exitSpec != null && !string.Equals(exitKey, App.Config.Settings.FullScreenHotkey, StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    _fsEscHook = new LowLevelKeyboardHook
-                    {
-                        Spec = exitSpec,
-                        // ★ 全屏时**不问窗口是否激活**：焦点常在 RDP 子 HWND 里，
-                        //   问 IsActive 会让逃生通道在最需要时失效。
-                        CanTrigger = () => _isFullScreen && IsVisible,
-                        Pressed = () => Dispatcher.BeginInvoke(new Action(ExitFullScreen)),
-                    };
-                    if (!_fsEscHook.Install()) _fsEscHook = null;
+                    InstallOneFullScreenHotkey(toggleSpec, "toggle",
+                        () => IsPageUsable(),
+                        () =>
+                        {
+                            RdpConsole.Debug("全屏热键命中：" + toggleSpec + "（" + (toggleSpec.IsMouse ? "鼠标" : "键盘")
+                                + "）→ 切换全屏，当前 " + (_isFullScreen ? "全屏" : "非全屏"));
+                            Dispatcher.BeginInvoke(new Action(ToggleFullScreen));
+                        });
                 }
+                catch (Exception ex) { App.AppendErrorLog("ConsolePage.FullScreenHook", ex); }
             }
-            catch (Exception ex) { App.AppendErrorLog("ConsolePage.ExitFullScreenHook", ex); }
+
+            // ── ② 退出全屏（可选）──────────────────────────────────
+            if (exitSpec != null && !exitIsSameAsToggle)
+            {
+                try
+                {
+                    InstallOneFullScreenHotkey(exitSpec, "exit",
+                        () => _isFullScreen && IsPageUsable(),
+                        () =>
+                        {
+                            RdpConsole.Debug("退出全屏热键命中：" + exitSpec);
+                            Dispatcher.BeginInvoke(new Action(() => ExitFullScreen("ExitHotkey")));
+                        });
+                }
+                catch (Exception ex) { App.AppendErrorLog("ConsolePage.ExitFullScreenHook", ex); }
+            }
+        }
+
+        /// <summary>
+        /// 安装**一个**全屏热键：鼠标键走 WH_MOUSE_LL，键盘键走 WH_KEYBOARD_LL。
+        /// role = "toggle" | "exit"，用于分配字段与日志。
+        /// </summary>
+        private void InstallOneFullScreenHotkey(HotkeySpec spec, string role,
+            Func<bool> canTrigger, Action pressed)
+        {
+            if (spec.IsMouse)
+            {
+                var hook = new LowLevelMouseHook();
+                bool swallowUp = false;   // 按下被吞过 → 抬起也要吞，避免目标程序收到孤立抬起
+                hook.Handler = ev =>
+                {
+                    try
+                    {
+                        if (ev.IsInjected) return false;          // 注入事件不触发，避免回环
+
+                        // ★ 抬起必须与按下成对处理：
+                        //   只吞 Down 会让目标程序/游戏收到一个孤立的 Up，
+                        //   侧键绑定的动作可能因此"粘住"（实测这类 bug 很隐蔽）。
+                        if (ev.IsXButtonUp)
+                        {
+                            bool swallowThisUp = swallowUp;
+                            swallowUp = false;
+                            return swallowThisUp;
+                        }
+
+                        if (!canTrigger()) return false;
+                        if (!spec.MatchesMouse(ev)) return false;   // 只看 Down
+                        if (spec.ToModifiers() != LowLevelKeyboardHook.CurrentModifiers) return false;
+
+                        swallowUp = true;
+                        pressed();
+                        return true;                               // 吞掉这一次侧键按下
+                    }
+                    catch { return false; }
+                };
+                if (hook.Install())
+                {
+                    if (role == "exit") _fsMouseExitHook = hook; else _fsMouseToggleHook = hook;
+                    RdpConsole.Debug("全屏热键已安装：" + spec + "（鼠标，WH_MOUSE_LL）role=" + role);
+                }
+                else hook.Dispose();
+                return;
+            }
+
+            var kb = new LowLevelKeyboardHook
+            {
+                Spec = spec,
+                CanTrigger = canTrigger,
+                Pressed = pressed,
+            };
+            if (kb.Install())
+            {
+                if (role == "exit") _fsEscHook = kb; else _fsKeyHook = kb;
+                RdpConsole.Debug("全屏热键已安装：" + spec + "（键盘，WH_KEYBOARD_LL）role=" + role);
+            }
+            else kb.Dispose();
         }
 
         private void BtnFullScreen_Click(object sender, RoutedEventArgs e)
@@ -2892,6 +3025,8 @@ namespace SoulLink.Views
                 _preFsHeight = win.Height;
 
                 _isFullScreen = true;
+                RdpConsole.Debug("进入全屏 · 钩子 hooked=" + (_fsKeyHook?.IsHooked == true)
+                    + " canTrigger=" + IsPageUsable());
 
                 // 全屏不保护：直接解锁。
                 try { _viewing.Console.UnlockShield("进入全屏"); } catch { }
@@ -2942,6 +3077,8 @@ namespace SoulLink.Views
                 // 顶部标签条让位给画面
                 if (TopBar != null) TopBar.Visibility = Visibility.Collapsed;
 
+
+
                 // 先露出菜单 3 秒，让用户知道入口在哪。
                 SetFullScreenMenuVisible(true);
                 _fullScreenMenuHideAt = DateTime.UtcNow.AddSeconds(3);
@@ -2959,15 +3096,18 @@ namespace SoulLink.Views
 
         private void BtnExitFullScreen_Click(object sender, RoutedEventArgs e) => ExitFullScreen();
 
-        private void ExitFullScreen()
+        private void ExitFullScreen(
+            [System.Runtime.CompilerServices.CallerMemberName] string from = "")
         {
             try
             {
+                RdpConsole.Debug("退出全屏 · from=" + from + " 当前_isFullScreen=" + _isFullScreen);
                 if (!_isFullScreen) return;
                 _isFullScreen = false;
 
                 EnsureFullScreenMenuWatch(false);
                 SetFullScreenMenuVisible(false);
+
 
                 var win = Window.GetWindow(this);
                 if (win != null)

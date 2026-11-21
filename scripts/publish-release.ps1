@@ -407,26 +407,54 @@ Write-Host "  开始上传…" -ForegroundColor Cyan
 
 Put-CosObject "$keyPrefix/$zipName" $zipBytes "application/zip"
 
+# ──────────────────────────────────────────────────────────────
+#  CDN 校验：确认包真的能从公网下载到，且字节数与刚上传的一致。
+#
+#  ★★ 3.2.6 修复：原来用 Invoke-WebRequest，它会读**系统代理**
+#     用户机器上装了翻墙代理（127.0.0.1:7897）时，代理端口一关，
+#     探测就连续 5 次报"目标计算机积极拒绝"，发布被卡在最后一步。
+#     而实际上包已经上传成功、CDN 也完全可访问 —— 是探测方式选错了。
+#
+#     现在改用 New-Http()（脚本自己的 HttpClient，UseProxy=$false 时
+#     显式禁用代理），与上传走同一条链路，两者行为一致。
+#     再加一条兜底：CDN 域名失败时直接探 COS 源站域名，
+#     源站可达同样能证明"包确实传上去了"（更新器最终也走 CDN，
+#     但 CDN 只是缓存层，源站有对象才可能被回源）。
+# ──────────────────────────────────────────────────────────────
 $probeUrl = "$cdnBase/$zipName"
+$originUrl = "https://$cosHost/$keyPrefix/$zipName"
 $ok = $false
+$probe = [System.Net.Http.HttpClient]$null
 for ($i = 1; $i -le 5; $i++) {
-    try {
-        $h = Invoke-WebRequest -Uri ($probeUrl + "?probe=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + "-$i") -Method Head -TimeoutSec 25 -UseBasicParsing -ErrorAction Stop
-        $rawLen = $h.Headers["Content-Length"]
-        if ($rawLen -is [array]) { $rawLen = $rawLen[0] }
-        $got = 0; [void][int]::TryParse([string]$rawLen, [ref]$got)
-        if ([int]$h.StatusCode -eq 200 -and $got -eq $zipBytes.Length) {
-            Write-Host "  下载校验通过（$got 字节）" -ForegroundColor Green
-            $ok = $true; break
+    foreach ($target in @(@{ Url = $probeUrl; Name = "CDN" }, @{ Url = $originUrl; Name = "源站" })) {
+        try {
+            if ($probe -eq $null) {
+                $probe = New-Http
+                $probe.Timeout = [TimeSpan]::FromSeconds(25)
+            }
+            $bust = "?probe=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + "-$i"
+            $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, ($target.Url + $bust))
+            $resp = $probe.SendAsync($req).GetAwaiter().GetResult()
+            $code = [int]$resp.StatusCode
+            $got = 0
+            if ($resp.Content.Headers.ContentLength -ne $null) { $got = [long]$resp.Content.Headers.ContentLength }
+            if ($code -eq 200 -and $got -eq $zipBytes.Length) {
+                Write-Host "  下载校验通过（$($target.Name)，$got 字节）" -ForegroundColor Green
+                $ok = $true; break
+            }
+            Write-Warning "  $($target.Name) 校验未通过：HTTP $code / $got 字节（期望 $($zipBytes.Length)）"
+        } catch {
+            $inner = $_.Exception
+            if ($inner.InnerException -ne $null) { $inner = $inner.InnerException }
+            Write-Warning "  $($target.Name) 探测失败（第 $i 次）：$($inner.Message)"
         }
-        Write-Warning "  校验未通过：HTTP $([int]$h.StatusCode) / $got 字节（期望 $($zipBytes.Length)）"
-    } catch {
-        Write-Warning "  探测失败（第 $i 次）：$($_.Exception.Message)"
     }
+    if ($ok) { break }
     Start-Sleep -Seconds 5
 }
+if ($probe -ne $null) { try { $probe.Dispose() } catch { } }
 if (-not $ok) {
-    throw "更新包在 CDN 上不可访问，已中止；未写入 latest.json，现有用户不受影响。"
+    throw "更新包在 CDN 与源站上均不可访问，已中止；未写入 latest.json，现有用户不受影响。"
 }
 
 Put-CosObject "$keyPrefix/latest.json" $jsonBytes "application/json"
