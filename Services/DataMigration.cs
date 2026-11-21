@@ -166,6 +166,22 @@ namespace SoulLink.Services
             return r;
         }
 
+        /// <summary>
+        /// 该文件是否是「用户真实配置」，迁移时必须覆盖目标。
+        ///
+        /// ★ 3.1.1：见 CopyTree 里的详细说明。
+        /// 只认这几个**单一真相源**：其余文件（日志、bgi-backups、route-backups）
+        /// 都是只增不改的，跳过即可。
+        /// </summary>
+        private static bool IsAuthoritativeConfig(string rel)
+        {
+            string name = Path.GetFileName(rel);
+            return name.Equals("config.json", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("state.json", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("lobby.json", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("device.json", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static void CopyTree(string srcRoot, string dstRoot, string baseRoot,
                                      Result r, IProgress<string>? progress, CancellationToken ct)
         {
@@ -181,9 +197,46 @@ namespace SoulLink.Services
                         .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                     string dst = Path.Combine(dstRoot, rel);
 
+                    // ══════════════════════════════════════════════════════
+                    //  ★★ 3.1.1 修复：配置类文件必须覆盖，否则迁移等于没做 ★★
+                    //
+                    //  现象（2026-11-21 实测）：用户迁移后 config.json 里
+                    //  账号 0 / 动作 0，但备份文件都正常复制过来了。
+                    //
+                    //  根因：程序**首次启动时就会自动生成一份空 config.json**
+                    //  放在新的 data\ 下。等用户点「迁移」时，目标文件已存在，
+                    //  原来的「不覆盖已存在文件」策略就把真正的配置跳过了 ——
+                    //  结果只搬了一堆日志和备份，唯独最关键的配置没搬。
+                    //
+                    //  修法：区分两类文件。
+                    //    · 配置类（config.json / state.json / lobby.json /
+                    //      device.json）：**必须覆盖**。旧目录里的是用户
+                    //      真实的配置，新目录里的是刚生成的空壳。
+                    //    · 其他（日志、备份）：保留不覆盖。它们只增不改，
+                    //      覆盖没有意义，跳过还能省时间。
+                    // ══════════════════════════════════════════════════════
                     if (File.Exists(dst))
                     {
-                        r.SkippedFiles++;
+                        if (!IsAuthoritativeConfig(rel))
+                        {
+                            r.SkippedFiles++;
+                            continue;
+                        }
+
+                        // 配置类：备份后覆盖
+                        try
+                        {
+                            File.Copy(dst, dst + ".bak-before-migrate", overwrite: true);
+                        }
+                        catch { }
+                        try
+                        {
+                            File.Copy(full, dst, overwrite: true);
+                            r.CopiedFiles++;
+                            try { r.CopiedBytes += new FileInfo(full).Length; } catch { }
+                            progress?.Report("已覆盖配置：" + rel);
+                        }
+                        catch { r.FailedFiles++; }
                         continue;
                     }
 
