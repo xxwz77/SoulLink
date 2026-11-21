@@ -8,6 +8,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
@@ -74,7 +75,66 @@
             </Grid>
 
             <!-- 进程表 -->
-            <Border Grid.Row="2" CornerRadius="14" Background="#0CFFFFFF" BorderBrush="#1EFFFFFF" BorderThickness="1" Padding="2">
+            <!-- ★ 会话瘦身面板：统计 + 清理 + 按账号勾选的启动项优化 -->
+            <Border Grid.Row="2" CornerRadius="12" Margin="0,0,0,12" Padding="14,12"
+                    Background="{DynamicResource FieldBackground}" BorderBrush="#28FFFFFF" BorderThickness="1">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="会话瘦身" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextPrimary}" />
+                            <TextBlock x:Name="SlimSummary" FontSize="11" Margin="0,4,0,0"
+                                       Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"
+                                       Text="选择会话后显示进程构成" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="BtnSlim" Style="{StaticResource PrimaryButton}"
+                                    Padding="16,7" Margin="0,0,8,0" Click="Slim_Click">
+                                <TextBlock Text="清理外围进程" FontSize="12" />
+                            </Button>
+                            <Button x:Name="BtnPolicy" Style="{StaticResource GhostButton}"
+                                    Padding="14,7" Click="Policy_Click">
+                                <TextBlock Text="应用启动项优化" FontSize="12" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock x:Name="PolicyHint" FontSize="10.5" Margin="0,9,0,0"
+                               Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap"
+                               Text="启动项优化只作用于下方勾选的账号，未勾选的完全不受影响。" />
+
+                    <ItemsControl x:Name="PolicyList" Margin="0,9,0,0">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border CornerRadius="8" Padding="10,6" Margin="0,0,8,6"
+                                        Background="{DynamicResource ButtonBackground}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <CheckBox IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                                  VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding UserName}" FontSize="12"
+                                                   Margin="8,0,0,0" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextPrimary}" />
+                                        <TextBlock Text="{Binding StateText}" FontSize="10"
+                                                   Margin="8,0,0,0" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextMuted}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="3" CornerRadius="14" Background="#0CFFFFFF" BorderBrush="#1EFFFFFF" BorderThickness="1" Padding="2">
                 <DataGrid x:Name="Grid" AutoGenerateColumns="False" IsReadOnly="True"
                           HeadersVisibility="Column" GridLinesVisibility="None" Background="Transparent"
                           RowBackground="Transparent" BorderThickness="0" CanUserAddRows="False"
@@ -125,7 +185,7 @@
             </Border>
 
             <!-- 底部 -->
-            <Grid Grid.Row="3" Margin="2,12,2,0">
+            <Grid Grid.Row="4" Margin="2,12,2,0">
                 <TextBlock x:Name="StatusText" Style="{StaticResource Caption}" VerticalAlignment="Center" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Style="{StaticResource GhostButton}" Padding="14,8" Click="OpenNew_Click">
