@@ -61,7 +61,7 @@ namespace SoulLink.Services
 
     public sealed class ScheduleRunner : IDisposable
     {
-        private readonly System.Windows.Threading.DispatcherTimer _timer;
+        private IDisposable? _tickSub;
         private readonly Func<AppConfig> _configGetter;
         private readonly HashSet<string> _running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Lock _sync = new();
@@ -78,21 +78,19 @@ namespace SoulLink.Services
         public ScheduleRunner(Func<AppConfig> configGetter)
         {
             _configGetter = configGetter;
-            _timer = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(TickSeconds)
-            };
-            _timer.Tick += (_, __) => Tick();
+            // ★ 改用统一节拍（TickHub）。每秒只唤醒一次 Dispatcher，
+            //   而不是每个定时器各唤醒一次。
+            _tickSub = TickHub.Register("ScheduleRunner", TickSeconds, Tick);
         }
 
         public void Start()
         {
-            try { if (!_timer.IsEnabled) _timer.Start(); } catch { }
+            // 订阅在构造函数里已注册，TickHub 自己管理节拍。
         }
 
         public void Stop()
         {
-            try { _timer.Stop(); } catch { }
+            try { _tickSub?.Dispose(); _tickSub = null; } catch { }
         }
 
         public void Dispose()
@@ -193,6 +191,7 @@ namespace SoulLink.Services
                 var now = DateTime.Now;
 
                 CleanupNonPersisted(cfg);
+
                 TickAutomations(cfg, now);
 
                 foreach (var action in cfg.Actions.ToList())

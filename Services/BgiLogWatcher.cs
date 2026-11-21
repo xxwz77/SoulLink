@@ -38,6 +38,9 @@ namespace SoulLink.Services
         /// <summary>通知「通道状态可能变了」。失败不外抛，绝不影响投送流程。</summary>
         public static void NotifyChannelStateChanged()
         {
+            // ★ 通道状态变了 → 管道列表必然变了。让下一次发现调用重新全扫，
+            //   否则最多 3 秒内会读到旧缓存，界面状态更新滞后。
+            try { InvalidatePipeCache(); } catch { }
             try { ChannelStateMayHaveChanged?.Invoke(); } catch { }
         }
 
@@ -54,6 +57,93 @@ namespace SoulLink.Services
             public DateTime StartTime { get; init; }
         }
 
+        // ── 命名管道枚举缓存 ────────────────────────────────────────────
+        //
+        // ★★ 为什么必须缓存：★★
+        //   DiscoverChannelSessions / DiscoverLiveAgentSessions 都靠
+        //   Directory.GetFiles(@\"\\.\\pipe\\\") 全量枚举命名管道。
+        //   Windows 没有「按前缀枚举管道」的 API，只能全扫。
+        //
+        //   正常环境约几百个管道，全扫无感；但第三方软件可能泄漏管道
+        //   （实测某远控守护进程每秒 +11 个，累积到 2.9 万个），
+        //   这时每次全扫要几百毫秒，而会话监控每 2 秒就调用一次，
+        //   主线程被反复占满 → 布局与 UIAutomation 事件积压 →
+        //   界面卡死、点击无响应（实测两个线程合计 166% 单核，
+        //   栈顶全是 fireAutomationEvents / CreateAutomationPeer）。
+        //
+        //   缓存后：无论多少个管道，同一时间窗内只全扫一次。
+        private static readonly Lock PipeCacheGate = new();
+        private static string[] _pipeCache = Array.Empty<string>();
+        private static DateTime _pipeCacheAt = DateTime.MinValue;
+        /// <summary>
+        /// 缓存有效期。
+        ///
+        /// ★ 必须远大于「单次枚举耗时」，否则缓存形同虚设。
+        ///   实测：正常环境 ~300 个管道约 1ms；但第三方软件泄漏管道时
+        ///   2.9 万个管道单次枚举要 **7.3 秒**。若 TTL 只有几秒，
+        ///   每次调用都会判定过期、重新全扫，等于没加缓存。
+        ///
+        ///   取 30 秒：通道状态变化有 InvalidatePipeCache() 主动失效，
+        ///   所以真正需要立刻看到变化的场合不会受这个 TTL 影响；
+        ///   而周期性轮询最多滞后 30 秒，对「发现新投送」完全够用。
+        /// </summary>
+        private static readonly TimeSpan PipeCacheTtl = TimeSpan.FromSeconds(30);
+        private static long _pipeScanCount;
+        private static bool _pipeSlowWarned;
+
+        /// <summary>
+        /// 取命名管道列表（带缓存）。
+        /// forceRefresh=true 时无视缓存，用于通道状态刚变化、需要立刻确认的场合。
+        /// </summary>
+        private static string[] GetPipePaths(bool forceRefresh = false)
+        {
+            lock (PipeCacheGate)
+            {
+                var age = DateTime.UtcNow - _pipeCacheAt;
+                if (!forceRefresh && _pipeCacheAt != DateTime.MinValue && age < PipeCacheTtl)
+                    return _pipeCache;
+
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    _pipeCache = Directory.GetFiles(@"\\.\\pipe\\");
+                    sw.Stop();
+                    _pipeCacheAt = DateTime.UtcNow;
+                    _pipeScanCount++;
+
+                    // ★ 枚举异常缓慢说明系统命名管道数量失控（第三方软件泄漏）。
+                    //   只报告一次，避免日志被刷爆。
+                    if (sw.ElapsedMilliseconds > 500 && !_pipeSlowWarned)
+                    {
+                        _pipeSlowWarned = true;
+                        try
+                        {
+                            App.AppendErrorLog("BgiLogWatcher: 命名管道枚举过慢",
+                                new InvalidOperationException(
+                                    "管道数=" + _pipeCache.Length + " 耗时=" + sw.ElapsedMilliseconds + "ms。" +
+                                    "通常由第三方软件泄漏命名管道导致，会影响界面响应。"));
+                        }
+                        catch { }
+                    }
+                }
+                catch
+                {
+                    // 枚举失败时保留旧缓存（总比返回空好），并推迟重试
+                    _pipeCacheAt = DateTime.UtcNow;
+                }
+                return _pipeCache;
+            }
+        }
+
+        /// <summary>强制让下一次取管道时重新全扫。通道状态变化时调用。</summary>
+        public static void InvalidatePipeCache()
+        {
+            lock (PipeCacheGate) { _pipeCacheAt = DateTime.MinValue; }
+        }
+
+        /// <summary>诊断用：累计全扫次数（缓存命中时不增加）。</summary>
+        public static long PipeScanCount => Interlocked.Read(ref _pipeScanCount);
+
         /// <summary>
         /// 检测哪些会话已有注入通道（继电器进程在线）。
         ///
@@ -67,7 +157,7 @@ namespace SoulLink.Services
             try
             {
                 // 通道属于 Windows 会话，不属于某个版本。两个版本都能看到已投送的通道。
-                foreach (var path in Directory.GetFiles(@"\\.\pipe\"))
+                foreach (var path in GetPipePaths())
                 {
                     string name = Path.GetFileName(path);
                     if (!IsRelayPipeName(name)) continue;
@@ -103,7 +193,7 @@ namespace SoulLink.Services
                 // ★ 不连接管道：代理管道只接受一个连接，探测会把它占掉并导致代理退出
                 //   （表现为“通道绿一下就消失”）。
                 var pipes = new HashSet<int>();
-                foreach (var raw in Directory.GetFiles(@"\\.\pipe\"))
+                foreach (var raw in GetPipePaths())
                 {
                     string name = Path.GetFileName(raw);
                     if (!IsRelayPipeName(name)) continue;
@@ -715,17 +805,12 @@ namespace SoulLink.Services
             _watcher.Changed += (_, __) => Pump();
             _watcher.Created += (_, __) => Pump();
 
-            // 兜底：某些网络盘/异常情况下 watcher 不触发，1 秒补漏
-            var timer = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(1)
-            };
-            timer.Tick += (_, __) => Pump();
-            timer.Start();
-            _fallbackTimer = timer;
+            // 兜底：某些网络盘/异常情况下 watcher 不触发，1 秒补漏。
+            // ★ 改用统一节拍（TickHub），不再自建 DispatcherTimer。
+            _fallbackSub = TickHub.Register("BgiLogWatcher.Fallback", 1, Pump);
         }
 
-        private readonly System.Windows.Threading.DispatcherTimer? _fallbackTimer;
+        private readonly IDisposable? _fallbackSub;
 
         /// <summary>读取新增字节并回调。</summary>
         private void Pump()
@@ -786,7 +871,7 @@ namespace SoulLink.Services
         public void Dispose()
         {
             try { _watcher.EnableRaisingEvents = false; _watcher.Dispose(); } catch { }
-            try { _fallbackTimer?.Stop(); } catch { }
+            try { _fallbackSub?.Dispose(); } catch { }
         }
     }
 }

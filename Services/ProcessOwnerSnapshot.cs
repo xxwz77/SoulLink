@@ -20,6 +20,48 @@ namespace SoulLink.Services
         public static long RefreshCount { get; private set; }
         public static IReadOnlyList<ProcessOwnerRecord> Items { get { lock (Sync) return _items; } }
         /// <summary>
+        /// 是否需要刷新快照。
+        ///
+        /// ★★ 按需刷新：★
+        ///   刷新要 Process.GetProcesses() 遍历全部进程（实测本机 550 个，约 20ms），
+        ///   而快照只服务于「进程检查」类条件节点（CondProcessExists）
+        ///   与少数动作的所有者校验。没有启用的流程用到它时，每秒枚举 550 个
+        ///   进程纯属浪费——实测每轮额外产生 1~2 个句柄，累积会拖慢
+        ///   Directory.GetFiles(\\.\pipe\)，最终表现为界面卡顿。
+        ///
+        ///   判断本身只遍历内存里的配置，不碰系统。
+        /// </summary>
+        public static bool IsNeeded(Models.AppConfig? cfg)
+        {
+            try
+            {
+                if (cfg?.Automations == null) return false;
+                foreach (var f in cfg.Automations)
+                {
+                    if (f == null || !f.Enabled || f.Paused) continue;
+                    if (UsesProcessCondition(f)) return true;
+                }
+                return false;
+            }
+            catch { return true; }   // 判断失败时保守刷新，避免条件读到空快照
+        }
+
+        /// <summary>流程里是否有「进程检查」类条件节点。</summary>
+        private static bool UsesProcessCondition(Models.AutomationFlow flow)
+        {
+            try
+            {
+                foreach (var n in flow.Nodes)
+                {
+                    if (n.Kind != Models.FlowNodeKind.Condition) continue;
+                    if (n.Type == Models.FlowNodeType.CondProcessExists) return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>
         /// 刷新进程/所有者快照。
         ///
         /// ★★ 2.17.17 重构：不再用 tasklist /V。★★

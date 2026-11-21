@@ -27,7 +27,7 @@ namespace SoulLink.Views
         private readonly LobbyAccount _me;
         private readonly List<LobbyRoom> _rooms = new();
         private LobbyRoom? _selected;
-        private System.Windows.Threading.DispatcherTimer? _autoTimer;
+        private IDisposable? _autoSub;
 
         public LobbyPage()
         {
@@ -55,28 +55,24 @@ namespace SoulLink.Views
             _ = ReloadAsync();
 
             // ★ 每 5 秒自动刷新一次（别人建房/加入/离开都能实时看到）
-            _autoTimer = new System.Windows.Threading.DispatcherTimer
+            // ★ 改用统一节拍（TickHub）：5 秒一跳。
+            _autoSub = Services.TickHub.Register("LobbyPage", 5, async () =>
             {
-                Interval = TimeSpan.FromSeconds(5)
-            };
-            _autoTimer.Tick += async (_, __) =>
+            try
             {
-                try
-                {
-                    // 正在拖拽/弹窗时不刷新，避免打断操作
-                    if (!IsVisible) return;
+                // 正在拖拽/弹窗时不刷新，避免打断操作
+                if (!IsVisible) return;
 
-                    // ReloadAsync 内部已包含详情重渲染
-                    await ReloadAsync().ConfigureAwait(true);
-                }
-                catch { }
-            };
-            _autoTimer.Start();
+                // ReloadAsync 内部已包含详情重渲染
+                await ReloadAsync().ConfigureAwait(true);
+            }
+            catch { }
+            });
 
             Unloaded += (_, __) =>
             {
                 LobbyConnection.Instance.StateChanged -= OnConnStateChanged;
-                _autoTimer?.Stop();
+                // TickHub 自行管理节拍
             };
 
             if (_rooms.Count == 0)

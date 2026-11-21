@@ -54,7 +54,7 @@ namespace SoulLink.Services
         /// <summary>扫描间隔（秒）。路线更新不需要秒级精度，5 秒足够。</summary>
         public const int TickSeconds = 5;
 
-        private readonly System.Windows.Threading.DispatcherTimer _timer;
+        private IDisposable? _tickSub;
         private readonly Lock _sync = new();
         private bool _running;
         private bool _disposed;
@@ -62,21 +62,19 @@ namespace SoulLink.Services
 
         public RouteUpdateScheduler()
         {
-            _timer = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(TickSeconds)
-            };
-            _timer.Tick += (_, __) => Tick();
+            // ★ 改用统一节拍（TickHub），不再自建 DispatcherTimer。
+            //   原来每个 1 秒级定时器都独立唤醒 Dispatcher，线程池因此长期自旋。
+            _tickSub = TickHub.Register("RouteUpdateScheduler", TickSeconds, Tick);
         }
 
         public void Start()
         {
-            try { if (!_timer.IsEnabled) _timer.Start(); } catch { }
+            // 订阅在构造函数里已注册；TickHub 统一驱动节拍。
         }
 
         public void Stop()
         {
-            try { _timer.Stop(); } catch { }
+            try { _tickSub?.Dispose(); _tickSub = null; } catch { }
         }
 
         public void Dispose()

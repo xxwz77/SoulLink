@@ -311,6 +311,41 @@ namespace SoulLink.Views
             catch { }
         }
 
+        // ── 页面生命周期：切走 / 切回 ──────────────────────────────
+        //
+        // ★★ 为什么需要这个：★★
+        //   保护层看门狗是 150ms 定时器（每秒 6.7 次），原本只在页面
+        //   Loaded 时启动、Unloaded 时停止。但本页在 SetActivePage 里
+        //   只切 Visibility，**永远不会触发 Unloaded** ——
+        //   于是切到「在线会话」等其他页面后，它继续以 150ms 空转，
+        //   每秒六七次唤醒线程池，是空闲 CPU 的主要来源之一
+        //   （实测未连任何 RDP 时本进程仍有 25% 单核）。
+        //
+        //   RDP 画面看不见的时候，保护层检查毫无意义，直接停掉即可。
+
+        /// <summary>切到本页：恢复看门狗。</summary>
+        public void OnPageActivated()
+        {
+            try
+            {
+                EnsureShieldWatch();
+                if (_shieldWatch != null && !_isFullScreen && IsVisible) _shieldWatch.Start();
+            }
+            catch { }
+        }
+
+        /// <summary>切走本页：暂停看门狗（画面不可见时检查没有意义）。</summary>
+        public void OnPageDeactivated()
+        {
+            try
+            {
+                _shieldWatch?.Stop();
+                // 全屏菜单定时器同理：只有本页可见时才需要
+                EnsureFullScreenMenuWatch(false);
+            }
+            catch { }
+        }
+
         private void EnsureShieldWatch()
         {
             if (_shieldWatch != null) return;
@@ -840,9 +875,13 @@ namespace SoulLink.Views
                 if (_sessionWatch != null) return;
                 _sessionWatch = new System.Windows.Threading.DispatcherTimer
                 {
-                    // 2 秒扫描：query user 实测仅 ~28ms，开销可接受。
-                    // 配合 3 秒稳定期，会话出现后约 5 秒就能投送出通道。
-                    Interval = TimeSpan.FromSeconds(2)
+                    // ★ 从 2 秒放宽到 5 秒。
+                    //   每跳都要 query user + 枚举命名管道；后者在第三方软件
+                    //   泄漏管道时（实测 2.9 万个）单次就要几百毫秒，
+                    //   2 秒一跳会把主线程占满（实测 166% 单核、界面卡死）。
+                    //   配合 3 秒稳定期，会话出现后约 8 秒投送出通道，
+                    //   对挂机场景无感。
+                    Interval = TimeSpan.FromSeconds(5)
                 };
                 int tickCount = 0;
                 _sessionWatch.Tick += async (_, __) =>
@@ -856,7 +895,7 @@ namespace SoulLink.Views
                     catch (Exception ex) { Debug("会话监控 tick#" + tickCount + " 异常：" + ex.Message); }
                 };
                 _sessionWatch.Start();
-                Debug("会话监控已启动（每 2 秒扫描，命中后等 " +
+                Debug("会话监控已启动（每 5 秒扫描，命中后等 " +
                       RdpConsole.SessionSettleSeconds + " 秒稳定再投送）");
             }
             catch (Exception ex) { Debug("启动会话监控失败：" + ex.Message); }

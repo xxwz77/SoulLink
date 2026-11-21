@@ -1191,10 +1191,23 @@ namespace SoulLink.Views
                 try { RestoreNavRail(); } catch (Exception ex) { App.AppendErrorLog("RestoreNavRail on switch", ex); }
             }
 
+            // ★ 控制台页切走时暂停它的 150ms 保护层看门狗：
+            //   本页只切 Visibility，不会触发 Unloaded，看门狗会一直空转
+            //   （每秒 6.7 次唤醒线程池）。RDP 画面不可见时检查毫无意义。
+            if (tag != "console")
+            {
+                try { ConsoleView.OnPageDeactivated(); } catch { }
+            }
+
             switch (tag)
             {
                 case "automation": AutomationView.Activate(); break;
-                case "console": ConsoleView.Activate(); break;
+                case "console":
+                    // ★ Activate() 里有初始化逻辑（建列表、挂会话监控、Broker 重置），
+                    //   不能因为要恢复看门狗就跳过它。
+                    ConsoleView.Activate();
+                    ConsoleView.OnPageActivated();
+                    break;
                 case "datacenter": DataCenterView.Activate(); break;
                 case "remote": RemoteView.ReloadAsync(); break;
                 case "update": UpdateView.Reload(); break;
