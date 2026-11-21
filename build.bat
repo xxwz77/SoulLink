@@ -71,6 +71,15 @@ copy /y "scripts\check-runtime.ps1" "!STAGE!\check-runtime.ps1" >nul 2>nul
 
 if not exist dist mkdir dist
 copy /y "!STAGE!\SoulLink.exe" "dist\SoulLink.exe" >nul
+
+rem ★ 同步 tools\ 子目录（服务安装器在这里）。
+rem   BrokerSetup 现在是框架依赖单文件（约 1.1 MB），由 csproj 的
+rem   PublishBrokerSetup 目标自动发布；build.bat 只负责同步到 dist。
+if exist "!STAGE!\tools" (
+    if not exist "dist\tools" mkdir "dist\tools"
+    copy /y "!STAGE!\tools\*.*" "dist\tools\" >nul
+    echo   服务安装器：dist\tools\
+)
 rem ★ 独立更新器必须一起分发：主程序启动它来替换自己。
 rem   首次安装缺少它，后续的"检查更新"会因为找不到组件而失败。
 rem ★ 一键救援程序也要一起分发：主程序卡死时用户双击它解除光标/释放鼠标/结束进程。

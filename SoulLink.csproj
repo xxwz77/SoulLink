@@ -94,19 +94,32 @@
          而程序是在 exe 旁的 tools 目录里找它 —— 打进去等于没放。
          Target 是构建结束后直接复制文件，不参与打包决策。
 
-       ★ 条件：文件不存在时跳过（35MB 二进制不在 Git 里，clone 后可能没有）。 -->
+       ★ 2026-11-21：改为**自动发布**，不再依赖手工维护的 33.6 MB 文件。
+         原来是从 dist\tools\SoulLink.BrokerSetup.exe 复制，而那是一个
+         **自包含**发布产物（整个 .NET 运行时打进去，33.6 MB）。
+         该程序只做三件事（复制文件、建服务、改 ACL），和主程序一样跑在
+         框架依赖上即可 —— 用户能用到它，前提是已装主程序，也就必然有 .NET 11。
+
+         改为 框架依赖 + 单文件：33.6 MB → 约 1.1 MB，全量更新包因此
+         从 ~32 MB 降到 ~3.3 MB。 -->
+
+  <Target Name="PublishBrokerSetup" BeforeTargets="AfterBuild" Condition="Exists('$(MSBuildProjectDirectory)\tools\broker-setup\SoulLink.BrokerSetup.csproj')">
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\tools\broker-setup\SoulLink.BrokerSetup.csproj&quot; -c $(Configuration) -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o &quot;$(MSBuildProjectDirectory)\artifacts\broker-build&quot; --nologo -v q"
+          ContinueOnError="true" />
+  </Target>
+
   <Target Name="CopyBrokerSetupToOutput" AfterTargets="AfterBuild">
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe"
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\artifacts\broker-build\SoulLink.BrokerSetup.exe"
           DestinationFolder="$(TargetDir)tools"
           SkipUnchangedFiles="true"
-          Condition="Exists('$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe')" />
+          Condition="Exists('$(MSBuildProjectDirectory)\artifacts\broker-build\SoulLink.BrokerSetup.exe')" />
   </Target>
 
   <Target Name="CopyBrokerSetupToPublish" AfterTargets="Publish">
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe"
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\artifacts\broker-build\SoulLink.BrokerSetup.exe"
           DestinationFolder="$(PublishDir)tools"
           SkipUnchangedFiles="true"
-          Condition="Exists('$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe')" />
+          Condition="Exists('$(MSBuildProjectDirectory)\artifacts\broker-build\SoulLink.BrokerSetup.exe')" />
   </Target>
   <!-- ★ 独立更新器：必须作为**独立文件**放在 exe 旁边。
        单文件发布会把托管程序集合并进 exe，所以用 Target 在构建后复制，
