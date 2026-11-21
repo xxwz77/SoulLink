@@ -2614,6 +2614,20 @@ namespace SoulLink.Controls
             Debug("Desktop = " + w + "x" + h + " 色深=" + depth
                   + " Mode=" + scaleMode + " SmartSizing=" + stretch + "(回读 " + smartOk + ")");
 
+            // ★ EnableZoom（IMsRdpExtendedSettings 命名属性）：SmartSizing 官方语义是
+            //   **只缩不放**——窗口/全屏大于远端桌面时 1:1 居中留黑边。真 mstsc 的
+            //   「智能调整大小」能全屏拉满，靠的就是这个开关放行放大（官方文档：
+            //   "allows the user to scale the remote session window above its native
+            //   resolution while smart sizing is active"）。必须在 Connect 之前设置；
+            //   Win11 24H2 之前的系统没有该属性，失败则维持旧行为（只缩）。
+            try
+            {
+                object v = true;
+                ((IMsRdpExtendedSettings)ocx).SetProperty("EnableZoom", ref v);
+                Debug("EnableZoom = true（SmartSizing 允许放大铺满）");
+            }
+            catch (Exception ex) { Debug("EnableZoom 设置失败（旧系统，维持只缩）: " + ex.Message); }
+
             // ── 密码 ──
             // 实测：目标已登录时根本不需要密码；目标已注销时 Connect() 也会用 UserName 自动登录。
             // ClearTextPassword 在 .NET Core 上拿不到（见 HANDOFF 10.2），不设也不影响。
@@ -3329,10 +3343,11 @@ namespace SoulLink.Controls
             if (rect != null)
             {
                 var r = rect.Value;
-                input.Mapper.Update(
-                    input.Mapper.RemoteWidth > 0 ? input.Mapper.RemoteWidth : 1280,
-                    input.Mapper.RemoteHeight > 0 ? input.Mapper.RemoteHeight : 720,
-                    r.width, r.height);
+                int rw = input.Mapper.RemoteWidth > 0 ? input.Mapper.RemoteWidth : 1280;
+                int rh = input.Mapper.RemoteHeight > 0 ? input.Mapper.RemoteHeight : 720;
+                // 拉伸（含 EnableZoom 后的放大铺满）都是全幅 ↔ 全幅的线性映射，
+                // 与缩放系数无关，按视口全尺寸换算即可。
+                input.Mapper.Update(rw, rh, r.width, r.height);
             }
 
             SyncMapperViewport();

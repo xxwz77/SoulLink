@@ -2862,6 +2862,10 @@ namespace SoulLink.Views
                 FsNative.SetWindowPos(hwnd, IntPtr.Zero, scr.Left, scr.Top, scr.Width, scr.Height,
                     FsNative.SWP_NOZORDER | FsNative.SWP_NOACTIVATE | FsNative.SWP_FRAMECHANGED);
 
+                // ★ 全屏铺满：拉伸模式（SmartSizing + 连接前已开的 EnableZoom）
+                //   由控件按客户区自动放大铺满，远端分辨率不动——ApplyStretchRefit
+                //   随 WM_SIZE 生效，这里无需额外调用。
+
                 // 顶部标签条让位给画面
                 if (TopBar != null) TopBar.Visibility = Visibility.Collapsed;
 

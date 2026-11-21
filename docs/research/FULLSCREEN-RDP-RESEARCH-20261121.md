@@ -8,7 +8,11 @@
 > （EnterFullScreen/ExitFullScreen + 顶部热区菜单条 + 切换账号菜单），
 > 本次是**补完**而不是新写。
 > 全部 10 项自动化检查通过（FlaUI harness + rust 合成帧测试服务器），
-> 性能无新增异常；已知限制见「七、实测结果」。
+> 性能无新增异常。
+> **全屏铺满**（4K 屏 + 1080p 远端拉伸铺满）：第一版用的 ZoomProperty 是死路
+> （默认 IDispatch 上没有该成员，dynamic 直调失败）；查官方文档找到真 mstsc
+> 「智能调整大小」的机制——**IMsRdpExtendedSettings.EnableZoom**，连接前设置后
+> SmartSizing 即可放大铺满（详见「四、6」与「七」）。
 
 ## 一、现状（代码摸底）
 
@@ -111,6 +115,20 @@ SimpleRemote 已验证的模型（见 SIMPLEREMOTE-TABBED-RDP-RESEARCH-20261117.
    **不实现 Esc 退出**（游戏内 ESC 冲突，见 RdpConsole.cs:2546 注释），tooltip 已修正。
 5. **切页守卫**：`SetActivePage` 离开控制台页时先 `ExitFullScreenIfActive()`
    （全屏下导航已收纳，自动化/热键仍可能触发切页）。
+6. **全屏铺满（EnableZoom）**：`RdpConsole.Configure()` 连接前经
+   `IMsRdpExtendedSettings`（IID 302D8188-0052-4807-806A-362B628F9AC5，Win8+，
+   IUnknown 直系；vtable 槽位用 typelib 探针核实：put_Property 在前）设
+   **EnableZoom = true**。SmartSizing 官方语义是**只缩不放**，EnableZoom 是
+   真 mstsc「智能调整大小」能全屏拉满的放行开关（官方文档原文："allows the
+   user to scale the remote session window above its native resolution while
+   smart sizing is active"）。远端分辨率不动，纯本地缩放。
+   - 中途试过 IMsRdpClient8/9 的 `ZoomProperty`（dynamic 直调）——失败：
+     默认 IDispatch 不含该成员（`System.__ComObject does not contain a
+     definition`），已整体拆除。
+   - Win11 24H2 之前的系统没有 EnableZoom 属性 → 设置失败自动降级为旧行为
+     （只缩），日志有记录。
+   - 副作用（有意为之）：拉伸模式下**窗口**大于远端时同样放大铺满，
+     与真 mstsc 智能调整的语义一致（此前窗口内是 1:1 居中留黑边）。
 
 ## 五、测试方法（可复用）
 
@@ -160,13 +178,14 @@ SimpleRemote 已验证的模型（见 SIMPLEREMOTE-TABBED-RDP-RESEARCH-20261117.
 | 顶部热区召唤菜单条 | ✅ |
 | 退出还原几何（精确到原位置原尺寸） | ✅ 1071,495 1770x1170 |
 | 第二轮往返（可重复性） | ✅ |
+| **全屏铺满（1280x800 → 4K）** | ✅ 两轮截图四角/边缘/中心 9 点采样全非黑，棋盘格铺满整屏 |
 
-**已知限制**：拉伸模式（1/3，SmartSizing）在**全屏**下画面保持远端原分辨率 1:1 居中，
-不放大铺满（窗口内尺寸变化时拉伸正常）。mstscax 在超大客户区下 SmartSizing 不生效，
-属存量行为被全屏放大暴露。用户明确要求拉伸模式**不改远端分辨率**（见
-`RdpConsole.ScheduleStretchRefit` 注释），因此不能用重协商绕过；
-想要真全屏 1:1 请用「跟随窗口」模式（mode 0，进入全屏后远端分辨率会热更新为
-显示器物理分辨率）。待后续单独研究 mstscax 超大尺寸缩放机制。
+**全屏铺满（2026-11-21 二次修复）**：拉伸模式全屏现在**本地放大铺满**，
+远端分辨率不动。机制 = 连接前 `IMsRdpExtendedSettings.EnableZoom = true`
+放行 SmartSizing 放大（见「四、6」）。实测证据：rdp-debug 日志
+`EnableZoom = true`（连接前）+ 两轮全屏截图 9 点像素采样全非黑 +
+目视棋盘格铺满；窗口内拉伸同样放大铺满（与 mstsc 语义一致）。
+注意：Win11 24H2 之前的系统无此属性，自动降级为「只缩」旧行为。
 
 ## 八、参考
 
@@ -179,5 +198,8 @@ SimpleRemote 已验证的模型（见 SIMPLEREMOTE-TABBED-RDP-RESEARCH-20261117.
 来源：
 
 - https://learn.microsoft.com/en-us/windows/win32/termserv/imsrdpclient-fullscreen
+- https://learn.microsoft.com/en-us/windows/win32/termserv/imsrdpextendedsettings-property
+  （EnableZoom / ZoomLevel 命名属性表，EnableZoom 即智能调整放大的放行开关）
+- https://learn.microsoft.com/en-us/windows/win32/termserv/imsrdpclientadvancedsettings-smartsizing
 - https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/TermServ/msrdpclient2notsafeforscripting.md
 - https://forum.devolutions.net/topics/28846/embedded-rdp-session-opens-in-full-screen-window-not-tab
