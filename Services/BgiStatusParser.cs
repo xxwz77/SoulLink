@@ -281,8 +281,7 @@ namespace SoulLink.Services
         private static partial Regex RxCurrentAction();
 
         // 简单的"动作:"行（单独匹配便于取到动作名）
-        [GeneratedRegex(@"动作[:：]s*(?<name>[^
-]{1,24})", RegexOptions.Compiled)]
+        [GeneratedRegex(@"动作[:：]\s*(?<name>[^\r\n]{1,24})", RegexOptions.Compiled)]
         private static partial Regex RxActionLine();
 
         // ⑥ 拾取物品：交互或拾取："霜仙花"
@@ -372,7 +371,7 @@ namespace SoulLink.Services
                             }
                         }
 
-                        var rm = Regex.Match(merged, @"成功切换角色s*[:：]s*""?(?<r>[^""s，。]{1,16})");
+                        var rm = Regex.Match(merged, @"成功切换角色\s*[:：]\s*""?(?<r>[^""\s，。]{1,16})");
                         if (rm.Success)
                         {
                             CurrentAction = "切换角色 " + rm.Groups["r"].Value;
