@@ -567,18 +567,73 @@ namespace SoulLink.Services
 
         /// <summary>
         /// SoulLink 的备份根目录。
-        /// %LOCALAPPDATA%\SoulLink\bgi-backups
+        ///
+        /// ★ 2.20.0：跟随数据目录（默认是 exe 同目录下的 data\bgi-backups），
+        ///   不再写死 %LOCALAPPDATA%。原因见 AppIdentity.DataDir 的注释。
         /// </summary>
         public static string BackupRoot
         {
             get
             {
-                string dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "SoulLink", "bgi-backups");
+                string dir = Path.Combine(AppIdentity.DataDir, "bgi-backups");
                 Directory.CreateDirectory(dir);
                 return dir;
             }
+        }
+
+        /// <summary>
+        /// 每个账号保留最近几次备份。
+        ///
+        /// ★ 2.20.0 新增。之前**没有任何清理机制**，实测 4 个账号 5 天累积了
+        ///   20 次备份 / 872 MB / 14.5 万个文件，全压在 C 盘。
+        ///   一次 User 目录动辄 80~130 MB，不清理必然无限膨胀。
+        ///
+        /// 保留策略：每个账号保留最近 <paramref name="keep"/> 次（默认 3）。
+        /// 按目录名排序即可——名字里带 yyyyMMdd_HHmmss，字典序就是时间序。
+        /// </summary>
+        public static int PruneBackups(int keep = 3)
+        {
+            int removed = 0;
+            try
+            {
+                if (!Directory.Exists(BackupRoot)) return 0;
+
+                foreach (var acct in Directory.GetDirectories(BackupRoot))
+                {
+                    try
+                    {
+                        var snaps = Directory.GetDirectories(acct);
+                        if (snaps.Length <= keep) continue;
+
+                        Array.Sort(snaps, StringComparer.OrdinalIgnoreCase);
+                        // 前面的是旧的，删掉；保留最后 keep 个
+                        for (int i = 0; i < snaps.Length - keep; i++)
+                        {
+                            try { Directory.Delete(snaps[i], recursive: true); removed++; }
+                            catch { /* 被占用/正在用：下次再说 */ }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return removed;
+        }
+
+        /// <summary>当前备份总占用（字节），给设置页显示。</summary>
+        public static long GetBackupSize()
+        {
+            try
+            {
+                if (!Directory.Exists(BackupRoot)) return 0;
+                long sum = 0;
+                foreach (var f in Directory.EnumerateFiles(BackupRoot, "*", SearchOption.AllDirectories))
+                {
+                    try { sum += new FileInfo(f).Length; } catch { }
+                }
+                return sum;
+            }
+            catch { return 0; }
         }
 
         /// <summary>
@@ -598,6 +653,13 @@ namespace SoulLink.Services
                     "User_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
 
                 await Task.Run(() => CopyDirRecursive(userDir, bak, ct), ct).ConfigureAwait(false);
+
+                // ★ 2.20.0：备份完立刻清理旧快照，防止无限膨胀（实测 5 天涨到 872 MB）。
+                //   放在复制之后：万一这次复制失败，至少不会先把旧备份删了。
+                int pruned = PruneBackups();
+                if (pruned > 0)
+                    LogBus.Info("已清理旧备份", pruned + " 份，每账号保留最近 3 次");
+
                 return bak;
             }
             catch { return ""; }

@@ -115,6 +115,7 @@ namespace SoulLink.Views
             FallbackCheck.IsChecked = App.Config.Settings.AllowCurrentSessionFallback;
             OnlyAutomationCheck.IsChecked = App.Config.Settings.OnlyAutomationAccounts;
             ConfigPathText.Text = ConfigStore.ConfigPath;
+            ShowDataDirInfo();
 
             // 联机大厅服务器地址
             try
@@ -847,6 +848,92 @@ namespace SoulLink.Views
             }
             catch (Exception ex) { AutoStartStatus.Text = "操作失败：" + ex.Message; }
             finally { _autoStartBusy = false; }
+        }
+
+        /// <summary>
+        /// 显示数据目录位置与占用。
+        ///
+        /// ★ 2.20.0：数据目录从 %LOCALAPPDATA% 改到 exe 同目录下。
+        ///   老用户的旧数据仍在 C 盘旧位置，这里主动提示，并给出旧目录路径，
+        ///   免得用户以为配置丢了。
+        /// </summary>
+        private void ShowDataDirInfo()
+        {
+            try
+            {
+                string dir = AppIdentity.DataDir;
+                if (AppIdentity.IsPortable)
+                {
+                    DataDirModeText.Text = "数据目录：程序所在文件夹（便携模式）";
+                }
+                else
+                {
+                    DataDirModeText.Text =
+                        "数据目录：%LOCALAPPDATA%（程序目录不可写，已自动回退）。"
+                        + "想放到程序旁边请把 SoulLink 移到有写权限的文件夹。";
+                }
+
+                // 占用统计
+                try
+                {
+                    long backup = Services.BgiUpdater.GetBackupSize();
+                    string txt = "BGI 备份占用 " + FormatSize(backup) + "（每个账号保留最近 3 次）";
+                    StorageUsageText.Text = txt;
+                }
+                catch { StorageUsageText.Text = ""; }
+
+                // 旧数据提示：只在「旧目录确实有东西」且「和当前目录不同」时显示
+                try
+                {
+                    string legacy = AppIdentity.LegacyConfigDir;
+                    bool same = string.Equals(
+                        System.IO.Path.GetFullPath(legacy).TrimEnd('\\'),
+                        System.IO.Path.GetFullPath(dir).TrimEnd('\\'),
+                        StringComparison.OrdinalIgnoreCase);
+                    if (!same && System.IO.Directory.Exists(legacy))
+                    {
+                        int n = 0;
+                        try { n = System.IO.Directory.GetFileSystemEntries(legacy).Length; } catch { }
+                        if (n > 0)
+                        {
+                            LegacyDataHint.Text = "检测到旧版数据：" + legacy
+                                + "（" + n + " 项）。可以手动把需要的文件复制到当前数据目录，确认无误后再删旧的。";
+                            LegacyDataHint.Visibility = Visibility.Visible;
+                        }
+                    }
+                }
+                catch { }
+            }
+            catch
+            {
+                DataDirModeText.Text = "";
+            }
+        }
+
+        private static string FormatSize(long bytes)
+        {
+            if (bytes >= 1024L * 1024 * 1024) return (bytes / 1024.0 / 1024 / 1024).ToString("F1") + " GB";
+            if (bytes >= 1024 * 1024) return (bytes / 1024.0 / 1024).ToString("F1") + " MB";
+            if (bytes >= 1024) return (bytes / 1024.0).ToString("F1") + " KB";
+            return bytes + " B";
+        }
+
+        /// <summary>手动清理旧备份（保留每账号最近 3 次）。</summary>
+        private void PruneBackups_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                int n = Services.BgiUpdater.PruneBackups();
+                ShowDataDirInfo();
+                MessageBox.Show(
+                    n > 0 ? ("已清理 " + n + " 份旧备份。") : "没有需要清理的旧备份（每账号保留最近 3 次）。",
+                    "清理旧备份", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("清理失败：" + ex.Message, "清理旧备份",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         private void OpenConfig_Click(object sender, RoutedEventArgs e)
