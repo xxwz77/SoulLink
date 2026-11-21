@@ -8,7 +8,7 @@
         ShowInTaskbar="False" FontFamily="{StaticResource UiFont}"
         ResizeMode="NoResize">
 
-    <Border CornerRadius="14" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="10">
+    <Border CornerRadius="14" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="0">
                 <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
 
         <Grid ClipToBounds="True">

@@ -287,7 +287,7 @@
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />
                                     </Grid>
-                                    <Grid Height="38" Tag="procs" ToolTip="会话进程"
+                                    <Grid Height="38" Tag="procs" ToolTip="会话瘦身"
                                           Background="Transparent" MouseLeftButtonUp="NavRow_Click">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
@@ -298,7 +298,7 @@
                                                                 IsLight="{Binding IsLight, ElementName=NavGlyphProcs}" />
                                         <ctl:NavigationOrnament x:Name="NavGlyphProcs" Grid.Column="0" PageKey="procs" Width="42"
                                                    />
-                                        <TextBlock x:Name="NavTextProcs" Grid.Column="1" Text="会话进程"
+                                        <TextBlock x:Name="NavTextProcs" Grid.Column="1" Text="会话瘦身"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
                                                    Visibility="Collapsed" />

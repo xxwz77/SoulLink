@@ -325,6 +325,23 @@ namespace SoulLink.Models
 
     public class AppSettings
     {
+        /// <summary>
+        /// 会话瘦身：用户自定义的可清理进程名（不含 .exe，忽略大小写）。
+        ///
+        /// ★ 与内置白名单是**并集**关系：内置的那几个始终可清理，
+        ///   这里追加用户自己加进去的。
+        /// ★ 系统保护名单（explorer/dwm/输入法/SoulLink 自身等）在代码里硬编码，
+        ///   即使这里写了也不会被执行 —— 见 SessionSlimmer.NeverKill。
+        /// ★ 空 = 只用内置白名单（默认）。
+        /// </summary>
+        public List<string> SessionSlimKillList { get; set; } = new List<string>();
+
+        /// <summary>
+        /// 被用户从内置白名单里**移除**的项。
+        /// ★ 内置项也必须能移除 —— 否则等于把默认选择强加给用户。
+        /// 记录在这里而不是直接改内置数组，这样「恢复默认」能一键还原。
+        /// </summary>
+        public List<string> SessionSlimDisabled { get; set; } = new List<string>();
 
         /// <summary>允许在找不到会话时回退到当前用户会话</summary>
         public bool AllowCurrentSessionFallback { get; set; } = true;
@@ -922,6 +939,128 @@ namespace SoulLink.Models
         public string StartTime { get; set; } = "";
 
         public string Display => string.IsNullOrEmpty(Title) ? Name + "  (" + Pid + ")" : Title + "  (" + Pid + ")";
+
+        /// <summary>
+        /// 中文友好名。进程名（CrossDeviceService.exe 之类）普通用户看不懂，
+        /// 会话瘦身页要让人一眼知道"这是什么东西、能不能关"。
+        /// 未收录的返回空串，界面回退到显示原始名。
+        /// </summary>
+        public string FriendlyName
+        {
+            get
+            {
+                string key = Name.ToLowerInvariant();
+                if (key.EndsWith(".exe")) key = key.Substring(0, key.Length - 4);
+                return key switch
+                {
+                    "msedge" => "Edge 浏览器",
+                    "msedgewebview2" => "Edge 内嵌浏览器组件",
+                    "widgets" => "Windows 小组件",
+                    "widgetservice" => "小组件服务",
+                    "searchhost" => "开始菜单搜索",
+                    "startmenuexperiencehost" => "开始菜单",
+                    "shellexperiencehost" => "系统外壳",
+                    "phoneexperiencehost" => "手机连接",
+                    "crossdeviceservice" => "跨设备服务",
+                    "crossdeviceresume" => "跨设备续接",
+                    "gamebar" => "游戏栏",
+                    "gamebarftserver" => "游戏栏服务",
+                    "gamebarpresencewriter" => "游戏栏状态",
+                    "explorer" => "桌面与文件管理器",
+                    "dwm" => "桌面窗口管理器",
+                    "rdpclip" => "远程剪贴板",
+                    "rdpinput" => "远程输入",
+                    "ctfmon" => "输入法",
+                    "chsime" => "中文输入法",
+                    "textinputhost" => "输入体验",
+                    "tabtip" => "触摸键盘",
+                    "svchost" => "系统服务宿主",
+                    "runtimebroker" => "系统权限代理",
+                    "sihost" => "系统进程宿主",
+                    "taskhostw" => "系统任务宿主",
+                    "fontdrvhost" => "字体驱动",
+                    "csrss" => "客户端服务",
+                    "winlogon" => "登录进程",
+                    "nvcontainer" => "NVIDIA 容器",
+                    "nvdisplay.container" => "NVIDIA 显示服务",
+                    "rtkauduservice64" => "Realtek 声卡服务",
+                    "smartscreen" => "SmartScreen 筛选",
+                    "filecoauth" => "文件协作授权",
+                    "useroobebroker" => "系统设置代理",
+                    "defendersessionhelper" => "Defender 会话辅助",
+                    // 游戏与挂机工具（不做清理，只是让列表可读）
+                    "yuanshen" => "原神",
+                    "genshinimpact" => "原神",
+                    "bettergi" => "BetterGI 自动化",
+                    "auto-bgi" => "AutoBGI",
+                    "multiplayerhoeingassistant" => "联机锄地助手",
+                    "mojang" => "Minecraft 启动器",
+                    "zfgamebrowser" => "游戏内置浏览器",
+                    "edgegameassist" => "Edge 游戏助手",
+                    "appactions" => "系统应用操作",
+                    _ => ""
+                };
+            }
+        }
+
+        /// <summary>
+        /// 同名进程合并后的全部 PID。空表示只有这一个实例。
+        /// ★ 列表里同名进程合并成一行显示，但「结束进程」要按这里的
+        ///   全部实例执行 —— 否则用户以为清理干净了，实际还剩十几个。
+        /// </summary>
+        public List<int> DuplicatePids { get; set; } = new List<int>();
+
+        /// <summary>该行代表几个实例（≥1）。</summary>
+        public int InstanceCount => DuplicatePids.Count > 0 ? DuplicatePids.Count : 1;
+
+        /// <summary>PID 列显示文本：多个时显示「首个 +N」。</summary>
+        public string PidText => InstanceCount == 1
+            ? Pid.ToString()
+            : Pid + "  +" + (InstanceCount - 1);
+
+        /// <summary>
+        /// 列表显示用：有中文名时显示「中文名（进程名）」，否则只显示进程名。
+        /// ★ 单行而不是两行 —— 两行在紧凑列表里会把行高撑得很高、
+        ///   而且同一个进程重复出现时两行文字显得非常拥挤。
+        /// </summary>
+        public string DisplayLabel
+        {
+            get
+            {
+                string fn = FriendlyName;
+                string baseText = string.IsNullOrEmpty(fn) ? Name : fn + "（" + Name + "）";
+                return InstanceCount > 1 ? baseText + "  ×" + InstanceCount : baseText;
+            }
+        }
+
+        /// <summary>
+        /// 图标（Segoe MDL2 Assets 字形）。用于进程列表左侧，
+        /// 让一行行进程有视觉区分，而不是纯文字墙。
+        /// </summary>
+        public string IconGlyph
+        {
+            get
+            {
+                string key = Name.ToLowerInvariant();
+                if (key.EndsWith(".exe")) key = key.Substring(0, key.Length - 4);
+                return key switch
+                {
+                    "msedge" or "msedgewebview2" => "\uE774",          // 地球
+                    "widgets" or "widgetservice" => "\uE71D",          // 磁贴
+                    "searchhost" => "\uE721",                          // 搜索
+                    "startmenuexperiencehost" or "shellexperiencehost" => "\uE700",
+                    "phoneexperiencehost" or "crossdeviceservice" or "crossdeviceresume" => "\uE8EA", // 设备
+                    "gamebar" or "gamebarftserver" or "gamebarpresencewriter" => "\uE7FC", // 游戏
+                    "explorer" => "\uE756",                            // 文件夹
+                    "dwm" => "\uE7F4",                                 // 桌面
+                    "rdpclip" or "rdpinput" => "\uE8A7",
+                    "ctfmon" or "chsime" or "textinputhost" or "tabtip" => "\uE765", // 键盘
+                    "svchost" or "runtimebroker" or "sihost" or "taskhostw" => "\uE9F5", // 齿轮
+                    "nvcontainer" or "nvdisplay.container" => "\uE7F4",
+                    _ => "\uE7C3"                                       // 通用方块
+                };
+            }
+        }
     }
 
     public class ExecResult

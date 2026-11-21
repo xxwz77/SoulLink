@@ -43,7 +43,180 @@ namespace SoulLink.Services
             "GameBar",
             "GameBarFTServer",
             "GameBarPresenceWriter",
+            // 触摸键盘（实测杀掉不重启，约 65 MB/会话）
+            "TabTip",
+            // Windows 首次登录引导（登录完成后就没用了，约 11 MB）
+            "UserOOBEBroker",
+            // OneDrive 文件协作授权（挂机用不到，约 21 MB/会话）
+            "FileCoAuth",
         };
+
+        // ★★ 实测「杀了会自动重启」—— 清理无效，只能靠注册表策略 ★★
+        //
+        //   TextInputHost   杀后 20 秒内自动回来（77 MB）
+        //   ShellHost       杀后 20 秒内自动回来（54 MB）
+        //   SearchHost      同上（112 MB）
+        //   Widgets         同上（54 MB）
+        //
+        //   这些不放进清理名单：杀了立刻重启，不仅没省下内存，
+        //   反而多一次进程创建的 CPU 开销。界面上显示在
+        //   「需启动项优化」一栏，靠注册表根治。
+
+        // ★★ 明确不清理的「看起来无用但其实危险」的进程 ★★
+        //
+        //   以下这些在单个会话里也有实例，看似可以清，实测风险很高：
+        //
+        //   nvcontainer / NVDisplay.Container
+        //     NVIDIA 驱动框架的宿主。虽然会话里也有一份，但杀掉会导致
+        //     驱动框架重启 —— 游戏画面黑屏、DXGI 设备丢失。
+        //     显存回收根本不会因为杀它而变快。
+        //
+        //   RtkAudUService64
+        //     音频服务。挂机确实不出声，但杀掉可能让游戏音频初始化失败，
+        //     部分游戏会因此卡在加载界面。
+        //
+        //   FileCoAuth
+        //     OneDrive 文件协作。杀掉会触发一连串重试与重新拉起。
+        //
+        //   AppActions
+        //     系统应用操作代理。它会随系统 UI 自动重启，杀了没有净收益。
+
+        /// <summary>明确不清理的高风险进程（供界面说明）。</summary>
+        public static readonly string[] RiskyNotRecommended =
+        {
+            "nvcontainer", "NVDisplay.Container",
+            "RtkAudUService64", "FileCoAuth", "AppActions",
+        };
+
+        /// <summary>内置可清理进程名（始终生效）。</summary>
+        public static IReadOnlyList<string> BuiltInKillNames => SafeToKill;
+
+        /// <summary>系统保护名单（只读，供界面展示）。</summary>
+        public static IReadOnlyList<string> ProtectedNames => NeverKill.OrderBy(x => x).ToList();
+
+        /// <summary>
+        /// 当前生效的清理名单。
+        ///
+        /// ★ 由三部分组成：
+        ///   ① 内置名单 SafeToKill
+        ///   ② 减去用户在设置里**移除**的项（SessionSlimDisabled）
+        ///   ③ 加上用户**追加**的项（SessionSlimKillList）
+        ///   保护名单 NeverKill 优先级最高，任何来源都不会让它生效。
+        ///
+        /// ★ 内置项也允许移除 —— 用户明确要求"默认选中的东西也要能去掉"。
+        ///   原来内置项在界面上没有移除按钮，等于绑架用户。
+        /// </summary>
+        public static List<string> EffectiveKillNames()
+        {
+            var set = new List<string>();
+            var disabled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var cfg = App.Config?.Settings;
+                if (cfg?.SessionSlimDisabled != null)
+                    foreach (var raw in cfg.SessionSlimDisabled)
+                    {
+                        string d = Normalize(raw);
+                        if (d.Length > 0) disabled.Add(d);
+                    }
+            }
+            catch { }
+
+            foreach (var name in SafeToKill)
+            {
+                if (disabled.Contains(name)) continue;
+                if (NeverKill.Contains(name)) continue;
+                set.Add(name);
+            }
+
+            try
+            {
+                var cfg = App.Config?.Settings;
+                if (cfg?.SessionSlimKillList != null)
+                {
+                    foreach (var raw in cfg.SessionSlimKillList)
+                    {
+                        string name = Normalize(raw);
+                        if (name.Length == 0) continue;
+                        if (NeverKill.Contains(name)) continue;     // 保护名单优先
+                        if (disabled.Contains(name)) continue;      // 用户已移除
+                        if (!set.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+                            set.Add(name);
+                    }
+                }
+            }
+            catch { }
+            return set;
+        }
+
+        /// <summary>该项是否属于内置（仅供界面标注，判断的是"原始名单"）。</summary>
+        public static bool IsBuiltIn(string name)
+        {
+            string n = Normalize(name);
+            return SafeToKill.Any(x => string.Equals(x, n, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>从清理名单移除一项（内置的会记入 disabled，自定义的直接删）。</summary>
+        public static bool RemoveFromList(string name)
+        {
+            string n = Normalize(name);
+            if (n.Length == 0) return false;
+            try
+            {
+                var cfg = App.Config?.Settings;
+                if (cfg == null) return false;
+
+                bool changed = false;
+                // 自定义项：直接删
+                int removed = cfg.SessionSlimKillList?.RemoveAll(
+                    x => string.Equals(Normalize(x), n, StringComparison.OrdinalIgnoreCase)) ?? 0;
+                if (removed > 0) changed = true;
+
+                // 内置项：记入 disabled，避免下次又被加回来
+                if (IsBuiltIn(n))
+                {
+                    cfg.SessionSlimDisabled ??= new List<string>();
+                    if (!cfg.SessionSlimDisabled.Any(
+                            x => string.Equals(Normalize(x), n, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        cfg.SessionSlimDisabled.Add(n);
+                        changed = true;
+                    }
+                }
+
+                if (changed) ConfigStore.Save(App.Config);
+                return changed;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>恢复默认：清空自定义追加项与内置禁用项。</summary>
+        public static void ResetList()
+        {
+            try
+            {
+                var cfg = App.Config?.Settings;
+                if (cfg == null) return;
+                cfg.SessionSlimKillList?.Clear();
+                cfg.SessionSlimDisabled?.Clear();
+                ConfigStore.Save(App.Config);
+            }
+            catch { }
+        }
+
+        /// <summary>规范化进程名：去空格、去 .exe 后缀。</summary>
+        public static string Normalize(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "";
+            string s = raw.Trim();
+            if (s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                s = s.Substring(0, s.Length - 4);
+            return s;
+        }
+
+        /// <summary>这个名字是否受保护（不允许清理）。</summary>
+        public static bool IsProtected(string name)
+            => NeverKill.Contains(Normalize(name));
 
         /// <summary>
         /// 会自动重启、杀进程无意义的外围组件。
@@ -52,6 +225,8 @@ namespace SoulLink.Services
         private static readonly string[] NeedsPolicyFixes =
         {
             "SearchHost", "Widgets", "WidgetService",
+            // 实测会自动重启的两个（2026-11-21 验证，20 秒内回来）
+            "TextInputHost", "ShellHost",
         };
 
         /// <summary>绝对不能结束的进程名。即使配置写错也不动。</summary>
@@ -64,8 +239,9 @@ namespace SoulLink.Services
             "rdpclip", "rdpinput", "RdpInput", "TermSrv",
             // 本程序
             "SoulLink", "SoulLink.Agent", "SoulLink-Stable", "SoulLink.Updater",
-            // 输入法（用户随时要打字）
-            "ctfmon", "ChsIME", "TextInputHost", "TabTip", "InputPersonalization",
+            // 输入法核心（用户随时要打字，这两个绝不能杀）
+            // ★ TextInputHost / TabTip（触摸键盘）**不在此列**：
+            //   挂机场景用不到触摸键盘，已移入可清理名单（用户可自行移除）。
         };
 
         /// <summary>瘦身结果。</summary>
@@ -99,6 +275,7 @@ namespace SoulLink.Services
         public static SessionStat Count(int sessionId)
         {
             var s = new SessionStat { SessionId = sessionId };
+            var killSet = EffectiveKillNames();
             foreach (var p in Process.GetProcesses())
             {
                 try
@@ -111,7 +288,7 @@ namespace SoulLink.Services
                     s.Total++;
                     s.TotalBytes += mem;
 
-                    if (SafeToKill.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+                    if (killSet.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
                     {
                         s.Killable++;
                         s.KillableBytes += mem;
@@ -143,6 +320,7 @@ namespace SoulLink.Services
 
             try
             {
+                var killSet = EffectiveKillNames();
                 var targets = new List<Process>();
                 foreach (var p in Process.GetProcesses())
                 {
@@ -151,7 +329,7 @@ namespace SoulLink.Services
                         if (p.SessionId != sessionId) { p.Dispose(); continue; }
                         string name = p.ProcessName;
                         if (NeverKill.Contains(name)) { p.Dispose(); continue; }
-                        if (!SafeToKill.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+                        if (!killSet.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
                         {
                             p.Dispose();
                             continue;

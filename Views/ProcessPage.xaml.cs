@@ -26,6 +26,7 @@ namespace SoulLink.Views
 
         public void Activate()
         {
+            RefreshWhitelistText();
             RebuildPolicyRows();
             LoadSessions();
         }
@@ -41,7 +42,19 @@ namespace SoulLink.Views
         private async Task LoadSessionsAsync(SessionInfo? focus)
         {
             var all = await SessionService.QueryAsync().ConfigureAwait(true);
-            _sessions = AccountScope.Sessions(SessionService.FilterUsers(all));
+
+            // ★ 只列出「配置里填过」的账号，其余一概不显示。
+            //   AccountScope.Sessions 只过滤主用户，会把 A1/A4 这种
+            //   没配置的账号也列出来 —— 本页是会话瘦身，不该让用户
+            //   对着一个不属于自己管理的会话乱点。
+            var configured = (App.Config?.Accounts ?? new List<Models.Account>())
+                .Where(a => a != null && !string.IsNullOrWhiteSpace(a.UserName))
+                .Select(a => a.UserName.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            _sessions = AccountScope.Sessions(SessionService.FilterUsers(all))
+                .Where(s => s != null && configured.Contains(s.UserName ?? ""))
+                .ToList();
 
             _users.Clear();
             foreach (var s in _sessions)
@@ -72,21 +85,17 @@ namespace SoulLink.Views
         {
             if (_current == null) return;
             _loading = true;
-            StatusText.Text = "正在读取会话 " + _current.Id + " 的进程…";
             try
             {
                 var sid = _current.Id;
                 _all = await Task.Run(() => ProcessService.List(sid)).ConfigureAwait(true);
-                ApplyFilter();
+                ApplyFilter();          // ★ 必须调用：把数据推给 DataGrid，否则列表永远是空的
                 SubText.Text = _current.UserName + " · 会话 #" + _current.Id + " · 共 " + _all.Count + " 个可见进程";
-                StatusText.Text = _all.Count == 0
-                    ? "该会话当前没有可见的用户程序（管理员进程可能不显示）。"
-                    : "已加载 " + _all.Count + " 个进程 · 可多选后点「结束进程」";
                 RefreshSlimSummary(sid);
+                if (ProcessCountText != null) ProcessCountText.Text = "（共 " + _all.Count + " 个）";
             }
             catch (Exception ex)
             {
-                StatusText.Text = "读取失败：" + ex.Message;
             }
             finally
             {
@@ -125,6 +134,145 @@ namespace SoulLink.Views
 
         private readonly System.Collections.ObjectModel.ObservableCollection<PolicyRow> _policyRows = new();
 
+        /// <summary>
+        /// 该账号是否就是"当前正在使用的那个用户"（主用户）。
+        ///
+        /// ★ 判定：与 SoulLink 自身处于同一 Windows 会话号。
+        ///   主用户不参与会话瘦身 —— 他开着桌面、跑着日常程序，
+        ///   动他的启动项会影响正常使用。列表里直接不显示，不给误操作的机会。
+        /// </summary>
+        private static bool IsMainUserAccount(string userName)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(userName)) return false;
+                int mine = System.Diagnostics.Process.GetCurrentProcess().SessionId;
+                var sessions = Services.SessionService.QueryAsync().GetAwaiter().GetResult();
+                foreach (var s in sessions)
+                {
+                    if (s == null || s.Id != mine || s.UserName.Length == 0) continue;
+                    return string.Equals(s.UserName, userName, StringComparison.OrdinalIgnoreCase);
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// 白名单展示：把「会清理什么 / 不清理什么」直接写在界面上。
+        /// 用户点清理之前应该清楚会动哪些进程，而不是盲点。
+        /// </summary>
+        /// <summary>清理名单一行（界面绑定）。</summary>
+        public sealed class KillItem
+        {
+            public string Name { get; set; } = "";
+            /// <summary>内置 / 自定义。</summary>
+            public string SourceText { get; set; } = "";
+            /// <summary>内置项不允许移除（想撤掉请用「恢复默认」，或它本来就在白名单里）。</summary>
+            public System.Windows.Visibility RemoveVisibility { get; set; } = System.Windows.Visibility.Visible;
+        }
+
+        private readonly System.Collections.ObjectModel.ObservableCollection<KillItem> _killItems = new();
+
+        /// <summary>
+        /// 刷新「清理范围」展示。
+        /// 上半部是逐项可移除的当前名单；下半部是固定说明（不清理什么）。
+        /// </summary>
+        private void RefreshWhitelistText()
+        {
+            try
+            {
+                KillListItems.ItemsSource = _killItems;
+                _killItems.Clear();
+
+                var builtIn = Services.SessionSlimmer.BuiltInKillNames;
+                var effective = Services.SessionSlimmer.EffectiveKillNames();
+
+                foreach (var name in effective.OrderBy(x => x))
+                {
+                    bool isBuiltIn = Services.SessionSlimmer.IsBuiltIn(name);
+                    _killItems.Add(new KillItem
+                    {
+                        Name = name,
+                        SourceText = isBuiltIn ? "内置" : "自定义",
+                        // ★ 内置项也允许移除：默认勾选的东西不该绑架用户。
+                        //   移除的内置项记入 SessionSlimDisabled，「恢复默认」可还原。
+                        RemoveVisibility = System.Windows.Visibility.Visible
+                    });
+                }
+
+                var sb = new System.Text.StringBuilder();
+                sb.Append("不清理：游戏/挂机进程、SoulLink 自身、输入法、");
+                sb.Append("explorer/桌面、RDP 连接组件，以及所有未列出的进程。");
+                sb.AppendLine();
+                sb.Append("注：开始菜单搜索、小组件属于系统组件，结束后会被系统自动拉起，");
+                sb.Append("需用「启动项优化」从注册表层面关闭。");
+                WhitelistText.Text = sb.ToString();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 点击账号胶囊切换是否参与优化。
+        /// 用整个 Border 接收点击（圆点开关本身不是独立控件），
+        /// 这样点击面积更大，符合"整行可点"的直觉。
+        /// </summary>
+        private void PolicyRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            try
+            {
+                if ((sender as System.Windows.FrameworkElement)?.DataContext is PolicyRow row)
+                    row.Enabled = !row.Enabled;
+            }
+            catch { }
+        }
+
+        /// <summary>移除一项自定义清理进程。</summary>
+        private void RemoveOne_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string? name = (sender as System.Windows.FrameworkElement)?.Tag as string;
+                if (string.IsNullOrWhiteSpace(name)) return;
+
+                bool changed = Services.SessionSlimmer.RemoveFromList(name);
+                if (changed)
+                    Services.LogBus.Write(Services.LogLevel.Info, "清理名单已更新", "已移除：" + name);
+                RefreshWhitelistText();
+                RefreshSlimSummary(_current?.Id ?? 0);
+            }
+            catch (Exception ex) { Services.LogBus.Error("移除清理项失败", ex.Message); }
+        }
+
+        /// <summary>恢复默认：清空自定义名单，只保留内置。</summary>
+        private void ResetList_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var cfg = App.Config;
+                if (cfg?.Settings?.SessionSlimKillList == null) { RefreshWhitelistText(); return; }
+                int custom = cfg.Settings.SessionSlimKillList?.Count ?? 0;
+                int disabled = cfg.Settings.SessionSlimDisabled?.Count ?? 0;
+                if (custom == 0 && disabled == 0)
+                {
+                    Views.ThemedMessage.Info(Window.GetWindow(this), "已是默认",
+                        "当前清理范围就是内置白名单，没有改动过。");
+                    return;
+                }
+
+                bool ok = Views.ThemedMessage.Confirm(Window.GetWindow(this), "恢复默认",
+                    "将清空 " + custom + " 个自定义项，并恢复 " + disabled +
+                    " 个被移除的内置项。\n\n确定吗？");
+                if (!ok) return;
+
+                Services.SessionSlimmer.ResetList();
+                RefreshWhitelistText();
+                RefreshSlimSummary(_current?.Id ?? 0);
+                Services.LogBus.Write(Services.LogLevel.Info, "清理名单已恢复默认", "");
+            }
+            catch (Exception ex) { Services.LogBus.Error("恢复默认失败", ex.Message); }
+        }
+
         /// <summary>构建账号策略列表：只列举配置里填了用户名的账号。</summary>
         private void RebuildPolicyRows()
         {
@@ -139,13 +287,17 @@ namespace SoulLink.Views
                 foreach (var a in cfg.Accounts)
                 {
                     if (string.IsNullOrWhiteSpace(a.UserName)) continue;
-                    bool loggedOn = Services.SessionSlimmer.IsUserLoggedOn(a.UserName);
+                    // ★ 主用户（当前控制台会话）**完全不出现在列表里**：
+                    //   他开着桌面、跑着用户自己在用的程序，改他的启动项会影响日常使用。
+                    //   判定依据：与当前进程同一会话号 = 主用户。
+                    if (IsMainUserAccount(a.UserName)) continue;
+
                     _policyRows.Add(new PolicyRow
                     {
                         UserName = a.UserName,
-                        // 默认勾选：页面配置好的账号就是用户想优化的对象
+                        // 列表里只剩挂机账号，默认全选
                         Enabled = true,
-                        StateText = loggedOn ? "已登录（需注销后才能改）" : "可优化"
+                        StateText = "可优化"
                     });
                 }
 
@@ -232,9 +384,7 @@ namespace SoulLink.Views
                     "应用启动项优化",
                     "将对以下账号关闭「小组件 / Edge 预启动 / 手机连接」的自动启动：\n\n"
                     + "  " + names + "\n\n"
-                    + "只影响这些账号，其他用户完全不受影响。\n"
-                    + "该设置需要对应账号**注销后重新登录**才生效。\n\n"
-                    + "是否继续？");
+                    + "只影响这些账号，其他用户完全不受影响。");
                 if (!ok) return;
 
                 BtnPolicy.IsEnabled = false;
@@ -260,85 +410,202 @@ namespace SoulLink.Views
 
         private void ApplyFilter()
         {
-            string q = (SearchBox.Text ?? "").Trim();
-            var rows = string.IsNullOrEmpty(q)
-                ? _all
-                : _all.Where(p => p.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0
-                                  || p.Title.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0
-                                  || p.ExePath.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+            // 搜索框已移除（本页定位改为「会话瘦身」），直接展示全部。
+            //
+            // ★ 同名进程合并成一行并标注数量 —— msedgewebview2 这类
+            //   一个宿主就拉起十几个渲染进程，逐行列出全是重复内容，
+            //   既难扫读又占满列表。合并后仍保留全部 PID（见 PidText），
+            //   「结束进程」按合并前的实例集合执行，行为不变。
+            var rows = _all
+                .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(g =>
+                {
+                    var first = g.First();
+                    var pids = g.Select(x => x.Pid).ToList();
+                    if (pids.Count == 1) return first;
+
+                    // 多个同名进程：合成一条，Name 保持原名，Additional 记录数量
+                    var merged = new RemoteProcess
+                    {
+                        Pid = pids[0],
+                        Name = first.Name,
+                        ExePath = first.ExePath,
+                        Title = first.Title,
+                        StartTime = first.StartTime,
+                    };
+                    merged.DuplicatePids = pids;
+                    return merged;
+                })
+                .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             // 用 DataGrid.ItemsSource 迭代会触发“同一个可枚举不能被同时使用”，这里走默认视图
-            Grid.ItemsSource = null;
-            var view = new System.Windows.Data.ListCollectionView(rows);
-            Grid.ItemsSource = view;
+            try
+            {
+                Grid.ItemsSource = null;
+                var view = new System.Windows.Data.ListCollectionView(rows);
+                Grid.ItemsSource = view;
+                Services.LogBus.Write(Services.LogLevel.Info, "进程列表已更新",
+                    "行数=" + (rows?.Count ?? 0) + " ItemsSource=" + (Grid.ItemsSource != null));
+            }
+            catch (Exception ex)
+            {
+                Services.LogBus.Error("进程列表渲染失败", ex.GetType().Name + ": " + ex.Message);
+            }
         }
 
-        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyFilter();
 
         private void Refresh_Click(object sender, RoutedEventArgs e) => _ = LoadSessionsAsync(_current);
 
         private void Grid_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            BtnKill.IsEnabled = Grid.SelectedItems.Count > 0;
+            bool has = Grid.SelectedItems.Count > 0;
+            var kill = FindName("BtnKillAdvanced") as System.Windows.Controls.Button;
+            if (kill != null) kill.IsEnabled = has;
+            var add = FindName("BtnAddToList") as System.Windows.Controls.Button;
+            if (add != null) add.IsEnabled = has;
+        }
+
+        /// <summary>
+        /// 把选中的进程加入用户自定义清理名单。
+        ///
+        /// ★ 保护名单里的进程不允许加入 —— 按钮会直接拒绝并说明原因，
+        ///   而不是"加进去了但实际不生效"（那样用户会困惑）。
+        /// </summary>
+        private void AddToList_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var picked = Grid.SelectedItems.Cast<RemoteProcess>().ToList();
+                if (picked.Count == 0) return;
+
+                var added = new List<string>();      // 这次真的加进去的
+                var alreadyIn = new List<string>();  // 本来就在清理名单里
+                var refused = new List<string>();    // 系统保护，不允许
+
+                var cfg = App.Config;
+                if (cfg?.Settings == null) return;
+                cfg.Settings.SessionSlimKillList ??= new List<string>();
+
+                // 当前已生效的全部清理项（内置 + 自定义 - 被移除的）
+                var effective = new HashSet<string>(
+                    Services.SessionSlimmer.EffectiveKillNames(),
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (var p in picked)
+                {
+                    string name = Services.SessionSlimmer.Normalize(p.Name);
+                    if (name.Length == 0) continue;
+
+                    if (Services.SessionSlimmer.IsProtected(name))
+                    {
+                        refused.Add(name);
+                        continue;
+                    }
+
+                    // ★ 关键修正：如果它已经在生效名单里（无论是内置还是之前加过），
+                    //   就明确说"已在名单中"，绝不能报"已加入"——
+                    //   原来这里跳过之后仍然弹成功提示，用户以为加上了其实没变化。
+                    if (effective.Contains(name))
+                    {
+                        alreadyIn.Add(name);
+                        continue;
+                    }
+
+                    cfg.Settings.SessionSlimKillList.Add(name);
+                    effective.Add(name);
+                    added.Add(name);
+                }
+
+                if (added.Count > 0)
+                {
+                    Services.ConfigStore.Save(cfg);
+                    Services.LogBus.Write(Services.LogLevel.Ok, "清理名单已更新",
+                        "已加入：" + string.Join("、", added));
+                }
+
+                var msg = new System.Text.StringBuilder();
+                if (added.Count > 0)
+                    msg.Append("已加入：" + string.Join("、", added));
+                if (alreadyIn.Count > 0)
+                {
+                    if (msg.Length > 0) msg.Append("\n\n");
+                    msg.Append("已在名单中（无需重复添加）：" + string.Join("、", alreadyIn));
+                }
+                if (refused.Count > 0)
+                {
+                    if (msg.Length > 0) msg.Append("\n\n");
+                    msg.Append("未加入（系统保护，不允许清理）：" + string.Join("、", refused));
+                }
+                if (msg.Length == 0) msg.Append("没有可添加的进程。");
+
+                RefreshWhitelistText();
+                RefreshSlimSummary(_current?.Id ?? 0);
+                Views.ThemedMessage.Info(Window.GetWindow(this), "清理名单", msg.ToString());
+            }
+            catch (Exception ex)
+            {
+                Services.LogBus.Error("加入清理名单失败", ex.Message);
+            }
         }
 
         private async void Kill_Click(object sender, RoutedEventArgs e)
         {
             if (_current == null || Grid.SelectedItems.Count == 0) return;
 
-            var targets = Grid.SelectedItems.Cast<RemoteProcess>().ToList();
-            string names = string.Join("、", targets.Take(3).Select(t => t.Name)) + (targets.Count > 3 ? " 等" : "");
-            if (!Dialogs.Confirm("确定结束 " + targets.Count + " 个进程？\n\n" + names, "结束进程", true)) return;
+            var picked = Grid.SelectedItems.Cast<RemoteProcess>().ToList();
+
+            // ★ 合并行要展开成全部 PID 再杀，否则用户以为清理干净了、
+            //   实际同一个进程还剩十几个实例。
+            var targets = new List<RemoteProcess>();
+            foreach (var p in picked)
+            {
+                if (p.DuplicatePids.Count > 0)
+                {
+                    foreach (var pid in p.DuplicatePids)
+                        targets.Add(new RemoteProcess { Pid = pid, Name = p.Name, ExePath = p.ExePath });
+                }
+                else targets.Add(p);
+            }
+
+            string names = string.Join("、", picked.Take(3).Select(t => t.Name))
+                         + (picked.Count > 3 ? " 等" : "");
+            string detail = targets.Count != picked.Count
+                ? "\n\n共 " + targets.Count + " 个进程实例（含同名合并项）"
+                : "";
+            if (!Dialogs.Confirm("确定结束 " + targets.Count + " 个进程？\n\n" + names + detail,
+                                 "结束进程", true)) return;
 
             int ok = 0;
             var errors = new List<string>();
-            foreach (var t in targets)
+            await Task.Run(() =>
             {
-                var r = await Task.Run(() => ProcessService.KillAsync(t));
-                if (r.Ok) ok++;
-                else errors.Add(r.Message);
-            }
+                foreach (var t in targets)
+                {
+                    try
+                    {
+                        using var p = System.Diagnostics.Process.GetProcessById(t.Pid);
+                        p.Kill();
+                        ok++;
+                    }
+                    catch (Exception ex) { errors.Add(t.Name + "(" + t.Pid + ")：" + ex.Message); }
+                }
+            }).ConfigureAwait(true);
 
-            LogBus.Write(ok > 0 ? LogLevel.Ok : LogLevel.Error,
-                "结束进程 " + ok + "/" + targets.Count + " · 会话 #" + _current.Id,
-                string.Join(Environment.NewLine, errors));
+            Services.LogBus.Write(errors.Count == 0 ? Services.LogLevel.Ok : Services.LogLevel.Warn,
+                "结束进程", "成功 " + ok + " 个" + (errors.Count > 0 ? "，失败 " + errors.Count + " 个" : ""));
 
-            StatusText.Text = "已结束 " + ok + " 个进程" + (errors.Count > 0 ? "，" + errors.Count + " 个失败" : "");
-            await LoadProcessesAsync();
+            await LoadProcessesAsync().ConfigureAwait(true);
         }
 
-        private async void OpenNew_Click(object sender, RoutedEventArgs e)
+        private void OpenNew_Click(object sender, RoutedEventArgs e)
         {
-            if (_current == null) { StatusText.Text = "请先选择一个用户会话。"; return; }
-
-            var dlg = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "在 " + _current.UserName + " 的桌面打开程序",
-                Filter = "程序 (*.exe)|*.exe|所有文件 (*.*)|*.*",
-                CheckFileExists = false
-            };
-            if (dlg.ShowDialog() != true) return;
-
-            // 不再需要密码：投送走 SYSTEM 计划任务 + WTSQueryUserToken
-            var account = App.Config.Accounts.FirstOrDefault(a =>
-                string.Equals(a.UserName, _current.UserName, StringComparison.OrdinalIgnoreCase));
-            if (account == null)
-            {
-                account = new Account { UserName = _current.UserName };
-                App.Config.Accounts.Add(account);
-                ConfigStore.Save(App.Config);
-            }
-
-            var target = new ActionService.Target { Account = account, Session = _current };
-            await Task.Run(() => ActionService.EnsureToolAsync(App.Config));
-            var r = await Task.Run(() => ActionService.LaunchAsync(target, dlg.FileName, null));
-            LogBus.Write(r.Ok ? LogLevel.Ok : LogLevel.Error, r.Message);
-            StatusText.Text = r.Message;
-            await LoadProcessesAsync();
+            // 该按钮已从界面移除，保留方法避免 XAML 引用报错。
         }
     }
 
-    public class SessionItem
+    /// <summary>会话下拉框的一项。由 ProcessPage 内部使用。</summary>
+    internal sealed class SessionItem
     {
         public SessionInfo Session { get; }
         public SessionItem(SessionInfo s) { Session = s; }
