@@ -21,7 +21,7 @@
            避免用户装的是 .NET 11 却没有 .NET 8 的情况。 -->
     <RollForward>LatestMajor</RollForward>
 
-    <Version>3.2.0</Version>
+    <Version>3.2.2</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 一键救援</AssemblyTitle>
