@@ -105,6 +105,13 @@
                                                  Fill="{DynamicResource AmberBrush}" />
                                         <TextBlock x:Name="VersionText" FontSize="10.5"
                                                    Foreground="{DynamicResource TextMuted}" />
+                                        <!-- ★ 3.2.3：光靠版本号变琥珀色 + 一个小圆点，用户看不出是什么意思
+                                             （实测反馈："有更新的时候应该是有文字告诉别人有新版本"）。
+                                             这里直接写出文字，并显示目标版本号。 -->
+                                        <TextBlock x:Name="UpdateHintText" Margin="6,0,0,0" FontSize="10"
+                                                   VerticalAlignment="Center" Visibility="Collapsed"
+                                                   Foreground="{DynamicResource AmberBrush}"
+                                                   Text="有新版本" />
                                     </StackPanel>
                                 </Button>
                             </StackPanel>

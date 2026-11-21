@@ -563,12 +563,22 @@ namespace SoulLink.Views
 
         // ── 云端更新 ────────────────────────────────────────────────
         //
-        // 启动后延迟静默检查一次；有新版就把版本号染成琥珀色 + 显示红点。
-        // 点击版本号可随时手动检查。
+        // 启动后延迟静默检查一次，之后**每小时**再查一次；有新版就把版本号染成
+        // 琥珀色 + 显示圆点 + 明写「有新版本 vX.Y.Z」。点击版本号可随时手动检查。
+        //
+        // ★ 3.2.3：原来是"只在启动时查一次"，长时间挂机的人永远看不到新版本
+        //   （用户要求：「要定期检查更新，先设置为一小时」）。
+        // ★ 周期任务走 TickHub，不新建 DispatcherTimer（AGENTS.md 性能约束：
+        //   曾因 6 个独立 1 秒定时器把空闲 CPU 打到 27%）。
         private Services.CloudUpdater.Manifest? _pendingUpdate;
         private bool _updateChecking;
+        private IDisposable? _updateTimer;
+        private bool _updateFirstCheckDone;
 
-        /// <summary>启动后的静默检查（不打扰用户，失败静默）。</summary>
+        /// <summary>检查更新的间隔（秒）。用户要求先设为一小时。</summary>
+        private const int UpdateCheckIntervalSeconds = 3600;
+
+        /// <summary>启动后的静默检查 + 之后每小时一次的定期检查（失败静默）。</summary>
         private async void SilentUpdateCheck()
         {
             try
@@ -577,13 +587,33 @@ namespace SoulLink.Views
                 await Task.Delay(TimeSpan.FromSeconds(6));
                 if (!IsLoaded) return;
 
+                await CheckUpdateQuietAsync();
+                _updateFirstCheckDone = true;
+
+                // 之后按 TickHub 节拍定期检查
+                _updateTimer = TickHub.Register("UpdateCheck", UpdateCheckIntervalSeconds, () =>
+                {
+                    if (!_updateFirstCheckDone) return;   // 首次检查还没回来，跳过这一拍
+                    _ = CheckUpdateQuietAsync();
+                });
+            }
+            catch { /* 静默检查失败不提示 */ }
+        }
+
+        /// <summary>静默查一次；有新版就挂标记。已经有待更新或正在检查时跳过。</summary>
+        private async Task CheckUpdateQuietAsync()
+        {
+            if (_updateChecking || _pendingUpdate != null) return;   // 已发现更新就不再重复查
+            _updateChecking = true;
+            try
+            {
                 var m = await Services.CloudUpdater.CheckAsync();
                 if (m == null) return;
-
                 _pendingUpdate = m;
                 ApplyUpdateBadge(true);
             }
             catch { /* 静默检查失败不提示 */ }
+            finally { _updateChecking = false; }
         }
 
         /// <summary>把版本号标记为「有更新」。不暴露任何发布地址。</summary>
@@ -594,15 +624,24 @@ namespace SoulLink.Views
                 if (VersionText == null) return;
                 if (hasUpdate)
                 {
+                    string ver = _pendingUpdate?.Version ?? "";
                     VersionText.Foreground = (Brush)FindResource("AmberBrush");
-                    VersionText.ToolTip = "发现新版本 " + (_pendingUpdate?.Version ?? "") + "，点击查看";
+                    VersionText.ToolTip = "发现新版本 " + ver + "，点击查看";
                     if (UpdateDot != null) UpdateDot.Visibility = Visibility.Visible;
+
+                    // ★ 3.2.3：用文字明确告诉用户"有新版本"，不再只靠一个圆点。
+                    if (UpdateHintText != null)
+                    {
+                        UpdateHintText.Text = ver.Length > 0 ? "有新版本 v" + ver : "有新版本";
+                        UpdateHintText.Visibility = Visibility.Visible;
+                    }
                 }
                 else
                 {
                     VersionText.Foreground = (Brush)FindResource("TextMuted");
                     VersionText.ToolTip = "点击检查更新";
                     if (UpdateDot != null) UpdateDot.Visibility = Visibility.Collapsed;
+                    if (UpdateHintText != null) UpdateHintText.Visibility = Visibility.Collapsed;
                 }
             }
             catch { }
@@ -1212,6 +1251,8 @@ namespace SoulLink.Views
         {
             _closingToTray = true;
             _automationScheduler?.Dispose();
+            // ★ 3.2.3：定期检查更新的节拍也要停掉，否则退出后 TickHub 还留着这项订阅。
+            try { _updateTimer?.Dispose(); _updateTimer = null; } catch { }
             try { ConsoleView.DisposeConsoles(); } catch { }
             Close();
         }
