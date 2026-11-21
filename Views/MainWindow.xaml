@@ -67,7 +67,16 @@
                             </Grid>
                             <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
                                 <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
-                                <TextBlock x:Name="VersionText" FontSize="10.5" Foreground="{DynamicResource TextMuted}" />
+                                <!-- 版本号：可点击检查更新；有新版时变琥珀色并显示红点 -->
+                                <StackPanel Orientation="Horizontal" Background="Transparent"
+                                            Cursor="Hand" ToolTip="点击检查更新"
+                                            MouseLeftButtonUp="VersionText_Click">
+                                    <Ellipse x:Name="UpdateDot" Width="6" Height="6" Margin="0,0,4,0"
+                                             VerticalAlignment="Center" Visibility="Collapsed"
+                                             Fill="{DynamicResource AmberBrush}" />
+                                    <TextBlock x:Name="VersionText" FontSize="10.5"
+                                               Foreground="{DynamicResource TextMuted}" />
+                                </StackPanel>
                             </StackPanel>
                         </StackPanel>
 

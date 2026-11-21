@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>sl-rescue</AssemblyName>
+
+    <!-- ★ 框架依赖发布：从 33 MB 降到几十 KB。
+         原来的产物是自包含发布，把整个 .NET 8 运行时打了进去（33 MB），
+         而本程序只做 5 个 Win32 调用（ClipCursor / ShowCursor /
+         mouse_event / GetAsyncKeyState / SetSystemMetrics），
+         用不到 WPF 或任何重型组件。
+
+         ★ 为什么可以依赖 .NET：主程序本身是框架依赖的（3.4 MB，
+           要求 .NET 11 桌面运行时）。用户既然装了主程序，
+           机器上必然已有运行时，sl-rescue 不增加任何前置条件。
+
+         ★ 目标框架也跟随主程序从 net8.0 升到 net11.0，
+           避免用户装的是 .NET 11 却没有 .NET 8 的情况。 -->
+    <RollForward>LatestMajor</RollForward>
+
+    <Version>3.1.3</Version>
+    <FileVersion>$(Version).0</FileVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <AssemblyTitle>SoulLink 一键救援</AssemblyTitle>
+    <Product>SoulLink</Product>
+    <Description>解除光标裁剪、释放鼠标按键、结束 SoulLink 进程</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

@@ -82,6 +82,17 @@ tools/*
 !tools/broker-setup
 !tools/broker-setup/Program.cs
 !tools/broker-setup/SoulLink.BrokerSetup.csproj
+
+# ★ 云更新器：主程序启动它来替换文件，必须随包分发，源码必须入库。
+!tools/updater
+!tools/updater/Program.cs
+!tools/updater/SoulLink.Updater.csproj
+!tools/updater/app.manifest
+
+# ★ 一键救援程序：主程序卡死时的兜底工具，源码必须入库。
+!tools/rescue
+!tools/rescue/Program.cs
+!tools/rescue/Rescue.csproj
 # ── 本地构建 / 发布 / 备份产物（体积大，不入库；2026-11-20 补）────────────
 # 为什么补：git add -A 会把 7.4 GB 的 dist-*/backups/artifacts/releases 全吞进去。
 dist-*/

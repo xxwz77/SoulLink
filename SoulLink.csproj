@@ -108,15 +108,48 @@
           SkipUnchangedFiles="true"
           Condition="Exists('$(MSBuildProjectDirectory)\dist\tools\SoulLink.BrokerSetup.exe')" />
   </Target>
+  <!-- ★ 独立更新器：必须作为**独立文件**放在 exe 旁边。
+       单文件发布会把托管程序集合并进 exe，所以用 Target 在构建后复制，
+       与 CopyBrokerSetupToOutput 同理。 -->
+  <Target Name="BuildUpdater" BeforeTargets="AfterBuild" Condition="Exists('$(MSBuildProjectDirectory)\tools\updater\SoulLink.Updater.csproj')">
+    <MSBuild Projects="$(MSBuildProjectDirectory)\tools\updater\SoulLink.Updater.csproj"
+             Targets="Restore;Build"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="CopyUpdaterToOutput" AfterTargets="AfterBuild">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\updater\bin\$(Configuration)\net11.0-windows\SoulLink.Updater.exe"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildProjectDirectory)\tools\updater\bin\$(Configuration)\net11.0-windows\SoulLink.Updater.exe')" />
+  </Target>
+
+  <Target Name="CopyUpdaterToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\updater\bin\$(Configuration)\net11.0-windows\SoulLink.Updater.exe"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildProjectDirectory)\tools\updater\bin\$(Configuration)\net11.0-windows\SoulLink.Updater.exe')" />
+  </Target>
+
+  <!-- ★ 一键救援程序 sl-rescue.exe：放在 exe 旁边，主程序卡死时用户双击即可。
+       从 33 MB（自包含）降到 ~72 KB（框架依赖），见 tools/rescue/Rescue.csproj 注释。 -->
+  <Target Name="PublishRescue" BeforeTargets="AfterBuild" Condition="Exists('$(MSBuildProjectDirectory)\tools\rescue\Rescue.csproj')">
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\tools\rescue\Rescue.csproj&quot; -c $(Configuration) -r win-x64 --self-contained false -o &quot;$(MSBuildProjectDirectory)\artifacts\rescue-build&quot; --nologo -v q"
+          ContinueOnError="true" />
+  </Target>
+
+  <Target Name="CopyRescueToOutput" AfterTargets="AfterBuild">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\artifacts\rescue-build\sl-rescue.exe"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildProjectDirectory)\artifacts\rescue-build\sl-rescue.exe')" />
+  </Target>
+
+  <Target Name="CopyRescueToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\artifacts\rescue-build\sl-rescue.exe"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildProjectDirectory)\artifacts\rescue-build\sl-rescue.exe')" />
+  </Target>
+
 </Project>
-
-
-
-
-
-
-
-
-
-
-

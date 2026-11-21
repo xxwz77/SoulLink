@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shell;
+using System.Threading.Tasks;
 using System.Windows.Threading;
 using SoulLink.Models;
 using SoulLink.Services;
@@ -86,6 +87,8 @@ namespace SoulLink.Views
 
             Loaded += MainWindow_Loaded;
             ShowVersion();
+
+            SilentUpdateCheck();
             // ★ 非默认身份（如挂机验证版 SoulLink-Stable.exe）在标题上加标识，
             //   避免两个窗口标题完全相同、分不清哪个是哪个。
             try
@@ -491,6 +494,99 @@ namespace SoulLink.Views
                 VersionText.ToolTip = "SoulLink " + text + " · 多用户挂机中控台";
             }
             catch { if (VersionText != null) VersionText.Text = "v1.0.0"; }
+        }
+
+        // ── 云端更新 ────────────────────────────────────────────────
+        //
+        // 启动后延迟静默检查一次；有新版就把版本号染成琥珀色 + 显示红点。
+        // 点击版本号可随时手动检查。
+        private Services.CloudUpdater.Manifest? _pendingUpdate;
+        private bool _updateChecking;
+
+        /// <summary>启动后的静默检查（不打扰用户，失败静默）。</summary>
+        private async void SilentUpdateCheck()
+        {
+            try
+            {
+                // 延迟几秒，避开启动时的加载高峰
+                await Task.Delay(TimeSpan.FromSeconds(6));
+                if (!IsLoaded) return;
+
+                var m = await Services.CloudUpdater.CheckAsync();
+                if (m == null) return;
+
+                _pendingUpdate = m;
+                ApplyUpdateBadge(true);
+            }
+            catch { /* 静默检查失败不提示 */ }
+        }
+
+        /// <summary>把版本号标记为「有更新」。不暴露任何发布地址。</summary>
+        private void ApplyUpdateBadge(bool hasUpdate)
+        {
+            try
+            {
+                if (VersionText == null) return;
+                if (hasUpdate)
+                {
+                    VersionText.Foreground = (Brush)FindResource("AmberBrush");
+                    VersionText.ToolTip = "发现新版本 " + (_pendingUpdate?.Version ?? "") + "，点击查看";
+                    if (UpdateDot != null) UpdateDot.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    VersionText.Foreground = (Brush)FindResource("TextMuted");
+                    VersionText.ToolTip = "点击检查更新";
+                    if (UpdateDot != null) UpdateDot.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch { }
+        }
+
+        private async void VersionText_Click(object sender, MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+            if (_updateChecking) return;
+
+            // 已检测到更新：直接弹窗
+            if (_pendingUpdate != null)
+            {
+                ShowUpdateDialog(_pendingUpdate);
+                return;
+            }
+
+            _updateChecking = true;
+            try
+            {
+                VersionText.Text = "检查更新…";
+                var m = await Services.CloudUpdater.CheckAsync();
+                if (m == null)
+                {
+                    ShowVersion();
+                    Views.ThemedMessage.Info(this, "已是最新版本",
+                        "当前版本 v" + Services.CloudUpdater.CurrentVersion + " 已是最新。");
+                    return;
+                }
+                _pendingUpdate = m;
+                ShowVersion();
+                ApplyUpdateBadge(true);
+                ShowUpdateDialog(m);
+            }
+            finally
+            {
+                _updateChecking = false;
+            }
+        }
+
+        private void ShowUpdateDialog(Services.CloudUpdater.Manifest m)
+        {
+            bool ok = Views.UpdateWindow.ShowFor(this, m);
+            if (!ok) return;
+
+            // 用户确认更新后，UpdateWindow 已经启动更新器并要求退出。
+            // 这里只负责把主程序干净地关掉（保存配置等）。
+            try { Close(); } catch { }
+            Application.Current?.Shutdown();
         }
 
         private static string TrimRevision(string version)
