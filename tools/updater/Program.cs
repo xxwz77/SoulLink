@@ -51,9 +51,25 @@ namespace SoulLink.Updater
             if (!Directory.Exists(rootDir))
                 return ShowError("找不到程序安装目录。");
 
-            // 等主程序退出
+            // 等主程序退出。
+            // ★ 超时后必须**强制结束**，不能只是放弃等待：
+            //   WPF 的 Shutdown() 有时会被窗口关闭流程拖住，主程序迟迟不退；
+            //   这时如果直接往下走，覆盖 SoulLink.exe 会因文件被锁而失败，
+            //   整个更新回滚、用户看到"更新了但版本没变"（实测踩过）。
             if (int.TryParse(pidText, out int pid))
-                WaitForExit(pid, TimeSpan.FromSeconds(30));
+            {
+                if (!WaitForExit(pid, TimeSpan.FromSeconds(20)))
+                {
+                    try
+                    {
+                        using var victim = System.Diagnostics.Process.GetProcessById(pid);
+                        victim.Kill(entireProcessTree: true);
+                    }
+                    catch { }
+                    // 等文件句柄真正释放
+                    Thread.Sleep(1500);
+                }
+            }
 
             // 文件锁释放有延迟（实测约 1~2 秒）
             Thread.Sleep(1500);
@@ -183,15 +199,16 @@ namespace SoulLink.Updater
             }
         }
 
-        private static void WaitForExit(int pid, TimeSpan timeout)
+        /// <summary>等待指定进程退出。返回 true = 已退出（或本就不存在）。</summary>
+        private static bool WaitForExit(int pid, TimeSpan timeout)
         {
             try
             {
-                var p = Process.GetProcessById(pid);
-                p.WaitForExit((int)timeout.TotalMilliseconds);
+                using var p = Process.GetProcessById(pid);
+                return p.WaitForExit((int)timeout.TotalMilliseconds);
             }
-            catch (ArgumentException) { }
-            catch { }
+            catch (ArgumentException) { return true; }   // 进程不存在 = 已退出
+            catch { return false; }
         }
 
         private static int ShowError(string message)

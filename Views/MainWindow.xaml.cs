@@ -546,9 +546,8 @@ namespace SoulLink.Views
             catch { }
         }
 
-        private async void VersionText_Click(object sender, MouseButtonEventArgs e)
+        private async void VersionText_Click(object sender, RoutedEventArgs e)
         {
-            e.Handled = true;
             if (_updateChecking) return;
 
             // 已检测到更新：直接弹窗

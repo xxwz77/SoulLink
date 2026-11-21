@@ -49,7 +49,8 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center"
+                                    WindowChrome.IsHitTestVisibleInChrome="True">
                             <Grid Width="34" Height="34">
                                 <Ellipse Fill="#22FFFFFF" />
                                 <Ellipse Width="26" Height="26">
@@ -67,16 +68,32 @@
                             </Grid>
                             <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
                                 <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
-                                <!-- 版本号：可点击检查更新；有新版时变琥珀色并显示红点 -->
-                                <StackPanel Orientation="Horizontal" Background="Transparent"
-                                            Cursor="Hand" ToolTip="点击检查更新"
-                                            MouseLeftButtonUp="VersionText_Click">
-                                    <Ellipse x:Name="UpdateDot" Width="6" Height="6" Margin="0,0,4,0"
-                                             VerticalAlignment="Center" Visibility="Collapsed"
-                                             Fill="{DynamicResource AmberBrush}" />
-                                    <TextBlock x:Name="VersionText" FontSize="10.5"
-                                               Foreground="{DynamicResource TextMuted}" />
-                                </StackPanel>
+                                <!-- 版本号：点击检查更新；有新版时变琥珀色并显示红点 -->
+                                <!-- ★ 用 Button 而不是 StackPanel+MouseLeftButtonUp：
+                                     本窗口是自定义标题栏（WindowChrome），标题栏区域默认
+                                     只用于拖动窗口，鼠标事件到不了普通 WPF 元素 ——
+                                     即使加 WindowChrome.IsHitTestVisibleInChrome 也不可靠
+                                     （它不向下传递给嵌套的子元素，实测点击仍无反应）。
+                                     Button 自带命中测试并会阻止拖动，最稳。 -->
+                                <Button x:Name="VersionButton" Click="VersionText_Click"
+                                        Cursor="Hand" ToolTip="点击检查更新"
+                                        WindowChrome.IsHitTestVisibleInChrome="True"
+                                        Background="Transparent" BorderThickness="0" Padding="0"
+                                        HorizontalAlignment="Left"
+                                        HorizontalContentAlignment="Left">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <ContentPresenter />
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse x:Name="UpdateDot" Width="6" Height="6" Margin="0,0,4,0"
+                                                 VerticalAlignment="Center" Visibility="Collapsed"
+                                                 Fill="{DynamicResource AmberBrush}" />
+                                        <TextBlock x:Name="VersionText" FontSize="10.5"
+                                                   Foreground="{DynamicResource TextMuted}" />
+                                    </StackPanel>
+                                </Button>
                             </StackPanel>
                         </StackPanel>
 
