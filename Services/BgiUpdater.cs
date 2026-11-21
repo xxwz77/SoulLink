@@ -471,51 +471,18 @@ namespace SoulLink.Services
             return r;
         }
 
-        // ══════════ 停 BGI（复用现状方案）══════════
-
-        private static async Task UnusedStopBgiAsync(int sessionId, string bgiExePath,
-                                               Action<string> step)
-        {
-            var bgis = FindInSession(BgiProcessName, sessionId);
-            if (bgis.Count == 0)
-            {
-                step("  BGI 未运行，跳过");
-                return;
-            }
-
-            string hotkey = BgiTaskPreparer.ReadCancelHotkey(bgiExePath);
-            if (!string.IsNullOrEmpty(hotkey))
-            {
-                step("  发送停止快捷键 " + hotkey);
-                BgiTaskPreparer.SendHotkeyToSessionPublic(bgis[0].Id, hotkey);
-
-                // 等它自己退出
-                for (int i = 0; i < 10; i++)
-                {
-                    await Task.Delay(300).ConfigureAwait(false);
-                    if (FindInSession(BgiProcessName, sessionId).Count == 0)
-                    {
-                        step("  BGI 已退出");
-                        return;
-                    }
-                }
-                step("  快捷键没让它退出，改为结束进程");
-            }
-            else
-            {
-                step("  未配置停止快捷键，直接结束进程");
-            }
-
-            KillInSession(BgiProcessName, sessionId, step);
-
-            // 等进程真的没了
-            for (int i = 0; i < 20; i++)
-            {
-                if (FindInSession(BgiProcessName, sessionId).Count == 0) return;
-                await Task.Delay(300).ConfigureAwait(false);
-            }
-            step("  ⚠ BGI 进程仍未退出");
-        }
+        // ★★ 3.1.11：这里原来有一份 UnusedStopBgiAsync（已删除）★★
+        //
+        //   它是更新 BGI 前"停 BGI"的第二套实现：读 exePath 附近的快捷键 →
+        //   PostMessage 直投 → 轮询进程退出 → 不行再杀。
+        //   两套实现并存的问题：
+        //     · 它读的是 ReadCancelHotkey(exePath)（按文件路径猜），
+        //       而守卫走 ReadCancelHotkeyFor(sessionId, exePath)（数据中心 + 会话映射），
+        //       两处可能读到不同结果；
+        //     · 它用 PostMessage 单通道，守卫是「投送通道优先 + PostMessage 兜底」；
+        //     · 它轮询进程是否退出，守卫是等**日志出现停止证据**（用户要求）。
+        //   更新 BGI 现在统一走 BgiStartGuard.BeforeStartAsync（见本文件 ① 段），
+        //   与自动化流程的清场完全同一条逻辑，不再有第二套。
 
         // ══════════ 进程操作（按会话过滤）══════════
 

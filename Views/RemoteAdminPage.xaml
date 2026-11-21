@@ -1,6 +1,7 @@
 <UserControl x:Class="SoulLink.Views.RemoteAdminPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:SoulLink.Controls"
              FontFamily="{StaticResource UiFont}">
     <Grid VerticalAlignment="Stretch">
         <Grid.RowDefinitions>
@@ -96,14 +97,23 @@
                     <TextBlock Text="密码（至少 6 位，不含用户名）" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,3,0,6" />
                     <PasswordBox x:Name="NewPwd2Box" Style="{StaticResource GlassPasswordBox}" Padding="10,0,10,0" Height="34" FontSize="12" VerticalContentAlignment="Center" PasswordChanged="NewPassword_Changed" />
                     <TextBlock Text="再次输入密码" FontSize="9" Foreground="{DynamicResource TextMuted}" Margin="1,3,0,6" />
-                    <TextBlock x:Name="NewValidText" FontSize="9.5" Foreground="#FFFFB4B4" TextWrapping="Wrap" Margin="0,2,0,4" />
+                    <!-- ★ 3.1.11：提示行现在会主动说明"还差什么"（以前只有真填错了才出现文字，
+                         空表单时是一片安静的空白，用户不知道按钮为什么点不动）。 -->
+                    <TextBlock x:Name="NewValidText" FontSize="9.5" Foreground="#FFFFB4B4" TextWrapping="Wrap" Margin="0,2,0,4"
+                               MinHeight="13" />
                     <CheckBox x:Name="NewRemoteCheck" Style="{StaticResource GlassCheckBox}" Content="允许远程登录" IsChecked="True" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewAdminCheck" Style="{StaticResource GlassCheckBox}" Content="管理员权限" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewNeverExpireCheck" Style="{StaticResource GlassCheckBox}" Content="密码永不过期" IsChecked="True" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewHideCheck" Style="{StaticResource GlassCheckBox}" Content="登录界面隐藏" FontSize="10" Margin="0,2,0,2" />
                     <CheckBox x:Name="NewConfigCheck" Style="{StaticResource GlassCheckBox}" Content="同时创建 SoulLink 连接配置" IsChecked="True" FontSize="10" Margin="0,2,0,4" />
                     <TextBlock x:Name="NewHostText" FontSize="9" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,0,0,5" />
-                    <Button x:Name="BtnCreateUser" Style="{StaticResource PrimaryButton}" Padding="12,6" HorizontalAlignment="Stretch" Click="CreateUser_Click" Content="创建用户" FontSize="11" Margin="0,4,0,2" />
+                    <!-- ★ 3.1.11：Button → ctl:HintButton（自定义控件在 Controls/HintButton.cs）。
+                         HintButton 从不把自己 IsEnabled=False，而是用 IsBlocked 表示"现在按不进去"：
+                           · 外观：PrimaryButton 模板的 IsBlocked 触发器把它变成中性灰胶囊（一眼看出不可用）；
+                           · 交互：点下去仍然有回应 —— 把 BlockedHint 显示到上面的提示行，
+                             并让按钮轻微抖一下，而不是静默吞掉点击。
+                         BlockedFeedback 在 code-behind 的 BtnCreateUser_Blocked 里赋值。 -->
+                    <ctl:HintButton x:Name="BtnCreateUser" Style="{StaticResource HintPrimaryButton}" Padding="12,6" HorizontalAlignment="Stretch" Click="CreateUser_Click" Content="创建用户" FontSize="11" Margin="0,4,0,2" />
                 </StackPanel>
                 </ScrollViewer>
             </Border>

@@ -32,8 +32,35 @@ namespace SoulLink.Views
         public RemoteAdminPage()
         {
             InitializeComponent();
+            // ★ 3.1.11：按钮被挡住时用户点了，就把原因写到提示行（并让提示行闪一下）。
+            //   以前是 IsEnabled=false，点击被 WPF 直接吞掉，用户只看到"点了没反应"。
+            BtnCreateUser.BlockedFeedback = ShowNewUserHint;
             Loaded += (_, __) => { if (_loaded) return; _loaded = true; NewHostText.Text = "连接地址：" + AccountProvisioner.NextLoopbackHost(App.Config.Accounts); ValidateNewUser(); _ = ReloadAsync(); };
         }
+
+        /// <summary>把「为什么点不动」显示到提示行，并让这一行短暂高亮，避免用户漏看。</summary>
+        private void ShowNewUserHint(string hint)
+        {
+            try
+            {
+                NewValidText.Text = hint;
+                NewValidText.Foreground = _hintFlash;
+                var fade = new System.Windows.Media.Animation.DoubleAnimation(1.0, 0.35, TimeSpan.FromMilliseconds(650))
+                {
+                    AutoReverse = true,
+                    EasingFunction = new System.Windows.Media.Animation.QuadraticEase()
+                };
+                NewValidText.BeginAnimation(OpacityProperty, fade);
+            }
+            catch { }
+        }
+
+        /// <summary>提示行的"被点了一下"高亮色（比常驻错误色更亮）。</summary>
+        private static readonly System.Windows.Media.SolidColorBrush _hintFlash =
+            Freeze(new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0x8A, 0x8A)));
+
+        private static System.Windows.Media.SolidColorBrush Freeze(System.Windows.Media.SolidColorBrush b)
+        { b.Freeze(); return b; }
 
         private bool _loaded;
 
@@ -287,21 +314,53 @@ namespace SoulLink.Views
 
         private void NewField_TextChanged(object sender, TextChangedEventArgs e) => ValidateNewUser();
         private void NewPassword_Changed(object sender, RoutedEventArgs e) => ValidateNewUser();
+        /// <summary>
+        /// 实时校验「新建用户」表单。
+        ///
+        /// ★★ 3.1.11 交互修正（用户实测原话）：
+        ///    「创建用户按钮无法点击，不能创建用户」
+        ///    「没有点击动作，不能点的时候没有变灰色。交互性太差。」
+        ///    以前不满足条件时直接 BtnCreateUser.IsEnabled = false —— 禁用控件收不到鼠标事件，
+        ///    用户点上去毫无反馈；而且按钮只是变淡，看上去仍然能点。
+        ///    现在改成 IsBlocked（按钮始终可点、外观置灰），并把「还差哪一项」写进提示行；
+        ///    用户真去点，也会看到明确的说明，而不是静默无反应。
+        /// </summary>
         private bool ValidateNewUser()
         {
             string user = NewUserBox.Text?.Trim() ?? "", pwd = NewPwdBox.Password ?? "", pwd2 = NewPwd2Box.Password ?? "";
             string error = user.Length == 0 ? "" : LocalUserService.ValidateUserName(user) ?? "";
             if (error.Length == 0 && pwd.Length > 0) error = LocalUserService.ValidatePassword(pwd,user) ?? "";
             if (error.Length == 0 && pwd2.Length > 0 && pwd != pwd2) error = "两次输入的密码不一致";
-            NewValidText.Text = error;
+
             bool ready = user.Length > 0 && pwd.Length > 0 && pwd == pwd2 && error.Length == 0;
-            BtnCreateUser.IsEnabled = ready; return ready;
+
+            // 提示行：有错说错；没错但没填完就说"还差什么"，别让用户猜。
+            NewValidText.Text = error.Length > 0 ? error : (ready ? "" : MissingHint(user, pwd, pwd2));
+
+            BtnCreateUser.IsBlocked = !ready;
+            BtnCreateUser.BlockedHint = error.Length > 0 ? error : MissingHint(user, pwd, pwd2);
+            return ready;
+        }
+
+        /// <summary>列出还差哪几项，用逗号连起来（用户点不可用按钮时看到的就是这句）。</summary>
+        private static string MissingHint(string user, string pwd, string pwd2)
+        {
+            var missing = new System.Collections.Generic.List<string>();
+            if (user.Length == 0) missing.Add("Windows 用户名");
+            if (pwd.Length == 0) missing.Add("密码");
+            else if (pwd2.Length == 0) missing.Add("再次输入密码");
+            return missing.Count == 0 ? "表单还没填完" : "还差：" + string.Join("、", missing);
         }
         private async void CreateUser_Click(object sender, RoutedEventArgs e)
         {
             if (!ValidateNewUser()) return;
             string user = NewUserBox.Text.Trim(), pwd = NewPwdBox.Password, nick = NewNickBox.Text?.Trim() ?? "";
-            BtnCreateUser.IsEnabled = false; BtnCreateUser.Content = "创建中…";
+            // ★ 3.1.11：创建过程用 IsBlocked 挡住重复点击，不用 IsEnabled=false。
+            //   禁用会让按钮在"创建中"这几秒里再次变成点不动的死角；
+            //   IsBlocked 给的是同样的灰底不可点，但点了会说"正在创建，请稍候"。
+            BtnCreateUser.IsBlocked = true;
+            BtnCreateUser.BlockedHint = "正在创建，请稍候…";
+            BtnCreateUser.Content = "创建中…";
             try
             {
                 var spec = new LocalUserService.CreateSpec { UserName=user, Password=pwd, AddToAdministrators=NewAdminCheck.IsChecked==true, AddToRemoteDesktopUsers=NewRemoteCheck.IsChecked==true, Hide=NewHideCheck.IsChecked==true, PasswordNeverExpires=NewNeverExpireCheck.IsChecked==true };

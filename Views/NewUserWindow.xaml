@@ -55,8 +55,9 @@
                              PasswordChanged="Field_PasswordChanged" />
                 <TextBlock Text="再次输入密码" Style="{StaticResource Caption}" Margin="2,4,0,0" />
 
-                <!-- 校验提示 -->
-                <Border x:Name="ValidBox" Visibility="Collapsed" Margin="0,10,0,0"
+                <!-- 校验提示。★ 3.1.11：改成常驻（以前 Collapsed 时整块消失，
+                     空表单下用户看不到任何"还差什么"的信息，只能对着灰按钮干瞪眼）。 -->
+                <Border x:Name="ValidBox" Margin="0,10,0,0"
                         CornerRadius="8" Padding="10,7" Background="#18FF6B6B"
                         BorderBrush="#44FF6B6B" BorderThickness="1">
                     <TextBlock x:Name="ValidText" FontSize="10.5" TextWrapping="Wrap"
@@ -90,7 +91,10 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Button Content="取消" Style="{StaticResource GhostButton}" Padding="18,8"
                             Click="BtnCancel_Click" />
-                    <Button x:Name="BtnCreate" Content="创建" Style="{StaticResource PrimaryButton}"
+                    <!-- ★ 3.1.11：同 RemoteAdminPage 的修复 —— PrimaryButton → ctl:HintButton。
+                         表单没填完时不再把 IsEnabled 设 False（那样点击会被 WPF 直接吞掉，
+                         用户看到的是"按钮点了没反应"），而是用 IsBlocked 置灰 + 说明原因。 -->
+                    <ctl:HintButton x:Name="BtnCreate" Content="创建" Style="{StaticResource HintPrimaryButton}"
                             Padding="22,8" Margin="8,0,0,0" Click="BtnCreate_Click" />
                 </StackPanel>
             </Grid>

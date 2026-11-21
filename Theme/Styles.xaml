@@ -1,6 +1,7 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib"
+                    xmlns:ctl="clr-namespace:SoulLink.Controls">
 
     <!-- ════════════ 全局：点击不留虚线焦点框 ════════════ -->
     <!--
@@ -99,6 +100,12 @@
     <SolidColorBrush x:Key="SelectedFill" Color="#38C9B7F4" />
     <SolidColorBrush x:Key="ButtonBackground" Color="#16FFFFFF" />
     <SolidColorBrush x:Key="ButtonBorder" Color="#2AFFFFFF" />
+    <!-- ★ 3.1.11：「不可用」按钮的中性灰底板。
+         不能直接用 ButtonBackground —— 深色是 #16FFFFFF、浅色是 #B0FFFFFF，
+         浅色主题下叠在近白的玻璃卡片上等于隐形（实测渲染出来只有一丝极淡灰边，
+         用户根本看不出按钮被禁用）。这里单独给一组对比度够的灰。 -->
+    <SolidColorBrush x:Key="DisabledFill" Color="#3DFFFFFF" />
+    <SolidColorBrush x:Key="DisabledStroke" Color="#5CFFFFFF" />
     <SolidColorBrush x:Key="ControlAccentText" Color="#FFFFFFFF" />
     <SolidColorBrush x:Key="SubtleSurface" Color="#10FFFFFF" />
     <SolidColorBrush x:Key="ScrollThumb" Color="#55CFC3EF" />
@@ -544,6 +551,15 @@
                         </Border>
                         <Border x:Name="Overlay" CornerRadius="12" Background="#33FFFFFF" Opacity="0" />
                         <Border x:Name="Inner" CornerRadius="12" BorderThickness="1" BorderBrush="#55FFFFFF" />
+                        <!-- ★★ 3.1.11：禁用态专用底板。★★
+                             原来只有一句 Outer.Opacity=0.35 —— 渐变只是变淡，在浅色卡片上
+                             依旧是「一枚淡紫淡蓝的彩色按钮」。用户实测原话：
+                             「不能点的时候没有变灰色」、「没有点击动作，交互性太差」。
+                             现在禁用时把渐变整块隐去，换成中性灰胶囊 + 弱化文字 + 箭头光标，
+                             一眼就能看出「这个按钮现在按不动」。 -->
+                        <Border x:Name="Muted" CornerRadius="12" Visibility="Collapsed"
+                                Background="{DynamicResource DisabledFill}"
+                                BorderBrush="{DynamicResource DisabledStroke}" BorderThickness="1" />
                         <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center"
                                           VerticalAlignment="Center" RecognizesAccessKey="True" />
                     </Grid>
@@ -554,8 +570,79 @@
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="Outer" Property="Opacity" Value="0.85" />
                         </Trigger>
+                        <!-- 禁用：渐变与高光全部隐去，只剩中性灰底板，文字降为次级色 -->
                         <Trigger Property="IsEnabled" Value="False">
-                            <Setter TargetName="Outer" Property="Opacity" Value="0.35" />
+                            <Setter TargetName="Outer" Property="Opacity" Value="0" />
+                            <Setter TargetName="Inner" Property="Opacity" Value="0" />
+                            <Setter TargetName="Overlay" Property="Opacity" Value="0" />
+                            <Setter TargetName="Muted" Property="Visibility" Value="Visible" />
+                            <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ★★ 3.1.11：给 ctl:HintButton 用的主按钮样式。
+         ★ 为什么单独一份模板，而不是在 PrimaryButton 里加 DataTrigger：
+           试过了 —— 模板 TargetType 是 Button，DataTrigger 绑 IsBlocked 会去 Button 上找，
+           该属性只存在于派生类，绑定静默失败、触发器永不触发（实测禁用态和启用态两张
+           截图字节数完全相同，一枚灰都没变）。
+           这里把 TargetType 定成 HintButton，Trigger 就能直接命中依赖属性。
+         ★ 与 PrimaryButton 的唯一差别：多一个 IsBlocked=True 的状态 ——
+           隐去渐变/高光/阴影，换成中性灰胶囊（Muted）+ 次级色文字 + 箭头光标。
+           普通 Button 继续用 PrimaryButton，行为完全不变。 -->
+    <Style x:Key="HintPrimaryButton" TargetType="ctl:HintButton" BasedOn="{StaticResource PrimaryButton}">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ctl:HintButton">
+                    <Grid>
+                        <Border x:Name="Outer" CornerRadius="12">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="24" ShadowDepth="0" Opacity="0.75" Color="#FF8B6BFF" />
+                            </Border.Effect>
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#FF6C5CE7" Offset="0" />
+                                    <GradientStop Color="#FF4FE3FF" Offset="0.6" />
+                                    <GradientStop Color="#FFFF5FD2" Offset="1" />
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        <Border x:Name="Overlay" CornerRadius="12" Background="#33FFFFFF" Opacity="0" />
+                        <Border x:Name="Inner" CornerRadius="12" BorderThickness="1" BorderBrush="#55FFFFFF" />
+                        <!-- 不可用时的中性灰底板：对比度单独调过，深浅两套主题都看得见 -->
+                        <Border x:Name="Muted" CornerRadius="12" Visibility="Collapsed"
+                                Background="{DynamicResource DisabledFill}"
+                                BorderBrush="{DynamicResource DisabledStroke}" BorderThickness="1" />
+                        <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center"
+                                          VerticalAlignment="Center" RecognizesAccessKey="True" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Overlay" Property="Opacity" Value="1" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Outer" Property="Opacity" Value="0.85" />
+                        </Trigger>
+                        <!-- ★ 挡住时：渐变/高光全隐去，只剩灰色胶囊；文字降为次级色 -->
+                        <Trigger Property="IsBlocked" Value="True">
+                            <Setter TargetName="Outer" Property="Opacity" Value="0" />
+                            <Setter TargetName="Inner" Property="Opacity" Value="0" />
+                            <Setter TargetName="Overlay" Property="Opacity" Value="0" />
+                            <Setter TargetName="Muted" Property="Visibility" Value="Visible" />
+                            <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Outer" Property="Opacity" Value="0" />
+                            <Setter TargetName="Inner" Property="Opacity" Value="0" />
+                            <Setter TargetName="Overlay" Property="Opacity" Value="0" />
+                            <Setter TargetName="Muted" Property="Visibility" Value="Visible" />
+                            <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
+                            <Setter Property="Cursor" Value="Arrow" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

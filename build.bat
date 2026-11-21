@@ -69,6 +69,11 @@ rem 运行时检测脚本随包发出，用户双击 exe 前先跑它
 rem （放在 scripts\ 下而不是 tools\，因为 .gitignore 把整个 tools\ 排除了）
 copy /y "scripts\check-runtime.ps1" "!STAGE!\check-runtime.ps1" >nul 2>nul
 
+rem ★ 使用手册随包发出：用户装完就能看到怎么用，不用回仓库找。
+rem   publish-release.ps1 只排除 .log/.bak/.old/.tmp/.pdb，.md 会被正常打进更新包。
+copy /y "README.md" "!STAGE!\README.md" >nul 2>nul
+if exist "README.md" echo   使用手册：README.md
+
 if not exist dist mkdir dist
 copy /y "!STAGE!\SoulLink.exe" "dist\SoulLink.exe" >nul
 

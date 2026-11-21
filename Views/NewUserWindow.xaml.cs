@@ -25,11 +25,31 @@ namespace SoulLink.Views
         public NewUserWindow()
         {
             InitializeComponent();
+            // ★ 3.1.11：按钮被挡住时点了，就把原因写到提示框里。
+            BtnCreate.BlockedFeedback = hint => SetHint(hint, flash: true);
             Loaded += (_, __) =>
             {
                 NextHostText.Text = "下一个可用地址：" + AccountProvisioner.NextLoopbackHost(App.Config.Accounts);
+                // ★ 必须在这里先校验一次：以前只在字段变动时才跑，
+                //   窗口刚打开时按钮其实是"可点"的，点下去 Validate() 返回 false
+                //   然后 BtnCreate_Click 直接 return —— 用户看到的就是"点了没反应"。
+                Validate();
                 UserBox.Focus();
             };
+        }
+
+        /// <summary>把一句提示写进校验框；flash=true 时闪一下，让用户注意到。</summary>
+        private void SetHint(string text, bool flash = false)
+        {
+            ValidBox.Visibility = Visibility.Visible;
+            ValidText.Text = text;
+            if (!flash) return;
+            var fade = new System.Windows.Media.Animation.DoubleAnimation(1.0, 0.35, TimeSpan.FromMilliseconds(650))
+            {
+                AutoReverse = true,
+                EasingFunction = new System.Windows.Media.Animation.QuadraticEase()
+            };
+            ValidBox.BeginAnimation(OpacityProperty, fade);
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -61,18 +81,25 @@ namespace SoulLink.Views
             if (err == null && pwd2.Length > 0 && pwd != pwd2)
                 err = "两次输入的密码不一致";
 
-            if (err != null)
-            {
-                ValidBox.Visibility = Visibility.Visible;
-                ValidText.Text = err;
-                if (BtnCreate != null) BtnCreate.IsEnabled = false;
-                return false;
-            }
+            bool ready = user.Length > 0 && pwd.Length > 0 && pwd == pwd2 && err == null;
 
-            ValidBox.Visibility = Visibility.Collapsed;
-            bool ready = user.Length > 0 && pwd.Length > 0 && pwd == pwd2;
-            if (BtnCreate != null) BtnCreate.IsEnabled = ready;
+            // ★ 3.1.11：提示框常驻，不再"没错误就整块消失"——
+            //   空表单时告诉用户还差什么，比让他对着灰按钮猜要好。
+            SetHint(err ?? (ready ? "" : MissingHint(user, pwd, pwd2)));
+
+            BtnCreate.IsBlocked = !ready;
+            BtnCreate.BlockedHint = err ?? MissingHint(user, pwd, pwd2);
             return ready;
+        }
+
+        /// <summary>列出还差哪几项（用户点不可用按钮时看到的就是这句）。</summary>
+        private static string MissingHint(string user, string pwd, string pwd2)
+        {
+            var missing = new System.Collections.Generic.List<string>();
+            if (user.Length == 0) missing.Add("Windows 用户名");
+            if (pwd.Length == 0) missing.Add("密码");
+            else if (pwd2.Length == 0) missing.Add("再次输入密码");
+            return missing.Count == 0 ? "表单还没填完" : "还差：" + string.Join("、", missing);
         }
 
         // ── 创建 ─────────────────────────────────────────────────────────
@@ -85,7 +112,9 @@ namespace SoulLink.Views
             string pwd = PwdBox.Password;
             string nick = NickBox.Text?.Trim() ?? "";
 
-            BtnCreate.IsEnabled = false;
+            // ★ 3.1.11：创建过程用 IsBlocked 挡重复点击，不用 IsEnabled=false。
+            BtnCreate.IsBlocked = true;
+            BtnCreate.BlockedHint = "正在创建，请稍候…";
             BtnCreate.Content = "创建中…";
 
             try
@@ -136,7 +165,7 @@ namespace SoulLink.Views
             finally
             {
                 BtnCreate.Content = "创建";
-                BtnCreate.IsEnabled = true;
+                Validate();     // 用表单真实状态决定是否仍然 IsBlocked
             }
         }
     }

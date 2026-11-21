@@ -92,6 +92,10 @@ namespace SoulLink.Services
             SetBrush(styles, "SelectedFill", IsDark ? Color.FromArgb(56, 201, 183, 244) : Color.FromArgb(45, 157, 122, 204));
             SetBrush(styles, "ButtonBackground", IsDark ? Color.FromArgb(22, 255, 255, 255) : Color.FromArgb(176, 255, 255, 255));
             SetBrush(styles, "ButtonBorder", IsDark ? Color.FromArgb(42, 255, 255, 255) : Color.FromArgb(60, 119, 88, 159));
+            // ★ 3.1.11：不可用按钮的中性灰。深色用淡白叠加；浅色用带紫调的灰，
+            //   否则叠在近白玻璃卡片上完全看不出来（用户原话"没有变灰色"）。
+            SetBrush(styles, "DisabledFill", IsDark ? Color.FromArgb(61, 255, 255, 255) : Color.FromArgb(58, 118, 110, 140));
+            SetBrush(styles, "DisabledStroke", IsDark ? Color.FromArgb(92, 255, 255, 255) : Color.FromArgb(86, 118, 110, 140));
             SetBrush(styles, "ControlAccentText", Colors.White);
             SetBrush(styles, "SubtleSurface", IsDark ? Color.FromArgb(16, 255, 255, 255) : Color.FromArgb(20, 106, 81, 153));
             SetBrush(styles, "ScrollThumb", IsDark ? Color.FromArgb(85, 207, 195, 239) : Color.FromArgb(100, 128, 103, 167));
