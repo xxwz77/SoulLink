@@ -187,6 +187,63 @@ namespace SoulLink.Views
             }
         }
 
+        // ═══ RDP 控制台全屏：chrome 收纳 ═══════════════════════════════════
+        //
+        // 全屏的真源状态在 ConsolePage._isFullScreen；这里只负责把窗口自身的
+        // chrome（标题栏 / 侧栏 / 内边距）收起来或还原。窗口几何、Topmost、
+        // DWM 圆角由 ConsolePage 在同一拍里设置（它要做显示器矩形协商）。
+
+        private Thickness _fsChromeMargin;
+        private GridLength _fsTitleHeight;
+        private GridLength _fsNavWidth;
+        private Visibility _fsNavRailVisibility;
+        private bool _fsNavWasCollapsed;
+        private bool _chromeFullscreen;
+
+        /// <summary>是否处于全屏 chrome 收纳状态。</summary>
+        public bool IsChromeFullscreen => _chromeFullscreen;
+
+        /// <summary>
+        /// 收纳 / 还原主窗口 chrome，让中控台画面铺满整个窗口。
+        ///
+        /// ★ 侧栏若正展开在浮层里，先按「收起」处理：全屏下没有任何入口能再
+        ///   展开它，而挂在浮层里的 NavRail 是独立 HWND，不受 WPF Visibility
+        ///   管，会一直浮在画面上方。退出全屏后侧栏保持收起态（用户重新展开即可）。
+        /// </summary>
+        public void SetChromeFullscreen(bool on)
+        {
+            if (on)
+            {
+                if (_chromeFullscreen) return;
+                _chromeFullscreen = true;
+
+                _fsChromeMargin = ChromeGrid.Margin;
+                _fsTitleHeight = TitleRow.Height;
+                _fsNavWidth = NavColumn.Width;
+                _fsNavRailVisibility = NavRail.Visibility;
+                _fsNavWasCollapsed = _navCollapsed;
+
+                if (!_navCollapsed) SetNavCollapsed(true, "进入全屏");
+
+                ChromeGrid.Margin = new Thickness(0);
+                TitleRow.Height = new GridLength(0);
+                NavColumn.Width = new GridLength(0);
+                NavRail.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                if (!_chromeFullscreen) return;
+                _chromeFullscreen = false;
+
+                ChromeGrid.Margin = _fsChromeMargin;
+                TitleRow.Height = _fsTitleHeight;
+                NavColumn.Width = _fsNavWidth;
+                NavRail.Visibility = _fsNavRailVisibility;
+
+                if (!_fsNavWasCollapsed) SetNavCollapsed(false, "退出全屏");
+            }
+        }
+
         /// <summary>
         /// 边框固定使用系统主题强调色；只在创建窗口、系统强调色变化时设置。
         ///
@@ -1196,6 +1253,13 @@ namespace SoulLink.Views
         private void SetActivePage(string tag)
         {
             if (!_pages.TryGetValue(tag, out var page)) return;
+
+            // ★ 离开控制台页必须先退全屏：全屏下导航已收纳，但自动化/热键仍可能
+            //   触发切页——那样其它页面会在全屏窗口里铺开且没有返回入口。
+            if (tag != "console")
+            {
+                try { ConsoleView.ExitFullScreenIfActive(); } catch { }
+            }
 
             foreach (var kv in _pages)
                 kv.Value.Visibility = kv.Key == tag ? Visibility.Visible : Visibility.Collapsed;
