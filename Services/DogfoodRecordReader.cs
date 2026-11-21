@@ -62,18 +62,17 @@ namespace SoulLink.Services
     ///   这里用同样的分界计算"业务日"，只有记录日期 == 当前业务日才算有效，
     ///   绝不接受昨天的数据 —— 否则会出现"昨天B线，今天误触发跳转"。
     /// </summary>
-    public static class DogfoodRecordReader
+    public static partial class DogfoodRecordReader
     {
         /// <summary>只解析 日期 + 收尾路线；经验/摩拉是可选的附加信息。</summary>
-        private static readonly Regex RxDaily = new Regex(
-            @"日期\s*[:：]\s*(?<date>\d{4}/\d{2}/\d{2})\s*[，,]\s*运行收尾路线\s*(?<route>收尾额外[AB])",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"日期\s*[:：]\s*(?<date>\d{4}/\d{2}/\d{2})\s*[，,]\s*运行收尾路线\s*(?<route>收尾额外[AB])", RegexOptions.Compiled)]
+        private static partial Regex RxDaily();
 
         /// <summary>经验（可选，用于显示与上限判断）。</summary>
-        private static readonly Regex RxExp = new Regex(
-            @"狗粮经验\s*(?<exp>-?\d+)", RegexOptions.Compiled);
-        private static readonly Regex RxMora = new Regex(
-            @"摩拉\s*(?<mora>-?\d+)", RegexOptions.Compiled);
+        [GeneratedRegex(@"狗粮经验\s*(?<exp>-?\d+)", RegexOptions.Compiled)]
+        private static partial Regex RxExp();
+        [GeneratedRegex(@"摩拉\s*(?<mora>-?\d+)", RegexOptions.Compiled)]
+        private static partial Regex RxMora();
 
         /// <summary>狗粮脚本目录名（固定）。</summary>
         public const string ScriptFolder = "AAA-Artifacts-Bulk-Supply";
@@ -140,7 +139,7 @@ namespace SoulLink.Services
                     head = System.Text.Encoding.UTF8.GetString(buf, 0, got);
                 }
 
-                var all = RxDaily.Matches(head);
+                var all = RxDaily().Matches(head);
                 foreach (Match m0 in all)
                 {
                 var record = new DogfoodRecord
@@ -155,9 +154,9 @@ namespace SoulLink.Services
                     int pos = m0.Index;
                     int nl = head.IndexOf('\n', pos);
                     string line = nl > pos ? head.Substring(pos, nl - pos) : head.Substring(pos);
-                    var me = RxExp.Match(line);
+                    var me = RxExp().Match(line);
                     if (me.Success) long.TryParse(me.Groups["exp"].Value, out record.Exp);
-                    var mm = RxMora.Match(line);
+                    var mm = RxMora().Match(line);
                     if (mm.Success) long.TryParse(mm.Groups["mora"].Value, out record.Mora);
                 }
                 catch { }

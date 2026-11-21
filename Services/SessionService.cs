@@ -13,15 +13,14 @@ namespace SoulLink.Services
     /// 会话发现：等价于批处理里的 `for /f "skip=1" ... query user`，
     /// 但解析更稳（中文 / 英文系统、状态单词、空闲时间里的空格都能处理）。
     /// </summary>
-    public static class SessionService
+    public static partial class SessionService
     {
         // ★ 宽松版：不再强求登录时间的具体格式。
         //   原来要求 yyyy/MM/dd HH:mm，遇到 11/17/2026、2026-11-17、
         //   或者系统没输出时间列时整行匹配失败 → 一个会话都读不到。
         //   现在：用户 会话名 ID 状态 后面的内容全部吞掉，再单独解析空闲/登录时间。
-        private static readonly Regex SessionRx = new Regex(
-            @"^\s*[>\*]?\s*(?<user>\S+)\s+(?<sess>\S*)\s+(?<id>\d+)\s+(?<state>\S+)(?<rest>.*)$",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"^\s*[>\*]?\s*(?<user>\S+)\s+(?<sess>\S*)\s+(?<id>\d+)\s+(?<state>\S+)(?<rest>.*)$", RegexOptions.Compiled)]
+        private static partial Regex SessionRx();
 
         /// <summary>从行尾解析空闲时间和登录时间（宽松，失败也不影响会话本身）。</summary>
         private static void ParseTail(string rest, out string idle, out string logon)
@@ -71,7 +70,7 @@ namespace SoulLink.Services
             {
                 string s = line.TrimEnd();
                 if (s.Length == 0) continue;
-                var m = SessionRx.Match(s);
+                var m = SessionRx().Match(s);
                 if (!m.Success) continue;
                 int id;
                 if (!int.TryParse(m.Groups["id"].Value, out id)) continue;

@@ -30,7 +30,7 @@ namespace SoulLink.Services
     ///
     /// 所有值都取"最近一次出现"，缺失就留空，界面显示 —，不猜。
     /// </summary>
-    public sealed class BgiStatus
+    public sealed partial class BgiStatus
     {
         // ── 任务与进度 ─────────────────────────────────────────────────
 
@@ -231,107 +231,96 @@ namespace SoulLink.Services
         // ── 正则 ───────────────────────────────────────────────────────
 
         // ① 联机锄地：[第 2/3 轮 思] "...开始第 1/78 条线路: "xxx.json"，本线路预计用时 ...
-        private static readonly Regex RxRound = new Regex(
-            @"\[第\s*(?<round>\d+\s*/\s*\d+)\s*轮\s*(?<role>[^\]]*)\]" +
-            @".*?开始第\s*(?<cur>\d+)\s*/\s*(?<total>\d+)\s*条线路" +
-            @".*?""(?<file>[^""]+)""",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"\[第\s*(?<round>\d+\s*/\s*\d+)\s*轮\s*(?<role>[^\]]*)\].*?开始第\s*(?<cur>\d+)\s*/\s*(?<total>\d+)\s*条线路.*?""(?<file>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxRound();
 
-        private static readonly Regex RxEta = new Regex(
-            @"本线路预计用时\s*(?<v>[0-9\u65f6\u5206\u79d2]+)", RegexOptions.Compiled);
-        private static readonly Regex RxRemain = new Regex(
-            @"本轮预计剩余\s*(?<v>[0-9\u65f6\u5206\u79d2]+)", RegexOptions.Compiled);
+        [GeneratedRegex(@"本线路预计用时\s*(?<v>[0-9\u65f6\u5206\u79d2]+)", RegexOptions.Compiled)]
+        private static partial Regex RxEta();
+        [GeneratedRegex(@"本轮预计剩余\s*(?<v>[0-9\u65f6\u5206\u79d2]+)", RegexOptions.Compiled)]
+        private static partial Regex RxRemain();
 
         // ② 每日采集：任务「每日采集」，执行路线「03-霜仙花-xx」；路线共 1440 条，CD中 481 条；任务累计执行时长：1时13分03秒
-        private static readonly Regex RxTaskRoute = new Regex(
-            @"任务「(?<task>[^」]+)」\s*[,，]\s*执行路线「(?<route>[^」]+)」" +
-            @"(?:.*?路线共\s*(?<total>\d+)\s*条)?" +
-            @"(?:.*?CD中\s*(?<cd>\d+)\s*条)?" +
-            @"(?:.*?任务累计执行时长\s*[:：]\s*(?<elapsed>[0-9\u65f6\u5206\u79d2]+))?",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"任务「(?<task>[^」]+)」\s*[,，]\s*执行路线「(?<route>[^」]+)」(?:.*?路线共\s*(?<total>\d+)\s*条)?(?:.*?CD中\s*(?<cd>\d+)\s*条)?(?:.*?任务累计执行时长\s*[:：]\s*(?<elapsed>[0-9\u65f6\u5206\u79d2]+))?", RegexOptions.Compiled)]
+        private static partial Regex RxTaskRoute();
 
         // ③ 纯数字进度：当前进度：纳塔-安饶之野东(进度: 48/94)
-        private static readonly Regex RxAreaProgress = new Regex(
-            @"当前进度\s*[:：]\s*(?<area>[^\s(（]+)\s*[(（]\s*进度\s*[:：]\s*(?<cur>\d+)\s*/\s*(?<total>\d+)\s*[)）]",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"当前进度\s*[:：]\s*(?<area>[^\s(（]+)\s*[(（]\s*进度\s*[:：]\s*(?<cur>\d+)\s*/\s*(?<total>\d+)\s*[)）]", RegexOptions.Compiled)]
+        private static partial Regex RxAreaProgress();
 
         // ③b 极简计数进度：当前进度：9个 / 当前进度：19个（实测 20261027 等文件尾部就是这种）
-        private static readonly Regex RxCountProgress = new Regex(
-            @"当前进度\s*[:：]\s*(?<n>\d+)\s*个\s*$", RegexOptions.Compiled);
+        [GeneratedRegex(@"当前进度\s*[:：]\s*(?<n>\d+)\s*个\s*$", RegexOptions.Compiled)]
+        private static partial Regex RxCountProgress();
 
         // ③c 地图追踪任务（实测最高频，占启动行 1 万+ 次）：
         //   → 开始执行地图追踪任务: "A06-欧蒂克莱尔左侧-8个.json"
         //   注意：这条**不带**"当前进度：任务「X」，执行路线「Y」"的成对行，
         //   所以原来完全解析不到，界面显示"等待日志中的状态"（用户实测）。
-        private static readonly Regex RxMapTrace = new Regex(
-            @"开始执行地图追踪任务\s*[:：]\s*""(?<route>[^""]+)""" + @"|开始执行地图追踪任务\s*[:：]\s*(?<route2>[^\r\n""]+)",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"开始执行地图追踪任务\s*[:：]\s*""(?<route>[^""]+)""|开始执行地图追踪任务\s*[:：]\s*(?<route2>[^\r\n""]+)", RegexOptions.Compiled)]
+        private static partial Regex RxMapTrace();
 
         // ③d 独立 JS 脚本任务：→ 开始执行JS脚本: "xxx.js"
-        private static readonly Regex RxJsScript = new Regex(
-            @"开始执行JS脚本\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"开始执行JS脚本\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxJsScript();
 
         // ③e 独立任务：→ 开始执行独立任务: "xxx"
-        private static readonly Regex RxStandalone = new Regex(
-            @"开始执行独立任务\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"开始执行独立任务\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxStandalone();
 
         // ③f 一条龙任务启动：锄地一条龙任务启动 [配置组: "X"]
-        private static readonly Regex RxOneDragonStart2 = new Regex(
-            @"一条龙任务启动\s*\[配置组\s*[:：]\s*""(?<g>[^""]+)""\]", RegexOptions.Compiled);
+        [GeneratedRegex(@"一条龙任务启动\s*\[配置组\s*[:：]\s*""(?<g>[^""]+)""\]", RegexOptions.Compiled)]
+        private static partial Regex RxOneDragonStart2();
 
         // ★ 当前动作：BGI 的很多任务只输出动作，不输出"路线/进度"。
         //   例如：开始挖矿 / 动作：下落攻击 / 成功切换角色:"莉奈娅"
         //   原来这类行全部识别不到 → 界面一直显示"等待日志中的状态信息"
         //   （用户实测 A1 明明在挖矿，面板却是空的）。
-        private static readonly Regex RxCurrentAction = new Regex(
-            @"^s*(?<act>开始[^，。
+        [GeneratedRegex(@"^s*(?<act>开始[^，。
 ]{1,20}|动作[:：]s*(?<a2>[^
 ]{1,20}?)(?:s*结束)?|成功切换角色s*[:：]s*""?(?<role>[^""
-]{1,16}))s*$",
-            RegexOptions.Compiled);
+]{1,16}))s*$", RegexOptions.Compiled)]
+        private static partial Regex RxCurrentAction();
 
         // 简单的"动作:"行（单独匹配便于取到动作名）
-        private static readonly Regex RxActionLine = new Regex(
-            @"动作[:：]s*(?<name>[^
-]{1,24})", RegexOptions.Compiled);
+        [GeneratedRegex(@"动作[:：]s*(?<name>[^
+]{1,24})", RegexOptions.Compiled)]
+        private static partial Regex RxActionLine();
 
         // ⑥ 拾取物品：交互或拾取："霜仙花"
-        private static readonly Regex RxPick = new Regex(
-            @"交互或拾取\s*[:：]\s*""(?<item>[^""]+)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"交互或拾取\s*[:：]\s*""(?<item>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxPick();
 
         // ④ 一条龙配置
-        private static readonly Regex RxOneDragon = new Regex(
-            @"启用一条龙配置\s*[:：]\s*(?<v>.+?)\s*$", RegexOptions.Compiled);
+        [GeneratedRegex(@"启用一条龙配置\s*[:：]\s*(?<v>.+?)\s*$", RegexOptions.Compiled)]
+        private static partial Regex RxOneDragon();
 
         // ⑤ 配置组（两种写法都见过）
-        private static readonly Regex RxConfigGroup = new Regex(
-            @"配置组\s*=\s*""(?<g>[^""]+)""|总文件夹\s*=\s*""(?<g2>[^""]+)""",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"配置组\s*=\s*""(?<g>[^""]+)""|总文件夹\s*=\s*""(?<g2>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxConfigGroup();
 
-        private static readonly Regex RxFight = new Regex(
-            @"匹配到战斗脚本\s*[:：]\s*""(?<v>[^""]+)""", RegexOptions.Compiled);
-        private static readonly Regex RxTeam = new Regex(
-            @"当前队伍名称\s*[:：]\s*""(?<v>[^""]+)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"匹配到战斗脚本\s*[:：]\s*""(?<v>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxFight();
+        [GeneratedRegex(@"当前队伍名称\s*[:：]\s*""(?<v>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxTeam();
 
         // 失败/异常
-        private static readonly Regex RxFailGroup = new Regex(
-            @"配置组\s*""(?<g>[^""]+)""\s*未成功完成", RegexOptions.Compiled);
-        private static readonly Regex RxTaskEnd = new Regex(
-            @"→\s*""任务结束""", RegexOptions.Compiled);
-        private static readonly Regex RxError = new Regex(
-            @"执行脚本时发生异常\s*[:：]\s*""(?<e>[^""]+)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"配置组\s*""(?<g>[^""]+)""\s*未成功完成", RegexOptions.Compiled)]
+        private static partial Regex RxFailGroup();
+        [GeneratedRegex(@"→\s*""任务结束""", RegexOptions.Compiled)]
+        private static partial Regex RxTaskEnd();
+        [GeneratedRegex(@"执行脚本时发生异常\s*[:：]\s*""(?<e>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxError();
         // 一条龙失败：一条龙执行失败 / 一条龙前置动作未成功
-        private static readonly Regex RxOneDragonFail = new Regex(
-            @"一条龙(?:前置动作未成功|执行失败)", RegexOptions.Compiled);
+        [GeneratedRegex(@"一条龙(?:前置动作未成功|执行失败)", RegexOptions.Compiled)]
+        private static partial Regex RxOneDragonFail();
         // 游戏启动准备失败
-        private static readonly Regex RxStartFail = new Regex(
-            @"游戏启动准备失败[^""]*""(?<e>[^""]+)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"游戏启动准备失败[^""]*""(?<e>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxStartFail();
 
         // 一条龙开始/完成（判断"是否在跑"）
-        private static readonly Regex RxOneDragonStart = new Regex(
-            @"→\s*开始(?:执行)?一条龙|开始执行一条龙", RegexOptions.Compiled);
-        private static readonly Regex RxOneDragonDone = new Regex(
-            @"一条龙(?:任务)?(?:完成|结束)", RegexOptions.Compiled);
+        [GeneratedRegex(@"→\s*开始(?:执行)?一条龙|开始执行一条龙", RegexOptions.Compiled)]
+        private static partial Regex RxOneDragonStart();
+        [GeneratedRegex(@"一条龙(?:任务)?(?:完成|结束)", RegexOptions.Compiled)]
+        private static partial Regex RxOneDragonDone();
 
         // ── 解析 ───────────────────────────────────────────────────────
 
@@ -357,7 +346,7 @@ namespace SoulLink.Services
                     // ★ 当前动作：BGI 大量任务是"只报动作不报进度"的
                     //   （挖矿、下落攻击、切换角色…），之前完全没解析，
                     //   于是界面一直停在"等待日志中的状态信息"（用户实测）。
-                    var am = RxActionLine.Match(merged);
+                    var am = RxActionLine().Match(merged);
                     if (am.Success)
                     {
                         string act = am.Groups["name"].Value.Trim();
@@ -392,7 +381,7 @@ namespace SoulLink.Services
                     }
 
                     // ① 联机锄地（带轮次）
-                    var m = RxRound.Match(merged);
+                    var m = RxRound().Match(merged);
                     if (m.Success)
                     {
                         Round = m.Groups["round"].Value.Replace(" ", "");
@@ -404,8 +393,8 @@ namespace SoulLink.Services
                         //   用户真正关心的是"这一轮总共捡了什么"。
                         RouteFile = StripJson(m.Groups["file"].Value);
 
-                        RouteEta = Maybe(RxEta.Match(merged), "v");
-                        RoundRemain = Maybe(RxRemain.Match(merged), "v");
+                        RouteEta = Maybe(RxEta().Match(merged), "v");
+                        RoundRemain = Maybe(RxRemain().Match(merged), "v");
                         AreaName = "";
                         Recovered = true;   // 有正常进度 = 已恢复
                         matched = true;
@@ -414,7 +403,7 @@ namespace SoulLink.Services
                     // ② 每日采集（任务 + 路线 + CD）
                     if (!matched)
                     {
-                        var t = RxTaskRoute.Match(merged);
+                        var t = RxTaskRoute().Match(merged);
                         if (t.Success)
                         {
                             TaskName = t.Groups["task"].Value;
@@ -432,7 +421,7 @@ namespace SoulLink.Services
                     // ③ 纯数字区域进度
                     if (!matched)
                     {
-                        var a = RxAreaProgress.Match(merged);
+                        var a = RxAreaProgress().Match(merged);
                         if (a.Success)
                         {
                             AreaName = a.Groups["area"].Value;
@@ -447,7 +436,7 @@ namespace SoulLink.Services
                     //       导致 RouteFile 永远是空 → 界面只能显示"已拾取 N 个"。
                     if (!matched)
                     {
-                        var mt = RxMapTrace.Match(line);
+                        var mt = RxMapTrace().Match(line);
                         if (mt.Success)
                         {
                             string route = mt.Groups["route"].Success
@@ -469,7 +458,7 @@ namespace SoulLink.Services
                     // ③d JS 脚本 / 独立任务
                     if (!matched)
                     {
-                        var js = RxJsScript.Match(line);
+                        var js = RxJsScript().Match(line);
                         if (js.Success)
                         {
                             RouteFile = js.Groups["name"].Value;
@@ -479,7 +468,7 @@ namespace SoulLink.Services
                         }
                         else
                         {
-                            var sd = RxStandalone.Match(line);
+                            var sd = RxStandalone().Match(line);
                             if (sd.Success)
                             {
                                 RouteFile = sd.Groups["name"].Value;
@@ -493,7 +482,7 @@ namespace SoulLink.Services
                     // ③e 一条龙任务启动 [配置组: "X"]
                     if (!matched)
                     {
-                        var od = RxOneDragonStart2.Match(line);
+                        var od = RxOneDragonStart2().Match(line);
                         if (od.Success)
                         {
                             OneDragonConfig = od.Groups["g"].Value;
@@ -505,7 +494,7 @@ namespace SoulLink.Services
                     // ③b 极简计数（只有"当前进度：9个"，没有路线名和总数）
                     if (!matched)
                     {
-                        var c = RxCountProgress.Match(line);
+                        var c = RxCountProgress().Match(line);
                         if (c.Success)
                         {
                             PickCount = c.Groups["n"].Value;
@@ -517,7 +506,7 @@ namespace SoulLink.Services
                     // ④ 一条龙配置
                     if (!matched)
                     {
-                        var od = RxOneDragon.Match(line);
+                        var od = RxOneDragon().Match(line);
                         if (od.Success)
                         {
                             OneDragonConfig = od.Groups["v"].Value.Trim();
@@ -528,7 +517,7 @@ namespace SoulLink.Services
                     // ⑤ 配置组（拾取诊断 / 旧格式）
                     if (!matched)
                     {
-                        var cg = RxConfigGroup.Match(line);
+                        var cg = RxConfigGroup().Match(line);
                         if (cg.Success)
                         {
                             string g = cg.Groups["g"].Success ? cg.Groups["g"].Value : cg.Groups["g2"].Value;
@@ -548,12 +537,12 @@ namespace SoulLink.Services
 
                     if (!matched)
                     {
-                        var fs = RxFight.Match(line);
+                        var fs = RxFight().Match(line);
                         if (fs.Success) { FightScript = fs.Groups["v"].Value; matched = true; }
                     }
                     if (!matched)
                     {
-                        var tm = RxTeam.Match(line);
+                        var tm = RxTeam().Match(line);
                         if (tm.Success) { Team = tm.Groups["v"].Value; matched = true; }
                     }
 
@@ -599,7 +588,7 @@ namespace SoulLink.Services
                     }
 
                     // ⑥ 拾取物品（累计到本路线）。高频日志，必须放在最后且不打断 matched。
-                    var pk = RxPick.Match(line);
+                    var pk = RxPick().Match(line);
                     if (pk.Success)
                     {
                         string item = pk.Groups["item"].Value.Trim();
@@ -615,7 +604,7 @@ namespace SoulLink.Services
 
                     // ── 异常（优先级高，单独判定，不受 matched 影响）──
 
-                    var fg = RxFailGroup.Match(line);
+                    var fg = RxFailGroup().Match(line);
                     if (fg.Success)
                     {
                         FailedGroup = fg.Groups["g"].Value;
@@ -623,7 +612,7 @@ namespace SoulLink.Services
                         continue;
                     }
 
-                    var se = RxError.Match(line);
+                    var se = RxError().Match(line);
                     if (se.Success)
                     {
                         LastError = Clean(se.Groups["e"].Value);
@@ -631,7 +620,7 @@ namespace SoulLink.Services
                         continue;
                     }
 
-                    var odf = RxOneDragonFail.Match(line);
+                    var odf = RxOneDragonFail().Match(line);
                     if (odf.Success)
                     {
                         LastError = Clean(line);
@@ -639,7 +628,7 @@ namespace SoulLink.Services
                         continue;
                     }
 
-                    var sf = RxStartFail.Match(line);
+                    var sf = RxStartFail().Match(line);
                     if (sf.Success)
                     {
                         LastError = Clean(sf.Groups["e"].Value);
@@ -647,12 +636,12 @@ namespace SoulLink.Services
                         continue;
                     }
 
-                    if (RxTaskEnd.IsMatch(line))
+                    if (RxTaskEnd().IsMatch(line))
                     {
                         TaskEnded = true;
                         continue;
                     }
-                    if (RxOneDragonDone.IsMatch(line))
+                    if (RxOneDragonDone().IsMatch(line))
                     {
                         TaskEnded = true;
                         continue;

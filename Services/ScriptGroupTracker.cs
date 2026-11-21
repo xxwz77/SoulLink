@@ -61,24 +61,22 @@ namespace SoulLink.Services
     ///
     /// ★ 幂等：同一段文本重复喂入不会产生错误状态（按最后一条事件为准）。
     /// </summary>
-    public sealed class ScriptGroupTracker
+    public sealed partial class ScriptGroupTracker
     {
         private readonly Dictionary<string, ScriptGroupRun> _map
             = new Dictionary<string, ScriptGroupRun>(StringComparer.OrdinalIgnoreCase);
 
-        private static readonly Regex RxStart = new Regex(
-            @"配置组\s*""(?<g>[^""]+)""\s*加载完成[，,]\s*共\s*(?<n>\d+)\s*个脚本[，,]\s*开始执行",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"配置组\s*""(?<g>[^""]+)""\s*加载完成[，,]\s*共\s*(?<n>\d+)\s*个脚本[，,]\s*开始执行", RegexOptions.Compiled)]
+        private static partial Regex RxStart();
 
-        private static readonly Regex RxFinish = new Regex(
-            @"配置组\s*""(?<g>[^""]+)""\s*执行结束", RegexOptions.Compiled);
+        [GeneratedRegex(@"配置组\s*""(?<g>[^""]+)""\s*执行结束", RegexOptions.Compiled)]
+        private static partial Regex RxFinish();
 
-        private static readonly Regex RxFail = new Regex(
-            @"配置组\s*""(?<g>[^""]+)""\s*未成功完成[，,]?\s*结果\s*[:：]\s*(?<r>\S*)",
-            RegexOptions.Compiled);
+        [GeneratedRegex(@"配置组\s*""(?<g>[^""]+)""\s*未成功完成[，,]?\s*结果\s*[:：]\s*(?<r>\S*)", RegexOptions.Compiled)]
+        private static partial Regex RxFail();
 
-        private static readonly Regex RxCancel = new Regex(
-            @"取消执行配置组\s*[:：]\s*""(?<g>[^""]+)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"取消执行配置组\s*[:：]\s*""(?<g>[^""]+)""", RegexOptions.Compiled)]
+        private static partial Regex RxCancel();
 
         private readonly object _sync = new object();
 
@@ -117,7 +115,7 @@ namespace SoulLink.Services
                     // 各事件按在文本中出现的位置排序处理，保证先后关系正确
                     var events = new List<(int pos, Action apply)>();
 
-                    foreach (Match m in RxStart.Matches(logText))
+                    foreach (Match m in RxStart().Matches(logText))
                     {
                         string g = m.Groups["g"].Value.Trim();
                         int n = int.TryParse(m.Groups["n"].Value, out int c) ? c : 0;
@@ -136,7 +134,7 @@ namespace SoulLink.Services
                         }));
                     }
 
-                    foreach (Match m in RxFinish.Matches(logText))
+                    foreach (Match m in RxFinish().Matches(logText))
                     {
                         string g = m.Groups["g"].Value.Trim();
                         if (!ValidGroupName(g)) continue;
@@ -148,7 +146,7 @@ namespace SoulLink.Services
                         }));
                     }
 
-                    foreach (Match m in RxFail.Matches(logText))
+                    foreach (Match m in RxFail().Matches(logText))
                     {
                         string g = m.Groups["g"].Value.Trim();
                         string res = m.Groups["r"].Value.Trim();
@@ -162,7 +160,7 @@ namespace SoulLink.Services
                         }));
                     }
 
-                    foreach (Match m in RxCancel.Matches(logText))
+                    foreach (Match m in RxCancel().Matches(logText))
                     {
                         string g = m.Groups["g"].Value.Trim();
                         if (!ValidGroupName(g)) continue;

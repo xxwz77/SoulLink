@@ -21,7 +21,7 @@ namespace SoulLink.Services
     /// ★ 铁律：所有操作只针对**目标会话**（按 SessionId 过滤进程），
     ///   绝不碰其他用户的 BGI / 原神。
     /// </summary>
-    public static class BgiTaskPreparer
+    public static partial class BgiTaskPreparer
     {
         /// <summary>一次准备的结果。</summary>
         public sealed class Result
@@ -214,11 +214,11 @@ namespace SoulLink.Services
 
         // ── 读取 BGI 的「停止当前脚本」快捷键 ────────────────────────────
 
-        private static readonly Regex RxCancel =
-            new Regex(@"""cancelTaskHotkey""\s*:\s*""(?<v>[^""]*)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"""cancelTaskHotkey""\s*:\s*""(?<v>[^""]*)""", RegexOptions.Compiled)]
+        private static partial Regex RxCancel();
 
-        private static readonly Regex RxCancelType =
-            new Regex(@"""cancelTaskHotkeyType""\s*:\s*""(?<v>[^""]*)""", RegexOptions.Compiled);
+        [GeneratedRegex(@"""cancelTaskHotkeyType""\s*:\s*""(?<v>[^""]*)""", RegexOptions.Compiled)]
+        private static partial Regex RxCancelType();
 
         /// <summary>
         /// 从该账号的 BGI 配置里读 cancelTaskHotkey（停止当前脚本）。
@@ -328,7 +328,7 @@ namespace SoulLink.Services
                     text = sr.ReadToEnd();
                 }
 
-                var m = RxCancel.Match(text);
+                var m = RxCancel().Match(text);
                 if (!m.Success) { HkLog("配置里没有 cancelTaskHotkey: " + cfg); return ""; }
                 string key = m.Groups["v"].Value.Trim();
 
