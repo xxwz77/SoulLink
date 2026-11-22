@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -30,6 +31,14 @@ namespace SoulLink.Services
             public string PipeName { get; set; } = "";
             public string Nonce { get; set; } = "";
             public int Pid { get; set; }
+
+            /// <summary>
+            /// 需要注入给目标进程的环境变量。
+            /// ★ 3.2.8：录制回放要写主程序目录，而代理运行在 Program Files，
+            ///   自己推不出主程序位置，必须由投送方告知。
+            ///   旧版 Broker 不认识这个字段（反序列化后为 null），会在服务端忽略。
+            /// </summary>
+            public Dictionary<string, string>? Env { get; set; }
         }
 
         public sealed class Response

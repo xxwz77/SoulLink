@@ -209,6 +209,58 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- ══════════ 网页访问 ══════════
+                         ★ 这是**全局**功能：不只是录像，将来还要看截图、状态等，
+                           所以放在应用设置而不是 RDP 通用设置（那是单账号范围）。
+                         ★ 用户要求：「在设置里填写个端口号，ip+端口号可以打开网页」 -->
+                    <TextBlock Text="网页访问" Style="{StaticResource Label}" Margin="0,18,0,6" />
+                    <Border Style="{StaticResource GlassPanel}" Padding="14,12">
+                        <StackPanel>
+                            <TextBlock Text="在局域网内用浏览器查看录制回放。填 0 或不填 = 不开启。"
+                                       Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="18" />
+
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0" Text="端口号" Style="{StaticResource Label}"
+                                           VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <TextBox Grid.Column="1" x:Name="WebPortBox" Height="36"
+                                         Style="{StaticResource GlassTextBox}"
+                                         Padding="11,0,11,0" FontSize="12.5"
+                                         VerticalContentAlignment="Center"
+                                         TextChanged="WebPortBox_TextChanged" />
+
+                                <Button Grid.Column="2" Style="{StaticResource GhostButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Click="WebOpen_Click">
+                                    <TextBlock Text="打开网页" FontSize="11.5" />
+                                </Button>
+                            </Grid>
+
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="访问口令" Style="{StaticResource Label}"
+                                           VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <TextBox Grid.Column="1" x:Name="WebPasswordBox" Height="36"
+                                         Style="{StaticResource GlassTextBox}"
+                                         Padding="11,0,11,0" FontSize="12.5"
+                                         VerticalContentAlignment="Center"
+                                         TextChanged="WebPasswordBox_TextChanged" />
+                            </Grid>
+                            <TextBlock Text="留空 = 不校验，局域网内任何人可访问并操作。建议设置口令。"
+                                       Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap" />
+
+                            <TextBlock x:Name="WebStatus" Style="{StaticResource Caption}"
+                                       Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="18" />
+                        </StackPanel>
+                    </Border>
+
                     <!-- 配置 -->
                     <TextBlock Text="配置文件" Style="{StaticResource Label}" Margin="0,18,0,6" />
                     <Border Style="{StaticResource GlassPanel}" Padding="14,12">

@@ -25,6 +25,14 @@ namespace SoulLink.Relay
     internal static class RelayAgent
     {
         private static string? _deploymentNonce;
+
+        /// <summary>录屏默认参数（可用环境变量覆盖，主程序也能通过 record 命令改）。</summary>
+        private static int RecordingDefaultFps
+            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_REC_FPS"), out int v) && v > 0 ? v : 10;
+        private static int RecordingDefaultQuality
+            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_REC_QUALITY"), out int v) && v > 0 ? v : 75;
+        private static int RecordingDefaultKeepSeconds
+            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_REC_KEEP"), out int v) && v > 0 ? v : 30;
         // ── Win32 ────────────────────────────────────────────────────────────
         [DllImport("user32.dll")]
         private static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, IntPtr dwExtraInfo);
@@ -380,6 +388,13 @@ namespace SoulLink.Relay
             public int Count { get; set; } = 1;
             public string Hotkey { get; set; } = "";
             public bool Trace { get; set; }
+
+            /// <summary>
+            /// 非 0 表示"先定位到 X,Y 再点击"。
+            /// ★ 合并成一条命令是为了省一次往返：RelayClient 是串行请求-响应，
+            ///   拆成 move + click 要等两个 RTT（实测每次 45~64ms，双击就 200ms+）。
+            /// </summary>
+            public int Move { get; set; }
         }
 
         private sealed class RelayEvent
@@ -401,6 +416,8 @@ namespace SoulLink.Relay
             public bool Elevated { get; set; }
             public bool DesktopOk { get; set; }
             public string Nonce { get; set; } = "";
+            /// <summary>通用计数（录制保存时回传帧数等）。</summary>
+            public int Count { get; set; }
             public List<string> Windows { get; set; } = new List<string>();
         }
 
@@ -445,6 +462,19 @@ namespace SoulLink.Relay
             var stop = new ManualResetEventSlim(false);
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Set(); };
 
+            // ★★ 3.2.8：录屏由**用户在设置里按账号开启**，不在代理里无条件自动开始 ★★
+            //
+            //   用户明确纠正：
+            //     「我不是说在 RDP 通用设置里增加选项吗？指定的用户开启。」
+            //   所以代理启动时**不自动录**，等主程序下发 record 命令才开始。
+            //
+            //   ★ 生命周期语义（用户纠正过）：
+            //     代理活 → 录；代理断开 → 停。
+            //     断开就没有画面可言，不搞"脱离宿主继续录"。
+            //
+            //   ★ 只会录制**设置里勾选的账号**：主程序按配置决定要不要给这个会话
+            //     下发 record 命令，代理本身不做账号判断。
+
             int idleRounds = 0;
             AppDomain.CurrentDomain.ProcessExit += (_, __) => ReleaseAllMouseButtons();
             while (!stop.IsSet)
@@ -480,6 +510,8 @@ namespace SoulLink.Relay
             InputTrace.Write("AGENT_EXIT", "relay 退出 pid=" + Process.GetCurrentProcess().Id
                 + " 会话=" + Process.GetCurrentProcess().SessionId
                 + " 握手后存活=" + _traceRelaySw.ElapsedMilliseconds + "ms");
+            // ★ 代理退出前收掉录制线程：断开就没有画面，不该留孤儿线程
+            try { SessionRecorder.Shutdown(); } catch { }
             ReleaseAllMouseButtons();
             try { _hotkeys?.Dispose(); } catch { }
             _hotkeys = null;
@@ -638,6 +670,9 @@ namespace SoulLink.Relay
 
                 case "click":
                     {
+                        // ★ Move=1：在同一条命令里先定位再点，省一次往返。
+                        if (req.Move != 0) SetCursorPos(req.X, req.Y);
+
                         int count = req.Count <= 0 ? 1 : Math.Min(req.Count, 5);
                         for (int i = 0; i < count; i++)
                         {
@@ -727,6 +762,112 @@ namespace SoulLink.Relay
                             return true;
                         }, IntPtr.Zero);
                         return new Response { Ok = true, Message = "共 " + list.Count + " 个窗口", Windows = list };
+                    }
+
+                // ★★ 3.2.8：屏幕录制 / 截图 ★★
+                //   录屏必须由**目标会话内的代理**执行：别的会话截不到这个桌面，
+                //   投 SYSTEM 计划任务也不行（会话 0 没有交互式桌面，全黑，实测）。
+                //   录好的帧写进共享目录，主程序直接读文件，不走投送管道传二进制。
+                // ══════════ 录屏 / 截图（3.2.8）══════════
+                //
+                //   ★ 尺寸取**代理所在会话**（目标 RDP 会话），不是主程序桌面。
+                //   ★ 录制走内存环形缓冲，只留最近 N 秒；SSD 平时零写入。
+                //   ★ 保存时才落盘到 <程序目录>\capture\s<会话>\...
+
+                case "record":
+                    {
+                        int sid = Process.GetCurrentProcess().SessionId;
+                        string action = (req.Button ?? "").Trim().ToLowerInvariant();
+                        if (action == "stop")
+                        {
+                            SessionRecorder.Stop();
+                            return new Response { Ok = true, Message = "已请求停止录制", SessionId = sid };
+                        }
+                        // 参数复用：Count=fps，X=质量，Delta=环形保留秒数
+                        bool ok = SessionRecorder.Start(
+                            req.Count > 0 ? req.Count : 15,
+                            req.X > 0 ? req.X : 75,
+                            req.Delta > 0 ? req.Delta : 30,
+                            sid, out string msg);
+                        return new Response { Ok = ok, Message = msg, SessionId = sid };
+                    }
+
+                case "shot":
+                    {
+                        // 字段复用：Button = 用户名-昵称，Hotkey = 触发条件，X = 质量
+                        int sid = Process.GetCurrentProcess().SessionId;
+                        bool ok = SessionRecorder.CaptureOnce(
+                            req.Button ?? "", req.Hotkey ?? "", req.X > 0 ? req.X : 75,
+                            sid, out string path, out string msg);
+                        return new Response
+                        {
+                            Ok = ok,
+                            Message = ok ? ("已截图：" + path) : msg,
+                            Info = path,
+                            SessionId = sid
+                        };
+                    }
+
+                case "save":
+                    {
+                        // 保存录制。字段复用：
+                        //   Button = 用户名-昵称（目录一级）
+                        //   Hotkey = 触发条件（拼在目录名末尾）
+                        //   X      = 触发前秒数
+                        //   Delta  = 触发后秒数
+                        int sid = Process.GetCurrentProcess().SessionId;
+                        string userTag = req.Button ?? "";
+                        string trigger = req.Hotkey ?? "";
+                        double before = req.X > 0 ? req.X : 30;
+                        double after = req.Delta > 0 ? req.Delta : 0;
+                        string? dir = SessionRecorder.SaveRecording(userTag, trigger, before, after, sid,
+                            out int frames, out string msg);
+                        return new Response
+                        {
+                            Ok = dir != null,
+                            Message = msg,
+                            Info = dir ?? "",
+                            Count = frames,
+                            SessionId = sid
+                        };
+                    }
+
+                case "recordstatus":
+                    return new Response
+                    {
+                        Ok = true,
+                        Message = SessionRecorder.StatusText(),
+                        SessionId = Process.GetCurrentProcess().SessionId
+                    };
+
+                case "frame":
+                    {
+                        // 取最近一帧并**直接落盘**，返回路径（主程序读文件即可，
+                        // 不用在协议里传二进制）。Count 复用为"取第几帧"，-1=最新。
+                        int sid = Process.GetCurrentProcess().SessionId;
+                        byte[]? jpeg = req.Count >= 0
+                            ? SessionRecorder.GetFrameAt(req.Count)
+                            : SessionRecorder.GetLatestJpeg();
+                        if (jpeg == null)
+                            return new Response { Ok = false, Message = "缓冲里没有帧", SessionId = sid };
+                        try
+                        {
+                            string dir = Path.Combine(SessionRecorder.CaptureRoot, "s" + sid, "live");
+                            Directory.CreateDirectory(dir);
+                            string file = Path.Combine(dir, "latest.jpg");
+                            File.WriteAllBytes(file, jpeg);
+                            return new Response
+                            {
+                                Ok = true,
+                                Message = "已写出最新帧（" + jpeg.Length / 1024 + " KB）",
+                                Info = file,
+                                SessionId = sid
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            return new Response { Ok = false, Message = "写帧失败：" + ex.Message, SessionId = sid };
+                        }
                     }
 
                 case "exit":

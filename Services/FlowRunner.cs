@@ -542,6 +542,40 @@ namespace SoulLink.Services
                         // 已经是目标状态也算成功；OUT 不应因“没有可关闭进程”永久失败。
                         return (true, killed > 0 ? "已请求结束 " + killed + " 个 " + name + " 进程" : "目标账号下没有 " + name + " 进程");
                     }
+                    // ★★ 3.2.8：录制回放执行器 ★★
+                    case FlowNodeType.ActScreenshot:
+                    {
+                        string tag = UserTagOf(accountId, cfg);
+                        string trig = a.Get("trigger").Trim();
+                        var relay0 = SoulLink.Services.RelayClient.FindBySession(sessionId);
+                        if (relay0 == null || !relay0.IsConnected)
+                            return (false, "注入通道未就绪，无法截图");
+                        var r0 = await relay0.ScreenshotAsync(tag, trig).ConfigureAwait(false);
+                        return (r0?.Ok == true, r0?.Ok == true ? (r0.Message ?? "已截图") : (r0?.Message ?? "截图失败"));
+                    }
+
+                    case FlowNodeType.ActSaveRecording:
+                    {
+                        string tag = UserTagOf(accountId, cfg);
+                        string trig = a.Get("trigger").Trim();
+
+                        // ★ 用户要求：前后时长不得大于 RDP 通用设置里的保留时长。
+                        //   前 N + 后 N = 2N，所以 N 最大 = 保留时长 / 2。
+                        int keep = Math.Max(5, App.Config.Settings.RecordKeepSeconds);
+                        int maxN = Math.Max(1, keep / 2);
+                        int n = Math.Clamp(a.GetInt("seconds", 10), 1, maxN);
+                        string clamped = n < a.GetInt("seconds", 10)
+                            ? "（已按保留时长 " + keep + " 秒限制为 " + n + " 秒）" : "";
+
+                        var relay1 = SoulLink.Services.RelayClient.FindBySession(sessionId);
+                        if (relay1 == null || !relay1.IsConnected)
+                            return (false, "注入通道未就绪，无法保存录像");
+
+                        var r1 = await relay1.SaveRecordingAsync(tag, trig, n, n).ConfigureAwait(false);
+                        return (r1?.Ok == true,
+                            (r1?.Ok == true ? (r1.Message ?? "已保存录像") : (r1?.Message ?? "保存失败")) + clamped);
+                    }
+
                     case FlowNodeType.ActDelay:
                     {
                         int seconds = Math.Clamp(a.GetInt("seconds", 10), 0, 3600);
@@ -702,6 +736,17 @@ namespace SoulLink.Services
         }
 
         private static string UserOf(string id, AppConfig cfg) => cfg.Accounts.FirstOrDefault(a => a.Id == id)?.UserName ?? "";
+
+        /// <summary>录制回放目录用的标签：用户名-昵称。</summary>
+        private static string UserTagOf(string id, AppConfig cfg)
+        {
+            var acc = cfg.Accounts.FirstOrDefault(a => a.Id == id);
+            if (acc == null) return "";
+            string user = acc.UserName ?? "";
+            string nick = acc.DisplayName ?? "";
+            if (string.IsNullOrWhiteSpace(nick)) return user;
+            return user + "-" + nick;
+        }
         private static string BgiExeOf(string id, AppConfig cfg) => BgiPathResolver.GetPath(UserOf(id, cfg));
 
         private static (string file, DateTime lastWrite)? FindBgi(string id, AppConfig cfg)

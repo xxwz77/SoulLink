@@ -318,7 +318,12 @@ namespace SoulLink.Models
         ActMouseMove = 28, ActKeyPress = 29, ActMouseWheel = 30,
         ActEndFlow = 31, ActLaunchProcess = 32, ActKillProcess = 33,
         ActJoinRoom = 34, CondChoice = 39, CondScriptGroupState = 40, CondDogfoodRoute = 41,
-        CondBgiLiveState = 42, CondSessionState = 43, CondWindowForeground = 44
+        CondBgiLiveState = 42, CondSessionState = 43, CondWindowForeground = 44,
+        // ★ 3.2.8：录制回放执行器
+        /// <summary>触发即截一张图，存进「录制回放用户名-昵称时间-触发条件」。</summary>
+        ActScreenshot = 45,
+        /// <summary>保存触发点前 N 秒 + 后 N 秒的录像（N 不得大于保留时长的一半）。</summary>
+        ActSaveRecording = 46
     }
 
     public class FlowNode

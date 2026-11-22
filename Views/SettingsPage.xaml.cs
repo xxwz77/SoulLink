@@ -27,6 +27,115 @@ namespace SoulLink.Views
             InitializeComponent();
             LogList.ItemsSource = LogBus.Entries;
             VersionText.Text = "SoulLink v1.0 · " + (Environment.IsPrivilegedProcess ? "管理员权限" : "普通权限");
+
+            // ★ 网页访问是**全局**功能（不只录像），所以放应用设置
+            Loaded += (_, __) => LoadWebSettings();
+        }
+
+        // ══════════ 网页访问 ══════════
+
+        private void LoadWebSettings()
+        {
+            try
+            {
+                _loading = true;
+                int port = App.Config.Settings.WebPort;
+                WebPortBox.Text = port > 0 ? port.ToString() : "";
+                WebPasswordBox.Text = App.Config.Settings.WebPassword ?? "";
+                _loading = false;
+                UpdateWebStatus();
+            }
+            catch (Exception ex) { App.AppendErrorLog("LoadWebSettings", ex); _loading = false; }
+        }
+
+        private void WebPortBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_loading) return;
+            try
+            {
+                string txt = (WebPortBox.Text ?? "").Trim();
+                if (txt.Length == 0)
+                {
+                    App.Config.Settings.WebPort = 0;
+                    ConfigStore.Save(App.Config);
+                    Services.WebServer.Apply(0);
+                    UpdateWebStatus();
+                    return;
+                }
+                if (!int.TryParse(txt, out int port)) { UpdateWebStatus(); return; }
+                if (port < 1024 || port > 65535)
+                {
+                    if (WebStatus != null)
+                        WebStatus.Text = "端口需在 1024~65535 之间（当前填的是 " + port + "）";
+                    return;
+                }
+                App.Config.Settings.WebPort = port;
+                ConfigStore.Save(App.Config);
+                Services.WebServer.Apply(port);
+                UpdateWebStatus();
+            }
+            catch (Exception ex) { App.AppendErrorLog("WebPortBox_TextChanged", ex); }
+        }
+
+        private void WebPasswordBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_loading) return;
+            try
+            {
+                string newPw = (WebPasswordBox.Text ?? "").Trim();
+                string oldPw = App.Config.Settings.WebPassword ?? "";
+                App.Config.Settings.WebPassword = newPw;
+                // ★ 改了口令就作废旧 Cookie（否则改了密码但旧浏览器还免密，等于没改）
+                if (!string.Equals(newPw, oldPw, StringComparison.Ordinal))
+                    App.Config.Settings.WebAuthToken = Guid.NewGuid().ToString("N");
+                ConfigStore.Save(App.Config);
+                UpdateWebStatus();
+            }
+            catch (Exception ex) { App.AppendErrorLog("WebPasswordBox_TextChanged", ex); }
+        }
+
+        private void WebOpen_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                int port = App.Config.Settings.WebPort;
+                if (port <= 0)
+                {
+                    if (WebStatus != null) WebStatus.Text = "先填一个端口号（如 8080）再打开。";
+                    return;
+                }
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo("http://127.0.0.1:" + port + "/")
+                    { UseShellExecute = true });
+            }
+            catch (Exception ex) { App.AppendErrorLog("WebOpen_Click", ex); }
+        }
+
+        private void UpdateWebStatus()
+        {
+            try
+            {
+                if (WebStatus == null) return;
+                int port = App.Config.Settings.WebPort;
+                int running = Services.WebServer.RunningPort;
+                if (port <= 0)
+                {
+                    WebStatus.Text = "未开启。填一个端口号（如 8080），然后用 http://本机IP:端口 访问。";
+                    return;
+                }
+                if (running > 0)
+                {
+                    string auth = string.IsNullOrWhiteSpace(App.Config.Settings.WebPassword)
+                        ? "　⚠ 未设口令，局域网内任何人可访问并操作"
+                        : "　已启用口令";
+                    WebStatus.Text = "已开启：" + Services.WebServer.LanUrl(port) + auth;
+                }
+                else
+                {
+                    WebStatus.Text = "端口 " + port + " 未能监听，可能被占用或权限不足，换个端口试试。";
+                }
+            }
+            catch { }
         }
 
         /// <summary>输入框为空时显示占位文字。</summary>

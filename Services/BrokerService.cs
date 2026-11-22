@@ -199,7 +199,8 @@ namespace SoulLink.Services
 
                 Trace("DEPLOY_BEGIN", "session=" + request.SessionId + " user=" + request.UserName
                     + " pipe=" + request.PipeName);
-                var result = SystemLauncher.LaunchAdminAgentFromBroker(request.SessionId, request.PipeName, request.Nonce);
+                var result = SystemLauncher.LaunchAdminAgentFromBroker(
+                    request.SessionId, request.PipeName, request.Nonce, request.Env);
                 Trace("DEPLOY_RESULT", "ok=" + result.Ok + " pid=" + result.Pid + " " + result.Message);
                 if (!result.Ok) return BrokerProtocol.Fail("CREATE_AGENT", result.Message);
 

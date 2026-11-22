@@ -154,6 +154,7 @@ namespace SoulLink
                 try { Services.AccountStateCenter.Stop(); } catch { }
                 try { Services.ScheduleRunnerHost.Shutdown(); } catch { }
                 try { Services.RouteUpdateSchedulerHost.Shutdown(); } catch { }
+                try { Services.WebServer.Stop(); } catch { }
             };
 
             DispatcherUnhandledException += (_, args) =>
@@ -536,6 +537,17 @@ namespace SoulLink
                 catch (Exception ex)
                 {
                     LogBus.Error("启动定时调度失败：" + ex.Message);
+                }
+
+                // 启动局域网网页服务（端口来自设置，0 = 不启动）
+                try
+                {
+                    Services.WebServer.Apply(Config?.Settings?.WebPort ?? 0);
+                    Services.WebServer.EnsureLiveRefresh();
+                }
+                catch (Exception ex)
+                {
+                    LogBus.Error("启动网页服务失败：" + ex.Message);
                 }
 
                 // 启动路线更新的定时调度器（与动作调度互不影响）

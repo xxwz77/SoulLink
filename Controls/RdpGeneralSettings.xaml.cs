@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -36,6 +37,8 @@ namespace SoulLink.Controls
    ShieldThicknessSlider.Value = Math.Max(0, Math.Min(8, App.Config.Settings.ShieldBorderThickness));
    ShieldThicknessText.Text = ((int)ShieldThicknessSlider.Value) + " px";
 
+   LoadRecordSettings();
+
    SensitivitySlider.Value = App.Config.Settings.LookSensitivity;
    SensitivityText.Text = App.Config.Settings.LookSensitivity.ToString("0.0") + "x";
    GlobalHotkey.SetSpec(HotkeySpec.Parse(App.Config.Settings.LockHotkey));
@@ -58,6 +61,156 @@ namespace SoulLink.Controls
    // 先同步一次文本，避免 Slider 的值被 clamp 后和文字不一致
    SensitivityText.Text = SliderValueToText(SensitivitySlider.Value);
    _loading = false;
+  }
+
+  // ══════════ 屏幕录制（3.2.8）══════════
+  //
+  //  用户需求：「在 RDP 通用配置里增加一个设置栏目，对目标用户（RDP 配置里有的
+  //            用户，可多选）开启录像功能，然后用户可以设置录像时长」。
+
+  /// <summary>把账号列表渲染成一排复选框，勾选状态来自配置。</summary>
+  private void LoadRecordSettings()
+  {
+   try
+   {
+    var settings = App.Config.Settings;
+    // 帧率
+    SelectComboByTag(RecordFpsCombo, settings.RecordFps);
+    SelectComboByTag(RecordQualityCombo, settings.RecordQuality);
+    RecordKeepBox.Text = settings.RecordKeepSeconds.ToString();
+
+    // 账号多选
+    // ★★ 3.2.8：**排除主账号** ★★
+    //   用户明确指出：「不应该有主账号，主账号都不投送」。
+    //   录制依赖目标会话里的注入代理，而代理**从不投送到主账号**（那是操作者自己的桌面），
+    //   所以主账号出现在这里只会让用户勾了却没效果 —— 直接不显示。
+    //   判定用 AccountScope.IsPrimaryUser（与"仅管理挂机账号"同一套口径）。
+    RecordAccountPanel.Children.Clear();
+    var accounts = App.Config.Accounts
+        .Where(a => !string.IsNullOrWhiteSpace(a.UserName))
+        .Where(a => !AccountScope.IsPrimaryUser(a.UserName))
+        .ToList();
+    if (accounts.Count == 0)
+    {
+     RecordAccountPanel.Children.Add(new TextBlock
+     {
+      Text = "没有可录制的账号（主账号不投送代理，无法录制）",
+      Style = (Style)FindResource("Caption"),
+      TextWrapping = TextWrapping.Wrap
+     });
+     return;
+    }
+
+    foreach (var acc in accounts)
+    {
+     var cb = new CheckBox
+     {
+      Style = (Style)FindResource("GlassCheckBox"),
+      Content = string.IsNullOrWhiteSpace(acc.DisplayName) ? acc.UserName : acc.DisplayName + "（" + acc.UserName + "）",
+      IsChecked = settings.RecordAccountIds.Contains(acc.Id),
+      Tag = acc.Id,
+      FontSize = 10,
+      Margin = new Thickness(0, 2, 0, 2)
+     };
+     cb.Checked += RecordAccount_Changed;
+     cb.Unchecked += RecordAccount_Changed;
+     RecordAccountPanel.Children.Add(cb);
+    }
+
+    // ★ 顺手清理历史配置里可能残留的主账号勾选（旧版本允许勾选它）
+    try
+    {
+     int removed = settings.RecordAccountIds.RemoveAll(id =>
+     {
+      var acc = App.Config.Accounts.FirstOrDefault(a => a.Id == id);
+      return acc != null && AccountScope.IsPrimaryUser(acc.UserName);
+     });
+     if (removed > 0) Save();
+    }
+    catch { }
+
+    UpdateRecordHint();
+   }
+   catch (Exception ex) { App.AppendErrorLog("LoadRecordSettings", ex); }
+  }
+
+  private static void SelectComboByTag(ComboBox? combo, int value)
+  {
+   if (combo == null) return;
+   foreach (var obj in combo.Items)
+    if (obj is ComboBoxItem item && item.Tag is string tag && tag == value.ToString())
+    { combo.SelectedItem = item; return; }
+   if (combo.Items.Count > 0) combo.SelectedIndex = 0;
+  }
+
+  private void RecordAccount_Changed(object sender, RoutedEventArgs e)
+  {
+   if (_loading) return;
+   if (sender is not CheckBox cb || cb.Tag is not string id) return;
+
+   var list = App.Config.Settings.RecordAccountIds;
+   if (cb.IsChecked == true) { if (!list.Contains(id)) list.Add(id); }
+   else list.Remove(id);
+
+   Save();
+   UpdateRecordHint();
+  }
+
+  private void RecordFps_Changed(object sender, SelectionChangedEventArgs e)
+  {
+   if (_loading) return;
+   if (RecordFpsCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
+       && int.TryParse(tag, out int fps))
+   {
+    App.Config.Settings.RecordFps = fps;
+    Save();
+    UpdateRecordHint();
+   }
+  }
+
+  private void RecordQuality_Changed(object sender, SelectionChangedEventArgs e)
+  {
+   if (_loading) return;
+   if (RecordQualityCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
+       && int.TryParse(tag, out int q))
+   {
+    App.Config.Settings.RecordQuality = q;
+    Save();
+    UpdateRecordHint();
+   }
+  }
+
+  private void RecordKeep_Changed(object sender, TextChangedEventArgs e)
+  {
+   if (_loading) return;
+   if (int.TryParse((RecordKeepBox.Text ?? "").Trim(), out int sec) && sec >= 5 && sec <= 600)
+   {
+    App.Config.Settings.RecordKeepSeconds = sec;
+    Save();
+    UpdateRecordHint();
+   }
+  }
+
+  /// <summary>把内存占用估算显示给用户，避免开了很多账号才发现吃内存。</summary>
+  private void UpdateRecordHint()
+  {
+   try
+   {
+    var s = App.Config.Settings;
+    int count = s.RecordAccountIds.Count;
+    if (count == 0)
+    {
+     RecordHintText.Text = "未选择任何账号 —— 不录制。勾选上面的账号后，代理会在该账号的会话内开始录制。";
+     return;
+    }
+    // 1920x1080 质量60≈126KB、75≈159KB、90≈206KB /帧
+    double perFrameKb = s.RecordQuality switch { >= 85 => 206, >= 70 => 159, _ => 126 };
+    double totalMb = count * perFrameKb * s.RecordFps * s.RecordKeepSeconds / 1024.0;
+    RecordHintText.Text = "已选 " + count + " 个账号 · " + s.RecordFps + "fps · 质量 " + s.RecordQuality
+        + " · 保留 " + s.RecordKeepSeconds + " 秒，预计占用内存约 " + totalMb.ToString("0") + " MB。"
+        + "（只在内存里循环，点「保存」才写盘）";
+   }
+   catch { }
   }
 
   private static string SliderValueToText(double v) => Math.Round(v, 1).ToString("0.0") + "x";
@@ -183,6 +336,8 @@ namespace SoulLink.Controls
   {
    ConfigStore.Save(App.Config);
    SoulLink.Views.ConsolePage.NotifyGlobalSettingsChanged();
+   // 3.2.8：录制选项改了立刻同步到已投送的账号（勾上的开始录，取消的停）
+   try { SoulLink.Views.ConsolePage.NotifyRecordingSettingsChanged(); } catch { }
    foreach (Window window in Application.Current.Windows)
     foreach (var console in FindConsoles(window)) console.ApplyGlobalSettings();
    if (SavedText != null) SavedText.Text = "已保存 · 所有用户共用 · " + DateTime.Now.ToString("HH:mm:ss");

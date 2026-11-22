@@ -56,6 +56,13 @@ namespace SoulLink.Services
             public string ResultPath { get; set; } = "";
             public bool RequireElevated { get; set; } = true;
             public string Nonce { get; set; } = "";
+
+            /// <summary>
+            /// 追加给目标进程的环境变量（会覆盖同名项）。
+            /// ★ 3.2.8：录制回放要写主程序目录，而代理运行在 Program Files，
+            ///   自己推不出主程序位置，必须由投送方显式告知。
+            /// </summary>
+            public Dictionary<string, string> Env { get; set; } = new();
         }
 
         // ── 特权 ─────────────────────────────────────────────────────────────
@@ -147,7 +154,7 @@ namespace SoulLink.Services
 
         public static async Task<Result> LaunchAsync(int sessionId, string exePath, string arguments,
             string workingDir = "", bool interactive = true, string? bootstrapExe = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default, Dictionary<string, string>? env = null)
         {
             if (AccountScope.OnlyAutomationAccounts())
             {
@@ -164,13 +171,14 @@ namespace SoulLink.Services
             try
             {
                 return await LaunchCoreAsync(sessionId, exePath, arguments, workingDir,
-                    interactive, bootstrapExe, ct).ConfigureAwait(false);
+                    interactive, bootstrapExe, ct, env).ConfigureAwait(false);
             }
             finally { LaunchGate.Release(); }
         }
 
         private static async Task<Result> LaunchCoreAsync(int sessionId, string exePath, string arguments,
-            string workingDir, bool interactive, string? bootstrapExe, CancellationToken ct)
+            string workingDir, bool interactive, string? bootstrapExe, CancellationToken ct,
+            Dictionary<string, string>? env = null)
         {
             var sw = Stopwatch.StartNew();
 
@@ -202,7 +210,8 @@ namespace SoulLink.Services
                     : workingDir,
                 Interactive = interactive,
                 RequireElevated = true,
-                ResultPath = resultPath
+                ResultPath = resultPath,
+                Env = env ?? new Dictionary<string, string>()
             };
 
             try
@@ -444,7 +453,8 @@ namespace SoulLink.Services
             return path;
         }
 
-        public static Result LaunchAdminAgentFromBroker(int sessionId, string pipeName, string nonce)
+        public static Result LaunchAdminAgentFromBroker(int sessionId, string pipeName, string nonce,
+            Dictionary<string, string>? env = null)
         {
             string exe = BrokerInstall.ServiceExe, agent = BrokerInstall.AgentExe;
             if (!IsElevated || !BrokerInstall.IsFixedTestPath(ResolveSelfExe()) || !BrokerInstall.ValidAgent(exe, agent)) return Result.Fail("Broker 身份或固定代理路径无效");
@@ -470,7 +480,8 @@ namespace SoulLink.Services
                 RequireElevated = true,
                 Nonce = nonce,
                 WorkingDir = BrokerInstall.Root,
-                Interactive = false
+                Interactive = false,
+                Env = env ?? new Dictionary<string, string>()
             };
             var r = LaunchAsUser(job); return new Result { Ok = r.ok, Pid = r.pid, Message = r.message };
         }
@@ -641,6 +652,47 @@ namespace SoulLink.Services
             catch { return IntPtr.Zero; }
         }
 
+        /// <summary>
+        /// 在已有的 ENVIRONMENT_BLOCK 上追加/覆盖变量。
+        /// 环境块格式：一串 "NAME=VALUE\0"，以双 \0 结尾。
+        /// </summary>
+        private static IntPtr MergeEnvironment(IntPtr src, Dictionary<string, string> extra)
+        {
+            var items = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (src != IntPtr.Zero)
+                {
+                    IntPtr p = src;
+                    while (true)
+                    {
+                        string? s = Marshal.PtrToStringUni(p);
+                        if (string.IsNullOrEmpty(s)) break;
+                        int eq = s.IndexOf('=');
+                        if (eq > 0) items[s.Substring(0, eq)] = s.Substring(eq + 1);
+                        p = IntPtr.Add(p, (s.Length + 1) * 2);
+                    }
+                }
+            }
+            catch { }
+
+            foreach (var kv in extra) items[kv.Key] = kv.Value;
+
+            var sb = new System.Text.StringBuilder();
+            foreach (var kv in items) sb.Append(kv.Key).Append('=').Append(kv.Value).Append('\0');
+            sb.Append('\0');
+
+            // 转成 UTF-16 双零结尾的块
+            string block = sb.ToString();
+            IntPtr mem = Marshal.AllocHGlobal((block.Length + 1) * 2);
+            var chars = block.ToCharArray();
+            Marshal.Copy(chars, 0, mem, chars.Length);
+            Marshal.WriteInt16(mem, chars.Length * 2, 0);
+
+            if (src != IntPtr.Zero) { try { DestroyEnvironmentBlock(src); } catch { } }
+            return mem;
+        }
+
         /// <summary>核心：以目标会话用户身份创建进程。</summary>
         private static (bool ok, int pid, string message) LaunchAsUser(Job job)
         {
@@ -704,6 +756,14 @@ namespace SoulLink.Services
 
                 // ③ 用户环境变量（不建的话会继承 SYSTEM 的 PATH / TEMP，程序可能找不到依赖）
                 if (!CreateEnvironmentBlock(out env, primary, false)) return (false, 0, "无法创建用户环境");
+
+                // ★ 3.2.8：把调用方指定的环境变量并进去（如录制回放目录）。
+                //   CreateEnvironmentBlock 只给用户默认环境，需要额外追加。
+                if (job.Env.Count > 0)
+                {
+                    try { env = MergeEnvironment(env, job.Env); }
+                    catch { /* 合并失败不阻断启动，代理会回退到自己推导路径 */ }
+                }
 
                 // ④ 组装命令行
                 string cmd = QuoteArg(job.ExePath);

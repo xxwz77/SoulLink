@@ -223,7 +223,8 @@ namespace SoulLink.Services
                 var broker = await BrokerProtocol.SendAsync(new BrokerProtocol.Request
                 {
                     Command = "ensure", SessionId = SessionId, UserName = account.UserName,
-                    PipeName = PipeName, Nonce = DeploymentNonce
+                    PipeName = PipeName, Nonce = DeploymentNonce,
+                    Env = CaptureEnv()      // ★ 3.2.8 告知录制目录
                 }).ConfigureAwait(false);
                 launch = new SystemLauncher.Result
                 {
@@ -237,7 +238,8 @@ namespace SoulLink.Services
             {
                 launch = await SystemLauncher.LaunchAsync(
                     SessionId, agent, "--relay " + PipeName,
-                    interactive: false, bootstrapExe: self).ConfigureAwait(false);
+                    interactive: false, bootstrapExe: self,
+                    env: CaptureEnv()).ConfigureAwait(false);
             }
 
             if (!launch.Ok)
@@ -546,6 +548,16 @@ namespace SoulLink.Services
         public Task<RelayResponse?> MoveRelAsync(int dx, int dy)
             => SendAsync(new { Cmd = "moverel", Dx = dx, Dy = dy });
 
+        /// <summary>
+        /// 定位 + 点击，**一次往返完成**。
+        /// ★ 为什么要合并：RelayClient 的命令是串行请求-响应，
+        ///   分成 move + click 两条就要等两个 RTT。
+        ///   实测单条 45~64ms，双击 4 条就 200ms+，主观延迟明显。
+        ///   协议复用：X/Y 是坐标，Button 是按键，Move=1 表示"先定位再点"。
+        /// </summary>
+        public Task<RelayResponse?> ClickAtAsync(int x, int y, string button = "left", int count = 1)
+            => SendAsync(new { Cmd = "click", X = x, Y = y, Button = button, Count = count, Move = 1 });
+
         public Task<RelayResponse?> ClickAsync(int x, int y, string button = "left", int count = 1)
             => SendAsync(new { Cmd = "click", X = x, Y = y, Button = button, Count = count });
 
@@ -573,6 +585,70 @@ namespace SoulLink.Services
 
         public Task<RelayResponse?> CursorAsync() => SendAsync(new { Cmd = "cursor" });
         public Task<RelayResponse?> ForegroundAsync() => SendAsync(new { Cmd = "foreground" });
+
+        // ── 屏幕录制（3.2.8）────────────────────────────────────────────
+        //
+        //  代理在目标会话内录屏（内存环形缓冲），这里只负责下发参数。
+        //  协议字段复用：Count=fps，X=质量，Delta=保留秒数，Button=动作。
+
+        /// <summary>开始/更新录制参数。</summary>
+        public Task<RelayResponse?> RecordStartAsync(int fps, int quality, int keepSeconds)
+            => SendAsync(new { Cmd = "record", Button = "start", Count = fps, X = quality, Delta = keepSeconds }, 6000);
+
+        /// <summary>停止录制。</summary>
+        public Task<RelayResponse?> RecordStopAsync()
+            => SendAsync(new { Cmd = "record", Button = "stop" }, 4000);
+
+        /// <summary>查询录制状态（帧数、字节数、尺寸）。</summary>
+        public Task<RelayResponse?> RecordStatusAsync()
+            => SendAsync(new { Cmd = "recordstatus" }, 4000);
+
+        /// <summary>
+        /// 投送代理时带上的环境变量。
+        /// ★ 3.2.8：代理运行在 Program Files，自己推不出主程序位置，
+        ///   录制回放目录必须由投送方显式告知，否则会写到安装目录
+        ///   （权限不稳、卸载残留、与"跟程序一个目录"的要求不符）。
+        /// </summary>
+        private static Dictionary<string, string> CaptureEnv()
+        {
+            try
+            {
+                string dir = System.IO.Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? "";
+                if (string.IsNullOrWhiteSpace(dir)) return new Dictionary<string, string>();
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["SOULLINK_CAPTURE_DIR"] = System.IO.Path.Combine(dir, "capture")
+                };
+            }
+            catch { return new Dictionary<string, string>(); }
+        }
+
+        /// <summary>
+        /// 保存录制到磁盘。
+        /// ★ 目录：录制回放\&lt;用户名-昵称&gt;\&lt;时间-触发条件&gt;\
+        /// </summary>
+        /// <param name="userTag">用户名-昵称</param>
+        /// <param name="trigger">触发条件（拼在目录名末尾）</param>
+        /// <param name="beforeSeconds">触发前秒数</param>
+        /// <param name="afterSeconds">触发后追加秒数（0 = 只存前段）</param>
+        public Task<RelayResponse?> SaveRecordingAsync(string userTag, string trigger,
+            int beforeSeconds, int afterSeconds)
+            => SendAsync(new
+            {
+                Cmd = "save",
+                Button = userTag ?? "",
+                Hotkey = trigger ?? "",
+                X = Math.Max(1, beforeSeconds),
+                Delta = Math.Max(0, afterSeconds)
+            }, 60000);   // 后 N 秒要等，超时给足
+
+        /// <summary>单张截图（直接落盘，目录规范同录像）。</summary>
+        public Task<RelayResponse?> ScreenshotAsync(string userTag, string trigger, int quality = 75)
+            => SendAsync(new { Cmd = "shot", Button = userTag ?? "", Hotkey = trigger ?? "", X = quality }, 15000);
+
+        /// <summary>取最近一帧并落盘（实时预览用）。Count=-1 表示最新帧。</summary>
+        public Task<RelayResponse?> WriteLatestFrameAsync()
+            => SendAsync(new { Cmd = "frame", Count = -1 }, 8000);
         public Task<RelayResponse?> WindowsAsync() => SendAsync(new { Cmd = "windows" });
 
         [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]

@@ -498,6 +498,48 @@ namespace SoulLink.Models
         ///     · 任何热键都只在全屏时生效，非全屏一律原样透传给画面，绝不吞键。
         /// </summary>
         public string ExitFullScreenHotkey { get; set; } = "";
+
+        // ══════════ 屏幕录制（3.2.8）══════════
+        //
+        //  需求（用户原话）：
+        //    「在 RDP 通用配置里，增加一个设置栏目，对目标用户（RDP 配置里有的用户，
+        //      可多选）开启录像功能，然后用户可以设置录像时长」
+        //    「一直录，只留最近 30 秒，旧帧自动删」
+        //    「10fps / 15fps / 30fps 用户可选」
+        //    「肯定要清晰」
+
+        /// <summary>开启录制的账号 Id 列表（用户多选）。空 = 不录任何账号。</summary>
+        public List<string> RecordAccountIds { get; set; } = new();
+
+        /// <summary>录制帧率：10 / 15 / 30，用户可选。</summary>
+        public int RecordFps { get; set; } = 10;
+
+        /// <summary>JPEG 质量。用户要求清晰，默认 75（越高越清晰也越大）。</summary>
+        public int RecordQuality { get; set; } = 75;
+
+        /// <summary>环形缓冲保留秒数。超过即丢弃最旧的帧。</summary>
+        public int RecordKeepSeconds { get; set; } = 30;
+
+        // ══════════ 网页访问（3.2.8）══════════
+        //
+        //  用户需求：「在设置里填写个端口号，ip+端口号可以打开网页」
+        //  用途：手机等设备通过局域网访问录制回放、实时画面。
+
+        /// <summary>网页服务端口。0 = 不启动（默认关闭，避免无谓监听）。</summary>
+        public int WebPort { get; set; } = 0;
+
+        /// <summary>网页访问是否需要口令（空 = 不需要）。局域网内可选。</summary>
+        public string WebPassword { get; set; } = "";
+
+        /// <summary>
+        /// 网页登录令牌（持久化，让浏览器"记住密码"）。
+        /// ★ 用户反馈：每次都要重新输口令很烦。
+        ///   这里把 token 存进配置，Cookie 带一年有效期，
+        ///   只要口令没改、配置没清，同一浏览器就一直免密。
+        /// 改口令 → 旧 token 失效（因为比对的是当前 token，用户可手动换）。
+        /// </summary>
+        public string WebAuthToken { get; set; } = "";
+
         /// <summary>0=跟随系统 1=浅色 2=深色</summary>
         public int ThemeMode { get; set; } = 0;
         /// <summary>true=点击 RDP 画面才接收键鼠，移出画面立即释放</summary>

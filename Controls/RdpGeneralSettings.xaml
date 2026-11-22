@@ -73,6 +73,71 @@
      <TextBlock Text="★ 默认不占用 Esc —— 游戏里 Esc 是菜单/取消键，被拦截会导致游戏没法用。若你想给自己留一条额外的退出退路，再自己录一个（例如 Ctrl+Shift+Q）。两个热键都只在全屏时生效，非全屏一律原样送给画面，绝不拦截。"
                 Style="{StaticResource Caption}" Margin="2,8,0,0" TextWrapping="Wrap" />
 
+     <!-- ══════════ 屏幕录制（3.2.8）══════════
+          用户需求：「在 RDP 通用配置里增加一个设置栏目，对目标用户（RDP 配置里
+                    有的用户，可多选）开启录像功能，然后用户可以设置录像时长」。
+          ★ 录制在**目标会话的代理**里跑，录的是那个账号的 RDP 画面（不是主控台桌面）。
+          ★ 环形缓冲：只保留最近 N 秒，SSD 平时零写入，保存时才落盘。 -->
+     <Border Style="{StaticResource Divider}" Margin="0,18,0,0" />
+     <TextBlock Text="屏幕录制" Style="{StaticResource Label}" Margin="0,14,0,0"
+                ToolTip="在目标账号的 RDP 会话内录制画面。勾选的账号才会录。" />
+
+     <TextBlock Text="选择要录制的账号（可多选）" Style="{StaticResource Caption}"
+                Margin="2,8,0,6" TextWrapping="Wrap" />
+     <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,0,0,6">
+      <StackPanel x:Name="RecordAccountPanel">
+       <TextBlock Text="正在读取账号…" Style="{StaticResource Caption}" />
+      </StackPanel>
+     </Border>
+
+     <Grid Margin="0,10,0,0">
+      <Grid.ColumnDefinitions>
+       <ColumnDefinition Width="*" />
+       <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="帧率" Style="{StaticResource Label}" VerticalAlignment="Center"
+                 ToolTip="越高越流畅、占用越多。挂机看操作 10fps 通常够用。" />
+      <ComboBox Grid.Column="1" x:Name="RecordFpsCombo" Width="140" Height="30"
+                SelectionChanged="RecordFps_Changed">
+       <ComboBoxItem Content="10 帧/秒（省资源）" Tag="10" />
+       <ComboBoxItem Content="15 帧/秒（推荐）" Tag="15" />
+       <ComboBoxItem Content="30 帧/秒（流畅）" Tag="30" />
+      </ComboBox>
+     </Grid>
+
+     <Grid Margin="0,10,0,0">
+      <Grid.ColumnDefinitions>
+       <ColumnDefinition Width="*" />
+       <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="画质" Style="{StaticResource Label}" VerticalAlignment="Center"
+                 ToolTip="越高越清晰，单帧体积也越大。" />
+      <ComboBox Grid.Column="1" x:Name="RecordQualityCombo" Width="140" Height="30"
+                SelectionChanged="RecordQuality_Changed">
+       <ComboBoxItem Content="标准（60）" Tag="60" />
+       <ComboBoxItem Content="清晰（75）" Tag="75" />
+       <ComboBoxItem Content="高清晰（90）" Tag="90" />
+      </ComboBox>
+     </Grid>
+
+     <Grid Margin="0,10,0,0">
+      <Grid.ColumnDefinitions>
+       <ColumnDefinition Width="*" />
+       <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="保留时长" Style="{StaticResource Label}" VerticalAlignment="Center"
+                 ToolTip="环形缓冲只保留最近这么多秒，更早的帧自动丢弃。保存时才写入磁盘。" />
+      <StackPanel Grid.Column="1" Orientation="Horizontal">
+       <TextBox x:Name="RecordKeepBox" Width="60" Height="30" Style="{StaticResource GlassTextBox}"
+                Padding="8,0,8,0" FontSize="12" VerticalContentAlignment="Center"
+                TextChanged="RecordKeep_Changed" Text="30" />
+       <TextBlock Text="秒" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="6,0,0,0" />
+      </StackPanel>
+     </Grid>
+
+     <TextBlock x:Name="RecordHintText" Style="{StaticResource Caption}" Margin="2,8,0,0" TextWrapping="Wrap"
+                Text="录制在目标账号的会话内进行。未勾选的账号不录。缓冲区只在内存里，点「保存」才写入磁盘。" />
+
      <!-- ── 保护层边框 ─────────────────────────────────────────────
           ★ 锁定态时才出现，框住 RDP 画布。默认色故意与焦点边框区分开，
             否则用户会误以为"保护层没生效、只是焦点高亮"。

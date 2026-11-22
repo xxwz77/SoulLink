@@ -144,6 +144,23 @@ namespace SoulLink.Models
             D(FlowNodeType.ActKillProcess,FlowNodeKind.Action,"关闭进程","只操作目标账号；不存在目标进程属于幂等成功","\uE711",P("process","进程名","",FlowParamKind.ProcessName),P("force","强制结束","true",FlowParamKind.Bool));
             D(FlowNodeType.ActJoinRoom,FlowNodeKind.Action,"上线房间","调用房间服务；成功以服务端响应为准","\uE8FA",P("code","房间码"));
             D(FlowNodeType.ActDelay,FlowNodeKind.Action,"等待","条件满足后开始等待，到时继续；条件中断则重新计时","\uE916",P("seconds","秒数","10",FlowParamKind.Number));
+            // ★★ 3.2.8：录制回放执行器 ★★
+            //   用户需求：「在自动化里增加两个执行器，一个是截图（触发即截图），
+            //             一个是录像（保存发生时前后多少秒，不得大于 RDP 通用设置里的）」
+            //   目录：<主程序目录>\录制回放\<用户名-昵称>\<时间-触发条件>\
+            D(FlowNodeType.ActScreenshot, FlowNodeKind.Action, "截图",
+                "触发即截取目标会话当前画面，存进「录制回放」目录",
+                "\uE722",
+                P("trigger", "触发标签", "", hint: "拼在文件夹名末尾，留空则只写时间", required: false));
+
+            D(FlowNodeType.ActSaveRecording, FlowNodeKind.Action, "保存录像",
+                "保存触发时刻前 N 秒 + 后 N 秒的画面（N 不超过保留时长的一半）",
+                "\uE714",
+                P("trigger", "触发标签", "", hint: "拼在文件夹名末尾，例如「日志：ERROR」", required: false),
+                P("seconds", "前后各几秒", "10", FlowParamKind.Number,
+                  "前 N 秒 + 后 N 秒 = 共 2N 秒；N 不得超过 RDP 通用设置里的保留时长的一半",
+                  required: false));
+
             D(FlowNodeType.ActEndFlow,FlowNodeKind.Terminate,"每天完成","到达后当天停止扫描；到本节点日界自动重置。属性里可手动切换今天是否运行","\uE71A");
         }
         public static FlowNodeDef? Get(FlowNodeType t) => Map.TryGetValue(t,out var d) ? d : null;

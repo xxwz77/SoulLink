@@ -79,6 +79,13 @@ namespace SoulLink.Views
             FullScreenHotkeysChanged -= OnFullScreenHotkeysChanged;
             FullScreenHotkeysChanged += OnFullScreenHotkeysChanged;
 
+            // ★ 录制设置变更：勾上的账号立刻开始录，取消的停
+            RecordingSettingsChanged -= OnRecordingSettingsChanged;
+            RecordingSettingsChanged += OnRecordingSettingsChanged;
+
+            // ★ 3.2.8：保存请求看门狗（独立定时器，不依赖会话监控是否在跑）
+            EnsureSaveRequestWatch();
+
             Loaded += (_, __) =>
             {
                 var window = Window.GetWindow(this);
@@ -347,6 +354,177 @@ namespace SoulLink.Views
         //   （实测未连任何 RDP 时本进程仍有 25% 单核）。
         //
         //   RDP 画面看不见的时候，保护层检查毫无意义，直接停掉即可。
+
+        /// <summary>
+        /// 按设置决定是否给这个账号开始录制。
+        ///
+        /// ★ 3.2.8：录制**由用户在 RDP 通用设置里按账号勾选**开启，
+        ///   这里只是把勾选结果翻译成一条 record 命令发给目标会话的代理。
+        ///   未勾选的账号完全不录。
+        /// </summary>
+        private async Task TryStartRecordingAsync(Account account)
+        {
+            try
+            {
+                if (account == null) return;
+                var s = App.Config.Settings;
+                // ★ 临时诊断：把判定过程写进日志，确认到底卡在哪一步
+                LogBus.Info("录屏判定", account.Caption + " id=" + account.Id
+                    + " 配置列表=[" + string.Join(",", s.RecordAccountIds ?? new System.Collections.Generic.List<string>()) + "]"
+                    + " 命中=" + (s.RecordAccountIds != null && s.RecordAccountIds.Contains(account.Id)));
+                if (s.RecordAccountIds == null || !s.RecordAccountIds.Contains(account.Id)) return;
+
+                int sid = AccountStateCenter.Get(account.Id)?.SessionId ?? 0;
+                if (sid <= 0)
+                {
+                    LogBus.Warn("录屏跳过", account.Caption + " 没有会话号");
+                    return;
+                }
+
+                var relay = SoulLink.Services.RelayClient.FindBySession(sid);
+                if (relay == null || !relay.IsConnected)
+                {
+                    LogBus.Warn("录屏跳过", account.Caption + " 注入通道未就绪（会话 " + sid + "）");
+                    return;
+                }
+
+                var r = await relay.RecordStartAsync(
+                    Math.Max(1, s.RecordFps),
+                    Math.Max(30, s.RecordQuality),
+                    Math.Max(5, s.RecordKeepSeconds)).ConfigureAwait(false);
+
+                // ★ 用 LogBus：Debug() 会被日志过滤器丢掉（不含失败/异常等关键词），
+                //   排查时看不到任何痕迹（实测踩过）。
+                if (r?.Ok == true)
+                    LogBus.Ok("录屏已开始", account.Caption + " · " + (r.Message ?? ""));
+                else
+                    LogBus.Error("录屏启动失败", account.Caption + " · " + (r?.Message ?? "无响应"));
+            }
+            catch (Exception ex) { LogBus.Error("录屏启动异常", ex.Message); }
+        }
+
+        /// <summary>设置里改了录制选项后，把所有已投送的账号同步一遍。</summary>
+        public static void NotifyRecordingSettingsChanged() => RecordingSettingsChanged?.Invoke();
+        private static event Action? RecordingSettingsChanged;
+
+        private void OnRecordingSettingsChanged()
+        {
+            try
+            {
+                var ids = App.Config.Settings.RecordAccountIds;
+                foreach (var t in _tiles)
+                {
+                    var acc = t.Row?.Account;
+                    if (acc == null) continue;
+
+                    bool wanted = ids != null && ids.Contains(acc.Id);
+                    if (wanted)
+                    {
+                        _ = TryStartRecordingAsync(acc);   // 勾上 → 开始/更新参数
+                    }
+                    else
+                    {
+                        // 取消勾选 → 停止录制（释放内存缓冲）
+                        _ = StopRecordingAsync(acc);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>停止某账号的录制。</summary>
+        private async Task StopRecordingAsync(Account account)
+        {
+            try
+            {
+                int sid = AccountStateCenter.Get(account.Id)?.SessionId ?? 0;
+                if (sid <= 0) return;
+                var relay = SoulLink.Services.RelayClient.FindBySession(sid);
+                if (relay == null || !relay.IsConnected) return;
+                var r = await relay.RecordStopAsync().ConfigureAwait(false);
+                if (r?.Ok == true) LogBus.Info("录屏已停止", account.Caption);
+            }
+            catch (Exception ex) { LogBus.Error("录屏停止异常", ex.Message); }
+        }
+
+        /// <summary>
+        /// 调试/测试用：如果程序目录下存在 capture\save-request.txt，
+        /// 就把所有勾选账号的录制缓冲立即保存到磁盘，然后删除该文件。
+        ///
+        /// ★ 为什么需要它：保存操作必须经由 RelayClient（进程内注册表），
+        ///   外部进程拿不到那个静态表，所以只能让主程序自己执行。
+        ///   现在没有 UI 的"保存"按钮，先用这个文件触发来验证录制内容。
+        /// </summary>
+        private void PollSaveRequest()
+        {
+            try
+            {
+                string root = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? ".", "capture");
+                string req = System.IO.Path.Combine(root, "save-request.txt");
+                if (!System.IO.File.Exists(req)) return;
+                LogBus.Error("PollSaveRequest 命中", "文件=" + req);   // 用 Error 级别确保不被打断
+                try { System.IO.File.Delete(req); } catch { }
+
+                LogBus.Info("收到保存请求", "开始保存已勾选账号的录制缓冲");
+
+                // ★ 不能遍历 _tiles：那只是"打开过画面"的账号，
+                //   后台投送的账号（只建通道不建画面）不在里面，会漏掉。
+                //   直接按配置里的勾选列表驱动。
+                var ids = App.Config.Settings.RecordAccountIds ?? new System.Collections.Generic.List<string>();
+                LogBus.Info("保存范围", "共 " + ids.Count + " 个账号");
+                foreach (string id in ids)
+                {
+                    var acc = App.Config.Accounts.FirstOrDefault(a => a.Id == id);
+                    if (acc == null) { LogBus.Warn("保存跳过", "账号不存在：" + id); continue; }
+                    _ = SaveRecordingAsync(acc);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>把某账号的内存缓冲保存到磁盘。</summary>
+        private async Task SaveRecordingAsync(Account account)
+        {
+            try
+            {
+                int sid = AccountStateCenter.Get(account.Id)?.SessionId ?? 0;
+                if (sid <= 0) { LogBus.Warn("保存失败", account.Caption + " 无会话"); return; }
+                var relay = SoulLink.Services.RelayClient.FindBySession(sid);
+                if (relay == null || !relay.IsConnected) { LogBus.Warn("保存失败", account.Caption + " 通道未就绪"); return; }
+
+                // 目录：录制回放\<用户名-昵称>\<时间-手动>
+                string tag = string.IsNullOrWhiteSpace(account.DisplayName)
+                    ? account.UserName
+                    : account.UserName + "-" + account.DisplayName;
+                var r = await relay.SaveRecordingAsync(tag, "手动", 30, 0).ConfigureAwait(false);
+                if (r?.Ok == true)
+                    LogBus.Ok("缓冲已保存", account.Caption + " · " + r.Message);
+                else
+                    LogBus.Error("保存失败", account.Caption + " · " + (r?.Message ?? "无响应"));
+            }
+            catch (Exception ex) { LogBus.Error("保存异常", ex.Message); }
+        }
+
+        /// <summary>
+        /// 调试/测试用：如果程序目录下存在 capture\save-request.txt，
+        /// 就把所有勾选账号的录制缓冲立即保存到磁盘，然后删除该文件。
+        ///
+        /// ★ 为什么需要它：保存操作必须经由 RelayClient（进程内静态注册表），
+        ///   外部进程拿不到，所以只能让主程序自己执行。
+        /// ★ 用独立定时器驱动，不挂在会话监控上 ——
+        ///   会话监控在投送完成后可能停摆，导致钩子不触发（实测踩过）。
+        /// </summary>
+        private System.Windows.Threading.DispatcherTimer? _saveReqWatch;
+
+        private void EnsureSaveRequestWatch()
+        {
+            if (_saveReqWatch != null) return;
+            _saveReqWatch = new System.Windows.Threading.DispatcherTimer
+            { Interval = TimeSpan.FromSeconds(2) };
+            _saveReqWatch.Tick += (_, __) => PollSaveRequest();
+            _saveReqWatch.Start();
+        }
 
         /// <summary>切到本页：恢复看门狗。</summary>
         public void OnPageActivated()
@@ -915,6 +1093,7 @@ namespace SoulLink.Views
                     try
                     {
                         await ScanAndDeployAsync();
+                        PollSaveRequest();      // ★ 3.2.8 调试钩子：capture\save-request.txt
                         if (tickCount % 6 == 1) Debug("会话监控 tick#" + tickCount + " 完成");
                     }
                     catch (Exception ex) { Debug("会话监控 tick#" + tickCount + " 异常：" + ex.Message); }
@@ -1144,6 +1323,12 @@ namespace SoulLink.Views
                                     {
                                         _openedIds.Add(row.Account.Id);
                                         _deployHandled.Remove(row.Account.Id);
+
+                                        // ★★ 3.2.8：这是**真正的自动连接路径**（会话监控拉起）。
+                                        //   另一套 AutoConnectAsync（约 1350 行）是旧实现，
+                                        //   实际不会走到 —— 之前把录制触发加在那里，所以一直没生效。
+                                        //   通道建好后按设置决定是否开始录制。
+                                        await TryStartRecordingAsync(row.Account).ConfigureAwait(false);
                                     }
                                     else
                                     {
@@ -1198,6 +1383,11 @@ namespace SoulLink.Views
                             bool ok = await console.StartInputBySessionAsync().ConfigureAwait(false);
                             Debug(ok ? "会话监控：通道投送成功 " + caption
                                      : "会话监控：通道投送跳过 " + caption);
+
+                            // ★★ 3.2.8：这是**会话监控自动投送**的主路径。
+                            //   启动、重连、代理重投全走这里，是录制触发最该挂的位置。
+                            if (ok) await TryStartRecordingAsync(row.Account).ConfigureAwait(false);
+
                             await Dispatcher.InvokeAsync(RenderTabs);
                         }
                         catch (Exception ex)
@@ -1273,6 +1463,14 @@ namespace SoulLink.Views
                 // ① 第一个：打开画面（走完整连接流程，本身是 async，不阻塞）
                 await Dispatcher.InvokeAsync(() => _ = ShowViewPageAsync(snapshot[0].row));
 
+                // ★ 3.2.8：第一个账号走的是"打开画面"路径，不经过下面的投送循环，
+                //   所以录制要在这里单独触发一次，否则勾选第一个账号永远不录。
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(4000).ConfigureAwait(false);   // 等通道建好
+                    await TryStartRecordingAsync(snapshot[0].row.Account).ConfigureAwait(false);
+                });
+
                 // ② 其余：只投送通道，不开画面
                 for (int i = 1; i < snapshot.Count; i++)
                 {
@@ -1303,6 +1501,8 @@ namespace SoulLink.Views
                             bool ok = await console.StartInputBySessionAsync().ConfigureAwait(false);
                             Debug(ok ? "通道投送成功：" + caption
                                      : "通道投送跳过：" + caption + "（无会话）");
+                            // ★ 3.2.8：投送成功且该账号在设置里勾了「录制」→ 下发录制
+                            if (ok) await TryStartRecordingAsync(row.Account).ConfigureAwait(false);
                         }
                     }
                     catch (Exception ex) { Debug("投送通道失败：" + ex.Message); }
