@@ -3,20 +3,15 @@ using System;
 namespace SoulLink.Services
 {
     /// <summary>
-    /// 网页界面。
+    /// 网页界面（由 docs/web-index.html 生成，改样式请改那个文件）。
     ///
-    /// ★ 为什么单独一个文件：WebServer.cs 里 400+ 行是 HTML 字符串，
-    ///   混在一起改页面时容易把逻辑文件写坏（实际发生过多次截断事故）。
-    ///   这里用 C# 11 raw string literal，HTML/JS/CSS 不需要任何转义。
-    ///
-    /// ★ 首页设计（用户要求）：
-    ///   不是直接放视频，而是"运行状态总览 + 账号列表"。
-    ///   总览指标与桌面版一致：绑定账号 / 会话在线 / BGI 运行。
-    ///   视频降级为模块，点某个账号的「查看画面」才展开。
+    /// ★ 首页 = 运行状态总览 + 每个账号的运行详情。
+    ///   数据源与桌面版一致：BgiLogCenter 快照 + BgiStatus 解析。
+    /// ★ 明暗主题 + 渐变背景，配色取自 ThemeManager.cs。
+    /// ★ 性能：页面不可见 / 无请求时不传任何数据。
     /// </summary>
     internal static class WebPages
     {
-        /// <summary>主页：运行状态 + 账号列表 + 可展开的实时画面模块。</summary>
         public const string Index = """
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -25,90 +20,252 @@ namespace SoulLink.Services
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>SoulLink</title>
 <style>
+  /* ══════════ 配色系统 ══════════
+     ★ 与应用内主题保持一致（ThemeManager.cs 的颜色）：
+         暗色                              亮色
+       Bg0      #05060c         →        #faf2fc
+       Bg1      #0b0f22         →        #f3ebfc
+       TextPri  #f2f5ff         →        #30254c
+       TextSec  rgba(194,232,255,.71) →  #392b56
+       TextMut  #a5abcd         →        #5c4c78
+       Cyan     #4fe3ff         →        #0087a7
+       Mint     #41f0c0         →        #008869
+       Rose     #ff6b8b         →        #c02753
+
+     实现方式：全部走 CSS 变量，<html data-theme="dark|light"> 一键切换，
+     选择记在 localStorage，刷新后保持。
+  */
+  :root, :root[data-theme="dark"] {
+    --bg0:#05060c; --bg1:#0b0f22;
+    --card:#121a2e; --card2:#0e1526;
+    --card-hover:#182236; --card-active:#1c2740;
+    --border:#25314b; --border-hi:#3b4c6e;
+    --txt:#f2f5ff;
+    --txt2:rgba(194,232,255,.78);
+    --txt3:#a5abcd;
+    --txt4:#7b86a8;
+    --accent:#4fe3ff; --accent-bg:#1a3050; --accent-border:#2f4a72;
+    --violet:#8b6bff;
+    --mint:#41f0c0; --mint-bg:#163328; --mint-border:#1f4d3c;
+    --rose:#ff6b8b; --rose-bg:#341f28; --rose-border:#5a2f3e;
+    --magenta:#ff5fd2; --magenta-bg:#331e3a; --magenta-border:#4d2a58;
+    --shadow:0 3px 18px rgba(0,0,0,.42);
+    --shadow-sm:0 2px 10px rgba(0,0,0,.28);
+    /* 背景装饰 */
+    --nebula1:rgba(139,107,255,.46);
+    --nebula2:rgba(79,227,255,.34);
+    --glow:rgba(139,107,255,.16);
+  }
+  :root[data-theme="light"] {
+    --bg0:#faf2fc; --bg1:#f3ebfc;
+    --card:#ffffff; --card2:#fdf9ff;
+    --card-hover:#f7f0ff; --card-active:#f0e6fc;
+    --border:#e2d6f0; --border-hi:#c9b4e4;
+    --txt:#30254c;
+    --txt2:#392b56;
+    --txt3:#5c4c78;
+    --txt4:#8678a0;
+    --accent:#0087a7; --accent-bg:#e0f4fa; --accent-border:#a8dcea;
+    --violet:#7649c4;
+    --mint:#008869; --mint-bg:#dff7ef; --mint-border:#9ddcca;
+    --rose:#c02753; --rose-bg:#fbe4eb; --rose-border:#efb0c2;
+    --magenta:#c83491; --magenta-bg:#fbe3f3; --magenta-border:#eeabd8;
+    --shadow:0 3px 18px rgba(102,66,139,.13);
+    --shadow-sm:0 2px 10px rgba(102,66,139,.09);
+    /* 背景装饰：亮色下星云改淡紫，星点改深色才看得见 */
+    /* ★ 亮色下必须用更浓的颜色，否则叠在 #faf2fc 上完全看不出
+          （用户实测：.20 透明度肉眼不可见） */
+    --nebula1:rgba(118,73,196,.42);
+    --nebula2:rgba(0,140,175,.32);
+    --glow:rgba(139,107,255,.18);
+  }
+
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;
     -webkit-user-select:none;user-select:none}
-  body{margin:0;background:#080b16;color:#e6ecff;
-       font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif}
-  header{position:sticky;top:0;z-index:30;padding:11px 14px 9px;
-         background:rgba(8,11,22,.96);backdrop-filter:blur(14px);
-         border-bottom:1px solid #1a2238;display:flex;align-items:center;gap:10px}
-  .logo{width:26px;height:26px;border-radius:8px;flex:0 0 auto;
-        background:linear-gradient(135deg,#6c5ce7,#4fe3ff);display:flex;
-        align-items:center;justify-content:center;font-size:13px;font-weight:700}
-  .ttl{font-size:14px;font-weight:600}
-  .ver{font-size:10px;color:#5a6889;margin-left:2px}
-  .right{margin-left:auto}
-  .pill{font-size:10.5px;padding:3px 9px;border-radius:20px;
-        background:#151f38;color:#7fd8ff;border:1px solid #233052}
-  main{padding:12px 12px 30px}
+  /* ══════════ 背景：多层渐变 + 星点，模拟应用内的星空主题 ══════════
+     ★ 用户要求：「你没做网页背景啊」——原来只有纯色 var(--bg0)。
+       现在用 CSS 多层 radial-gradient 叠出：
+         · 左上角紫色星云
+         · 右下角青色星云
+         · 中间微弱光晕
+         · 细密星点（radial-gradient 重复）
+     全部走 CSS，不引入任何图片资源，零体积。
+  */
+  /* ★ html 不能设不透明背景 —— 它会盖住 body 上的渐变。
+     实测：html{background:#05060c} + body{background-image:radial-gradient(...)}
+     结果是只看到纯色，渐变完全不可见。 */
+  html{min-height:100%;background:transparent}
+  body{margin:0;color:var(--txt);
+       font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;
+       -webkit-font-smoothing:antialiased;
+       min-height:100vh;
+       /* ★ 背景直接画在 body 上（不要用负 z-index 伪元素 ——
+            那会跑到 html 背后被纯色盖住，实测就是这个原因导致"看不见背景"）。
+            用 background-attachment:fixed 让渐变固定在视口，滚动时不跟着走。 */
+       background-color:var(--bg0);
+       /* ★ 星云：柔和的大面积渐变，边缘渐隐到透明 */
+       background-image:
+         radial-gradient(ellipse 80% 60% at 12% -8%, var(--nebula1) 0%, transparent 60%),
+         radial-gradient(ellipse 75% 65% at 100% 105%, var(--nebula2) 0%, transparent 58%),
+         radial-gradient(ellipse 90% 70% at 50% 42%, var(--glow) 0%, transparent 65%);
+       background-attachment:fixed;
+       background-repeat:no-repeat;
+       transition:background-color .25s,color .25s}
 
-  /* ── 状态卡 ── */
-  .stat{background:linear-gradient(135deg,#161d36,#111729);border:1px solid #232d4a;
-        border-radius:13px;padding:13px 14px;margin-bottom:11px}
-  .stat h2{font-size:12px;margin:0 0 3px;color:#8b9bc4;font-weight:500}
-  .stat .desc{font-size:10.5px;color:#5a6889;margin-bottom:10px}
-  .metrics{display:flex;gap:8px}
-  .metric{flex:1;background:#0d1324;border:1px solid #1d2742;border-radius:9px;
-          padding:9px 10px;text-align:center}
-  .metric .v{font-size:17px;font-weight:600;color:#4fe3ff}
-  .metric .k{font-size:9.5px;color:#6f7fa8;margin-top:2px}
 
-  /* ── 用户列表 ── */
-  .sect-t{font-size:12px;color:#8b9bc4;margin:16px 0 9px;font-weight:500}
-  .urow{background:linear-gradient(135deg,#161d36,#111729);border:1px solid #232d4a;
-        border-radius:12px;padding:11px 12px;margin-bottom:8px;
-        display:flex;align-items:center;gap:10px;cursor:pointer}
-  .urow:active{background:#1c2444}
-  .udot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;
-        background:#3a4460}
-  .udot.on{background:#4fe3ff;box-shadow:0 0 6px #4fe3ff}
+
+  header{position:sticky;top:0;z-index:30;padding:13px 16px 11px;
+         background:color-mix(in srgb, var(--bg0) 82%, transparent);
+         backdrop-filter:blur(18px);
+         border-bottom:1px solid var(--border);
+         display:flex;align-items:center;gap:11px;
+         transition:background .22s,border-color .22s}
+  .logo{width:30px;height:30px;border-radius:9px;flex:0 0 auto;
+        background:linear-gradient(135deg,var(--violet),var(--accent));
+        display:flex;align-items:center;justify-content:center;
+        font-size:15px;font-weight:700;color:#fff;
+        box-shadow:var(--shadow-sm)}
+  .ttl{font-size:15px;font-weight:650;letter-spacing:.2px;color:var(--txt)}
+  .ver{font-size:10.5px;color:var(--txt4);margin-top:1px}
+  .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .pill{font-size:11px;padding:4px 11px;border-radius:20px;
+        background:var(--accent-bg);color:var(--accent);
+        border:1px solid var(--accent-border);font-weight:550}
+  .themebtn{width:32px;height:32px;border-radius:9px;flex:0 0 auto;
+            margin-left:2px;
+            border:1px solid var(--border);background:var(--card);
+            color:var(--txt2);font-size:15px;cursor:pointer;
+            display:flex;align-items:center;justify-content:center;
+            transition:.15s}
+  .themebtn:hover{border-color:var(--border-hi);background:var(--card-hover)}
+  .themebtn:active{transform:scale(.94)}
+
+
+
+  main{padding:14px 14px 40px;max-width:720px;margin:0 auto;background:transparent}
+
+  .stat{background:linear-gradient(150deg,var(--card),var(--card2));
+        border:1px solid var(--border);border-radius:15px;
+        padding:16px 16px 15px;margin-bottom:14px;
+        box-shadow:var(--shadow);transition:.22s}
+  .stat h2{font-size:13px;margin:0 0 3px;color:var(--txt);
+           font-weight:600;letter-spacing:.3px}
+  .stat .desc{font-size:11px;color:var(--txt4);margin-bottom:13px}
+  .metrics{display:flex;gap:9px}
+  .metric{flex:1;background:var(--card2);border:1px solid var(--border);
+          border-radius:11px;padding:11px 8px;text-align:center;transition:.22s}
+  .metric .v{font-size:21px;font-weight:700;color:var(--accent);
+             line-height:1.15;font-variant-numeric:tabular-nums}
+  .metric .k{font-size:10px;color:var(--txt3);margin-top:3px}
+
+  .sect-t{font-size:12.5px;color:var(--txt3);margin:18px 0 10px;
+          font-weight:600;letter-spacing:.3px}
+  .urow{background:linear-gradient(150deg,var(--card),var(--card2));
+        border:1px solid var(--border);border-radius:14px;
+        padding:13px 14px;margin-bottom:10px;
+        display:flex;align-items:flex-start;gap:11px;cursor:pointer;
+        box-shadow:var(--shadow-sm);
+        transition:border-color .15s,background .15s,transform .1s}
+  .urow:hover{border-color:var(--border-hi);background:var(--card-hover)}
+  .urow:active{background:var(--card-active);transform:scale(.995)}
+
+  .udot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;margin-top:6px;
+        background:var(--txt4)}
+  .udot.on{background:var(--mint);box-shadow:0 0 8px var(--mint-border)}
   .uinfo{flex:1;min-width:0}
-  .un{font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px}
-  .us{font-size:10px;color:#6f7fa8;margin-top:2px}
-  .tag{font-size:9px;padding:1px 6px;border-radius:5px;
-       background:#22315c;color:#7fd8ff}
-  .tag.rec{background:#392040;color:#e08fff}
-  .tag.bgi{background:#1d3a2a;color:#6ee7a8}
+  .un{font-size:13.5px;font-weight:600;display:flex;align-items:center;
+      gap:7px;flex-wrap:wrap;color:var(--txt)}
+  .us{font-size:11px;color:var(--txt3);margin-top:3px}
+  .tag{font-size:9.5px;padding:2px 7px;border-radius:5px;font-weight:550;
+       background:var(--accent-bg);color:var(--accent)}
+  .tag.rec{background:var(--magenta-bg);color:var(--magenta)}
+  .tag.bgi{background:var(--mint-bg);color:var(--mint)}
+  .tag.off{background:var(--rose-bg);color:var(--rose)}
   .uact{display:flex;gap:6px;flex:0 0 auto}
-  .ibtn{padding:6px 11px;border-radius:8px;border:1px solid #232d4a;background:#111729;
-        color:#8b9bc4;font-size:11px;cursor:pointer}
-  .ibtn.on{background:#22315c;color:#7fd8ff;border-color:#2f4372}
 
-  /* ── 视频模块（可展开） ── */
-  #viewer{display:none;margin-top:12px}
-  #scr{position:relative;background:#000;border-radius:12px;overflow:hidden;
-       border:1px solid #1e2742;touch-action:none}
-  #scr img{width:100%;display:block;min-height:120px;object-fit:contain;pointer-events:none}
-  #ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-      color:#5a6889;font-size:12px;padding:20px;text-align:center}
-  #rip{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;
-       border:2px solid #4fe3ff;opacity:0;pointer-events:none}
-  #rip.go{animation:rp .45s ease-out}
-  @keyframes rp{0%{opacity:.9;transform:scale(.35)}100%{opacity:0;transform:scale(1.5)}}
-  .row{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:9px}
-  .row label{font-size:11px;color:#8b9bc4;flex:0 0 auto}
-  .seg{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
-  .seg button{padding:5px 10px;border-radius:7px;border:1px solid #232d4a;background:#111729;
-              color:#8b9bc4;font-size:10.5px;cursor:pointer}
-  .seg button.on{background:#22315c;color:#7fd8ff;border-color:#2f4372}
-  #kbTip{display:none;margin-top:9px;padding:8px 10px;border-radius:8px;
-         background:#1a2340;border:1px solid #2f4372;color:#7fd8ff;font-size:11px}
+  .ibtn{padding:8px 14px;border-radius:9px;border:1px solid var(--accent-border);
+        background:var(--accent-bg);color:var(--accent);font-size:11.5px;
+        font-weight:550;cursor:pointer;white-space:nowrap;transition:.15s}
+  .ibtn:hover{border-color:var(--accent);filter:brightness(1.08)}
+  .ibtn:active{transform:scale(.97)}
+  .ibtn.on{background:var(--accent);color:var(--bg0);border-color:var(--accent)}
 
-  /* ── 录像 ── */
-  .item{background:#111729;border:1px solid #232d4a;border-radius:9px;padding:10px;
-        margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:9px}
-  .item:active{background:#18203a}
-  .inm{font-size:12px;color:#d3ddff}
-  .imt{font-size:10px;color:#6f7fa8;margin-top:2px}
-  .badge{padding:1px 6px;border-radius:5px;font-size:9.5px;background:#22315c;
-         color:#7fd8ff;margin-left:5px}
-  #player{display:none;margin-top:12px}
-  #vid{width:100%;display:block;background:#000;border-radius:11px;border:1px solid #1e2742}
-  .tools{display:flex;gap:7px;margin-top:9px}
-  .tools button{flex:1;padding:9px;border-radius:9px;border:1px solid #232d4a;
-                background:#111729;color:#a8b6d8;font-size:11.5px;cursor:pointer}
-  .empty{color:#5a6889;font-size:12px;text-align:center;padding:32px 18px;
-         border:1px dashed #232d4a;border-radius:11px}
+  .detail{margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+  .dline{display:flex;gap:10px;font-size:11.5px;line-height:1.85}
+  .dk{color:var(--txt4);flex:0 0 56px;font-size:11px}
+  .dv{color:var(--txt2);flex:1;word-break:break-all}
+
+  #viewer{display:none;margin-top:14px}
+  #viewerBox{background:linear-gradient(150deg,var(--card),var(--card2));
+             border:1px solid var(--border);border-radius:14px;
+             padding:13px;box-shadow:var(--shadow);transition:.22s}
+  #viewerTitle{font-size:13px;font-weight:600;color:var(--txt);
+               margin-bottom:11px;display:flex;align-items:center;gap:8px}
+  #scr{position:relative;background:#000;border-radius:11px;overflow:hidden;
+       border:1px solid var(--border);touch-action:none;cursor:crosshair}
+  #scr img{width:100%;display:block;min-height:120px;object-fit:contain;
+           pointer-events:none}
+  #ph{position:absolute;inset:0;display:flex;align-items:center;
+      justify-content:center;color:#8b9bc4;font-size:12.5px;
+      padding:20px;text-align:center}
+  #rip{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;
+       border-radius:50%;border:2px solid var(--accent);opacity:0;pointer-events:none}
+  #rip.go{animation:rp .5s ease-out}
+  @keyframes rp{0%{opacity:.95;transform:scale(.3)}100%{opacity:0;transform:scale(1.6)}}
+
+  .row{display:flex;align-items:center;justify-content:space-between;
+       margin-top:11px;gap:10px;flex-wrap:wrap}
+  .row label{font-size:11.5px;color:var(--txt3);flex:0 0 auto;font-weight:500}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg button{padding:6px 12px;border-radius:8px;border:1px solid var(--border);
+              background:var(--card2);color:var(--txt3);font-size:11px;
+              font-weight:500;cursor:pointer;transition:.15s}
+  .seg button:hover{border-color:var(--border-hi);color:var(--txt2)}
+  .seg button.on{background:var(--accent-bg);color:var(--accent);
+                 border-color:var(--accent-border)}
+
+  #kbTip{display:none;margin-top:10px;padding:10px 12px;border-radius:9px;
+         background:var(--accent-bg);border:1px solid var(--accent-border);
+         color:var(--accent);font-size:11.5px;line-height:1.6}
+
+  .item{background:var(--card2);border:1px solid var(--border);border-radius:10px;
+        padding:11px 12px;margin-bottom:8px;cursor:pointer;
+        display:flex;align-items:center;gap:10px;transition:.15s}
+  .item:hover{border-color:var(--border-hi);background:var(--card-hover)}
+  .inm{font-size:12.5px;color:var(--txt);font-weight:500}
+  .imt{font-size:10.5px;color:var(--txt4);margin-top:3px}
+  .badge{padding:2px 7px;border-radius:5px;font-size:9.5px;
+         background:var(--accent-bg);color:var(--accent);margin-left:6px;font-weight:550}
+
+  #player{display:none;margin-top:13px}
+  #vid{width:100%;display:block;background:#000;border-radius:11px;
+       border:1px solid var(--border)}
+  .tools{display:flex;gap:8px;margin-top:10px}
+  .tools button{flex:1;padding:10px;border-radius:9px;border:1px solid var(--border);
+                background:var(--card2);color:var(--txt2);font-size:11.5px;
+                font-weight:500;cursor:pointer;transition:.15s}
+  .tools button:hover{border-color:var(--border-hi);color:var(--txt)}
+  .tools button:active{background:var(--card-active)}
+
+  .empty{color:var(--txt4);font-size:12.5px;text-align:center;padding:40px 20px;
+         border:1px dashed var(--border);border-radius:13px;line-height:1.7}
+
+  /* ══════════ 星空 ══════════
+     ★ 用户反馈：「不是太密，是矩阵，很难看，圆点，没有星星的感觉」
+       原来用 radial-gradient + repeat 平铺 = 规则网格 = 噪点观感。
+
+     ★ 现在用 box-shadow 画星：
+         · 1 个 1px 的圆点元素，用 100+ 个 box-shadow 在**随机坐标**画星
+         · 分三层：远星(80颗/暗/小) 中星(45颗/中) 近星(18颗/亮/带光晕)
+         · 坐标是伪随机生成的，不成行列、不重复
+         · 纯 CSS，零图片体积
+  */
+  /* ★ 关键：body 必须建立层叠上下文（isolation），
+        否则 z-index:0 的固定元素会和 body 背景同层，
+        被 background-color 盖住 —— 这就是"星点看不见"的真正原因。 */
+  /* 内容层（背景渐变已画在 body 上，无需额外层级处理） */
+  video,header,main,.stat,.urow{position:relative}
+
 </style>
 </head>
 <body>
@@ -119,14 +276,19 @@ namespace SoulLink.Services
     <div class="ttl">SoulLink</div>
     <div class="ver" id="ver"></div>
   </div>
-  <div class="right"><span class="pill" id="liveCount">— 在线</span></div>
+  <div class="right">
+    <span class="pill" id="liveCount">— 在线</span>
+    <button class="themebtn" id="themeBtn" title="切换明暗主题">
+      <span id="themeIcon">🌙</span>
+    </button>
+  </div>
 </header>
 
 <main>
   <!-- ══ 运行状态总览 ══ -->
   <div class="stat">
     <h2>运行状态</h2>
-    <div class="desc">监控各挂机账号的 BGI 运行情况</div>
+    <div class="desc">监控各挂机账号的 BGI 运行情况 · 数据来自数据中心</div>
     <div class="metrics">
       <div class="metric"><div class="v" id="mTotal">0</div><div class="k">绑定账号</div></div>
       <div class="metric"><div class="v" id="mOnline">0</div><div class="k">会话在线</div></div>
@@ -140,7 +302,8 @@ namespace SoulLink.Services
 
   <!-- ══ 实时画面（点"查看画面"才展开）══ -->
   <div id="viewer">
-    <div class="sect-t" id="viewerTitle" style="margin-top:4px">实时画面</div>
+   <div id="viewerBox">
+    <div id="viewerTitle">实时画面</div>
     <div id="scr">
       <img id="frame" alt="" style="display:none">
       <div id="ph">连接中…</div>
@@ -176,17 +339,69 @@ namespace SoulLink.Services
     <div id="saved"></div>
     <div id="player">
       <video id="vid" controls playsinline preload="metadata"></video>
-      <div class="imt" id="pinfo" style="text-align:center;margin-top:6px"></div>
+      <div class="imt" id="pinfo" style="text-align:center;margin-top:8px"></div>
       <div class="tools">
         <button id="pback">关闭播放器</button>
         <button id="dl">下载</button>
       </div>
     </div>
+   </div>
   </div>
 </main>
 
 <script>
 const $ = id => document.getElementById(id);
+
+// ══════════ 明暗主题 ══════════
+//
+//  ★ 与应用内主题联动（用户要求：「把应用的亮色与暗色主题做进去」）。
+//    优先级：用户手动选择（localStorage）> 应用当前主题（API 下发）> 系统偏好。
+//    应用里改主题后，网页重新加载会自动跟随；用户也可以在本页手动覆盖。
+
+let themeMode = 'auto';   // auto | dark | light
+let appIsDark = true;     // 来自后端 /api/sessions 的 theme 字段
+
+function applyTheme() {
+  let dark;
+  if (themeMode === 'dark') dark = true;
+  else if (themeMode === 'light') dark = false;
+  else if (themeMode !== 'auto' && typeof appIsDark === 'boolean') dark = appIsDark;
+  else dark = appIsDark;
+
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  const icon = $('themeIcon');
+  if (icon) icon.textContent = dark ? '🌙' : '☀️';
+  try { localStorage.setItem('soullink-theme', themeMode); } catch (e) {}
+}
+
+// 启动时读用户偏好（★ 整个主题初始化必须容错，
+//   任何一个元素缺失都不能让后面的 loadUsers 停下 —— 实测踩过：
+//   主题按钮没渲染出来时 $('themeBtn').onclick 抛异常，
+//   导致账号列表永远空白。）
+try {
+  const saved = localStorage.getItem('soullink-theme');
+  if (saved === 'dark' || saved === 'light' || saved === 'auto') themeMode = saved;
+} catch (e) {}
+try { applyTheme(); } catch (e) { console.warn('主题初始化失败', e); }
+
+// 点击：在"跟随应用"和"手动取反"之间轮换
+const tb = $('themeBtn');
+if (tb) tb.onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme') === 'dark';
+  // 先手动切到相反主题；如果本来就是手动模式且与应用相反，则回到 auto
+  if (themeMode === 'auto') {
+    themeMode = cur ? 'light' : 'dark';
+  } else if (themeMode === (cur ? 'dark' : 'light')) {
+    themeMode = 'auto';
+  } else {
+    themeMode = cur ? 'light' : 'dark';
+  }
+  applyTheme();
+  // 短暂提示当前模式
+  const btn = $('themeBtn');
+  const tips = { auto: '跟随应用', dark: '暗色', light: '亮色' };
+  btn.title = '主题：' + tips[themeMode] + '（点击切换）';
+};
 let users = [], cur = null;
 let liveTimer = null, liveMs = 500, paused = false;
 let rightMode = false, kbMode = false;
@@ -196,6 +411,12 @@ async function loadUsers() {
     const r = await fetch('/api/sessions');
     const d = await r.json();
     users = (d.sessions || []).filter(s => s.bound);
+
+    // ★ 跟随应用主题：后端下发当前是暗色还是亮色
+    if (typeof d.themeDark === 'boolean') {
+      appIsDark = d.themeDark;
+      applyTheme();     // 用户手动选过就忽略，否则自动跟随
+    }
     $('ver').textContent = d.version ? ('v' + d.version) : '';
     const on = users.filter(u => u.online).length;
     $('liveCount').textContent = users.filter(u => u.bgiRunning).length + ' BGI';
@@ -226,18 +447,45 @@ function renderUsers() {
     if (u.bgiRunning) tags.push('<span class="tag bgi">BGI ' +
       (u.bgiLogIdleMinutes >= 0 ? '空闲 ' + u.bgiLogIdleMinutes + ' 分' : '运行中') + '</span>');
     if (u.recording) tags.push('<span class="tag rec">录制中</span>');
-    if (!u.online) tags.push('<span class="tag">离线</span>');
+    if (!u.online) tags.push('<span class="tag off">离线</span>');
 
     // 副标题：会话 + BGI
     let sub = '';
     if (!u.online) sub = '会话未连接';
     else sub = esc(u.screen) + ' · 通道就绪 · ' + (u.bgiRunning ? 'BGI#' + u.bgiPid : 'BGI 未运行');
 
+    // ★ 运行详情（配置组 / 任务 / 路线 / 轮次·角色）
+    //   与桌面版"运行状态"同源：都来自 BgiLogCenter 快照 + BgiStatus 解析
+    let detail = '';
+    if (u.bgiRunning) {
+      const parts = [];
+      if (u.configGroup) parts.push(['配置组', u.configGroup]);
+      if (u.taskName) parts.push(['任务', u.taskName]);
+      if (u.routeFile) parts.push(['路线', u.routeFile]);
+      if (u.round || u.role) parts.push(['轮次/角色',
+        [u.round, u.role].filter(Boolean).join(' · ')]);
+      if (u.eta) parts.push(['预计', u.eta]);
+      if (u.action) parts.push(['当前动作', u.action]);
+      if (u.pickTotal > 0) parts.push(['拾取', u.pickTotal + ' 个']);
+      if (u.errorCount > 0) parts.push(['报错', u.errorCount + ' 次']);
+
+      if (parts.length === 0) {
+        detail = '<div class="detail"><div class="dline"><span class="dk">状态</span>'
+          + '<span class="dv">等待日志中的状态信息…</span></div></div>';
+      } else {
+        detail = '<div class="detail">'
+          + parts.map(p => '<div class="dline"><span class="dk">' + esc(p[0])
+              + '</span><span class="dv">' + esc(String(p[1])) + '</span></div>').join('')
+          + '</div>';
+      }
+    }
+
     row.innerHTML =
       '<div class="udot' + (u.online ? ' on' : '') + '"></div>'
       + '<div class="uinfo">'
       + '<div class="un">' + esc(u.label) + tags.join('') + '</div>'
       + '<div class="us">' + sub + '</div>'
+      + detail
       + '</div>'
       + '<div class="uact"><button class="ibtn">查看画面</button></div>';
     row.querySelector('.ibtn').onclick = e => { e.stopPropagation(); openViewer(u); };
@@ -278,6 +526,7 @@ function stopLive() { if (liveTimer) { clearInterval(liveTimer); liveTimer = nul
 
 function pullFrame() {
   if (!cur) return;
+  if (document.hidden) return;    // 后台不抓帧
   const t = new Image();
   t.onload = () => {
     const f = $('frame');
@@ -460,7 +709,9 @@ function esc(s) {
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-loadUsers();
+try { loadUsers(); } catch (e) { console.error('加载失败', e);
+  const em = $('empty');
+  if (em) { em.style.display = 'block'; em.textContent = '加载失败：' + e.message; } }
 </script>
 </body>
 </html>

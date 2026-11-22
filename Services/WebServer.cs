@@ -128,48 +128,41 @@ namespace SoulLink.Services
             catch { }
         }
 
-        private static readonly Dictionary<int, DateTime> _lastPull = new();
-        private static IDisposable? _liveTick;
+        // ── 实时画面：完全按需 ────────────────────────────────────────
+        //
+        //  ★★ 用户要求：「在没有请求的时候需要停止数据传送，否则造成性能浪费」★★
+        //
+        //   原来这里注册了一个 TickHub 每秒任务，**无条件**向所有录制账号
+        //   发送 frame 命令。每个命令在代理侧要 BitBlt + JPEG 编码一次
+        //   （1920x1080 实测 13~16ms），即使根本没人打开网页也照抓不误。
+        //
+        //   现在的策略：
+        //     · **不注册任何定时器**，没有轮询就不会有后台流量；
+        //     · 只有在 /api/live 收到请求时才拉一帧（请求本身就是需求信号）；
+        //     · 记录"最后一次有人看的时间"（_lastLiveRequest），
+        //       供 /api/status 之类的诊断查看，也方便以后做超时停止录制。
+
+        /// <summary>最近一次有人请求实时画面的时间（UTC）。</summary>
+        private static DateTime _lastLiveRequest = DateTime.MinValue;
+
+        /// <summary>多久算"有人在看"（超过这个时间没有请求就认为没人在看）。</summary>
+        private static readonly TimeSpan LiveIdleTimeout = TimeSpan.FromSeconds(10);
 
         /// <summary>
-        /// 兜底刷新（TickHub 每秒一次）。
-        /// ★ 实时性主要靠 /api/live 的按需抓取；这里只保证
-        ///   "没人看网页时也能拿到较新的帧"，不需要更快。
+        /// 兼容旧调用点：**不再注册任何定时器**。
+        /// 实时画面完全由 /api/live 按需触发，见 WriteLiveFrame。
         /// </summary>
         public static void EnsureLiveRefresh()
         {
-            if (_liveTick != null) return;
-            try
-            {
-                _liveTick = TickHub.Register("WebServer.LivePull", 1, PullLiveFrames);
-            }
-            catch { }
-            PullLiveFrames();
+            // 故意留空：注册定时器就会产生"没请求也在传数据"的性能浪费。
+            // 需要抓帧时由请求方直接调 WriteLiveFrame → WriteLatestFrameAsync。
         }
 
-        /// <summary>向所有在线会话要一帧最新画面。只对**开启录制**的账号做，避免无谓开销。</summary>
-        private static void PullLiveFrames()
-        {
-            try
-            {
-                var ids = App.Config?.Settings?.RecordAccountIds;
-                if (ids == null || ids.Count == 0) return;
+        /// <summary>标记"刚刚有人在看网页"。</summary>
+        public static void MarkLiveActivity() => _lastLiveRequest = DateTime.UtcNow;
 
-                foreach (string accId in ids)
-                {
-                    var acc = App.Config.Accounts.FirstOrDefault(a => a.Id == accId);
-                    if (acc == null) continue;
-                    int sid = AccountStateCenter.Get(accId)?.SessionId ?? 0;
-                    if (sid <= 0) continue;
-
-                    var relay = RelayClient.FindBySession(sid);
-                    if (relay == null || !relay.IsConnected) continue;
-
-                    _ = relay.WriteLatestFrameAsync();   // 不等待，失败无所谓
-                }
-            }
-            catch { }
-        }
+        /// <summary>当前是否有人在看网页（10 秒内有请求）。</summary>
+        public static bool IsLiveActive() => DateTime.UtcNow - _lastLiveRequest < LiveIdleTimeout;
 
         /// <summary>按配置启动或停止。可重复调用（端口变了会重启）。</summary>
         public static void Apply(int port)
@@ -698,6 +691,40 @@ namespace SoulLink.Services
                     }
                     catch { }
 
+                    // ★★ 运行详情 ★★
+                    //   用户要求：「每个用户的运行信息都要展示出来」。
+                    //   数据源同样只有一个：BgiLogCenter 的快照尾窗，
+                    //   用与桌面版完全相同的 BgiStatus 解析器解析，保证两边一致。
+                    //
+                    //   ★ 注意：这里读的是**内存里的快照字符串**，不是日志文件。
+                    //     所以不违反"日志只有数据中心能读"的架构。
+                    string taskName = "", configGroup = "", routeFile = "",
+                           round = "", role = "", eta = "", action = "";
+                    int errorCount = 0, pickTotal = 0;
+                    try
+                    {
+                        var snap = BgiLogCenter.Snapshot(acc.Id);
+                        if (snap != null && snap.Tail.Count > 0)
+                        {
+                            var sb = new StringBuilder(snap.Tail.Count * 96);
+                            foreach (var line in snap.Tail) sb.AppendLine(line.Text);
+
+                            var status = new BgiStatus();
+                            status.Update(sb.ToString());
+
+                            taskName = status.TaskName ?? "";
+                            configGroup = status.ConfigGroup ?? "";
+                            routeFile = status.RouteFile ?? "";
+                            round = status.Round ?? "";
+                            role = status.RoleName ?? "";
+                            eta = status.RouteEta ?? "";
+                            action = status.CurrentAction ?? "";
+                            pickTotal = status.PickTotal;
+                        }
+                        if (st != null) errorCount = st.ErrorCount;
+                    }
+                    catch { }
+
                     list.Add(new
                     {
                         id = acc.Id,
@@ -714,7 +741,18 @@ namespace SoulLink.Services
                         bgiLogIdleMinutes = logIdleMin,
                         recording = recordIds.Contains(acc.Id),
                         bgiPath = bgiPaths.TryGetValue(acc.UserName, out var bp) ? bp : "",
-                        screen = online ? (relay!.ScreenWidth + "x" + relay.ScreenHeight) : ""
+                        screen = online ? (relay!.ScreenWidth + "x" + relay.ScreenHeight) : "",
+
+                        // 运行详情
+                        taskName,
+                        configGroup,
+                        routeFile,
+                        round,
+                        role,
+                        eta,
+                        action,
+                        errorCount,
+                        pickTotal
                     });
                 }
             }
@@ -728,7 +766,11 @@ namespace SoulLink.Services
             }
             catch { }
 
-            return new { ok = true, version, sessions = list };
+            // ★ 下发应用当前主题，让网页自动跟随（用户要求"把应用的亮暗主题做进去"）
+            bool themeDark = true;
+            try { themeDark = ThemeManager.IsDark; } catch { }
+
+            return new { ok = true, version, themeDark, sessions = list };
         }
 
         /// <summary>

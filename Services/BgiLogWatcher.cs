@@ -243,10 +243,59 @@ namespace SoulLink.Services
             catch { return -1; }
         }
 
+        // ── Discover 缓存 ──────────────────────────────────────────────
+        //
+        //  ★★ 为什么要缓存（用户反馈「软件启动的时候卡卡的」）★★
+        //
+        //   原来 Discover() 每次调用都要：
+        //     · Process.GetProcessesByName("BetterGI")  ← 枚举全部进程
+        //     · 对每个进程读 MainModule.FileName        ← 跨进程读内存，慢
+        //     · 对每个进程扫日志目录下所有 .log 并逐个 File.GetLastWriteTime
+        //   而调用方极多且频繁：
+        //     · LaunchPage 每 3 秒一轮，单轮最多调 4 次
+        //     · BgiPathResolver.Resolve 每个账号一次
+        //     · AccountStateCenter 每秒一次
+        //   实测 3 个 BGI 在跑时，单次 Discover 约 20~30ms，
+        //   一秒内被调用多次就吃掉大量 CPU，启动阶段尤其明显。
+        //
+        //  ★ 缓存策略：1 秒 TTL。BGI 启动/退出本来就是秒级事件，
+        //    1 秒的延迟对界面无感，但能把重复枚举压掉一个数量级。
+        //  ★ ClearDiscoverCache() 供明确需要实时的场景（如"从进程取路径"按钮）用。
+
+        private static Dictionary<int, Instance>? _discoverCache;
+        private static DateTime _discoverCacheAt = DateTime.MinValue;
+        private static readonly object _discoverGate = new();
+        private static readonly TimeSpan DiscoverTtl = TimeSpan.FromMilliseconds(1000);
+
+        /// <summary>清空缓存，强制下一次 Discover 重新枚举（用户点"从进程取"时用）。</summary>
+        public static void ClearDiscoverCache()
+        {
+            lock (_discoverGate) { _discoverCache = null; _discoverCacheAt = DateTime.MinValue; }
+        }
+
         /// <summary>
         /// 枚举所有正在运行的 BGI，按会话号返回（同一会话只取最新的一个日志）。
+        /// ★ 结果缓存 1 秒（见上方说明）。
         /// </summary>
         public static Dictionary<int, Instance> Discover()
+        {
+            lock (_discoverGate)
+            {
+                if (_discoverCache != null && (DateTime.UtcNow - _discoverCacheAt) < DiscoverTtl)
+                    return _discoverCache;
+            }
+
+            var fresh = DiscoverCore();
+
+            lock (_discoverGate)
+            {
+                _discoverCache = fresh;
+                _discoverCacheAt = DateTime.UtcNow;
+            }
+            return fresh;
+        }
+
+        private static Dictionary<int, Instance> DiscoverCore()
         {
             var result = new Dictionary<int, Instance>();
             try
