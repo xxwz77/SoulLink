@@ -112,8 +112,9 @@ namespace StreamVerify
                 return 1;
             }
 
-            Console.WriteLine("★ 两种后端都**不是全黑**。那么之前我测到的全黑，是**条件差异**造成的：");
-            Console.WriteLine("  最可能是「当时那个会话/那个桌面当时没有可见内容」。");
+            Console.WriteLine("★ 两种后端都**不是全黑**。");
+            Console.WriteLine("  若这是修复后回归：说明 WGC 帧池尺寸已正确（原先 GetSystemMetrics 全屏尺寸 → 现用 item.Size）。");
+            Console.WriteLine("  若这是修复前基线：说明当时那个桌面没有可见内容，实验条件不成立，需换有内容的桌面重测。");
             Console.WriteLine("RESULT=OK BOTH-FINE 两种后端都能抓到内容");
             return 0;
         }

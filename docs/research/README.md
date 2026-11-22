@@ -33,6 +33,7 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [P1-VERIFY-20261123.md](P1-VERIFY-20261123.md) ← **P1 架构改动功能验收（五条全过）**：A 单观众 /stream（h264/Main@5.0/2560x1368/**2.4MB**，此前仅 42KB）；B **双观众同时订阅**（各 **334 NAL / 3,164,743 B，比值 1.00**，ffprobe 各自独立识别为 h264）；C 录像 **NAL 直封 MP4 无 rame-*.jpg**（eplay.mp4 1444KB / 64 帧）；D 静态截图 275KB 彩色正常；E **WGC 帧池修复回归**（同场景 Y 均值 **0.0 → 247.1**、非黑 **0% → 99.9%**，证实根因判断成立）。附 P1 前后对比：句柄 **45398 → 807**、内存 1710→890MB、CPU 41~45%→33.4%
 - [VERIFY-PITFALLS-20261123.md](VERIFY-PITFALLS-20261123.md) ← **验证陷阱清单（做验收前先读）**：作者自己踩过的 9 个坑——注释里的关键词不算代码 / 一个后端失败≠进程级问题（必须做对照）/ 自己的工具没传参数 / JSON 中文是 `\uXXXX` 转义导致 `Directory.Exists` 恒 false / `shot.jpg` 不等于残留 / 短采样窗口被 GC 锯齿骗 / 播放器缓冲污染端到端数字 / 构建产物取错 `win-x64` 目录 / 固定时长上限伪装成故障
 - [BLACKSCREEN-ROOTCAUSE-20261123.md](BLACKSCREEN-ROOTCAUSE-20261123.md) ← **画面全黑根因判定**（含对作者此前错误结论的更正）：三组对照实验证明**全黑只发生在 WGC 后端**、BitBlt 完全正常；根因是 `WgcCapture` 用 `GetForegroundWindow()` 抓**单个窗口**却用 `GetSystemMetrics()` 的**整屏**尺寸建帧池（实测 帧池 2560x1368 vs 窗口 1721x927），且代码从未读 `item.Size`；**随前台窗口大小漂移故偶发**——这解释了「我实测全黑 / stream-core 在 A1 实测彩色」两者都对
 - [ZERO-JPEG-VERIFY-20261123.md](ZERO-JPEG-VERIFY-20261123.md) ← **H.264 原生链路（零 JPEG）验收**：代码层检查工具 `check-no-jpeg.ps1` 实测——**网页侧 4 项已达成**（toDataURL/退回 JPEG 已移除且只剩注释、WebPages.cs 已同步），**服务端 5 项未达成**（Ring 仍存 `byte[] Jpeg`、`/stream` 仍每帧 `DecodeJpegToNv12`、`/live` 仍返 JPEG）→ P1 尚未开工；录像 ✅ 无 `frame-*.jpg` 只剩 `replay.mp4`（ffprobe: h264/50帧）；静态截图 ✅ `shot.jpg` 54KB 仍可用；采集侧 CPU **实测 41~45% 单核**（作为改前基线）
