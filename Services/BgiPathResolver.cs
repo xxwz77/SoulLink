@@ -451,6 +451,38 @@ namespace SoulLink.Services
             try
             {
                 var s = App.Config.Settings;
+
+                // ★★ 第一条判据：该用户必须**还在 RDP 配置的账号列表里** ★★
+                //
+                //   用户实测反馈：A1/A4 已经从账号列表删掉了，但 BgiPaths
+                //   里残留着它们的历史路径，于是仍被判为"已绑定"：
+                //     · 运行状态总览里列出 A1/A4（用户明确说不该显示）
+                //     · BgiLogCenter 持续读它们的日志（浪费 CPU）
+                //
+                //   "绑定"的前提是"这个账号还在管理范围内"。
+                //   账号都不存在了，讨论绑定没有意义。
+                //
+                //   ★ 只在账号列表里查，不用 AccountScope —— 后者还会排除主用户，
+                //     而主用户的"绑定"判断仍有意义（设置页要显示它的路径）。
+                bool inAccounts = false;
+                try
+                {
+                    string bare = Services.SessionService.BareName(userName);
+                    var accounts = App.Config.Accounts;
+                    if (accounts != null)
+                    {
+                        foreach (var a in accounts)
+                        {
+                            if (a == null) continue;
+                            if (string.Equals(Services.SessionService.BareName(a.UserName),
+                                    bare, StringComparison.OrdinalIgnoreCase))
+                            { inAccounts = true; break; }
+                        }
+                    }
+                }
+                catch { }
+                if (!inAccounts) return false;
+
                 if (s.BgiPinnedUsers != null
                     && s.BgiPinnedUsers.Contains(userName, StringComparer.OrdinalIgnoreCase))
                     return true;

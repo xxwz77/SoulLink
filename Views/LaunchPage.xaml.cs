@@ -105,7 +105,9 @@ namespace SoulLink.Views
             // 自动化卡片也跟随刷新，否则必须切页才能看到状态/名称变化。
             RefreshAutomationList();
             // 右侧原始日志：跟随点击的会话
-            if (_follower == null) RefreshSelectedLog();
+            // ★ 架构修正后没有本地 LogFollower 了，改用"是否订阅数据中心"判断。
+            //   内容更新由 OnLogCenterChanged 推送，这里只负责"换了会话要重新绑"。
+            if (!_logCenterSubscribed) RefreshSelectedLog();
             // 左侧：主会话显示总览，其它账号显示单账号状态
             if (_logSession != null && _logSession.IsConsoleSession)
             {
@@ -115,7 +117,7 @@ namespace SoulLink.Views
                 RefreshOverview();
                 if (_overviewRows.Count > 0) UpdateOverviewTexts();
             }
-            else if (_statusFollower == null && _logSession != null)
+            else if (!_logCenterSubscribed && _logSession != null)
             {
                 StartStatusFollowFor(_logSession);
             }
@@ -255,7 +257,39 @@ namespace SoulLink.Views
                         else all = await SessionService.QueryAsync().ConfigureAwait(false);
                     }
 
-                    var users = SessionService.FilterUsers(all); // 总览是导航入口，主用户必须始终可见
+                    // ★★ 只保留「配置里有的账号」+ 主会话 ★★
+                    //
+                    //   用户要求：「RDP 配置里没有的用户直接隐藏」。
+                    //
+                    //   原来只做了 FilterUsers（滤掉 services/UMFD/DWM），
+                    //   系统里任何登录过的人都会列出来 —— 实测 a1/a4 已经从
+                    //   RDP 配置里删掉，但会话还在，于是列表里一直有它们。
+                    //
+                    //   这些会话不属于我们管理的挂机账号：
+                    //     · 不该读它们的 BGI 日志
+                    //     · 不该显示"通道未投送"
+                    //     · 更不该出现在运行状态总览里
+                    //
+                    //   主会话（console）保留：它是"总览页面"的导航入口。
+                    var users = SessionService.FilterUsers(all);
+                    var accounts = App.Config?.Accounts;
+                    if (accounts != null && accounts.Count > 0)
+                    {
+                        var managed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var a in accounts)
+                        {
+                            if (a == null) continue;
+                            managed.Add(SessionService.BareName(a.UserName));
+                        }
+
+                        users = users.Where(s =>
+                        {
+                            // 主会话始终保留（总览入口）
+                            if (s.IsConsoleSession) return true;
+                            return managed.Contains(SessionService.BareName(s.UserName));
+                        }).ToList();
+                    }
+
                     await Dispatcher.InvokeAsync(async () => await ApplySessions(users)).Task.Unwrap();
                 }
                 catch { }
@@ -1027,30 +1061,28 @@ namespace SoulLink.Views
                     {
                         StopFollower();
                         LogTitle.Text = "BGI 实时日志 · " + user;
-                        LogMeta.Text = "PID " + pid + " · 实时跟随中";
+                        LogMeta.Text = "PID " + pid + " · 数据中心";
                         LogText.Text = "";
 
-                        try
-                        {
-                            _follower = new LogFollower(
-                                _logFile, Dispatcher,
-                                chunk =>
-                                {
-                                    // ① 解析运行状态并刷新面板
-                                    _bgiStatus.Update(chunk);
-                                    ApplyStatusToUi();
-
-                                    // ② 原始日志仍然累积（默认折叠，排查时展开）
-                                    LogText.Text += chunk;
-                                    TrimLogText();
-                                    try { LogScroll.ScrollToEnd(); } catch { }
-                                },
-                                initialLines: 200);   // 回填多一些，保证状态能解析到
-                        }
-                        catch (Exception ex)
-                        {
-                            LogText.Text = "无法跟随日志：" + ex.Message;
-                        }
+                        // ★★ 架构：日志的唯一读取者是 BgiLogCenter ★★
+                        //
+                        //   用户要求（反复强调过）：
+                        //     「访问日志的权限是数据中心，应用内其余地方只能从数据中心拿数据！」
+                        //
+                        //   BgiLogSnapshot.cs 的文件头也写着同样的硬性要求：
+                        //     「所有需要 BGI 日志的地方统一从这里取，不再各自读文件」
+                        //
+                        //   原来这里 new LogFollower(日志文件) 自己开 FileSystemWatcher，
+                        //   等于同一份日志被读两遍：
+                        //     · BgiLogCenter 单遍流式扫描（游标只进不退）
+                        //     · 这里再独立跟随一次
+                        //   → CPU 翻倍，而且未绑定账号也可能被读到。
+                        //
+                        //   现在只读数据中心的不可变快照 + 订阅它的 Changed 事件。
+                        string initial = TailTextOf(BgiLogCenter.SnapshotByUser(user));
+                        LogText.Text = initial.Length > 0 ? initial : "（等待数据中心采集…）";
+                        try { LogScroll.ScrollToEnd(); } catch { }
+                        SubscribeLogCenter();
                     });
                 }
                 catch { }
@@ -1258,40 +1290,31 @@ namespace SoulLink.Views
                         _statusEverResolved = _bgiStatus.HasData;   // 有缓存就不算"未解析"
                         StatusPicksBox.Visibility = Visibility.Collapsed;
                         ApplyStatusToUi();
-                        StatusMeta.Text = user + " · PID " + pid;
+                        StatusMeta.Text = user + " · 数据中心";
 
+                        // ★★ 架构：不再自己开 LogFollower ★★
+                        //
+                        //   用户硬性要求：
+                        //     「访问日志的权限是数据中心，应用内其余地方只能从数据中心拿数据！」
+                        //
+                        //   原来这里 new LogFollower(logFile, ..., deepBackfill: true)，
+                        //   会对几十 MB 的日志做**深度回填扫描**，而 BgiLogCenter
+                        //   已经在做同样的事（单遍流式、游标只进不退）——
+                        //   同一份日志被完整解析两遍。
+                        //
+                        //   现在只抄数据中心快照里的结构字段。
+                        //   结构性字段（任务名/配置组/路线/轮次）由数据中心增量维护，
+                        //   它从文件头一路扫到尾巴，不会漏掉"只在任务开始时写一次"的行。
                         try
                         {
-                            _statusFollower = new LogFollower(
-                                logFile, Dispatcher,
-                                chunk =>
-                                {
-                                    _bgiStatus.Update(chunk);
-                                    ApplyStatusToUi();
-                                    // ★ 每次有新增日志，都安排一次"全量重解析"。
-                                    //   原因：配置组 / 任务名只在任务开始时写一次，
-                                    //   如果那段内容不在初始回填范围内（文件 33MB，
-                                    //   回填只读最后 512KB），增量里永远拿不到 →
-                                    //   界面一直停在"等待日志中的状态信息"（用户实测）。
-                                    ScheduleStatusRebuild(logFile);
-                                },
-                                initialLines: 400,
-                                deepBackfill: true);   // ★ 状态行可能埋在几十万行之前（实测 20261107）
-
-                            // ★ 2.17.45：全天报错统计 / 分组拾取**不再各自扫一遍日志**。
-                            //   原来这里额外跑了 CountDailyErrors + CountDailyPicksByGroup
-                            //   两次全文件扫描（各 50MB），而 BgiLogCenter 的单遍流式扫描
-                            //   已经把这两项都算出来了。这里只是抄一次快照。
                             ApplyCenterSnapshot();
+                            SubscribeLogCenter();
                         }
                         catch (Exception ex)
                         {
-                            // ★ 原来这里是 catch { }，把创建失败吞掉了，
-                            //   结果 _statusFollower 一直是 null，守卫失效、
-                            //   状态永远显示不出来。现在把原因记下来。
-                            SoulLink.Controls.RdpConsole.Debug("状态跟随器创建异常：" + ex.GetType().Name
-                                + " - " + ex.Message);
-                            StatusEta.Text = "跟随失败：" + ex.Message;
+                            SoulLink.Controls.RdpConsole.Debug("应用数据中心快照异常："
+                                + ex.GetType().Name + " - " + ex.Message);
+                            StatusEta.Text = "读取数据中心失败：" + ex.Message;
                         }
                     });
                 }
@@ -1605,11 +1628,98 @@ namespace SoulLink.Views
             catch { }
         }
 
-        /// <summary>停止当前日志跟随。</summary>
+        /// <summary>停止当前日志跟随（架构修正后改为退订数据中心）。</summary>
         private void StopFollower()
         {
             try { _follower?.Dispose(); } catch { }
             _follower = null;
+            UnsubscribeLogCenter();
+        }
+
+        // ══════════ 数据中心订阅 ══════════
+        //
+        //  ★★ 用户硬性要求 ★★
+        //    「访问日志的权限是数据中心，应用内其余地方只能从数据中心拿数据！」
+        //
+        //  BgiLogSnapshot.cs 文件头同样写着：
+        //    「所有需要 BGI 日志的地方统一从这里取，不再各自读文件」
+        //    「只读已绑定 BGI 路径的账号，未绑定的一律零 IO」
+        //
+        //  所以本页不再打开任何日志文件，只做两件事：
+        //    ① 读 BgiLogCenter 的不可变快照（SnapshotByUser / Tail）；
+        //    ② 订阅 BgiLogCenter.Changed，数据变了再刷新界面。
+        //
+        //  这样一来"未绑定不读日志"由数据中心统一保证，
+        //  不需要在 UI 每个入口各写一遍判断（也就不会再漏）。
+
+        private bool _logCenterSubscribed;
+
+        private void SubscribeLogCenter()
+        {
+            if (_logCenterSubscribed) return;
+            try
+            {
+                BgiLogCenter.Changed += OnLogCenterChanged;
+                _logCenterSubscribed = true;
+            }
+            catch { }
+        }
+
+        private void UnsubscribeLogCenter()
+        {
+            if (!_logCenterSubscribed) return;
+            try
+            {
+                BgiLogCenter.Changed -= OnLogCenterChanged;
+                _logCenterSubscribed = false;
+            }
+            catch { }
+        }
+
+        /// <summary>把快照尾窗拼成文本（数据中心只提供不可变快照）。</summary>
+        private static string TailTextOf(BgiLogSnapshot? snap)
+        {
+            try
+            {
+                if (snap == null || snap.Tail.Count == 0) return "";
+                var sb = new System.Text.StringBuilder(snap.Tail.Count * 96);
+                foreach (var line in snap.Tail) sb.AppendLine(line.Text);
+                return sb.ToString();
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>数据中心有新数据 → 拉最新快照刷新界面（完全不碰文件）。</summary>
+        private void OnLogCenterChanged()
+        {
+            try
+            {
+                var sess = _logSession;
+                if (sess != null)
+                {
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            if (_logSession == null) return;
+                            string text = TailTextOf(BgiLogCenter.SnapshotByUser(_logSession.UserName));
+                            if (text.Length > 0 && text != _logText)
+                            {
+                                _logText = text;
+                                LogText.Text = text;
+                                TrimLogText();
+                                try { LogScroll.ScrollToEnd(); } catch { }
+                            }
+                        }
+                        catch { }
+                    });
+                }
+
+                // 左侧状态面板也从快照刷新（节流由 ScheduleStatusRebuild 保证）
+                if (_statusSessionId > 0)
+                    Dispatcher.InvokeAsync(() => { try { ApplyCenterSnapshot(); } catch { } });
+            }
+            catch { }
         }
 
         public MainWindow? MainWindowRef { get; set; }
@@ -2877,10 +2987,43 @@ namespace SoulLink.Views
             }
         }
 
-        /// <summary>主会话不显示 BGI 段。</summary>
+        /// <summary>
+        /// 该用户是否在 **RDP 配置的账号列表**里。
+        /// ★ 用户要求：「RDP 配置里没有的用户直接隐藏」。
+        ///   系统里可能有别人登录的会话（a1/a4 之类的残留、临时登录），
+        ///   它们不属于我们管理的挂机账号，不该出现在会话列表里。
+        /// </summary>
+        public bool IsManaged
+        {
+            get
+            {
+                try
+                {
+                    string bare = Services.SessionService.BareName(Session.UserName);
+                    var accounts = App.Config?.Accounts;
+                    if (accounts == null) return false;
+                    foreach (var a in accounts)
+                    {
+                        if (a == null) continue;
+                        if (string.Equals(Services.SessionService.BareName(a.UserName),
+                                bare, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                }
+                catch { }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 主会话不显示 BGI 段。
+        /// ★ 用户要求：「主用户不需要检测 BGI，应该直接未绑定」。
+        ///   再加一条：**不在配置里的账号**也不检测 BGI（它们根本不是挂机账号）。
+        /// </summary>
         public System.Windows.Visibility BgiVisibility
-            => Session.IsConsoleSession ? System.Windows.Visibility.Collapsed
-                                         : System.Windows.Visibility.Visible;
+            => Session.IsConsoleSession || !IsManaged
+                ? System.Windows.Visibility.Collapsed
+                : System.Windows.Visibility.Visible;
 
         private bool _hasChannel;
         /// <summary>该会话是否已有可用注入通道（由外部按活代理探测结果填充）。</summary>
@@ -2919,11 +3062,24 @@ namespace SoulLink.Views
             PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(BgiBrush)));
         }
 
-        /// <summary>三种状态：就绪 / 未投送 / 投送失败。</summary>
+        /// <summary>
+        /// 三种状态：就绪 / 未投送 / 投送失败。
+        /// ★ 用户要求：「主用户这里也不需要检测投送」。
+        ///   主会话是操作者自己的桌面，从不投送代理，显示"通道未投送"
+        ///   既无意义又误导（看起来像出了问题）。
+        ///   不在 RDP 配置里的账号同理。
+        /// </summary>
         public string ChannelText
-            => HasChannel ? "通道就绪"
-               : ChannelError.Length > 0 ? ("投送失败：" + ShortError(ChannelError))
-               : "通道未投送";
+        {
+            get
+            {
+                if (Session.IsConsoleSession) return "当前会话";
+                if (!IsManaged) return "";
+                return HasChannel ? "通道就绪"
+                     : ChannelError.Length > 0 ? ("投送失败：" + ShortError(ChannelError))
+                     : "通道未投送";
+            }
+        }
 
         private static string ShortError(string msg)
         {
