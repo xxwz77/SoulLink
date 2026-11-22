@@ -119,8 +119,24 @@ namespace SoulLink.Services
                         Id = info.SessionId,
                         UserName = user,
                         State = StateText(info.State),
+                        // ★★ 必须用 Ansi 读，不能用 Unicode ★★
+                        //
+                        //   WTS_SESSION_INFO.pWinStationName 指向的是
+                        //   **窄字符（ANSI）** 字符串，不是 UTF-16。
+                        //   用 PtrToStringUni 读会把两个字节当一个字符，
+                        //   于是 "Console" 变成 "潃獮汯e"（每字节序都被反转）。
+                        //
+                        //   后果非常隐蔽：IsConsoleSession 靠 StartsWith("console")
+                        //   判断主会话，站名乱码 → 永远判 false → 左栏永远进
+                        //   "单账号状态"分支，**总览面板不显示**。
+                        //   而 query user 兜底路径是文本解析，站名是对的，
+                        //   于是"有时正常有时不正常"，极难定位。
+                        //
+                        //   实测对比：
+                        //     PtrToStringUni  → [潃獮汯e䑒ⵐ捔⍰0...]
+                        //     PtrToStringAnsi → [Console]
                         Station = info.pWinStationName == IntPtr.Zero
-                                  ? "" : (Marshal.PtrToStringUni(info.pWinStationName) ?? ""),
+                                  ? "" : (Marshal.PtrToStringAnsi(info.pWinStationName) ?? ""),
                     });
                 }
                 return result;
