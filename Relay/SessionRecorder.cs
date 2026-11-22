@@ -4,96 +4,81 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
+using SoulLink.Services;
 
 namespace SoulLink.Relay
 {
     /// <summary>
-    /// 目标会话内的**屏幕录制器**：内存环形缓冲 + 按需保存。
-    ///
-    /// ★★ 为什么必须在代理进程里录 ★★
-    ///   画面按会话隔离：别的会话 CopyFromScreen 只能得到自己的桌面；
-    ///   投 SYSTEM 计划任务也不行 —— SYSTEM 在会话 0，那里没有交互式桌面，截出来全黑
-    ///   （2026-11-22 实测）。只有**身处目标会话**的进程才能截到那个用户的真实画面。
-    ///
-    /// ★★ 为什么是内存环形缓冲，不是一直写盘 ★★
-    ///   3 个账号 10fps 持续录 = 388 GB/天 的 SSD 写入量，长期跑伤盘。
-    ///   实测（1920x1080，质量 60）：JPEG 压缩后 126 KB/帧，30 秒只有 **37 MB/账号**；
-    ///   而原始位图 7.9 MB/帧（30 秒 2.4 GB）—— 所以**只存压缩后的字节**。
-    ///   内存里留最近 30 秒，SSD 写入 ≈ 0；只有「保存」时才落盘。
-    ///
-    /// ★★ 尺寸取**代理所在会话**，不是主程序桌面 ★★
-    ///   目标 RDP 会话是 1920x1080，主程序自己的桌面可能是别的大小。
-    ///   GetSystemMetrics 在代理进程里返回的就是目标会话的尺寸，天然正确。
-    ///   （代理需声明 DPI 感知，否则 150% 缩放下会拿到逻辑尺寸。）
-    ///
-    /// ★ 生命周期依附代理：代理断开 = RDP 断 = 没有画面，录制线程随之结束。
+    /// 会话内共享视频管线：抓屏 → BGRA → NV12 → H.264 → NAL 环形缓冲。
+    /// 所有观众只订阅编码结果，不重复抓屏或编码；JPEG 仅保留给一次性截图。
     /// </summary>
     internal static class SessionRecorder
     {
-        // ── 抓屏后端（第一步 = BitBlt，第二步 = WGC）──────────────────────────
-        //
-        // ★ 抓帧的 Win32 细节已搬到 IScreenCapture 实现（见 BitBltCapture.cs / WgcCapture.cs）。
-        //   SessionRecorder 只负责环形缓冲 / 录制 / 直播调度，不碰抓屏细节。
-        //
-        // ★ 后端选择（CaptureMode）：
-        //   0 = BitBlt（默认）；1 = WGC（版本化 TFM 才有实现）。
-        //   代理进程读环境变量 SOULLINK_CAPTURE_MODE（主程序投送时下发，与 SOULLINK_REC_FPS 同模式）。
-        //   WGC 初始化失败 → 回退 BitBlt，保证画面永不消失。
+        private sealed class VideoFrame
+        {
+            public byte[] Nal = Array.Empty<byte>();
+            public DateTime At;
+            public bool KeyFrame;
+        }
+
+        private sealed class Viewer
+        {
+            public readonly object Sync = new();
+            public readonly Queue<byte[]> Pending = new();
+            public bool Closed;
+        }
+
         private static IScreenCapture Capture = CreateCapture();
+        private static readonly object Gate = new();
+        private static readonly List<VideoFrame> Ring = new();
+        private static readonly Dictionary<int, Viewer> Viewers = new();
+        private static Thread? _worker;
+        private static volatile bool _stopRequested;
+        private static int _fps = 10;
+        private static int _quality = 75;
+        private static int _keepSeconds = 30;
+        private static int _sessionId;
+        private static string _status = "idle";
+        private static string _lastError = "";
+        private static long _totalFrames;
+        private static int _width, _height;
+        private static int _nextViewerId;
+        private static bool _recordRequested;
+        private static long _captureMs, _convertMs, _encodeMs;
+
+        private static int StreamFps
+            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_STREAM_FPS"), out int value) ? Math.Clamp(value, 1, 60) : 15;
+        private static int StreamBitrate
+            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_VIDEO_BITRATE"), out int value) ? Math.Max(500, value) : 8000;
 
         private static IScreenCapture CreateCapture()
         {
-            int mode = 0;
             string raw = Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE") ?? "";
-            if (int.TryParse(raw, out int parsed)) mode = parsed;
-
-            if (mode == 1)
+            if (int.TryParse(raw, out int mode) && mode == 1)
             {
 #if WGC
-                try
-                {
-                    var wgc = new WgcCapture();
-                    // 首次抓帧探活：成功才用 WGC，失败回退 BitBlt
-                    if (wgc.CaptureJpeg(75, out _, out _) != null) return wgc;
-                }
-                catch { }
+                try { return new WgcCapture(); }
+                catch (Exception ex) { _lastError = "WGC 创建失败：" + ex.Message; }
 #endif
             }
             return new BitBltCapture();
         }
 
-        // ── 缓存目录：跟程序目录走（用户要求「跟程序一个目录」）─────────────
-        /// <summary>
-        /// 截图/录像的落盘目录。默认 &lt;程序目录&gt;\capture，可用环境变量覆盖。
-        /// </summary>
         public static string CaptureRoot
         {
             get
             {
-                // ① 显式指定优先（主程序投送代理时会设这个变量）
                 string? env = Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_DIR");
                 if (!string.IsNullOrWhiteSpace(env)) return env!;
-
-                // ★★ ② 用户要求「肯定是放主程序位置啊，新建个目录」★★
-                //   主程序投送代理时会设 SOULLINK_CAPTURE_DIR 指向自己的目录下的 capture；
-                //   没设（手动代理模式）才按程序目录推。
-                //   注意：代理可能运行在 Program Files 下（不可写），
-                //   所以 CanCreate 失败时必须回退，否则录制会静默失败。
                 string exeDir;
                 try { exeDir = Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? "."; }
                 catch { exeDir = "."; }
-
                 string preferred = Path.Combine(exeDir, "capture");
                 if (CanCreate(preferred)) return preferred;
-
-                // ③ 兜底：ProgramData（所有用户可写、跨会话可读）
-                return Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                    "SoulLinkShare", "capture");
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SoulLinkShare", "capture");
             }
         }
 
-        /// <summary>目录能否真正创建（只 CreateDirectory 判断不出权限，要真建一次）。</summary>
         private static bool CanCreate(string dir)
         {
             try
@@ -107,404 +92,326 @@ namespace SoulLink.Relay
             catch { return false; }
         }
 
-        // ── 环形缓冲 ─────────────────────────────────────────────────────────
-
-        /// <summary>一帧：JPEG 字节 + 采集时间。只存压缩数据，不存位图。</summary>
-        private sealed class Frame
-        {
-            public byte[] Jpeg = Array.Empty<byte>();
-            public DateTime At;
-        }
-
-        private static readonly object Gate = new object();
-        private static readonly Queue<Frame> Ring = new();
-        private static Thread? _worker;
-        private static volatile bool _stopRequested;
-        private static int _fps = 15;
-        private static int _quality = 75;
-        private static int _keepSeconds = 30;
-        private static int _sessionId = 0;
-        private static string _status = "idle";
-        private static long _totalFrames;
-        private static int _width, _height;
-
-        /// <summary>当前状态文本（给 recordstatus 命令用）。</summary>
         public static string StatusText()
         {
             lock (Gate)
             {
                 long bytes = 0;
-                foreach (var f in Ring) bytes += f.Jpeg.Length;
-                // ★ 2026-11-22：把「实际在用的抓屏后端」报上去。
-                //   用户诉求：「界面显示当前实际用的哪个」，因为配置选了 WGC 也可能
-                //   因显存不足/身份不对而静默降级到 BitBlt，光看配置看不出来。
-                string backend = "unknown";
-                try { backend = Capture?.Name ?? "unknown"; } catch { }
-
-                return _status
-                    + "|fps=" + _fps
-                    + "|quality=" + _quality
-                    + "|frames=" + Ring.Count
-                    + "|bytes=" + bytes
-                    + "|total=" + _totalFrames
-                    + "|size=" + _width + "x" + _height
-                    + "|session=" + _sessionId
-                    + "|capture=" + backend;
+                foreach (var f in Ring) bytes += f.Nal.Length;
+                return _status + "|fps=" + _fps + "|quality=" + _quality
+                    + "|frames=" + Ring.Count + "|bytes=" + bytes + "|total=" + _totalFrames
+                    + "|size=" + _width + "x" + _height + "|session=" + _sessionId
+                    + "|capture=" + Capture.Name + "|codec=H264|viewers=" + Viewers.Count
+                    + "|captureMs=" + _captureMs + "|convertMs=" + _convertMs + "|encodeMs=" + _encodeMs
+                    + (_lastError.Length > 0 ? "|error=" + _lastError : "");
             }
         }
 
-        // ── 启停 ─────────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// 开始录制（重复调用会更新参数而不是重启线程）。
-        /// fps 用户可选；quality 默认 75（要求清晰）；keepSeconds 为环形缓冲时长。
-        /// </summary>
         public static bool Start(int fps, int quality, int keepSeconds, int sessionId, out string message)
         {
-            fps = Math.Clamp(fps, 1, 30);
-            quality = Math.Clamp(quality, 30, 95);
-            keepSeconds = Math.Clamp(keepSeconds, 5, 600);
+            lock (Gate) _recordRequested = true;
+            return StartCore(fps, quality, keepSeconds, sessionId, out message);
+        }
 
+        private static bool StartCore(int fps, int quality, int keepSeconds, int sessionId, out string message)
+        {
             lock (Gate)
             {
-                _fps = fps;
-                _quality = quality;
-                _keepSeconds = keepSeconds;
+                _fps = Math.Clamp(fps, 1, 30);
+                _quality = Math.Clamp(quality, 30, 95);
+                _keepSeconds = Math.Clamp(keepSeconds, 5, 600);
                 _sessionId = sessionId;
-
                 if (_worker != null && _worker.IsAlive)
                 {
-                    message = "已在录制，" + _fps + "fps 质量" + _quality + " 保留" + _keepSeconds + "秒";
+                    message = "共享 H.264 管线已在运行，" + _fps + "fps，观众=" + Viewers.Count;
                     return true;
                 }
-
                 _stopRequested = false;
                 _status = "recording";
-                _worker = new Thread(Loop) { IsBackground = true, Name = "SoulLinkRecorder" };
+                _worker = new Thread(Loop) { IsBackground = true, Name = "SoulLinkVideo" };
                 _worker.Start();
-                message = "开始录制 " + _fps + "fps 质量" + _quality
-                    + " 环形保留 " + _keepSeconds + " 秒，缓存目录=" + CaptureRoot;
+                message = "开始共享 H.264 采集编码 " + _fps + "fps，保留 " + _keepSeconds + " 秒（实时链路无 JPEG）";
                 return true;
             }
         }
 
         public static void Stop()
         {
+            lock (Gate) _recordRequested = false;
             _stopRequested = true;
         }
 
-        /// <summary>代理退出前调用：停止录制并等线程收尾。</summary>
         public static void Shutdown(int waitMs = 1500)
         {
-            try
-            {
-                _stopRequested = true;
-                var t = _worker;
-                if (t != null && t.IsAlive) t.Join(waitMs);
-            }
-            catch { }
+            _stopRequested = true;
+            lock (Gate) { foreach (var v in Viewers.Values) lock (v.Sync) v.Closed = true; }
+            try { var t = _worker; if (t != null && t.IsAlive) t.Join(waitMs); } catch { }
+            try { Capture.Dispose(); } catch { }
         }
-
-        // ── 录制循环 ─────────────────────────────────────────────────────────
 
         private static void Loop()
         {
+            MfFrameEncoder? encoder = null;
+            int encodedWidth = 0, encodedHeight = 0;
+            long frameIndex = 0;
             try
             {
                 while (!_stopRequested)
                 {
-                    int fps, quality, keepSec;
-                    lock (Gate) { fps = _fps; quality = _quality; keepSec = _keepSeconds; }
-
-                    int interval = Math.Max(1, 1000 / fps);
-                    var sw = Stopwatch.StartNew();
-
-                    var jpeg = Capture.CaptureJpeg(quality, out int cw, out int ch);
-                    if (jpeg != null)
+                    int fps, keepSec;
+                    lock (Gate) { fps = _fps; keepSec = _keepSeconds; }
+                    var frameStart = Stopwatch.StartNew();
+                    var bgra = Capture.CaptureBgra(out int width, out int height);
+                    long captureMs = frameStart.ElapsedMilliseconds;
+                    if (bgra == null || width <= 0 || height <= 0)
                     {
-                        if (cw > 0 && ch > 0) { _width = cw; _height = ch; }
-                        var now = DateTime.Now;
-                        lock (Gate)
-                        {
-                            Ring.Enqueue(new Frame { Jpeg = jpeg, At = now });
-                            _totalFrames++;
-                            // 丢掉超过保留时长的旧帧
-                            var cutoff = now.AddSeconds(-keepSec);
-                            while (Ring.Count > 0 && Ring.Peek().At < cutoff) Ring.Dequeue();
-                        }
+                        lock (Gate) { _status = "waiting"; _lastError = "抓屏没有返回原始帧"; }
+                        Thread.Sleep(Math.Max(20, 1000 / fps));
+                        continue;
+                    }
+                    int ew = width & ~1, eh = height & ~1;
+                    if (encoder == null || encodedWidth != ew || encodedHeight != eh)
+                    {
+                        encoder?.Dispose();
+                        encoder = new MfFrameEncoder();
+                        if (!encoder.TryInitialize(ew, eh, fps, StreamBitrate))
+                            throw new InvalidOperationException("H.264 编码器初始化失败：" + encoder.LastError);
+                        encodedWidth = ew; encodedHeight = eh;
+                        lock (Gate) { _width = ew; _height = eh; }
                     }
 
-                    int wait = interval - (int)sw.ElapsedMilliseconds;
+                    var convertStart = Stopwatch.StartNew();
+                    byte[] nv12 = BgraToNv12(bgra, ew, eh, width * 4);
+                    long convertMs = convertStart.ElapsedMilliseconds;
+                    var encodeStart = Stopwatch.StartNew();
+                    byte[]? nal = encoder.EncodeNv12(nv12, frameIndex * 1_000_000L / fps);
+                    long encodeMs = encodeStart.ElapsedMilliseconds;
+                    if (nal != null && nal.Length > 0)
+                    {
+                        frameIndex++;
+                        var frame = new VideoFrame { Nal = nal, At = DateTime.Now, KeyFrame = IsKeyFrame(nal) };
+                        lock (Gate)
+                        {
+                            Ring.Add(frame);
+                            _totalFrames++;
+                            _captureMs = captureMs; _convertMs = convertMs; _encodeMs = encodeMs;
+                            _status = "recording"; _lastError = "";
+                            if (_totalFrames % 30 == 0)
+                                RelayAgent.LogQuiet("[video] 共享管线 total=" + _totalFrames + " viewers=" + Viewers.Count
+                                    + " captureMs=" + captureMs + " convertMs=" + convertMs + " encodeMs=" + encodeMs);
+                            DateTime cutoff = frame.At.AddSeconds(-keepSec);
+                            while (Ring.Count > 0 && (Ring[0].At < cutoff || Ring.Count > Math.Max(300, fps * keepSec * 2))) Ring.RemoveAt(0);
+                            foreach (var viewer in Viewers.Values)
+                            {
+                                lock (viewer.Sync)
+                                {
+                                    if (viewer.Closed) continue;
+                                    if (frame.KeyFrame) viewer.Pending.Clear();
+                                    // 队列满时只丢旧非关键帧；绝不能把下一个 IDR 丢掉导致永久花屏。
+                                    while (viewer.Pending.Count >= 4 && !IsKeyFrame(viewer.Pending.Peek())) viewer.Pending.Dequeue();
+                                    viewer.Pending.Enqueue(frame.Nal);
+                                }
+                            }
+                        }
+                    }
+                    int wait = Math.Max(1, 1000 / fps) - (int)frameStart.ElapsedMilliseconds;
                     if (wait > 0) Thread.Sleep(wait);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                lock (Gate) { _status = "error"; _lastError = ex.GetType().Name + "：" + ex.Message; }
+                RelayAgent.LogQuiet("[video] 共享采集编码失败：" + ex);
+            }
             finally
             {
+                try { encoder?.Dispose(); } catch { }
                 lock (Gate) { _status = "idle"; _worker = null; }
             }
         }
 
-        // ── 对外：取帧 / 保存 ────────────────────────────────────────────────
-
-        /// <summary>取最近一帧的 JPEG 字节（实时预览用）。</summary>
-        public static byte[]? GetLatestJpeg()
+        /// <summary>订阅共享 NAL。返回失败时调用方必须给出错误，不允许退回 JPEG 轮询。</summary>
+        public static bool TrySubscribe(out int viewerId, out byte[]? initial, out string error)
         {
+            viewerId = 0; initial = null; error = "";
             lock (Gate)
             {
-                if (Ring.Count == 0) return null;
-                Frame? last = null;
-                foreach (var f in Ring) last = f;
-                return last?.Jpeg;
+                if (_lastError.Length > 0 && _status == "error") { error = _lastError; return false; }
+                viewerId = ++_nextViewerId;
+                Viewers[viewerId] = new Viewer();
+                if (Ring.Count > 0)
+                {
+                    int start = Ring.Count - 1;
+                    for (int i = Ring.Count - 1; i >= 0; i--) if (Ring[i].KeyFrame) { start = i; break; }
+                    initial = Ring[start].Nal;
+                }
             }
+            if (!StartCore(StreamFps, _quality, _keepSeconds, Process.GetCurrentProcess().SessionId, out error))
+            {
+                Unsubscribe(viewerId); viewerId = 0; return false;
+            }
+            return true;
         }
 
-        /// <summary>取指定序号帧（0 = 最旧）。给"翻看最近画面"用。</summary>
-        public static byte[]? GetFrameAt(int index)
+        public static void Unsubscribe(int viewerId)
         {
-            lock (Gate)
-            {
-                if (index < 0 || index >= Ring.Count) return null;
-                int i = 0;
-                foreach (var f in Ring)
-                {
-                    if (i++ == index) return f.Jpeg;
-                }
-                return null;
-            }
+            lock (Gate) { if (Viewers.Remove(viewerId, out var viewer)) lock (viewer.Sync) viewer.Closed = true; }
+            // 录制未开启且最后一个观众离开时停止共享管线，释放编码器与 MF 缓冲池。
+            // 锁外赋值避免在持锁状态调用线程管理。
+            bool shouldStop;
+            lock (Gate) shouldStop = !_recordRequested && Viewers.Count == 0;
+            if (shouldStop) _stopRequested = true;
+        }
+
+        /// <summary>取一个已编码帧；没有新帧时返回 null，不做抓屏或编码。</summary>
+        public static byte[]? ReadViewerFrame(int viewerId)
+        {
+            Viewer? viewer;
+            lock (Gate) { if (!Viewers.TryGetValue(viewerId, out viewer)) return null; }
+            lock (viewer.Sync) return viewer.Pending.Count > 0 ? viewer.Pending.Dequeue() : null;
         }
 
         public static int FrameCount { get { lock (Gate) return Ring.Count; } }
+        public static string? LastError { get { lock (Gate) return _lastError; } }
+        public static string StreamReadiness
+        {
+            get { lock (Gate) return "状态=" + _status + " 帧=" + Ring.Count + " 采集=" + Capture.Name + " 错误=" + _lastError; }
+        }
 
-        /// <summary>
-        /// 保存录制到磁盘。
-        ///
-        /// ★★ 目录规范（用户明确指定）★★
-        ///   &lt;主程序目录&gt;\录制回放\&lt;用户名-昵称&gt;\&lt;时间-触发条件&gt;\frame-xxxxx.jpg
-        ///   例：录制回放\A2-山客\2026-11-22-101500-日志关键字\
-        ///
-        /// ★ "前后 N 秒"的语义（用户选方案 A：前 N + 后 N，N ≤ 保留时长/2）：
-        ///   环形缓冲只有**过去**的帧，没有未来的帧。所以：
-        ///     ① 立刻把 [T-N, T] 这段（前 N 秒）落盘；
-        ///     ② 继续录制，等 N 秒后再把 [T, T+N]（后 N 秒）追加进来。
-        ///   整个过程是"延迟 N 秒完成"，不是瞬间保存。
-        /// </summary>
-        /// <param name="userTag">用户名-昵称，作为一级目录</param>
-        /// <param name="trigger">触发条件描述，拼在目录名末尾</param>
-        /// <param name="beforeSeconds">触发前保留秒数</param>
-        /// <param name="afterSeconds">触发后追加秒数（0=只存前段）</param>
+        /// <summary>一次性 JPEG 截图，仅供静态 shot/frame 协议使用；绝不进入实时 Ring。</summary>
+        public static byte[]? CaptureJpegOnce(int quality)
+            => Capture.CaptureJpeg(Math.Clamp(quality, 30, 95), out _, out _);
+
         public static string? SaveRecording(string userTag, string trigger,
             double beforeSeconds, double afterSeconds, int sessionId,
             out int frames, out string message)
         {
-            frames = 0;
-            message = "";
+            frames = 0; message = "";
             try
             {
-                // 目录名：时间-触发条件（时间精确到秒，避免同秒冲突）
-                string stamp = DateTime.Now.ToString("yyyy-MM-dd-HHmmss");
-                string safeTrigger = Sanitize(trigger);
-                string folder = stamp + (safeTrigger.Length > 0 ? "-" + safeTrigger : "");
+                if (afterSeconds > 0.5) Thread.Sleep(TimeSpan.FromSeconds(Math.Min(afterSeconds, 60)));
+                List<VideoFrame> copy;
+                int width, height, fps;
+                lock (Gate) { copy = new List<VideoFrame>(Ring); width = _width; height = _height; fps = _fps; }
+                DateTime cutoff = DateTime.Now.AddSeconds(-Math.Max(0, beforeSeconds));
+                int first = 0;
+                for (int i = 0; i < copy.Count; i++) if (copy[i].At >= cutoff) { first = i; break; }
+                for (int i = first; i >= 0; i--) if (copy[i].KeyFrame) { first = i; break; }
+                var selected = copy.GetRange(first, copy.Count - first);
+                if (selected.Count == 0 || !selected[0].KeyFrame) { message = "缓冲中没有可封装的关键帧"; return null; }
 
-                string dir = Path.Combine(CaptureRoot, "录制回放",
-                    string.IsNullOrWhiteSpace(userTag) ? ("会话" + sessionId) : Sanitize(userTag),
-                    folder);
+                string folder = DateTime.Now.ToString("yyyy-MM-dd-HHmmss") + (Sanitize(trigger).Length > 0 ? "-" + Sanitize(trigger) : "");
+                string dir = Path.Combine(CaptureRoot, "录制回放", string.IsNullOrWhiteSpace(userTag) ? "会话" + sessionId : Sanitize(userTag), folder);
                 Directory.CreateDirectory(dir);
-
-                // ① 先把"前 N 秒"落盘
-                int written = WriteSlice(dir, beforeSeconds, startIndex: 0);
-                frames = written;
-
-                // ② 需要"后 N 秒"就等一段时间再追加
-                if (afterSeconds > 0.5)
+                string rawPath = Path.Combine(dir, "replay.h264");
+                using (var output = File.Create(rawPath)) foreach (var frame in selected) output.Write(frame.Nal);
+                frames = selected.Count;
+                string mp4 = Path.Combine(dir, "replay.mp4");
+                if (Mp4Writer.TryWriteH264(selected.ConvertAll(f => f.Nal), width, height, fps, mp4, out string encodeMessage))
                 {
-                    int waitMs = (int)Math.Min(afterSeconds * 1000, 60000);
-                    int markIndex = written;   // 后面只追加新产生的帧
-                    var until = DateTime.UtcNow.AddMilliseconds(waitMs);
-                    while (DateTime.UtcNow < until) Thread.Sleep(100);
-
-                    // 再写一段：从上次写到的位置之后继续
-                    int more = WriteSliceFrom(dir, markIndex);
-                    frames = written + more;
-                }
-
-                WriteMeta(dir, sessionId, frames, trigger, beforeSeconds, afterSeconds);
-
-                // ★ 3.2.8：转成 MP4 并删除 JPEG 序列。
-                //   用户原话：「保存录像就是mp4，不然一张张图片很难查看」。
-                //   实测 276 帧 21.67MB → 0.09MB（静态桌面），真实游戏画面 1~3MB。
-                string mp4 = TryEncodeMp4(dir, _fps, out string encodeMsg);
-                if (mp4 != null)
-                {
-                    // 转码成功后删掉图片，只留 MP4 + meta
-                    try
-                    {
-                        foreach (string f in Directory.GetFiles(dir, "frame-*.jpg"))
-                            File.Delete(f);
-                    }
-                    catch { }
-                    message = "已保存 " + frames + " 帧 → " + Path.GetFileName(mp4)
-                        + "（" + (new FileInfo(mp4).Length / 1024) + " KB）";
+                    File.Delete(rawPath);
+                    message = "已保存 " + frames + " 帧 → replay.mp4（" + new FileInfo(mp4).Length / 1024 + " KB，无 JPEG 重编码）";
                 }
                 else
                 {
-                    // 转码失败就保留 JPEG 序列，至少数据没丢
-                    WriteEncodeError(dir, encodeMsg);
-                    message = "已保存 " + frames + " 帧（MP4 转码失败，保留图片）：" + encodeMsg;
+                    try { if (File.Exists(mp4)) File.Delete(mp4); } catch { }
+                    File.WriteAllText(Path.Combine(dir, "encode-error.txt"), "MP4 封装失败，已保留 H.264 原始流。\n" + encodeMessage);
+                    message = "已保留 " + frames + " 帧 H.264；MP4 封装失败：" + encodeMessage;
                 }
+                WriteMeta(dir, sessionId, frames, trigger, beforeSeconds, afterSeconds);
                 return dir;
             }
             catch (Exception ex) { message = "保存失败：" + ex.Message; return null; }
         }
 
-        /// <summary>
-        /// 把目录里的 frame-*.jpg 编码成 replay.mp4。
-        /// ★ 3.2.8：改用系统自带 Media Foundation（Services.Mp4Writer），
-        ///   不再依赖 ffmpeg —— 后者单个 exe 就 164~220 MB，会把安装包撑到 170 MB+，
-        ///   而 MF H.264 零依赖、零体积，实测压缩 17.6 倍（4823KB → 273KB）。
-        /// </summary>
-        private static string? TryEncodeMp4(string dir, int fps, out string message)
+        private static bool IsKeyFrame(byte[] data)
         {
-            string outPath = Path.Combine(dir, "replay.mp4");
-            try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
-
-            // 1080p 用 6000kbps：文字清晰且体积可控；
-            // 小分辨率按比例下调，避免无意义地浪费码率。
-            int bitrate = 6000;
-            if (_width > 0 && _height > 0)
-            {
-                int pixels = _width * _height;
-                bitrate = (int)Math.Clamp(pixels / 350.0, 1500, 12000);
-            }
-
-            if (SoulLink.Services.Mp4Writer.TryEncodeDirectory(dir, outPath, fps, bitrate, out message))
-                return outPath;
-            return null;
+            foreach (var (offset, length) in Nals(data))
+                if (length > 0 && (data[offset] & 0x1f) == 5) return true;
+            return false;
         }
 
-        private static void WriteEncodeError(string dir, string detail)
+        private static IEnumerable<(int Offset, int Length)> Nals(byte[] data)
+        {
+            int start = -1;
+            for (int i = 0; i + 3 < data.Length; i++)
+            {
+                int prefix = data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 ? 3
+                    : data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1 ? 4 : 0;
+                if (prefix == 0) continue;
+                if (start >= 0) yield return (start, i - start);
+                i += prefix - 1; start = i + 1;
+            }
+            if (start >= 0 && start < data.Length) yield return (start, data.Length - start);
+        }
+
+        private static byte[] BgraToNv12(byte[] bgra, int w, int h, int stride)
+        {
+            int ySize = w * h;
+            var nv12 = new byte[w * h * 3 / 2];
+            for (int y = 0; y < h; y++)
+            {
+                int row = y * stride, yRow = y * w;
+                for (int x = 0; x < w; x++)
+                {
+                    int i = row + x * 4;
+                    nv12[yRow + x] = (byte)((66 * bgra[i + 2] + 129 * bgra[i + 1] + 25 * bgra[i] + 128) >> 8);
+                }
+            }
+            for (int y = 0; y < h; y += 2)
+            {
+                int row0 = y * stride, row1 = row0 + stride, uvRow = ySize + y / 2 * w;
+                for (int x = 0; x < w; x += 2)
+                {
+                    int r = 0, g = 0, b = 0;
+                    int a = row0 + x * 4, c = row1 + x * 4;
+                    b = bgra[a] + bgra[a + 4] + bgra[c] + bgra[c + 4];
+                    g = bgra[a + 1] + bgra[a + 5] + bgra[c + 1] + bgra[c + 5];
+                    r = bgra[a + 2] + bgra[a + 6] + bgra[c + 2] + bgra[c + 6];
+                    r >>= 2; g >>= 2; b >>= 2;
+                    nv12[uvRow + x] = (byte)(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
+                    nv12[uvRow + x + 1] = (byte)(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+                }
+            }
+            return nv12;
+        }
+
+        private static void WriteMeta(string dir, int sessionId, int frames, string trigger, double before, double after)
         {
             try
             {
-                File.WriteAllText(Path.Combine(dir, "encode-error.txt"),
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + Environment.NewLine
-                    + "MP4 转码失败，已保留 JPEG 序列。" + Environment.NewLine
-                    + "原因：" + detail + Environment.NewLine);
+                File.WriteAllText(Path.Combine(dir, "meta.json"), "{\"sessionId\":" + sessionId + ",\"frames\":" + frames
+                    + ",\"fps\":" + _fps + ",\"size\":\"" + _width + "x" + _height + "\",\"codec\":\"H264\""
+                    + ",\"trigger\":\"" + JsonEscape(trigger) + "\",\"beforeSeconds\":" + before.ToString("0.#")
+                    + ",\"afterSeconds\":" + after.ToString("0.#") + ",\"savedAt\":\"" + DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss") + "\"}");
             }
             catch { }
         }
 
-        /// <summary>把缓冲最后 N 秒的帧写到目录。</summary>
-        private static int WriteSlice(string dir, double seconds, int startIndex)
-        {
-            List<Frame> copy;
-            lock (Gate) copy = new List<Frame>(Ring);
-            if (copy.Count == 0) return 0;
-
-            var cutoff = DateTime.Now.AddSeconds(-Math.Max(0, seconds));
-            int i = startIndex;
-            foreach (var f in copy)
-            {
-                if (f.At < cutoff) continue;
-                File.WriteAllBytes(Path.Combine(dir, "frame-" + i.ToString("D5") + ".jpg"), f.Jpeg);
-                i++;
-            }
-            return i - startIndex;
-        }
-
-        /// <summary>把缓冲里"第 skip 帧之后"的新帧追加到目录（用于后 N 秒）。</summary>
-        private static int WriteSliceFrom(string dir, int skip)
-        {
-            List<Frame> copy;
-            lock (Gate) copy = new List<Frame>(Ring);
-            if (copy.Count <= skip) return 0;
-
-            int i = skip;
-            for (int j = skip; j < copy.Count; j++)
-            {
-                File.WriteAllBytes(Path.Combine(dir, "frame-" + i.ToString("D5") + ".jpg"), copy[j].Jpeg);
-                i++;
-            }
-            return i - skip;
-        }
-
-        private static void WriteMeta(string dir, int sessionId, int frames, string trigger,
-            double before, double after)
-        {
-            try
-            {
-                File.WriteAllText(Path.Combine(dir, "meta.json"),
-                    "{\"sessionId\":" + sessionId
-                    + ",\"frames\":" + frames
-                    + ",\"fps\":" + _fps
-                    + ",\"quality\":" + _quality
-                    + ",\"size\":\"" + _width + "x" + _height + "\""
-                    + ",\"trigger\":\"" + JsonEscape(trigger) + "\""
-                    + ",\"beforeSeconds\":" + before.ToString("0.#")
-                    + ",\"afterSeconds\":" + after.ToString("0.#")
-                    + ",\"savedAt\":\"" + DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss") + "\"}");
-            }
-            catch { }
-        }
-
-        private static string JsonEscape(string s)
-            => (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
-
-        /// <summary>Windows 文件名非法字符 → 下划线。</summary>
+        private static string JsonEscape(string s) => (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
         private static string Sanitize(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return "";
             var sb = new StringBuilder();
-            foreach (char c in s.Trim())
-            {
-                if (c < 32 || "\\/:*?\"<>|".IndexOf(c) >= 0) sb.Append('_');
-                else sb.Append(c);
-            }
+            foreach (char c in s.Trim()) sb.Append(c < 32 || "\\/:*?\"<>|".IndexOf(c) >= 0 ? '_' : c);
             string r = sb.ToString().Trim();
-            if (r.Length > 60) r = r.Substring(0, 60);
-            return r;
+            return r.Length > 60 ? r.Substring(0, 60) : r;
         }
 
-        /// <summary>
-        /// 单张截图（直接落盘，不进环形缓冲）。
-        /// ★ 目录规范与录像一致：录制回放\&lt;用户名-昵称&gt;\&lt;时间-触发条件&gt;\
-        /// </summary>
-        public static bool CaptureOnce(string userTag, string trigger, int quality,
-            int sessionId, out string path, out string message)
+        /// <summary>一次性静态截图；这是 JPEG 在整个类的唯一合法用途。</summary>
+        public static bool CaptureOnce(string userTag, string trigger, int quality, int sessionId, out string path, out string message)
         {
-            path = "";
-            message = "";
+            path = ""; message = "";
             try
             {
-                var jpeg = Capture.CaptureJpeg(Math.Clamp(quality, 30, 95), out int cw, out int ch);
+                var jpeg = Capture.CaptureJpeg(Math.Clamp(quality, 30, 95), out int width, out int height);
                 if (jpeg == null) { message = "抓屏失败"; return false; }
-                if (cw > 0 && ch > 0) { _width = cw; _height = ch; }
-
-                string stamp = DateTime.Now.ToString("yyyy-MM-dd-HHmmss");
-                string safeTrigger = Sanitize(trigger);
-                string folder = stamp + (safeTrigger.Length > 0 ? "-" + safeTrigger : "");
-
-                string dir = Path.Combine(CaptureRoot, "录制回放",
-                    string.IsNullOrWhiteSpace(userTag) ? ("会话" + sessionId) : Sanitize(userTag),
-                    folder);
+                string folder = DateTime.Now.ToString("yyyy-MM-dd-HHmmss") + (Sanitize(trigger).Length > 0 ? "-" + Sanitize(trigger) : "");
+                string dir = Path.Combine(CaptureRoot, "录制回放", string.IsNullOrWhiteSpace(userTag) ? "会话" + sessionId : Sanitize(userTag), folder);
                 Directory.CreateDirectory(dir);
-
-                string file = Path.Combine(dir, "shot.jpg");
-                File.WriteAllBytes(file, jpeg);
-
-                try
-                {
-                    File.WriteAllText(Path.Combine(dir, "meta.json"),
-                        "{\"sessionId\":" + sessionId
-                        + ",\"kind\":\"screenshot\""
-                        + ",\"quality\":" + quality
-                        + ",\"size\":\"" + _width + "x" + _height + "\""
-                        + ",\"trigger\":\"" + JsonEscape(trigger) + "\""
-                        + ",\"savedAt\":\"" + DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss") + "\"}");
-                }
-                catch { }
-
-                path = file;
+                path = Path.Combine(dir, "shot.jpg");
+                File.WriteAllBytes(path, jpeg);
+                File.WriteAllText(Path.Combine(dir, "meta.json"), "{\"sessionId\":" + sessionId + ",\"kind\":\"screenshot\",\"size\":\"" + width + "x" + height + "\"}");
                 return true;
             }
             catch (Exception ex) { message = ex.Message; return false; }

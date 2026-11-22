@@ -836,7 +836,10 @@ namespace SoulLink.Services
 
             // 兜底：某些网络盘/异常情况下 watcher 不触发，1 秒补漏。
             // ★ 改用统一节拍（TickHub），不再自建 DispatcherTimer。
-            _fallbackSub = TickHub.Register("BgiLogWatcher.Fallback", 1, Pump);
+            // ★ 后台订阅：Pump 是同步 FileStream 读 + UTF8 解码（最多 256KB），
+            //   挪到线程池，读盘不再卡 UI。回调内最后的 _dispatcher.BeginInvoke
+            //   已把界面更新切回 UI 线程，无需再改。
+            _fallbackSub = TickHub.RegisterBackground("BgiLogWatcher.Fallback", 1, Pump);
         }
 
         private readonly IDisposable? _fallbackSub;
@@ -891,7 +894,14 @@ namespace SoulLink.Services
 
                 string text = sb.ToString();
                 if (text.Length == 0) return;
-                _dispatcher.BeginInvoke(new Action(() => _onNewLines(text)));
+                // ★ 后台线程 → UI 线程：回调里要改界面，必须回 Dispatcher，
+                //   且要检查 HasShutdownStarted（退出竞态下 BeginInvoke 会静默丢操作）。
+                try
+                {
+                    if (!_dispatcher.HasShutdownStarted)
+                        _dispatcher.BeginInvoke(new Action(() => _onNewLines(text)));
+                }
+                catch { }
             }
             catch { }
             finally { _busy = false; }

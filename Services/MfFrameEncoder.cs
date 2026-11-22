@@ -43,9 +43,14 @@ namespace SoulLink.Services
         private long _frameDuration;
         private long _frameIndex;
         private int _outBufferSize;
+        private IMFSample? _outputSample;
+        private Vortice.MediaFoundation.IMFMediaBuffer? _outputBuffer;
         private bool _initialized, _disposed;
 
         public string Name => "MF-Frame-H264";
+
+        /// <summary>最近一次初始化/编码失败原因；供 HTTP 500 和 Agent 日志诊断。</summary>
+        public string LastError { get; private set; } = "";
 
         private static void EnsureStarted()
         {
@@ -62,7 +67,8 @@ namespace SoulLink.Services
         public bool TryInitialize(int width, int height, int fps, int bitrateKbps)
         {
             if (_initialized) return true;
-            if (width <= 0 || height <= 0) return false;
+            LastError = "";
+            if (width <= 0 || height <= 0) { LastError = "帧尺寸无效"; return false; }
             if ((width & 1) != 0) width--;
             if ((height & 1) != 0) height--;
             if (width <= 0 || height <= 0) return false;
@@ -76,16 +82,16 @@ namespace SoulLink.Services
                 var inInfo = new RegisterTypeInfo { GuidMajorType = MFMediaType_Video, GuidSubtype = MFVideoFormat_NV12 };
                 var outInfo = new RegisterTypeInfo { GuidMajorType = MFMediaType_Video, GuidSubtype = MFVideoFormat_H264 };
 
-                var hwColl = MediaFactory.MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, 4, inInfo, outInfo);
-                var swColl = MediaFactory.MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, 3, inInfo, outInfo);
+                using var hwColl = MediaFactory.MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, 4, inInfo, outInfo);
+                using var swColl = MediaFactory.MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, 3, inInfo, outInfo);
 
                 // 第一版用软件 MFT（同步）；硬件 MFT 异步需事件驱动，后续再做。
                 foreach (var act in swColl) { _transform = act.ActivateObject<IMFTransform>(); break; }
                 if (_transform == null)
                     foreach (var act in hwColl) { _transform = act.ActivateObject<IMFTransform>(); break; }
-                if (_transform == null) return false;
+                if (_transform == null) { LastError = "系统没有可用的 H.264 MFT"; return false; }
 
-                var outMediaType = MediaFactory.MFCreateMediaType();
+                using var outMediaType = MediaFactory.MFCreateMediaType();
                 outMediaType.Set(MF_MT_MAJOR_TYPE, MFMediaType_Video);
                 outMediaType.Set(MF_MT_SUBTYPE, MFVideoFormat_H264);
                 outMediaType.Set(MF_MT_AVG_BITRATE, (uint)(Math.Max(500, bitrateKbps) * 1000));
@@ -95,7 +101,7 @@ namespace SoulLink.Services
                 outMediaType.Set(MF_MT_PIXEL_ASPECT_RATIO, Pack(1, 1));
                 _transform.SetOutputType(0, outMediaType, 0);
 
-                var inMediaType = MediaFactory.MFCreateMediaType();
+                using var inMediaType = MediaFactory.MFCreateMediaType();
                 inMediaType.Set(MF_MT_MAJOR_TYPE, MFMediaType_Video);
                 inMediaType.Set(MF_MT_SUBTYPE, MFVideoFormat_NV12);
                 inMediaType.Set(MF_MT_INTERLACE_MODE, 2u);
@@ -108,15 +114,21 @@ namespace SoulLink.Services
                 _transform.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
 
                 var outInfo2 = _transform.GetOutputStreamInfo(0);
-                _outBufferSize = Math.Max(outInfo2.Size, width * height * 3 / 2);
+                // MFT 可能报告一个过小的建议值（本机 1920x1080 软编曾因此每帧 MF_E_BUFFERTOOSMALL）。
+                // 给关键帧留足够空间，不要用 NV12 输入大小作为 H.264 输出的上限。
+                _outBufferSize = Math.Max(outInfo2.Size, width * height * 2);
+                _outputSample = MediaFactory.MFCreateSample();
+                _outputBuffer = MediaFactory.MFCreateMemoryBuffer(_outBufferSize);
 
                 _initialized = true;
                 return true;
             }
             catch (Exception ex)
             {
+                LastError = ex.GetType().Name + "：" + ex.Message;
                 AsyncLog.Append(Path.Combine(Path.GetTempPath(), "soullink-mf-encoder.log"),
-                    DateTime.Now.ToString("HH:mm:ss.fff") + "  TryInitialize 失败: " + ex.Message + Environment.NewLine);
+                    DateTime.Now.ToString("HH:mm:ss.fff") + "  TryInitialize 失败: " + ex + Environment.NewLine);
+                try { _transform?.Dispose(); } catch { }
                 _transform = null;
                 return false;
             }
@@ -134,11 +146,19 @@ namespace SoulLink.Services
 
             try
             {
-                var sample = MediaFactory.MFCreateSample();
-                var buf = MediaFactory.MFCreateMemoryBuffer(nv12.Length);
-                buf.Lock(out IntPtr pData, out _, out _);
-                Marshal.Copy(nv12, 0, pData, nv12.Length);
-                buf.Unlock();
+                // Vortice 的 IMFTransform/IMFSample/IMFMediaBuffer 都是 SharpGen ComObject，
+                // 实现 IDisposable，Dispose 会 Release 自己持有的 COM 引用。
+                // AddBuffer 只让 sample 增加自己的 buf 引用，不转移调用者的引用，故二者都释放。
+                using var sample = MediaFactory.MFCreateSample();
+                using var buf = MediaFactory.MFCreateMemoryBuffer(nv12.Length);
+                bool locked = false;
+                try
+                {
+                    buf.Lock(out IntPtr pData, out _, out _);
+                    locked = true;
+                    Marshal.Copy(nv12, 0, pData, nv12.Length);
+                }
+                finally { if (locked) buf.Unlock(); }
                 buf.CurrentLength = nv12.Length;
                 sample.AddBuffer(buf);
                 sample.SampleTime = _frameIndex * _frameDuration;
@@ -147,43 +167,66 @@ namespace SoulLink.Services
 
                 _transform.ProcessInput(0, sample, 0);
 
-                var outBuf = new OutputDataBuffer { StreamID = 0 };
-                var outSample = MediaFactory.MFCreateSample();
-                var outMemBuf = MediaFactory.MFCreateMemoryBuffer(_outBufferSize);
-                outMemBuf.CurrentLength = 0;
-                outSample.AddBuffer(outMemBuf);
-                outBuf.Sample = outSample;
-
-                var status = new ProcessOutputStatus();
-                byte[]? result = null;
-                while (true)
+                if (_outputSample == null || _outputBuffer == null) throw new InvalidOperationException("输出缓冲未初始化");
+                // 同一编码器单线程使用：每帧复用缓冲，不把 2*w*h 的 MF 缓冲无限留在旧样本上。
+                // NAL 已复制成独立 byte[] 返回；下一次写入前才清空/解挂旧缓冲。
+                _outputSample.RemoveAllBuffers();
+                _outputBuffer.CurrentLength = 0;
+                _outputSample.AddBuffer(_outputBuffer);
+                var outBuf = new OutputDataBuffer { StreamID = 0, Sample = _outputSample };
+                try
                 {
-                    var r = _transform.ProcessOutput(ProcessOutputFlags.None, 1, ref outBuf, out status);
-                    if (!r.Success) break;
-                    if (outBuf.Sample == null) break;
-                    result = ExtractNals(outBuf.Sample);
-                    outBuf.Sample = null;
+                    var status = new ProcessOutputStatus();
+                    byte[]? result = null;
+                    while (true)
+                    {
+                        var r = _transform.ProcessOutput(ProcessOutputFlags.None, 1, ref outBuf, out status);
+                        if (!r.Success) break;
+                        IMFSample? got = outBuf.Sample;
+                        outBuf.Sample = null;
+                        if (got == null) break;
+                        try { result = ExtractNals(got); }
+                        finally
+                        {
+                            // MFT 可能替换 Sample：必须释放实际返回的对象，包括其缓冲引用。
+                            got.RemoveAllBuffers();
+                            if (!ReferenceEquals(got, _outputSample))
+                            {
+                                // 若 MFT 换了 sample，旧字段不再代表本帧返回对象；替换前释放旧引用。
+                                _outputSample.Dispose();
+                                _outputSample = got;
+                            }
+                        }
+                    }
+                    return result;
                 }
-                return result;
+                finally { outBuf.Sample = null; }
             }
             catch (Exception ex)
             {
+                LastError = ex.GetType().Name + "：" + ex.Message;
                 AsyncLog.Append(Path.Combine(Path.GetTempPath(), "soullink-mf-encoder.log"),
-                    DateTime.Now.ToString("HH:mm:ss.fff") + "  Encode 失败: " + ex.Message + Environment.NewLine);
-                return null;
+                    DateTime.Now.ToString("HH:mm:ss.fff") + "  Encode 失败: " + ex + Environment.NewLine);
+                // 调用方需要知道是暂时无输出还是实际失败，不能吞掉异常无限空转。
+                throw;
             }
         }
 
         private static byte[]? ExtractNals(IMFSample sample)
         {
-            var buf = sample.ConvertToContiguousBuffer();
+            using var buf = sample.ConvertToContiguousBuffer();
             if (buf == null) return null;
             int len = buf.CurrentLength;
             if (len <= 0) return null;
             var bytes = new byte[len];
-            buf.Lock(out IntPtr pData, out _, out _);
-            Marshal.Copy(pData, bytes, 0, len);
-            buf.Unlock();
+            bool locked = false;
+            try
+            {
+                buf.Lock(out IntPtr pData, out _, out _);
+                locked = true;
+                Marshal.Copy(pData, bytes, 0, len);
+            }
+            finally { if (locked) buf.Unlock(); }
             return bytes;
         }
 
@@ -220,6 +263,11 @@ namespace SoulLink.Services
                 _transform?.ProcessMessage(TMessageType.MessageNotifyEndOfStream, UIntPtr.Zero);
             }
             catch { }
+            try { _outputSample?.RemoveAllBuffers(); } catch { }
+            try { _outputSample?.Dispose(); } catch { }
+            try { _outputBuffer?.Dispose(); } catch { }
+            _outputSample = null; _outputBuffer = null;
+            try { _transform?.Dispose(); } catch { }
             _transform = null;
         }
     }

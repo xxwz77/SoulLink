@@ -64,7 +64,9 @@ namespace SoulLink.Services
         {
             // ★ 改用统一节拍（TickHub），不再自建 DispatcherTimer。
             //   原来每个 1 秒级定时器都独立唤醒 Dispatcher，线程池因此长期自旋。
-            _tickSub = TickHub.Register("RouteUpdateScheduler", TickSeconds, Tick);
+            // ★ 后台订阅：Tick 内含 ConfigStore.Save（写盘），是同步 IO，
+            //   挪到线程池；LogBus/App.AppendErrorLog 自身已做 UI 切换。
+            _tickSub = TickHub.RegisterBackground("RouteUpdateScheduler", TickSeconds, Tick);
         }
 
         public void Start()

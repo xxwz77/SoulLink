@@ -34,6 +34,10 @@ namespace SoulLink.Services
             public Action Callback = () => { };
             public long Counter;
             public bool Removed;
+            /// <summary>后台订阅：回调在线程池执行（而非 UI 线程）。</summary>
+            public bool Background;
+            /// <summary>后台订阅的防重入标记：1 = 上一拍回调还没跑完。</summary>
+            public int Running;
         }
 
         private static readonly Lock Gate = new();
@@ -58,7 +62,42 @@ namespace SoulLink.Services
             if (callback == null) throw new ArgumentNullException(nameof(callback));
             int every = Math.Max(1, everySeconds);
 
-            var s = new Sub { Name = name, Every = every, Callback = callback };
+            var s = new Sub { Name = name, Every = every, Callback = callback, Background = false };
+            lock (Gate)
+            {
+                Subs.Add(s);
+                EnsureTimerOnDispatcher();
+            }
+            return new Handle(s);
+        }
+
+        /// <summary>
+        /// 注册一个**后台**周期任务：回调在 .NET 线程池执行，不占用 UI 线程。
+        ///
+        /// ★ 为什么需要它：★★
+        ///   Register() 的回调在 Dispatcher（UI）线程跑。BgiLogCenter / BgiLogWatcher /
+        ///   ScheduleRunner / RouteUpdateScheduler 这四个订阅者内部是**同步文件 IO**
+        ///   （读日志 / 写配置），挂在 UI 线程上就是「每秒一次的卡顿」——
+        ///   用户点按钮、切页、拖窗口都要排队等这些 IO。
+        ///
+        ///   把它们迁到后台后，UI 线程每个节拍只剩「把回调投递到线程池」这一下，
+        ///   纳秒级完成，不再被磁盘 IO 阻塞。
+        ///
+        /// ★ 语义与 Register() 完全一致：节拍统一、按 N 拍分频、单个订阅者
+        ///   抛异常不影响其它订阅者。额外多一条：**防重入** —— 上一拍的回调
+        ///   还没跑完时，本拍直接跳过（不排队堆积），等价于 UI 版 Pump 的 _pumping。
+        ///
+        /// ★ 回调里若要更新界面，必须自己 Dispatcher.BeginInvoke 回到 UI 线程，
+        ///   并检查 Dispatcher.HasShutdownStarted。
+        /// </summary>
+        /// <param name="name">诊断用名称。</param>
+        /// <param name="everySeconds">每几秒执行一次（≥1）。</param>
+        public static IDisposable RegisterBackground(string name, int everySeconds, Action callback)
+        {
+            if (callback == null) throw new ArgumentNullException(nameof(callback));
+            int every = Math.Max(1, everySeconds);
+
+            var s = new Sub { Name = name, Every = every, Callback = callback, Background = true };
             lock (Gate)
             {
                 Subs.Add(s);
@@ -120,6 +159,29 @@ namespace SoulLink.Services
                     if (s.Removed) continue;
                     s.Counter++;
                     if (s.Counter % s.Every != 0) continue;
+
+                    if (s.Background)
+                    {
+                        // ★ 后台订阅：把回调投递到线程池，UI 线程立刻返回。
+                        //   防重入：上一拍还没跑完就跳过（后台回调可能慢于节拍）。
+                        if (Interlocked.CompareExchange(ref s.Running, 1, 0) != 0) continue;
+                        try
+                        {
+                            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                            {
+                                try { s.Callback(); }
+                                catch (Exception ex)
+                                {
+                                    try { App.AppendErrorLog("TickHub: 订阅者异常 " + s.Name, ex); }
+                                    catch { }
+                                }
+                                finally { Interlocked.Exchange(ref s.Running, 0); }
+                            });
+                        }
+                        catch { Interlocked.Exchange(ref s.Running, 0); }
+                        continue;
+                    }
+
                     try { s.Callback(); }
                     catch (Exception ex)
                     {

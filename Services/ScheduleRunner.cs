@@ -80,7 +80,9 @@ namespace SoulLink.Services
             _configGetter = configGetter;
             // ★ 改用统一节拍（TickHub）。每秒只唤醒一次 Dispatcher，
             //   而不是每个定时器各唤醒一次。
-            _tickSub = TickHub.Register("ScheduleRunner", TickSeconds, Tick);
+            // ★ 后台订阅：Tick 内含 ConfigStore.Save（写盘）+ 遍历自动化流程，
+            //   是同步 IO，挪到线程池；LogBus/App.AppendErrorLog 自身已做 UI 切换。
+            _tickSub = TickHub.RegisterBackground("ScheduleRunner", TickSeconds, Tick);
         }
 
         public void Start()

@@ -991,12 +991,9 @@ namespace SoulLink.Relay
 
                 case "frame":
                     {
-                        // 取最近一帧并**直接落盘**，返回路径（主程序读文件即可，
-                        // 不用在协议里传二进制）。Count 复用为"取第几帧"，-1=最新。
+                        // 静态截图：独立一次性取帧，不读 H.264 实时 Ring。
                         int sid = Process.GetCurrentProcess().SessionId;
-                        byte[]? jpeg = req.Count >= 0
-                            ? SessionRecorder.GetFrameAt(req.Count)
-                            : SessionRecorder.GetLatestJpeg();
+                        byte[]? jpeg = SessionRecorder.CaptureJpegOnce(req.X > 0 ? req.X : 75);
                         if (jpeg == null)
                             return new Response { Ok = false, Message = "缓冲里没有帧", SessionId = sid };
                         try

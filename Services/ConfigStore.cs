@@ -1,13 +1,15 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 using SoulLink.Core;
 using SoulLink.Models;
-using System.Threading;
 
 namespace SoulLink.Services
 {
@@ -86,6 +88,110 @@ namespace SoulLink.Services
 
         private static readonly Lock ConfigIo = new();
 
+        // ── 后台串行保存队列 ──────────────────────────────────────────
+        //
+        // ★ 为什么要有它（用户反馈「点按钮/切页要等」+ 历史事故「配置被旧值覆盖」）：
+        //
+        //   1. 原来 Save() 在**调用线程**同步做「序列化 + 写临时文件 + File.Replace」，
+        //      而调用方既有 UI 线程（点按钮/拖滑块），也有后台调度器（每秒/每 5 秒）。
+        //      写盘是同步 IO，挂在 UI 线程上就是卡顿的直接来源之一。
+        //
+        //   2. 历史事故（ConsolePage.xaml.cs:240 有记录）：滑块初始化时 ValueChanged
+        //      误触发 Save，把用户已保存的值覆盖掉。根因是「谁最后写谁赢」+ 无保序。
+        //
+        //   这里改成**后台串行队列**：
+        //     · 入队前先在调用线程把配置序列化成**不可变字符串**（快照），
+        //       彻底杜绝后台线程读到一个「正在被 UI 改到一半」的活对象；
+        //     · 单消费者按入队顺序逐个原子写盘（临时文件 + File.Replace），
+        //       严格 FIFO —— 后入队的值一定写在先入队的之后，旧值不可能盖新值；
+        //     · 序列化（纯内存）留在调用线程，真正的磁盘 IO 全在后台线程；
+        //     · 退出前 Flush() 排空，ProcessExit 再兜底同步写一遍，保证最后一次保存不丢。
+
+        private sealed record SaveItem(string Json, TaskCompletionSource? Done);
+
+        private static readonly BlockingCollection<SaveItem> SaveQueue =
+            new(new ConcurrentQueue<SaveItem>());
+
+        private static int _exiting;
+
+        private static readonly Task Writer = Task.Run(() =>
+        {
+            try
+            {
+                foreach (var item in SaveQueue.GetConsumingEnumerable())
+                {
+                    try { WriteAtomic(item.Json); }
+                    catch (Exception ex)
+                    {
+                        // 后台写失败无法抛回调用方（可能已经是几拍前的事了），
+                        // 记录到 error.log，保证「不丢保存」的失败是可观测的。
+                        try { App.AppendErrorLog("ConfigStore.SaveQueue", ex); } catch { }
+                    }
+                    finally { item.Done?.TrySetResult(); }
+                }
+            }
+            catch { }
+        });
+
+        /// <summary>
+        /// 序列化一份配置（纯内存，调用线程执行，耗时极小）。
+        /// </summary>
+        private static string Serialize(AppConfig cfg) => JsonSerializer.Serialize(cfg, Opt);
+
+        /// <summary>
+        /// 原子写盘：临时文件 + File.Replace。内部加锁，供队列与同步路径共用。
+        /// </summary>
+        private static void WriteAtomic(string json)
+        {
+            lock (ConfigIo)
+            {
+                string path = ConfigPath;
+                string? dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+                string tmp = path + ".tmp";
+                File.WriteAllText(tmp, json, new UTF8Encoding(false));
+                try
+                {
+                    if (File.Exists(path)) File.Replace(tmp, path, null);
+                    else File.Move(tmp, path);
+                }
+                catch
+                {
+                    // 落盘失败必须让调用者知道，不能宣称 END 已可靠持久化。
+                    File.Copy(tmp, path, true); File.Delete(tmp);
+                }
+            }
+        }
+
+        static ConfigStore()
+        {
+            // 兜底：任何退出路径（含直接 Shutdown 没走 Flush 的）都不丢最后一次保存。
+            AppDomain.CurrentDomain.ProcessExit += (_, __) =>
+            {
+                try { DrainSynchronously(); } catch { }
+            };
+        }
+
+        /// <summary>
+        /// 同步排空队列：拒绝新入队，把剩余项逐个写盘。退出前调用。
+        /// 幂等；之后 Save() 会退化为同步写，仍不丢数据。
+        /// </summary>
+        public static void Flush()
+        {
+            DrainSynchronously();
+        }
+
+        private static void DrainSynchronously()
+        {
+            if (Interlocked.Exchange(ref _exiting, 1) == 1) return;
+            try { SaveQueue.CompleteAdding(); } catch { }
+            // ★ 不自己并发 TryTake：那会和 Writer 从同一个 FIFO 队列抢项，
+            //   两个线程的写盘顺序可能倒置（旧值反而后写）。
+            //   正确做法是让 Writer 独占地把队列按序排空，这里只等它完成。
+            try { Writer.Wait(2000); } catch { }
+        }
+
         public static AppConfig Load()
         {
             string originalJson = "";
@@ -148,6 +254,8 @@ namespace SoulLink.Services
                     if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                     string backup = Path.Combine(dir ?? "", "config-before-flow-migration.json");
                     File.WriteAllText(backup, originalJson, new UTF8Encoding(false));
+                    // ★ 迁移是启动期一次性路径（非 UI 线程），Save 内部会等写盘完成再返回，
+                    //   调用方返回后立即读盘校验新格式也拿得到新内容。
                     Save(cfg);
                 }
                 return cfg;
@@ -164,25 +272,61 @@ namespace SoulLink.Services
 
         public static void Save(AppConfig cfg)
         {
-            lock (ConfigIo)
-            {
-            string path = ConfigPath;
-            string? dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            if (cfg == null) return;
 
-            string tmp = path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(cfg, Opt), new UTF8Encoding(false));
+            // ★ 先序列化（纯内存、调用线程执行）：把「此刻」的配置固化成字符串，
+            //   之后后台线程按入队顺序写盘。既保证 FIFO，也避免后台线程读到
+            //   一个正被 UI 改到一半的活对象。
+            string json;
+            try { json = Serialize(cfg); }
+            catch (Exception ex)
+            {
+                App.AppendErrorLog("ConfigStore.Save(serialize)", ex);
+                return;
+            }
+
+            // 退出阶段：队列已排空，退化为同步写，最后一次保存仍落盘。
+            if (Volatile.Read(ref _exiting) == 1)
+            {
+                try { WriteAtomic(json); } catch (Exception ex) { App.AppendErrorLog("ConfigStore.Save", ex); }
+                return;
+            }
+
+            // ★ 只有 UI 线程才「入队后立刻返回」（这才是 P0 要消除的同步 IO）。
+            //   其它线程（后台调度器 / FlowRunner / 无 WPF 的测试工具）保持同步语义：
+            //   等自己的这一项写完再返回，调用方「写完才读回」的既有行为不变。
+            //   —— 保序由单一 FIFO 队列保证，任何线程类型之间都不会倒置。
+            if (OnUiThread())
+            {
+                try { SaveQueue.Add(new SaveItem(json, null)); }
+                catch { try { WriteAtomic(json); } catch { } }
+                return;
+            }
+
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             try
             {
-                if (File.Exists(path)) File.Replace(tmp, path, null);
-                else File.Move(tmp, path);
+                SaveQueue.Add(new SaveItem(json, done));
+                done.Task.GetAwaiter().GetResult();
             }
             catch
             {
-                // 落盘失败必须让调用者知道，不能宣称 END 已可靠持久化。
-                File.Copy(tmp, path, true); File.Delete(tmp);
+                try { WriteAtomic(json); } catch { }
             }
+        }
+
+        /// <summary>
+        /// 是否正运行在 WPF UI 线程上（无 WPF Application 的测试工具返回 false）。
+        /// </summary>
+        private static bool OnUiThread()
+        {
+            try
+            {
+                var app = System.Windows.Application.Current;
+                var d = app?.Dispatcher;
+                return d != null && d.CheckAccess();
             }
+            catch { return false; }
         }
 
         public static AppConfig Defaults()

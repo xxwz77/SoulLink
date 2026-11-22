@@ -599,6 +599,14 @@ namespace SoulLink.Models
         public string WebPassword { get; set; } = "";
 
         /// <summary>
+        /// 显式豁免：允许代理直连**无口令访问**（仅建议本机回环场景）。
+        /// ★ 2026-11-23 安全收口：默认 false。代理侧 CheckToken 在 token 为空时
+        ///   默认拒绝（401），仅当此项为 true 才放行 —— 用显式开关代替「空串=放行」，
+        ///   避免「刚装好未设口令 → /api/input 无鉴权开放」的默认裸奔。
+        /// </summary>
+        public bool WebAllowNoToken { get; set; } = false;
+
+        /// <summary>
         /// 网页登录令牌（持久化，让浏览器"记住密码"）。
         /// ★ 用户反馈：每次都要重新输口令很烦。
         ///   这里把 token 存进配置，Cookie 带一年有效期，

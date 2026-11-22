@@ -17,6 +17,7 @@ namespace SoulLink.Relay
     internal sealed class BitBltCapture : IScreenCapture
     {
         public string Name => "BitBlt";
+        public void Dispose() { }
 
         // ── Win32 ────────────────────────────────────────────────────────────
         [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
@@ -111,6 +112,45 @@ namespace SoulLink.Relay
 
             // 0,0 表示用图标原始尺寸
             DrawIconEx(hdc, x, y, ci.hCursor, 0, 0, 0, IntPtr.Zero, DI_NORMAL);
+        }
+
+        public byte[]? CaptureBgra(out int width, out int height)
+        {
+            width = 0; height = 0;
+            IntPtr hScreen = IntPtr.Zero, hMem = IntPtr.Zero, hBmp = IntPtr.Zero, old = IntPtr.Zero;
+            try
+            {
+                int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
+                if (w <= 0 || h <= 0) return null;
+                hScreen = GetDC(IntPtr.Zero);
+                hMem = CreateCompatibleDC(hScreen);
+                hBmp = CreateCompatibleBitmap(hScreen, w, h);
+                if (hMem == IntPtr.Zero || hBmp == IntPtr.Zero) return null;
+                old = SelectObject(hMem, hBmp);
+                if (!BitBlt(hMem, 0, 0, w, h, hScreen, 0, 0, SRCCOPY)) return null;
+                try { DrawCursorOn(hMem, w, h); } catch { }
+                using var bmp = Image.FromHbitmap(hBmp);
+                using var copy = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+                using (var g = Graphics.FromImage(copy)) g.DrawImage(bmp, 0, 0, w, h);
+                var bd = copy.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+                try
+                {
+                    var pixels = new byte[w * h * 4];
+                    for (int y = 0; y < h; y++)
+                        Marshal.Copy(IntPtr.Add(bd.Scan0, y * bd.Stride), pixels, y * w * 4, w * 4);
+                    width = w; height = h;
+                    return pixels;
+                }
+                finally { copy.UnlockBits(bd); }
+            }
+            catch { return null; }
+            finally
+            {
+                if (hMem != IntPtr.Zero && old != IntPtr.Zero) SelectObject(hMem, old);
+                if (hBmp != IntPtr.Zero) DeleteObject(hBmp);
+                if (hMem != IntPtr.Zero) DeleteDC(hMem);
+                if (hScreen != IntPtr.Zero) ReleaseDC(IntPtr.Zero, hScreen);
+            }
         }
 
         public byte[]? CaptureJpeg(int quality, out int width, out int height)

@@ -629,6 +629,8 @@ namespace SoulLink
             foreach (Window window in Current.Windows)
                 if (window is MainWindow main) main.ForceClose();
             try { ConfigStore.Save(Config); } catch { }
+            // ★ 排空后台保存队列：保证最后一次保存写盘完成后再结束进程。
+            try { ConfigStore.Flush(); } catch { }
             _cts.Cancel();
             _tray?.Dispose();
             try { _instanceMutex?.ReleaseMutex(); } catch { }

@@ -415,7 +415,10 @@ namespace SoulLink.Services
         public static void EnsureServiceTick()
         {
             if (_tickSub != null) return;
-            try { _tickSub = TickHub.Register("BgiLogCenter.Tick", 1, ServiceTick); } catch { }
+            // ★ 后台订阅：ServiceTick 内部是同步文件读 + 行解析，跑在 UI 线程
+            //   会每秒卡一次界面。迁到线程池；Changed 事件本身在后台线程抛，
+            //   订阅方（LaunchPage.OnLogCenterChanged）已用 Dispatcher.InvokeAsync 切回 UI。
+            try { _tickSub = TickHub.RegisterBackground("BgiLogCenter.Tick", 1, ServiceTick); } catch { }
         }
 
         /// <summary>停止节拍（退出时调用）。</summary>

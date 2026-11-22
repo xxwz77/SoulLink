@@ -22,6 +22,13 @@ public static class Program
         try
         {
             File.WriteAllText(LogPath, "", new UTF8Encoding(false));
+            // 干跑验证模式：只把源目录的旁挂文件同步到目标目录，不动服务/ACL/固定安装目录。
+            // 用于在临时目录里验证复制逻辑与幂等性（不触碰生产环境）。
+            if (args.Length == 3 && args[0] == "--sync-runtime")
+            {
+                SyncRuntimeFiles(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
+                return 0;
+            }
             if (args.Length == 1 && args[0] == "--uninstall") return Uninstall();
             if (args.Length == 1 && args[0] == "--uninstall") return Uninstall();
             if (args.Length != 2 || args[0] != "--install") return 2;
@@ -53,6 +60,9 @@ public static class Program
             // 代理清单是判定"代理是否就绪"的依据，必须每次都校验，不能因为内容相同就跳过。
             if (!File.Exists(agent) || !PatchManifest(agent, source)) { CopyFile(source, agent); PatchManifest(agent, null); }
             Log("AGENT_READY");
+            // ★ 部署链路修复（2026-11-23）：只复制 exe 会缺旁挂运行库，
+            //   见 SyncRuntimeFiles。必须在建服务前把 DLL / 网页 / tools 补齐。
+            SyncRuntimeFiles(Path.GetDirectoryName(source) ?? "", InstallRoot);
             EnsureService(service); Log("SERVICE_CREATED");
             using (var controller = new ServiceController(ServiceName))
             {
@@ -101,6 +111,64 @@ public static class Program
             }
         }
         throw new IOException("无法替换文件（旧服务可能仍占用）：" + destination);
+    }
+
+    /// <summary>
+    /// ★ 部署链路修复（2026-11-23）：
+    ///   单文件 exe 把 Vortice.* / SharpGen.Runtime* / WinRT 投影 DLL 外置
+    ///   （见 SoulLink.csproj 的 ExcludeWinRTRuntimePacksFromSingleFile），
+    ///   网页界面、7za、tools\ 也都是 exe 旁的独立文件。
+    ///   安装时只复制 exe 会缺运行库，真实 Agent 的 /stream 因加载不到
+    ///   Vortice.MediaFoundation 直接类型加载失败（连接重置）。
+    ///   这里把 exe 同目录的旁挂文件一并同步到安装目录。
+    ///   幂等：按内容比对，相同跳过；单个文件复制失败（旧进程仍占用）只记日志，不中断安装。
+    /// </summary>
+    private static void SyncRuntimeFiles(string sourceDir, string root)
+    {
+        if (string.IsNullOrEmpty(sourceDir) || !Directory.Exists(sourceDir)) { Log("SYNC_NO_SRC " + sourceDir); return; }
+        Directory.CreateDirectory(root);
+
+        // 1) 网页界面：主程序优先读 exe 同目录的 web-index.html（改样式不用重启）。
+        SyncFile(Path.Combine(sourceDir, "web-index.html"), Path.Combine(root, "web-index.html"));
+
+        // 2) 7za.exe：BGI 更新包解压依赖，必须随 exe 一起。
+        SyncFile(Path.Combine(sourceDir, "7za.exe"), Path.Combine(root, "7za.exe"));
+
+        // 3) 旁挂运行时 DLL：单文件外置的 Vortice / SharpGen / WinRT 投影。
+        foreach (var pattern in new[] { "Vortice.*.dll", "SharpGen.Runtime*.dll", "WinRT.Runtime.dll", "Microsoft.Windows.SDK.NET.dll", "Microsoft.Windows.UI.Xaml.dll" })
+        {
+            string[] hits;
+            try { hits = Directory.GetFiles(sourceDir, pattern); } catch { hits = new string[0]; }
+            foreach (var src in hits) SyncFile(src, Path.Combine(root, Path.GetFileName(src)));
+        }
+
+        // 4) tools\ 子目录：broker-*.ps1 与独立安装器，安装目录自身要能再次安装/卸载。
+        string toolsSrc = Path.Combine(sourceDir, "tools");
+        if (Directory.Exists(toolsSrc))
+        {
+            string toolsDst = Path.Combine(root, "tools");
+            Directory.CreateDirectory(toolsDst);
+            var list = new System.Collections.Generic.List<string>();
+            try
+            {
+                list.AddRange(Directory.GetFiles(toolsSrc, "broker-*.ps1"));
+                list.AddRange(Directory.GetFiles(toolsSrc, "SoulLink.BrokerSetup.exe"));
+            }
+            catch { }
+            foreach (var src in list) SyncFile(src, Path.Combine(toolsDst, Path.GetFileName(src)));
+        }
+    }
+
+    private static void SyncFile(string source, string destination)
+    {
+        if (string.IsNullOrEmpty(source) || !File.Exists(source)) { Log("SYNC_MISSING " + source); return; }
+        try
+        {
+            if (File.Exists(destination) && SameContent(source, destination)) { Log("SYNC_SAME " + destination); return; }
+            File.Copy(source, destination, true);
+            Log("SYNC_COPIED " + destination);
+        }
+        catch (Exception ex) { Log("SYNC_FAIL " + destination + " :: " + ex.Message); }
     }
 
     private static bool SameContent(string a, string b)

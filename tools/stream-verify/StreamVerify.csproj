@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- 无版本 TFM：不依赖 WGC WinRT 投影，纯管道 + HTTP 验证，任何机器都能构建 -->
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>StreamVerify</RootNamespace>
+    <AssemblyName>stream-verify</AssemblyName>
+    <SatelliteResourceLanguages>zh-CN;en-US</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="ProbeHost.cs" />
+    <Compile Include="DelayProbe.cs" />
+    <Compile Include="RecordProbe.cs" />
+    <Compile Include="BlackScreenProbe.cs" />
+    <Compile Include="DualViewerProbe.cs" />
+  </ItemGroup>
+</Project>

@@ -107,12 +107,14 @@ namespace SoulLink.Relay
                 int hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.NativePointer, out IntPtr winrtPtr);
                 if (hr < 0) return;
                 _winrtDevice = WinRT.ComWrappersSupport.CreateRcwForComObject<Windows.Graphics.DirectX.Direct3D11.IDirect3DDevice>(winrtPtr);
+                Marshal.Release(winrtPtr); // CreateRcwForComObject 已取得自己的引用
 
                 // CreateForWindow 优先，CreateForMonitor 降级
                 var item = TryCreateFromWindow() ?? TryCreateFromMonitor();
                 if (item == null) return;
 
-                int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
+                // 帧池必须与捕获目标的实际尺寸一致；前台窗口小于整屏时用整屏会产生空帧/黑帧。
+                int w = item.Size.Width, h = item.Size.Height;
                 if (w <= 0 || h <= 0) return;
 
                 _pool = Windows.Graphics.Capture.Direct3D11CaptureFramePool.CreateFreeThreaded(
@@ -196,7 +198,8 @@ namespace SoulLink.Relay
             {
                 if (_stashedTexture != IntPtr.Zero) { try { Marshal.Release(_stashedTexture); } catch { } _stashedTexture = IntPtr.Zero; }
             }
-            try { _winrtDevice = null; } catch { }
+            try { _winrtDevice?.Dispose(); } catch { }
+            _winrtDevice = null;
             try { _context?.Dispose(); } catch { }
             try { _device?.Dispose(); } catch { }
             _context = null; _device = null;
@@ -232,6 +235,56 @@ namespace SoulLink.Relay
                 return true;
             }
             catch { return false; }
+        }
+
+        /// <summary>实时原始帧：常驻时只读回最新 GPU 纹理，绝不 JPEG 中转。</summary>
+        public byte[]? CaptureBgra(out int width, out int height)
+        {
+            // 调用方是唯一的视频线程；_running 只读、Start 只在锁外首次触发。
+            if (!_running) AddRef();
+            DrainFramePool();
+            lock (_stashLock)
+            {
+                if (_stashedTexture == IntPtr.Zero) { width = 0; height = 0; return null; }
+                width = _stashedWidth; height = _stashedHeight;
+                return ReadBackTexture(_stashedTexture, width, height);
+            }
+        }
+
+        private void DrainFramePool()
+        {
+            var pool = _pool;
+            if (pool == null) return;
+            try
+            {
+                Windows.Graphics.Capture.Direct3D11CaptureFrame? frame;
+                while ((frame = pool.TryGetNextFrame()) != null)
+                {
+                    using (frame)
+                    {
+                        IntPtr surface = ((WinRT.IWinRTObject)frame.Surface).NativeObject.ThisPtr;
+                        Guid accessIid = new("a9b3d012-3df2-4ee3-b8d1-8695f457d3c1");
+                        if (Marshal.QueryInterface(surface, ref accessIid, out IntPtr accessPtr) < 0 || accessPtr == IntPtr.Zero) continue;
+                        IntPtr texture = IntPtr.Zero;
+                        try
+                        {
+                            var access = (IDirect3DDxgiInterfaceAccess)Marshal.GetObjectForIUnknown(accessPtr);
+                            Guid textureIid = new("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
+                            if (access.GetInterface(ref textureIid, out texture) < 0 || texture == IntPtr.Zero) continue;
+                        }
+                        finally { Marshal.Release(accessPtr); }
+                        lock (_stashLock)
+                        {
+                            if (_stashedTexture != IntPtr.Zero) Marshal.Release(_stashedTexture);
+                            _stashedTexture = texture;
+                            _stashedWidth = frame.ContentSize.Width;
+                            _stashedHeight = frame.ContentSize.Height;
+                            _frameSeq++;
+                        }
+                    }
+                }
+            }
+            catch { }
         }
 
         /// <summary>
@@ -284,7 +337,7 @@ namespace SoulLink.Relay
                 var item = TryCreateFromWindow() ?? TryCreateFromMonitor();
                 if (item == null) return null;
 
-                int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
+                int w = item.Size.Width, h = item.Size.Height;
                 if (w <= 0 || h <= 0) return null;
 
                 var pool = Windows.Graphics.Capture.Direct3D11CaptureFramePool.CreateFreeThreaded(

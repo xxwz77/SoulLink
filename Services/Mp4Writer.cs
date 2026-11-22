@@ -149,6 +149,60 @@ namespace SoulLink.Services
             return TryEncode(list, outputMp4, fps, bitrateKbps, out message);
         }
 
+        /// <summary>
+        /// 把已编码 Annex-B H.264 直接封装成 MP4，不解码、不重编码。
+        /// 保存时调用本机 ffmpeg 的 -c copy；实时管线不依赖它，也不打包额外工具。
+        /// </summary>
+        public static bool TryWriteH264(IReadOnlyList<byte[]> frames, int width, int height, int fps,
+            string outputMp4, out string message)
+        {
+            message = "";
+            if (frames == null || frames.Count == 0 || width <= 0 || height <= 0)
+            { message = "没有可封装的 H.264 帧或尺寸无效"; return false; }
+            System.Diagnostics.Process? process = null;
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("ffmpeg")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardInput = true,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = false
+                };
+                foreach (string arg in new[] { "-hide_banner", "-loglevel", "error", "-f", "h264",
+                    "-framerate", Math.Max(1, fps).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    "-i", "pipe:0", "-c", "copy", "-y", outputMp4 }) psi.ArgumentList.Add(arg);
+                process = System.Diagnostics.Process.Start(psi) ?? throw new InvalidOperationException("无法启动 ffmpeg（需要系统 PATH 中可用）");
+                System.Threading.Tasks.Task<string> errors = process.StandardError.ReadToEndAsync();
+                try
+                {
+                    foreach (var frame in frames)
+                    {
+                        if (frame == null || frame.Length == 0) continue;
+                        process.StandardInput.BaseStream.Write(frame, 0, frame.Length);
+                    }
+                    process.StandardInput.Close();
+                }
+                catch (IOException) { /* ffmpeg 已退出，下面读取退出码和错误 */ }
+                if (!process.WaitForExit(30000))
+                {
+                    process.Kill(true);
+                    process.WaitForExit(5000);
+                    message = "ffmpeg 封装超时";
+                    return false;
+                }
+                string error = errors.GetAwaiter().GetResult();
+                if (process.ExitCode != 0) { message = "ffmpeg 封装失败：" + error.Trim(); return false; }
+                var file = new FileInfo(outputMp4);
+                if (!file.Exists || file.Length == 0) { message = "封装后的 MP4 为空：" + error.Trim(); return false; }
+                message = "OK " + file.Length / 1024 + " KB";
+                return true;
+            }
+            catch (Exception ex) { message = "H.264 封装异常：" + ex.Message; return false; }
+            finally { try { process?.Dispose(); } catch { } }
+        }
+
         // ── 编码核心 ─────────────────────────────────────────────────────
 
         private static void EncodeCore(IReadOnlyList<string> jpegFiles, string outputMp4, int fps, int bitrateKbps)

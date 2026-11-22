@@ -33,6 +33,12 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [VERIFY-PITFALLS-20261123.md](VERIFY-PITFALLS-20261123.md) ← **验证陷阱清单（做验收前先读）**：作者自己踩过的 9 个坑——注释里的关键词不算代码 / 一个后端失败≠进程级问题（必须做对照）/ 自己的工具没传参数 / JSON 中文是 `\uXXXX` 转义导致 `Directory.Exists` 恒 false / `shot.jpg` 不等于残留 / 短采样窗口被 GC 锯齿骗 / 播放器缓冲污染端到端数字 / 构建产物取错 `win-x64` 目录 / 固定时长上限伪装成故障
+- [BLACKSCREEN-ROOTCAUSE-20261123.md](BLACKSCREEN-ROOTCAUSE-20261123.md) ← **画面全黑根因判定**（含对作者此前错误结论的更正）：三组对照实验证明**全黑只发生在 WGC 后端**、BitBlt 完全正常；根因是 `WgcCapture` 用 `GetForegroundWindow()` 抓**单个窗口**却用 `GetSystemMetrics()` 的**整屏**尺寸建帧池（实测 帧池 2560x1368 vs 窗口 1721x927），且代码从未读 `item.Size`；**随前台窗口大小漂移故偶发**——这解释了「我实测全黑 / stream-core 在 A1 实测彩色」两者都对
+- [ZERO-JPEG-VERIFY-20261123.md](ZERO-JPEG-VERIFY-20261123.md) ← **H.264 原生链路（零 JPEG）验收**：代码层检查工具 `check-no-jpeg.ps1` 实测——**网页侧 4 项已达成**（toDataURL/退回 JPEG 已移除且只剩注释、WebPages.cs 已同步），**服务端 5 项未达成**（Ring 仍存 `byte[] Jpeg`、`/stream` 仍每帧 `DecodeJpegToNv12`、`/live` 仍返 JPEG）→ P1 尚未开工；录像 ✅ 无 `frame-*.jpg` 只剩 `replay.mp4`（ffprobe: h264/50帧）；静态截图 ✅ `shot.jpg` 54KB 仍可用；采集侧 CPU **实测 41~45% 单核**（作为改前基线）
+- [STREAM-VERIFY-20261123.md](STREAM-VERIFY-20261123.md) ← **`/stream` 端到端验收报告**：两个 TFM 均 0 error；ffprobe 实测 h264/Main@5.0/2560x1368/25fps 且 ffmpeg 与 WebCodecs 都解码成功；缺 DLL 已给出中文 500 + 日志堆栈（此前的连接重置已修好）；无头 Edge 实测 WebCodecs **解出 13 帧并上屏**、SPS 动态解析出 `avc1.4D4032`；**发现 P0 缺陷：画面全黑，根因为 `RelayAgent.cs:523` 的 `SetProcessDPIAware()` 使 `GetSystemMetrics` 返回缩放尺寸 2560x1368 而真实合成尺寸是 1707x960**（含对照实验证据链与 4 条修复建议）；附最短手动验收 3 步
+- [MEMORY-LEAK-VERIFY-20261123.md](MEMORY-LEAK-VERIFY-20261123.md) ← **内存泄漏验证基座 + 修复后回归清单**（`tools/mem-probe` 量具 / 含 `--selftest` 6/6 证判据可区分真假泄漏 / 实测「`using var` 修复后仍泄漏 46.3MB/s R²=0.998」/ 新发现句柄漏 1454 个/秒 / 24 项回归清单含 401、颜色、错误可诊断）
+- [LATENCY-BENCHMARK-20261123.md](LATENCY-BENCHMARK-20261123.md) ← **延迟归因与业界对标**：把「卡」拆成抓屏/编码/传输/解码/上屏逐段（实测采集 12.14fps、推流 13.56fps，串行双节拍 ≈157ms）；7 个业界参照物及可信度分级；指出瓶颈是「15fps 硬编码 + 软编优先 + 无帧间去重」而非传输（实测 0.8ms）；5 条落地建议含收益/成本/风险；专项评估 `optimizeForLatency` / `AVLowLatencyMode` / 「不攒帧直接推」
 - [HANDOFF-STREAM-STATUS-20261123.md](HANDOFF-STREAM-STATUS-20261123.md) ← **最新交接（修正上一份）**：服务端链路跑通但 `/stream` 在真实 Agent 里不可用；含端口分配实测（`PortFor` 有 +1）、两套鉴权、5 个环境坑、下一步 P0~P3
 - [HANDOFF-VIDEO-20261122.md](HANDOFF-VIDEO-20261122.md) —— 昨晚交接（**`/stream` 可用的结论已被修正**，其余数据仍有效）
 - [STREAM-LATENCY-TEST-20261122.md](STREAM-LATENCY-TEST-20261122.md) —— **延迟实测**（软编 1384ms vs 硬编 636~742ms，各阶段耗时分解）
@@ -47,6 +53,7 @@
 
 ## 性能与架构
 
+- [UI-PERF-IO-TRIAGE-20261123.md](UI-PERF-IO-TRIAGE-20261123.md) —— **UI 线程减负**（TickHub 后台订阅 RegisterBackground + 4 订阅者迁后台；RdpConsole 5 个 DispatcherTimer 全收编/事件驱动；ConfigStore.Save 改后台串行队列保序原子写；94 处同步 IO 分类清单）
 - [PERF-3.3.4-20261122.md](PERF-3.3.4-20261122.md) —— **性能基线**（16% 单核的构成分解 + 三个卡顿根因）
 - [LOOK-OPTIMIZE-20261122.md](LOOK-OPTIMIZE-20261122.md) —— **转视角链路优化 + 手机端贯通**（去 Thread.Sleep(6) + moverel 单向 NoReply + 8ms 节流 + 触屏滑动手势状态机）
 - [WEB-DIRECT-3.3.5-20261122.md](WEB-DIRECT-3.3.5-20261122.md) —— **网页直连代理**（端口按账号分配 / 端口独占实测 / 路径穿越防护）
@@ -62,6 +69,7 @@
 - [MOBILE-CONTROLS-DESIGN-20261122.md](MOBILE-CONTROLS-DESIGN-20261122.md) —— **手机端控制层设计**（虚拟摇杆数学与事件序列 / 可编辑键位布局 JSON / 中文输入上屏时序 / 断线释放协议）
 - [ANDROID-APP-DESIGN-20261122.md](ANDROID-APP-DESIGN-20261122.md) —— **安卓 APP 协议设计与工程脚手架**（Kotlin + 传统 View/SurfaceView + Compose 混合 / ExoPlayer vs MediaCodec 取舍 / 协议时序 / 目录树 / 类骨架 / 分阶段）
 - [VIRTUAL-CONTROLS-RESEARCH-20261122.md](VIRTUAL-CONTROLS-RESEARCH-20261122.md) —— **虚拟按键/摇杆/键位映射调研**（UU 远程公开资料 / Moonlight OSC 详细拆解 / 开源项目对比表 / 手机端转视角方案对比 / 键位映射 JSON Schema v2 / 许可风险）
+- [REMOTE-ACCESS-OPTIONS-20261123.md](REMOTE-ACCESS-OPTIONS-20261123.md) —— **远程访问「更优方案」横向对比**（PWA / 开源串流复用 / WebRTC / 原生壳 / 第三方兜底 五路线；WebCodecs 移动端支持度实测 + Moonlight 协议不匹配结论；推荐排序 + 逐条痛点打分）
 - [MIYOUSHE-RESEARCH-20261122.md](MIYOUSHE-RESEARCH-20261122.md) —— **米游社扫码/短信登录与收益数据获取调研**（开源项目清单 / 扫码+短信登录完整流程含极验 / 收益接口清单 / C# 集成方案含 DS 签名 / 风险合规）
 - [SYSTEM-OPTIMIZE-20261122.md](SYSTEM-OPTIMIZE-20261122.md) —— **系统优化：可关服务白名单 + Defender 目录排除**（6 项服务白名单 / 仅本次停止不改启动类型 / Defender 排除增删 / 风险边界）
 - [OSS-REMOTE-RESEARCH-20261122.md](OSS-REMOTE-RESEARCH-20261122.md) —— **开源远程串流项目调研**（Sunshine/Moonlight/Parsec 替代/候选项目对比 / 转视角实现方案对比 / WGC vs DXGI vs BitBlt 在 RDP 下的可用性 / 可借鉴代码 file:line / 许可风险 / 给 SoulLink 的 3 条建议）

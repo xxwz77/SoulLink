@@ -219,9 +219,10 @@ body.viewonly #liveCount{display:none}
 body.viewonly #scr{height:auto;background:transparent;width:100%;
                    display:flex;align-items:center;justify-content:center}
 /* 画面按可用区域缩放：宽高都不越界，比例不变，四周均匀留白 */
-body.viewonly #scr img{width:auto;height:auto;max-width:100%;
-                       max-height:calc(100vh - 46px);object-fit:contain;
-                       margin:0 auto;display:block}
+body.viewonly #scr canvas{width:auto;height:auto;max-width:100%;
+                          max-height:calc(100vh - 46px);object-fit:contain;
+                          margin:0 auto;display:none}
+body.viewonly #scr canvas.show{display:block}
 body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
   #viewerBox{background:linear-gradient(150deg,var(--card),var(--card2));
              border:1px solid var(--border);border-radius:14px;
@@ -234,12 +235,20 @@ body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
        border:1px solid var(--border);touch-action:none;cursor:default}
   /* ★ 宽度撑满、高度按比例自适应，并封顶在可视区内。
      历史教训：写成 height:100% 会让图在容器里居中缩小 → 画面变小 + 黑边。 */
-  #scr img{display:block;width:100%;height:auto;max-height:70vh;
-           object-fit:contain;pointer-events:none}
-  /* 占位提示层不能吃掉指针事件，否则"还没有画面"时鼠标移动完全收不到 */
+  /* ★ 2026-11-23：JPEG 轮询通路按用户指令整个移除（「很卡很卡」），
+     画面只有 <canvas id="vframe">（WebCodecs 解码直绘）。
+     默认隐藏，JS 在首帧解码成功后加 .show（viewonly 的 display 规则
+     优先级高于这里，见上面的 body.viewonly 块）。 */
+  #scr canvas{display:none;width:100%;height:auto;max-height:70vh;
+              object-fit:contain;pointer-events:none}
+  #scr canvas.show{display:block}
+  /* 占位提示层里的文字不可点（不挡 #scr 的手势），但重连按钮要可点：
+     文字层 pointer-events:none，按钮单独恢复 auto。 */
   #ph{position:absolute;inset:0;display:flex;align-items:center;
       justify-content:center;color:#8b9bc4;font-size:12.5px;
-      padding:20px;text-align:center;pointer-events:none}
+      padding:20px;text-align:center;pointer-events:none;flex-direction:column;
+      gap:10px;line-height:1.7}
+  #ph #reconn{pointer-events:auto}
   #rip{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;
        border-radius:50%;border:2px solid var(--accent);opacity:0;pointer-events:none}
   #rip.go{animation:rp .5s ease-out}
@@ -407,18 +416,9 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
         </label>
       </div>
 
-      <div class="hgroup" data-kind="view" title="播放参数：只影响本浏览器，不改录制也不影响别人">
-        <span class="gtag">本机播放</span>
-        <label class="hfield">
-          <span>取图</span>
-          <select id="selViewFps" title="本浏览器每秒来取几次画面（不会超过录制帧率）">
-            <option value="2">2 次/秒</option>
-            <option value="5">5 次/秒</option>
-            <option value="10">10 次/秒</option>
-            <option value="0">跟随录制</option>
-          </select>
-        </label>
-      </div>
+      <!-- ★ 2026-11-23：「本机播放-取图」下拉框随 JPEG 轮询通路一起移除
+           （用户指令：只要视频流）。画面帧率现在由服务端 /stream 直推，
+           本浏览器无「取图频率」概念。保留的「录制帧率」仍写回应用配置。 -->
 
       <button id="pauseBtn" class="hbtn">暂停</button>
       <button id="closeViewer" class="hbtn">收起</button>
@@ -450,8 +450,11 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
    <div id="viewerBox">
     <div id="viewerTitle">实时画面</div>
     <div id="scr">
-      <img id="frame" alt="" style="display:none">
-      <div id="ph">连接中…</div>
+      <!-- ★ 2026-11-23：画面只有 WebCodecs 解码直绘的 canvas（用户指令：
+           「我压根不需要 jpeg 序列，只要视频流」—— /live 轮询通路已移除）。
+           #ph 是提示层：连接中 / 断开（内部含重连按钮，见 CSS 的 pointer-events）。 -->
+      <canvas id="vframe"></canvas>
+      <div id="ph"><span id="phtxt">连接中…</span><button id="reconn" class="hbtn" style="display:none">重新连接</button></div>
       <div id="rip"></div>
     </div>
     <!-- ★ 3.3.8：这里的操作行已全部移到顶栏（见 <header>）。
@@ -541,9 +544,10 @@ let users = [], cur = null;
 //
 //   ★ 上限关系：实际取图频率 = min(viewFps, recFps)，
 //     取再快也只能拿到同一帧（代理还没录新的）。
-let liveTimer = null, paused = false;
+let paused = false;
 let recFps = 10, recQuality = 75, recKeep = 30;
-let viewFps = 0;              // 0 = 跟随录制
+let viewFps = 0;              // 0 = 跟随录制（2026-11-23 起只用于鼠标移动节流，
+                              // 不再控制拉帧 —— 画面是 /stream 视频流直推）
 let liveMs = 500;
 const VIEWFPS_KEY = 'sl_view_fps';
 
@@ -660,9 +664,10 @@ function openViewer(u) {
   $('viewerTitle').textContent = '实时画面 · ' + u.label;
   $('viewer').style.display = 'block';
   $('player').style.display = 'none';
-  $('ph').style.display = 'flex';
-  $('ph').textContent = u.online ? '连接中…' : '该账号不在线';
-  $('frame').style.display = 'none';
+  $('phtxt').textContent = u.online ? '连接中…' : '该账号不在线';
+  $('ph').style.display = u.online ? 'flex' : 'none';
+  $('reconn').style.display = 'none';
+  $('vframe').classList.remove('show');
   $('fpsinfo').textContent = (u.screen || '');
   startLive();
   // ★ 不在这里读录像列表：那是扫磁盘目录（/api/list），
@@ -686,56 +691,97 @@ function closeViewer() {
   }
 }
 
-// ══════════ 按需拉帧（3.3.16 重写）══════════════
+// ══════════ 视频流播放（2026-11-23 按用户指令重写）══════════════
 //
-// ★★ 用户要求：「两端交互需要 api 按需触发，不要持续不断，否则拖垮性能」★★
+// ★★ 用户指令：「我压根不需要 jpeg 序列，只要视频流，上个工作会话还保留它，很卡很卡」。
 //
-//   原来是 setInterval 固定节奏轮询：不管画面动没动、上一帧回来没有，
-//   到点就发一个新 Image 请求。挂机时 BGI 画面几乎静止，
-//   这些请求 99% 拿到的是同样的内容 —— 纯浪费 CPU。
-//
-//   现在改成**串行 + 自适应**：
-//     · 上一帧没回来，绝不发下一帧（请求永不堆积）
-//     · 页面不可见 / 暂停 / 无会话 → 一个请求都不发
-//     · 连续失败按 1s→2s→4s→8s 退避（不空转打无效请求）
-//     · 连续多帧内容几乎没变 → 自动降频到 1fps（挂机静止画面）
-//     · 一有变化立刻恢复目标帧率
-let liveHandle = null;        // setTimeout 句柄（不再用 setInterval）
-let liveRunning = false;      // 是否处于拉帧循环中
-let failStreak = 0;           // 连续失败次数
-let stillStreak = 0;          // 连续"画面没怎么变"的帧数
-let lastFrameBytes = 0;       // 上一帧体积，用来判断画面是否静止
-let frameGen = 0;             // 换账号/停止时递增，用来丢弃过期的在途请求
+//   /live（单帧 JPEG 轮询）通路**整个移除**，不再是降级备胎。
+//   /stream（H.264 Annex-B + WebCodecs）是唯一画面通路：
+//     · 断开 → 画面上明确提示 + 自动退避重连（1s→2s→4s→8s）+ 手动重连按钮；
+//     · 重连是全新的 HTTP 连接，从头等 SPS/IDR 再起播（不从半个 GOP 里捡）；
+//     · 页面隐藏 → 断流省资源；回前台 → 自动重连；
+//     · 暂停 → 断流；继续 → 重连。
+//   （保留的 liveMs/computeLiveMs 只服务鼠标移动节流和设置回显，与拉帧无关。）
+let liveRunning = false;      // 是否处于「应播放」状态（true 时才允许重连）
+let failStreak = 0;           // 连续连接失败次数（出画面即清零）
+let reconnectTimer = null;    // 自动重连的 setTimeout 句柄
+
+const webCodecsSupported = (typeof VideoDecoder !== 'undefined')
+    && (typeof EncodedVideoChunk !== 'undefined');
+
+// ═════════════ 播放器状态必须放在模块级（2026-11-23 修复）═════════════
+//   旧版 h264Gener/h264Reader/dirtyFrame 声明在 pullFrame() 内部，
+//   每次 pullFrame 都重建闭包 —— 代际永远等于自己，作废机制完全失效：
+//   stopLive() 之后流还在拉、切账号时两条流并发、decode 回调还在画旧画面。
+let h264Gen = 0;              // 代际：停流/重连/切账号时 +1，作废旧流的一切回调
+let h264Reader = null;        // /stream 的 ReadableStreamDefaultReader
+let h264Active = false;       // /stream 连接是否在跑
+
+// 收掉当前流（作废回调 + 断开连接），不动画面
+function abortStream() {
+  h264Gen++;                  // 读流循环、decode 回调全部作废
+  h264Active = false;
+  const r = h264Reader; h264Reader = null;
+  if (r) { try { r.cancel().catch(() => {}); } catch (e) {} }
+}
+
+// 停流 + 隐藏画面（切账号 / 暂停用）
+function stopH264() {
+  abortStream();
+  $('vframe').classList.remove('show');
+}
 
 function stopLive() {
   liveRunning = false;
-  frameGen++;                    // 让在途请求的结果作废（换账号时不能串画面）
-  if (liveHandle) { clearTimeout(liveHandle); liveHandle = null; }
+  stopH264();                  // 也断掉视频流（旧版漏了，流会在后台一直跑）
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 }
 
 function startLive() {
   stopLive();
-  if (!cur || !cur.online) return;
+  if (!cur) return;
+  if (!cur.online) { setPh('该账号不在线', false); return; }
   liveRunning = true;
   failStreak = 0;
-  stillStreak = 0;
-  lastFrameBytes = 0;        // 换账号要重置，否则会误判"画面静止"
-  scheduleNext(0);          // 立刻取第一帧
+  if (!webCodecsSupported) {
+    // 没有降级通路（用户指令），只能明确告知
+    setPh('当前浏览器不支持 H.264 视频流播放（需要 WebCodecs，请用新版 Chrome/Edge）', false);
+    return;
+  }
+  setPh('连接中…', false);
+  startStream();
 }
 
-// 决定下一帧等多久：正常按目标帧率；失败退避；静止降频。
-function nextDelayMs() {
-  if (failStreak > 0) return Math.min(1000 * Math.pow(2, failStreak - 1), 8000);
-  if (stillStreak >= 6) return 1000;                 // 静止：最多 1fps
-  if (stillStreak >= 3) return Math.max(liveMs, 500); // 疑似静止：先降到 2fps
-  return liveMs;
+// 断开后自动重连：按失败次数指数退避，正在排队时不重复排
+function scheduleReconnect() {
+  if (!liveRunning || reconnectTimer) return;
+  const delay = Math.min(1000 * Math.pow(2, failStreak), 8000);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (liveRunning) startStream();
+  }, delay);
 }
 
-function scheduleNext(delay) {
-  if (!liveRunning) return;
-  if (liveHandle) clearTimeout(liveHandle);
-  liveHandle = setTimeout(pullFrame, delay);
+// 提示层：msg=null 隐藏；否则显示文本（可选重连按钮）。
+// 半透明底色盖在最后一帧上 —— 用户能看到断开瞬间的画面，而不是黑屏。
+function setPh(msg, showReconn) {
+  const ph = $('ph');
+  if (!ph) return;
+  if (msg === null) { ph.style.display = 'none'; return; }
+  ph.style.display = 'flex';
+  $('phtxt').textContent = msg;
+  $('reconn').style.display = showReconn ? 'inline-flex' : 'none';
 }
+
+// 手动重连按钮：清退避、立即重连
+const __rc = $('reconn');
+if (__rc) __rc.onclick = () => {
+  if (!cur || !liveRunning) return;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  failStreak = 0;
+  setPh('连接中…', false);
+  startStream();
+};
 
 // ── 直连代理（3.3.5）───────────────────────────────────────────
 //   用户在局域网里访问 http://主机:10800，但画面/按键直连代理的端口：
@@ -751,217 +797,274 @@ function directBase(sess) {
   return location.protocol + '//' + location.hostname + ':' + p;
 }
 
-function pullFrame() {
-  if (!cur || !liveRunning) return;
-  // 页面在后台 / 用户暂停 → 彻底停下，不再排下一帧
-  if (document.hidden || paused) { liveHandle = null; return; }
+// ═════════════ Annex-B → AVCC 的格式选择（2026-11-23，查证规范后定）═════════════
+//
+// 依据 W3C「AVC (H.264) WebCodecs Registration」§2/§3：
+//   · VideoDecoderConfig.description 存在 → 码流按 AVCC（长度前缀）解析，
+//     description 必须是 AVCDecoderConfigurationRecord（即 MP4 的 avcC）。
+//   · description 不存在 → 码流按 Annex-B（起始码）解析，
+//     且 key chunk 必须自带解码所需的全部参数集（SPS/PPS）。
+//
+// 旧版把 Annex-B 转成长度前缀喂 decoder 却不给 description ——
+// 按 AVCC 解析无起始码的裸 NAL，与规范相矛盾，必然一帧都解不出来。
+//
+// ★ 本实现选择：不给 description + 纯 Annex-B。
+//   理由：① 服务端 MfFrameEncoder 输出本来就是带 00000001 起始码的
+//            Annex-B，且 IDR 帧带 SPS/PPS，正好是规范对 annexb 模式
+//            key chunk 的要求 —— 零转换、零重组；
+//         ② 走 AVCC 得自己拼 AVCDecoderConfigurationRecord（含 SPS/PPS
+//            重组和长度表），多一层易错的手工活，收益为零。
+//   EncodedVideoChunk.data 直接给「起始码+NAL」的原始字节。
+// ══════════════════════════════════════════════════════════════════
 
-  // ══════════════════════════════════════════════════════════════════
-  // H.264 视频流播放（WebCodecs）
+  // 从 SPS NAL（已去掉起始码、**含 1 字节 NAL 头**）解析 profile_idc /
+  // constraint flags / level_idc，拼成 WebCodecs 的 codec 字符串
+  // 'avc1.PPCCLL'（PP=profile, CC=constraint, LL=level，各 2 位十六进制，
+  // 见 RFC 6381 §3.4）。解析失败返回 null，由调用方走默认值。
+  // ★ SPS NAL 布局（ITU-T H.264 §7.3.2.1）：
+  //   byte0 = NAL 头（type=7，必须跳过！）
+  //   byte1 = profile_idc
+  //   byte2 = constraint_set0..5 + reserved_zero（codec 串要整个字节，含保留位）
+  //   byte3 = level_idc
+  //   （单测曾抓到没跳 NAL 头的 bug：nal[0]=0x67 被当 profile → 解析必失败）
+  function avcCodecFromSps(sps) {
+    if (!sps || sps.length < 4) return null;
+    const p = sps[1], c = sps[2], l = sps[3];
+    // 合理性检查：profile_idc 只可能是这些已定义值
+    const known = [44, 66, 77, 83, 86, 88, 100, 110, 118, 122, 128,
+                   138, 139, 134, 135, 244, 247];
+    if (!known.includes(p)) return null;
+    const hex = n => n.toString(16).padStart(2, '0').toUpperCase();
+    return 'avc1.' + hex(p) + hex(c) + hex(l);
+  }
+  // ═════════════ splitAnnexB：重写（2026-11-23，单测校验过）═════════════
+  // 旧版三处错误：
+  //   ① 循环里 `i += 2`/`i += 3` 跳过起始码后会**越过下一个起始码**的检测位置
+  //     （起始码可以紧贴在前一个 NAL 尾部，跳着扫会漏检）；
+  //   ② 检测 4 字节起始码要求 i+4 < len，缓冲末尾恰好停在 00 00 00 01 时
+  //     检测不到 → 起始码被永久丢弃 → 丢帧；
+  //   ③ 前导零归属错：00 00 00 00 01 应整体视为起始码区（Annex-B 的
+  //     leading_zero_8bits 属于起始码不属于上一个 NAL），否则切出的 NAL
+  //     尾部挂着起始码前缀字节。
   //
-  // ★ 为什么用 WebCodecs 而不是 MSE：
-  //   MSE 需要 fMP4/TS 切片，服务端要额外封装；WebCodecs 直接吃裸 NAL，
-  //   延迟低一个数量级（MSE 至少攒 1~2 秒），符合「像远程控制一样」的目标。
-  //
-  // ★ Annex-B → AVCC 转换：
-  //   服务端推的是 Annex-B（00 00 00 01 起始码），WebCodecs 要 AVCC（长度前缀）。
-  //   转换很简单：把每个起始码换成 4 字节大端长度。
-  // ══════════════════════════════════════════════════════════════════
-  const webCodecsSupported = (typeof VideoDecoder !== 'undefined')
-      && (typeof EncodedVideoChunk !== 'undefined');
-  let h264Gener = 0;          // 代际，切账号时作废旧流
-  let h264Reader = null;      // ReadableStreamDefaultReader
-  let dirtyFrame = false;     // 是否已切到 H.264 模式
+  // 新实现：逐字节状态扫描，起始码区 = 遇到 1 时的整段连零 + 这个 1，
+  // 即 at = i - zeros、len = zeros + 1（3/4 字节起始码及任意长度前导零
+  // 都正确），上一个 NAL 止于 at，下一个 NAL 始于 i+1。
+  // 末段（最后一个起始码之后）一律留到下一轮 —— 可能是不完整的 NAL，
+  // 下轮新起始码到达时被安全切出，不丢帧也不吐半 NAL。
+  function splitAnnexB(buf) {
+    const units = [];
+    const starts = [];      // 每个起始码的位置（at）与长度（len）
+    let zeros = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const b = buf[i];
+      if (b === 0) { zeros++; continue; }
+      if (b === 1 && zeros >= 2) {
+        starts.push({ at: i - zeros, len: zeros + 1 });
+        zeros = 0;
+        continue;
+      }
+      zeros = 0;
+    }
+    if (!starts.length) {
+      // 整个缓冲没有起始码：流头垃圾或起始码前缀还没到齐。
+      // 全部保留；超过 1MB 仍无起始码视为坏流，清空（防内存无限涨）。
+      return { units, pending: buf.length > 1048576 ? new Uint8Array(0) : buf };
+    }
+    for (let k = 0; k < starts.length - 1; k++) {
+      const from = starts[k].at + starts[k].len;
+      const to = starts[k + 1].at;
+      if (to > from) units.push(buf.subarray(from, to));
+    }
+    // 末段从最后一个起始码起保留（含起始码本身，下轮重新定位）。
+    // 末段超过 4MB 说明坏流（单个 NAL 不可能这么大），丢弃防涨。
+    const lastStart = starts[starts.length - 1];
+    if (buf.length - lastStart.at > 4 * 1048576) {
+      return { units, pending: new Uint8Array(0) };
+    }
+    return { units, pending: buf.subarray(lastStart.at) };
+  }
 
-  async function startH264(cur, base, tok) {
-    // 停掉旧的
-    try { if (h264Reader) { await h264Reader.cancel(); h264Reader = null; } } catch (e) { }
-    const myGen = ++h264Gener;
-
+  // H.264 主循环：拉 /stream → 切 NAL → 找 SPS 配置 decoder → 解码画 canvas
+  async function startStream() {
+    const myGen = ++h264Gen;
+    h264Active = true;
+    const base = directBase(cur);
+    const tok = directToken();
     const url = (base || '') + '/stream'
         + (base && tok ? '?token=' + encodeURIComponent(tok) : '');
 
     let decoder = null;
-    let canvas = null;
-    let ctx = null;
+    let configured = false;
+    let firstKey = false;
+    let gotFrame = false;        // 本轮是否已出过画面（区分「连不上」和「断了」）
+
+    // 解码帧直接画到 DOM 里的 <canvas id="vframe">，不再经过 <img>。
+    // 旧版每帧 canvas.toDataURL('image/jpeg') 等于把省下的带宽又花回去
+    //（JPEG 重编码 + base64 膨胀 1.33 倍），已删除。
+    const canvas = $('vframe');
+    const ctx = canvas.getContext('2d', { alpha: false });
+
+    // 失败 = 停流 + 提示 + 自动退避重连（没有 JPEG 降级，用户指令移除）
+    const fail = (msg, e) => {
+      if (myGen !== h264Gen) return;      // 已换代：静默退出，别干扰新流
+      if (e) console.warn(msg, e); else console.warn(msg);
+      abortStream();                        // 只收流，画面留着（冻结在最后一帧）
+      setPh(gotFrame
+          ? '视频流已断开 · 正在自动重连（' + Math.min(1000 * Math.pow(2, failStreak), 8000) + 'ms 后）'
+          : '连接不上视频流（第 ' + (failStreak + 1) + ' 次）· 正在自动重连', true);
+      failStreak++;
+      scheduleReconnect();
+    };
 
     try {
-      const f = $('frame');
-      // 用一个隐藏 canvas 接解码后的帧，再贴到 img 上（复用现有 DOM，不改布局）
-      canvas = document.createElement('canvas');
-      ctx = canvas.getContext('2d', { alpha: false });
-
       decoder = new VideoDecoder({
         output: (frame) => {
-          if (myGen !== h264Gener) { frame.close(); return; }
+          if (myGen !== h264Gen) { frame.close(); return; }
           try {
-            if (canvas.width !== frame.displayWidth) {
+            if (canvas.width !== frame.displayWidth
+                || canvas.height !== frame.displayHeight) {
               canvas.width = frame.displayWidth;
               canvas.height = frame.displayHeight;
             }
             ctx.drawImage(frame, 0, 0);
-            if (!dirtyFrame) {
-              dirtyFrame = true;
-              f.style.display = 'block';
-              $('ph').style.display = 'none';
+            canvas.classList.add('show');
+            setPh(null, false);
+            if (!gotFrame) {
+              gotFrame = true;
+              failStreak = 0;             // 出画面了，失败计数清零
             }
           } finally { frame.close(); }
         },
-        error: (e) => {
-          console.warn('[H264] 解码错误，退回 JPEG:', e);
-          dirtyFrame = false;
-          if (myGen === h264Gener) scheduleNext(0);
-        }
-      });
-
-      // SPS/PPS 从流里取不现实（要解析 AVCC 的 avcC 头），
-      // 这里先用 Main Profile Level 4.0 的通用描述；服务端固定这个组合。
-      decoder.configure({
-        codec: 'avc1.4D4028',
-        codedWidth: 1920,
-        codedHeight: 1080,
-        optimizeForLatency: true
+        error: (e) => fail('[H264] 解码错误，断开重连:', e)
       });
 
       const resp = await fetch(url, { cache: 'no-store' });
+      if (myGen !== h264Gen) { try { resp.body && resp.body.cancel(); } catch (e) {} return; }
       if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
-      h264Reader = resp.body.getReader();
+      const reader = resp.body.getReader();
+      h264Reader = reader;
 
       let pending = new Uint8Array(0);
-      let firstKey = false;
+      // ── AU（access unit）攒批 ──
+      // ★ WebCodecs 的 chunk.data 必须是完整 AU（AVC Registration §2/§4）：
+      //   annexb 模式的 key chunk 必须同时含 SPS/PPS/IDR。逐 NAL 喂
+      //   decode() 是非法的（自测页实测：decode×14 出 0 帧 + "Decoding error"）。
+      //   所以按 Annex-B 惯例把 NAL 攒成 AU 再喂：SPS/PPS/SEI/新 slice
+      //   （type 1-5）出现 = 上一个 AU 结束。
+      let auNals = [];           // 当前 AU 的 NAL（纯 NAL 体，无起始码）
+      let auHasKey = false, auHasData = false;
+      let ts = 0;                // AU 时间戳（单调微秒）
 
-      while (myGen === h264Gener) {
-        const { done, value } = await h264Reader.read();
+      const flushAu = () => {
+        if (!auHasData || !configured) { auNals = []; auHasKey = false; auHasData = false; return; }
+        // AU → 单个 annexb 字节块（4 字节起始码 + 各 NAL）
+        let total = 0;
+        for (const n of auNals) total += 4 + n.length;
+        const data = new Uint8Array(total);
+        let off = 0;
+        for (const n of auNals) {
+          data[off] = 0; data[off+1] = 0; data[off+2] = 0; data[off+3] = 1;
+          data.set(n, off + 4);
+          off += 4 + n.length;
+        }
+        try {
+          decoder.decode(new EncodedVideoChunk({
+            type: auHasKey ? 'key' : 'delta',
+            timestamp: ts,
+            data
+          }));
+        } catch (e) { /* 解码器饱和时丢弃本 AU，等下一帧 */ }
+        ts += 66666;             // 固定 15fps 节拍（与服务端一致）；单调即可
+        auNals = [];
+        auHasKey = false;
+        auHasData = false;
+      };
+
+      while (myGen === h264Gen) {
+        const { done, value } = await reader.read();
+        if (myGen !== h264Gen) break;      // 换代：立刻退出，不碰已换人的 reader
         if (done) break;
 
-        // 拼接到 pending
         const merged = new Uint8Array(pending.length + value.length);
         merged.set(pending, 0);
         merged.set(value, pending.length);
         pending = merged;
 
-        // 按 Annex-B 起始码切分 NAL
         const nals = splitAnnexB(pending);
-        if (!nals.length) continue;
         pending = nals.pending;
+        if (!nals.units.length) continue;
 
         for (const nal of nals.units) {
+          if (myGen !== h264Gen) break;
           const type = nal[0] & 0x1f;
-          const isKey = (type === 5);        // IDR
-          const isSpsPps = (type === 7 || type === 8);
+          const isKey = (type === 5);
+          const isSps = (type === 7), isPps = (type === 8);
+          const isVcl = (type >= 1 && type <= 5);   // slice/IDR = 图像数据
+
+          // 首个 SPS 之前绝不能 decode —— 没 configure 的 decoder 会抛
+          // InvalidStateError。SPS 一到就从它解析 codec 字符串再 configure。
+          if (isSps && !configured) {
+            const codec = avcCodecFromSps(nal);
+            if (!codec) {
+              console.warn('[H264] SPS 解析失败，用兜底 avc1.4D4028（Main@4.0）');
+            }
+            // ★ codec 字符串从 SPS 动态生成（profile/constraint/level 与
+            //   服务端实际输出一致）；解析失败才退到 Main@L4.0 兜底并打日志。
+            //   旧版硬编码 'avc1.4D4028'，与服务端 profile/level 不符时
+            //   decoder.configure 直接 NotSupportedError。
+            const cfg = {
+              codec: codec || 'avc1.4D4028',
+              optimizeForLatency: true     // 直播：不攒帧，低延迟优先
+            };
+            try {
+              decoder.configure(cfg);
+              configured = true;
+            } catch (e) {
+              // 配置不支持（老设备的硬解不支持该 profile）→ 报错并重试
+              fail('[H264] decoder.configure 失败:', e);
+              return;
+            }
+          }
+
+          if (!configured) continue;       // 等 SPS
+
+          // ── AU 边界判定：SPS/PPS/新 VCL = 新 AU 开始 ──
+          if (isVcl && auHasData) flushAu();   // 新图像数据 → 先结上一 AU
+          if (isSps || isPps) {
+            // 参数集挂在「即将开始的 AU」上：若已攒着 AU 尾巴，先结掉
+            if (auHasData) flushAu();
+          }
+
+          // ★ 从 IDR 起播：重连后第一个 key 之前的 delta 一律丢弃 ——
+          //   半个 GOP 的 delta 帧缺参考帧，喂进去只会花屏/报错。
+          if (!firstKey && !isKey && !isSps && !isPps) continue;
           if (isKey) firstKey = true;
-          if (!firstKey && !isSpsPps) continue;   // 等到关键帧才能解
 
-          // Annex-B → AVCC：4 字节大端长度 + 原始 NAL
-          const avcc = new Uint8Array(4 + nal.length);
-          new DataView(avcc.buffer).setUint32(0, nal.length, false);
-          avcc.set(nal, 4);
-
-          try {
-            decoder.decode(new EncodedVideoChunk({
-              type: isKey ? 'key' : 'delta',
-              timestamp: performance.now() * 1000,
-              data: avcc
-            }));
-          } catch (e) { /* 解码器忙时丢弃 */ }
+          auNals.push(nal);
+          if (isVcl) auHasData = true;   // ★ 只有 VCL 算「AU 有图像」；SPS/PPS/SEI
+                                        //   是参数，单独不能成 AU（否则会 flush
+                                        //   出没有图像数据的非法 chunk）
+          if (isKey) auHasKey = true;
         }
-
-        // 画到 img（把 canvas 转成 blob，代价比逐帧 drawImage 到 DOM 高，
-        // 但 img 复用现有布局；后续可改成直接把 canvas 放进 DOM）
-        if (dirtyFrame && canvas.width > 0) {
-          f.src = canvas.toDataURL('image/jpeg', 0.8);
-        }
+        // network chunk 边界不等于 AU 边界，攒批的 AU 留到下一个 VCL 到达
+        // 或流结束时 flush（见下方 done 分支）。
+      }
+      // 流结束：把攒着的最后一个 AU 喂掉
+      if (myGen === h264Gen) {
+        flushAu();
+        fail('[H264] 流结束', null);
       }
     } catch (e) {
-      console.warn('[H264] 流断开，退回 JPEG:', e);
-      dirtyFrame = false;
-      if (myGen === h264Gener) scheduleNext(0);
+      fail('[H264] 流断开:', e);
     } finally {
-      try { if (decoder && decoder.state !== 'closed') decoder.close(); } catch (e) { }
-    }
-  }
-
-  // 把 Annex-B 字节流切成一个个 NAL 单元（去掉起始码）
-  function splitAnnexB(buf) {
-    const units = [];
-    const starts = [];
-    for (let i = 0; i + 3 < buf.length; i++) {
-      if (buf[i] === 0 && buf[i+1] === 0 && buf[i+2] === 1) {
-        starts.push({ at: i, len: 3 });
-        i += 2;
-      } else if (i + 4 < buf.length && buf[i] === 0 && buf[i+1] === 0 && buf[i+2] === 0 && buf[i+3] === 1) {
-        starts.push({ at: i, len: 4 });
-        i += 3;
+      if (myGen === h264Gen) {
+        h264Active = false;
+        h264Reader = null;
       }
+      try { if (decoder && decoder.state !== 'closed') decoder.close(); } catch (e) {}
     }
-    if (!starts.length) return { units: [], pending: buf };
-    // 第一个起始码之前的字节丢弃
-    for (let k = 0; k < starts.length - 1; k++) {
-      const from = starts[k].at + starts[k].len;
-      const to = starts[k+1].at;
-      if (to > from) units.push(buf.subarray(from, to));
-    }
-    // 最后一截可能不完整，留到下次
-    const lastStart = starts[starts.length - 1];
-    const pending = buf.subarray(lastStart.at);
-    return { units, pending };
   }
-  const base = directBase(cur);
-  const tok = directToken();
-
-  // ★★ 2026-11-22：优先走 H.264 视频流（/stream），失败自动退回 JPEG 轮询 ★★
-  //   为什么：JPEG 单帧每张约 90KB，30fps 就是 46 Mbps，手机流量和电量都吃不下；
-  //         H.264 同画质只要 8 Mbps（省 5.7 倍），而且是硬解。
-  //   怎么判：用 WebCodecs 的 VideoDecoder 是否存在 —— 有就直接播流。
-  //         没有（老浏览器）就完全走老逻辑，一行不改。
-  //   注意：/stream 是长连接（chunked），不能像 JPEG 那样一帧一个请求。
-  if (webCodecsSupported && !dirtyFrame) {
-    startH264(cur, base, tok);
-    return;
-  }
-
-  const url = (base || "") + "/live?t=" + Date.now()
-              + (base && tok ? "&token=" + encodeURIComponent(tok) : "");
-
-  // ★ 用 fetch + Blob 而不是 <img src>：
-  //   ① 能拿到真实字节数 → 可判断"画面有没有动"（静止就降频）
-  //   ② 内部仍是同一个解码器，不额外增加开销
-  let cancelled = false;
-  const myGen = ++frameGen;
-
-  fetch(url, { cache: "no-store" })
-    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
-    .then(b => {
-      // 期间换了账号或停了 → 丢弃这帧，别再更新界面
-      if (cancelled || myGen !== frameGen || !liveRunning) return;
-      failStreak = 0;
-
-      // 静止检测：字节数和上一帧完全相同 → 画面没动，降频
-      if (b.size === lastFrameBytes) stillStreak++; else stillStreak = 0;
-      lastFrameBytes = b.size;
-
-      const f = $("frame");
-      const old = f.dataset.objUrl;
-      const objUrl = URL.createObjectURL(b);
-      f.src = objUrl;
-      f.style.display = "block";
-      f.dataset.objUrl = objUrl;
-      if (old) { try { URL.revokeObjectURL(old); } catch (e) { } }   // 及时释放，防内存涨
-
-      $("ph").style.display = "none";
-      scheduleNext(nextDelayMs());
-    })
-    .catch(() => {
-      if (myGen !== frameGen || !liveRunning) return;
-      failStreak++;
-      const ph = $("ph");
-      ph.style.display = "flex";
-      ph.textContent = failStreak >= 3
-        ? "连接不上该账号（连续 " + failStreak + " 次）· 正在退避重试"
-        : "暂时没有画面（该账号未开启录制）";
-      scheduleNext(nextDelayMs());
-    });
-}
 
 // ── 输入 ────────────────────────────────────────────────────
 async function sendInput(action, nx, ny, extra) {
@@ -982,8 +1085,13 @@ async function sendInput(action, nx, ny, extra) {
 }
 
 function norm(e) {
-  const el = $('scr'), rect = el.getBoundingClientRect(), img = $('frame');
-  const iw = img.naturalWidth || 16, ih = img.naturalHeight || 9;
+  // ★ 画面唯一来源是 <canvas id="vframe">（JPEG img 已随轮询通路一起移除）。
+  //   canvas.width/height 是解码帧的原始分辨率；还没出画面时退回 16:9 兜底，
+  //   此时点击坐标本来就不该生效（ph 提示层挡着）。
+  const el = $('scr'), rect = el.getBoundingClientRect();
+  const cv = $('vframe');
+  const iw = (cv && cv.width > 0) ? cv.width : 16;
+  const ih = (cv && cv.height > 0) ? cv.height : 9;
   const sc = Math.min(rect.width / iw, rect.height / ih);
   const dw = iw * sc, dh = ih * sc;
   const ox = (rect.width - dw) / 2, oy = (rect.height - dh) / 2;
@@ -1230,7 +1338,8 @@ function applySettings(d) {
   if (typeof d.recordQuality === 'number' && d.recordQuality > 0) recQuality = d.recordQuality;
   if (typeof d.recordKeepSeconds === 'number' && d.recordKeepSeconds > 0) recKeep = d.recordKeepSeconds;
 
-  // 本机播放帧率：从 localStorage 恢复（每个浏览器独立）
+  // viewFps 从 localStorage 恢复（2026-11-23 起仅用于鼠标移动节流，
+  // 「取图」下拉框已随 JPEG 轮询通路移除）
   try {
     const v = localStorage.getItem(VIEWFPS_KEY);
     if (v !== null) viewFps = parseInt(v) || 0;
@@ -1247,7 +1356,6 @@ function syncDropdowns() {
   setSelect('selFps', recFps, v => v + ' fps');
   setSelect('selQuality', recQuality, v => qualityLabel(v));
   setSelect('selKeep', recKeep, v => v + ' 秒');
-  setSelect('selViewFps', viewFps, v => v === 0 ? '跟随录制' : (v + ' 次/秒'));
 }
 
 function qualityLabel(v) {
@@ -1301,16 +1409,9 @@ bindSelect('selFps',     v => pushSettings({ fps: v }));
 bindSelect('selQuality', v => pushSettings({ quality: v }));
 bindSelect('selKeep',    v => pushSettings({ keepSeconds: v }));
 
-// 本机播放组：**只存本地**，不发服务器、不改配置。
-//   ★ 这是刻意的：如果它也写配置，就等于「我看得慢一点」会让别人也变慢。
-const selView = $('selViewFps');
-if (selView) selView.onchange = () => {
-  viewFps = parseInt(selView.value) || 0;
-  try { localStorage.setItem(VIEWFPS_KEY, String(viewFps)); } catch (e) { }
-  computeLiveMs();
-  syncDropdowns();
-  startLive();
-};
+// 「本机播放」下拉框已随 JPEG 轮询通路移除（2026-11-23）：
+//   画面帧率由服务端 /stream 直推，本机没有取图频率概念。
+//   viewFps 仅保留作为鼠标移动节流的基准值，localStorage 读取仍在 applySettings。
 // ── 键盘：点画面即开启（不再用顶栏按钮）───────────────────
 //   原来有个「键盘」按钮占着顶栏，而页面本来就已经全局监听 keydown。
 //   现在改成 RDP 客户端的习惯：点一下画面 = 键盘发往远程，
@@ -1325,13 +1426,33 @@ document.addEventListener('pointerdown', e => {
   if (!e.target.closest('#scr')) setKbMode(false);
 }, true);
 
+// 页面可见性（2026-11-23 随「移除 JPEG 轮询」重写）：
+//   隐藏 → 断流省资源（挂机监控页常年开着的场景）；
+//   回前台 → 自动重连（画面断开时的提示也会被新一轮连接刷新）。
+//   ★ pause 状态下不自动恢复（用户点了暂停就尊重暂停）。
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (liveRunning && h264Active) {
+      abortStream();          // 只断流，画面冻在最后一帧
+      setPh('页面已隐藏，流已暂停 · 回到页面自动重连', false);
+    }
+  } else {
+    if (liveRunning && !paused && !h264Active && !reconnectTimer) {
+      setPh('连接中…', false);
+      startStream();
+    }
+  }
+});
+
 $('pauseBtn').onclick = () => {
   paused = !paused;
   $('pauseBtn').classList.toggle('on', paused);
   $('pauseBtn').textContent = paused ? '继续' : '暂停';
-  // 暂停 = 彻底停发请求（不是空转跳帧），继续 = 立刻恢复
-  if (paused) { stopLive(); }
-  else { startLive(); }
+  // 暂停 = 断流（不是空转跳帧），继续 = 立刻重连
+  if (paused) {
+    stopLive();
+    setPh('已暂停', false);
+  } else { startLive(); }
 };
 // 滚轮用真实鼠标滚轮（见 #scr 的 wheel 监听），不需要按钮
 
@@ -1457,8 +1578,10 @@ async function bootViewerMode() {
   const t = $("viewerTitle"); if (t) t.textContent = "实时画面 · " + u.label;
   const v = $("viewer"); if (v) v.style.display = "block";
   const p = $("player"); if (p) p.style.display = "none";
-  const ph = $("ph"); if (ph) { ph.style.display = "flex"; ph.textContent = u.online ? "连接中…" : "该账号不在线"; }
+  // 提示层由 startLive() 统一管理（含 WebCodecs 不支持 / 不在线的文案）
+  const ph = $("ph"); if (ph) ph.style.display = "none";
   const fi = $("fpsinfo"); if (fi) fi.textContent = (u.screen || "");
+  const cv = $("vframe"); if (cv) cv.classList.remove("show");
 
   cur = u;
   startLive();

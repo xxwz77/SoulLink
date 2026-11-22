@@ -71,7 +71,12 @@ namespace SoulLink.Controls
         public bool CaptureOnClick { get; set; }
         public bool PointerCaptureEnabled { get; private set; } = true;
         private bool _pointerCaptured;
-        private System.Windows.Threading.DispatcherTimer? _captureWatch;
+
+        // ★ 释放态光标出界检测：画布矩形缓存（替代原来的 60ms 轮询定时器）。
+        //   见 WatchPointerCaptureEventDriven() 的说明。
+        private (int left, int top, int width, int height)? _canvasRectCache;
+        private DateTime _canvasRectCacheAt = DateTime.MinValue;
+        private static readonly TimeSpan CanvasRectTtl = TimeSpan.FromMilliseconds(120);
 
         /// <summary>注入活动文字，给界面显示</summary>
         public event Action<RdpConsole, string>? InputActivity;
@@ -465,32 +470,34 @@ namespace SoulLink.Controls
         private int _lastMoveY = int.MinValue;
 
         /// <summary>锁定看门狗：自由视角下长时间没有任何输入事件就自动解锁。</summary>
-        private System.Windows.Threading.DispatcherTimer? _lockWatchdog;
+        private IDisposable? _lockWatchdog;
         private DateTime _lastInputAt = DateTime.MinValue;
         private const int LockWatchdogSeconds = 45;
 
         /// <summary>
         /// 看门狗：自由视角下若连续 N 秒没有真实输入，自动解锁。
         /// 目的是"人已经离开/卡住"时也能恢复，不依赖键盘是否送到前台。
+        ///
+        /// ★ 处置：从独立 DispatcherTimer 改为 TickHub 统一节拍（5 秒一拍）。
+        ///   保留在 UI 线程 —— 每拍只读两个字段 + 比较，无 IO；
+        ///   真正落盘（watchdog.log）只在 45 秒超时那一拍发生一次，是安全关键
+        ///   事件（必须同步可查），且 ReleaseCapture 要动 UI 状态。
+        ///   读 _captured/_lastInputAt 若放后台线程会引入跨线程可见性问题，
+        ///   收益却趋近于零（不是每秒 IO），故不迁后台。
         /// </summary>
         private void StartLockWatchdog()
         {
-            _lockWatchdog ??= new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(5)
-            };
-            _lockWatchdog.Tick -= OnWatchdogTick;
-            _lockWatchdog.Tick += OnWatchdogTick;
-            _lockWatchdog.Start();
+            if (_lockWatchdog != null) return;
+            _lockWatchdog = TickHub.Register("RdpConsole.LockWatchdog", 5, OnWatchdogTick);
         }
 
         private void StopLockWatchdog()
         {
-            try { _lockWatchdog?.Stop(); } catch { }
-            if (_lockWatchdog != null) _lockWatchdog.Tick -= OnWatchdogTick;
+            try { _lockWatchdog?.Dispose(); } catch { }
+            _lockWatchdog = null;
         }
 
-        private void OnWatchdogTick(object? sender, EventArgs e)
+        private void OnWatchdogTick()
         {
             if (!_captured)
             {
@@ -783,7 +790,9 @@ namespace SoulLink.Controls
 
         // ── 通道自动重建 ─────────────────────────────────────────────────────
 
-        private System.Windows.Threading.DispatcherTimer? _rebuildTimer;
+        // ★ 一次性退避定时器：改用 CancellationTokenSource + Task.Delay，
+        //   不再新建 DispatcherTimer（AGENTS.md 性能约束）。
+        private CancellationTokenSource? _rebuildCts;
         private int _rebuildAttempt;
         private const int MaxRebuildAttempts = 5;
 
@@ -811,25 +820,37 @@ namespace SoulLink.Controls
                 int delayMs = Math.Min(30000, 2000 * (1 << (_rebuildAttempt - 1)));
                 Debug("安排通道重建 #" + _rebuildAttempt + "（" + reason + "），" + delayMs + "ms 后执行");
 
-                _rebuildTimer?.Stop();
-                _rebuildTimer = new System.Windows.Threading.DispatcherTimer
+                _rebuildCts?.Cancel();
+                _rebuildCts?.Dispose();
+                _rebuildCts = new CancellationTokenSource();
+                var cts = _rebuildCts;
+                _ = Task.Run(async () =>
                 {
-                    Interval = TimeSpan.FromMilliseconds(delayMs)
-                };
-                _rebuildTimer.Tick += (_, __) =>
-                {
-                    _rebuildTimer?.Stop();
                     try
                     {
-                        if (_disposed || !IsConnected) return;
-                        if (Input?.Relay.IsConnected == true) { _rebuildAttempt = 0; return; }
-                        Debug("执行通道重建 #" + _rebuildAttempt);
-                        InputActivity?.Invoke(this, "正在重建注入通道…");
-                        EnsureInputRestored();
+                        await Task.Delay(delayMs, cts.Token).ConfigureAwait(false);
                     }
-                    catch (Exception ex) { Debug("通道重建异常：" + ex.Message); }
-                };
-                _rebuildTimer.Start();
+                    catch (OperationCanceledException) { return; }
+                    // ★ 退避在后台线程等待；到点后回到 UI 线程执行重建动作。
+                    try
+                    {
+                        if (Dispatcher.HasShutdownStarted) return;
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (cts.IsCancellationRequested) return;
+                            try
+                            {
+                                if (_disposed || !IsConnected) return;
+                                if (Input?.Relay.IsConnected == true) { _rebuildAttempt = 0; return; }
+                                Debug("执行通道重建 #" + _rebuildAttempt);
+                                InputActivity?.Invoke(this, "正在重建注入通道…");
+                                EnsureInputRestored();
+                            }
+                            catch (Exception ex) { Debug("通道重建异常：" + ex.Message); }
+                        }));
+                    }
+                    catch { }
+                });
             }
             catch (Exception ex) { Debug("安排重建失败：" + ex.Message); }
         }
@@ -885,16 +906,11 @@ namespace SoulLink.Controls
             CaptureOnClick = App.Config.Settings.RdpCaptureOnClick;
             if (!CaptureOnClick)
             {
-                _captureWatch?.Stop();
                 _pointerCaptured = true;
                 PointerCaptureEnabled = true;
             }
-            else if (_captureWatch == null || !_captureWatch.IsEnabled)
-            {
-                _captureWatch = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
-                _captureWatch.Tick += (_, __) => WatchPointerCapture();
-                _captureWatch.Start();
-            }
+            // ★ _captureWatch 已移除：释放态光标出界检测改为事件驱动（见
+            //   WatchPointerCaptureEventDriven）。这里不再创建 60ms 轮询定时器。
         }
 
         private string _toggleHotkey = "Ctrl+Alt+Q";
@@ -1460,26 +1476,44 @@ namespace SoulLink.Controls
             Debug("已请求代理释放所有鼠标按键");
         }
 
-        private void WatchPointerCapture()
+        /// <summary>
+        /// 释放态光标出界检测（事件驱动，替代原 60ms 轮询定时器）。
+        ///
+        /// ★ 原来这里挂一个 60ms 的 DispatcherTimer，每 60ms 读一次
+        ///   Cursor.Position + 算画布矩形，即使光标一动不动也在空转 ——
+        ///   这正是「拖动/缩放窗口卡」的持续来源之一（多个 Console 各挂一个）。
+        ///
+        /// 现在改为**事件驱动**：只在全局鼠标钩子真的收到鼠标移动时，
+        ///   用钩子自带的坐标（ev.X/ev.Y，就在 UI 线程）判断光标是否离开画布。
+        ///   光标不动就零开销，离开画布的判定延迟从「最多 60ms」降到「下一次移动事件」。
+        ///
+        /// ★ 语义保持不变：释放态（_pointerCaptured 为真、且不在自由视角）
+        ///   下光标移出画布 → 释放键鼠 + 请求外层重新上锁。
+        /// </summary>
+        private void WatchPointerCaptureEventDriven(int cursorX, int cursorY)
         {
+            if (!_pointerCaptured || _captured) return;
             if (!IsConnected || !IsVisible) { ReleasePointerCapture(); return; }
 
-            // ★ 优先用「整块画布」的矩形判断是否离开。
-            //   代价：光标在画布内格子之间移动不会重新上锁（正确行为）。
-            //   兜底：没有注入画布矩形时退回单个 RDP 画面矩形（兼容旧路径）。
-            var rect = CanvasScreenRectProvider?.Invoke() ?? ViewportScreenRect();
+            // ★ 画布矩形每 120ms 才重算一次：PointToScreen 有一定成本，
+            //   而拖动窗口时移动事件每秒几十次，没必要每次都算。
+            //   120ms 缓存下「出界」判定最多晚 120ms，人眼无感。
+            var now = DateTime.UtcNow;
+            var rect = _canvasRectCache;
+            if (rect == null || now - _canvasRectCacheAt > CanvasRectTtl)
+            {
+                rect = CanvasScreenRectProvider?.Invoke() ?? ViewportScreenRect();
+                _canvasRectCache = rect;
+                _canvasRectCacheAt = now;
+            }
             if (rect == null) { ReleasePointerCapture(); return; }
-            var cursor = System.Windows.Forms.Cursor.Position;
-            bool inside = cursor.X >= rect.Value.left && cursor.X < rect.Value.left + rect.Value.width
-                       && cursor.Y >= rect.Value.top && cursor.Y < rect.Value.top + rect.Value.height;
-            bool wasCaptured = _pointerCaptured;
-            bool ownerInactive = _ownerWindow != null && !_ownerWindow.IsActive;
-            if (!inside || ownerInactive) ReleasePointerCapture();
 
-            // 移出视口或主窗口失活，都回到锁定态。Alt+Tab 时光标往往仍
-            // 位于 RDP 矩形内，不能只检查 inside，否则切回窗口会残留解锁态。
-            if (wasCaptured && !_pointerCaptured && (!inside || ownerInactive))
-                ShieldRearmRequested?.Invoke(this);
+            bool inside = cursorX >= rect.Value.left && cursorX < rect.Value.left + rect.Value.width
+                       && cursorY >= rect.Value.top && cursorY < rect.Value.top + rect.Value.height;
+            if (inside) return;
+
+            ReleasePointerCapture();
+            try { ShieldRearmRequested?.Invoke(this); } catch { }
         }
 
         /// <summary>失焦/原生画面变化时完整撤销输入权限，必须重新点击才能恢复。</summary>
@@ -1522,6 +1556,11 @@ namespace SoulLink.Controls
         {
             try
             {
+                // ★ 释放态光标出界检测（事件驱动，替代原 60ms 轮询）。
+                //   只在真正有鼠标移动时检查，光标不动就零开销。
+                //   钩子回调跑在 UI 线程，直接改 UI 状态安全。
+                if (ev.IsMove) WatchPointerCaptureEventDriven(ev.X, ev.Y);
+
                 // ★★★ 自由视角期间：退出热键必须在本机完成 ★★★
                 //
                 // 事故根因：进入自由视角后本机钩子吞掉鼠标，A2 会话永远收不到侧键，
@@ -2753,7 +2792,9 @@ namespace SoulLink.Controls
         /// <summary>尺寸停止变化后等待多久才协商（毫秒）。</summary>
         public const int ResizeSettleMs = 500;
 
-        private System.Windows.Threading.DispatcherTimer? _resizeDebounce;
+        // ★ 一次性防抖：改用 CancellationTokenSource + Task.Delay 等待，
+        //   不再新建 DispatcherTimer（AGENTS.md 性能约束）。
+        private CancellationTokenSource? _resizeDebounceCts;
         private (int width, int height) _pendingViewportPixels;
 
         /// <summary>全局串行：同一时刻只允许一个画面重协商远端分辨率。</summary>
@@ -2762,6 +2803,9 @@ namespace SoulLink.Controls
         /// <summary>
         /// 视口尺寸变了：只记录目标，重置防抖计时器。
         /// 真正的协商在 <see cref="CommitPendingResizeAsync"/> 里做。
+        /// ★ 原来挂一个 500ms DispatcherTimer 在 UI 线程空等；现在改为后台
+        ///   Task.Delay 等待「停手 500ms」，到点再回 UI 线程协商 —— UI 线程
+        ///   不再被一个空转的定时器占着。
         /// </summary>
         public void NoteViewportSizeChanged()
         {
@@ -2774,18 +2818,25 @@ namespace SoulLink.Controls
 
             _pendingViewportPixels = (rect.Value.width, rect.Value.height);
 
-            if (_resizeDebounce == null)
+            _resizeDebounceCts?.Cancel();
+            _resizeDebounceCts?.Dispose();
+            _resizeDebounceCts = new CancellationTokenSource();
+            var cts = _resizeDebounceCts;
+            _ = Task.Run(async () =>
             {
-                _resizeDebounce = new System.Windows.Threading.DispatcherTimer
-                { Interval = TimeSpan.FromMilliseconds(ResizeSettleMs) };
-                _resizeDebounce.Tick += async (_, __) =>
+                try { await Task.Delay(ResizeSettleMs, cts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+                try
                 {
-                    _resizeDebounce!.Stop();
-                    await CommitPendingResizeAsync().ConfigureAwait(true);
-                };
-            }
-            _resizeDebounce.Stop();
-            _resizeDebounce.Start();
+                    if (Dispatcher.HasShutdownStarted) return;
+                    await Dispatcher.InvokeAsync(async () =>
+                    {
+                        if (cts.IsCancellationRequested) return;
+                        await CommitPendingResizeAsync().ConfigureAwait(true);
+                    });
+                }
+                catch { }
+            });
         }
 
         /// <summary>防抖到期后真正协商一次远端分辨率。</summary>
@@ -3190,8 +3241,9 @@ namespace SoulLink.Controls
             System.Threading.Interlocked.Increment(ref _inputGeneration);
             // ★ 停掉等待中的重建定时器：否则"主动停止"会被当成"通道断开"，
             //   重建 → 再停 → 再重建，形成死循环。
-            _rebuildTimer?.Stop();
-            _rebuildTimer = null;
+            try { _rebuildCts?.Cancel(); } catch { }
+            try { _rebuildCts?.Dispose(); } catch { }
+            _rebuildCts = null;
 
             var old = Input;
             Input = null;
@@ -3236,7 +3288,9 @@ namespace SoulLink.Controls
                   + " 远端=" + remoteW + "x" + remoteH + " · " + input.Mapper.Describe());
         }
 
-        private System.Windows.Threading.DispatcherTimer? _stretchRefit;
+        // ★ 一次性防抖：用「版本号 + Dispatcher.BeginInvoke」实现，
+        //   不再新建 DispatcherTimer（AGENTS.md 性能约束）。
+        private long _stretchRefitVersion;
 
         /// <summary>
         /// 拉伸模式下的重新铺满。
@@ -3254,6 +3308,10 @@ namespace SoulLink.Controls
         ///   等 200ms 纯属浪费。改成约一帧后：
         ///     · 拖动窗口仍能合并（16ms 内多次 SizeChanged 只跑最后一次）
         ///     · 顶栏显隐立刻生效
+        ///
+        /// ★ 实现改为 Dispatcher.BeginInvoke(Background)：每次尺寸变化都把版本号 +1，
+        ///   只让「最新版本」在下一拍执行。语义等价于 16ms 防抖（拖动窗口的
+        ///   连续 SizeChanged 只跑最后一次），但不再挂定时器。
         /// </summary>
         private void ScheduleStretchRefit()
         {
@@ -3264,22 +3322,17 @@ namespace SoulLink.Controls
                 int mode = Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode;
                 if (mode != 1 && mode != 3) return;
 
-                _stretchRefit ??= new System.Windows.Threading.DispatcherTimer
-                { Interval = TimeSpan.FromMilliseconds(16) };
-                _stretchRefit.Tick -= OnStretchRefitTick;
-                _stretchRefit.Tick += OnStretchRefitTick;
-                _stretchRefit.Stop();
-                _stretchRefit.Start();
-            }
-            catch { }
-        }
-
-        private void OnStretchRefitTick(object? sender, EventArgs e)
-        {
-            try
-            {
-                _stretchRefit?.Stop();
-                ApplyStretchRefit();
+                long myVersion = System.Threading.Interlocked.Increment(ref _stretchRefitVersion);
+                try
+                {
+                    if (Dispatcher.HasShutdownStarted) return;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (System.Threading.Interlocked.Read(ref _stretchRefitVersion) != myVersion) return;
+                        try { ApplyStretchRefit(); } catch { }
+                    }), System.Windows.Threading.DispatcherPriority.Background);
+                }
+                catch { }
             }
             catch { }
         }
@@ -3402,13 +3455,16 @@ namespace SoulLink.Controls
         {
             if (_disposed) return;
             _disposed = true;
-            try { _resizeDebounce?.Stop(); } catch { }
-            _resizeDebounce = null;
+            try { _resizeDebounceCts?.Cancel(); } catch { }
+            try { _resizeDebounceCts?.Dispose(); } catch { }
+            _resizeDebounceCts = null;
+            try { _rebuildCts?.Cancel(); } catch { }
+            try { _rebuildCts?.Dispose(); } catch { }
+            _rebuildCts = null;
             ReleaseCapture("释放控制台");
             ReleaseInjectedButtonsAsync();   // 兜底：即使 ReleaseCapture 提前返回也要释放
             UninstallMouseHook();
             DetachOwnerWindow();
-            _captureWatch?.Stop();
             ResetLookQueue();
             _ = StopInputAsync();
             try

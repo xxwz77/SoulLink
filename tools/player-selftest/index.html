@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>SoulLink H.264 播放器自测</title>
+<style>
+  body{font-family:Consolas,"Microsoft YaHei",monospace;background:#0b0f22;color:#f2f5ff;
+       margin:0;padding:18px;font-size:13px;line-height:1.7}
+  h1{font-size:16px;margin:0 0 4px}
+  .sub{color:#a5abcd;font-size:11.5px;margin-bottom:14px}
+  #banner{display:none;font-size:20px;font-weight:700;padding:14px;border-radius:10px;text-align:center;margin:12px 0}
+  #banner.pass{display:block;background:#163328;border:1px solid #1f4d3c;color:#41f0c0}
+  #banner.fail{display:block;background:#341f28;border:1px solid #5a2f3e;color:#ff6b8b}
+  table{border-collapse:collapse;margin:8px 0;width:100%}
+  td{border:1px solid #25314b;padding:5px 10px;font-size:12px}
+  td:first-child{color:#7dd3a0;width:250px}
+  pre{background:#121a2e;border:1px solid #25314b;border-radius:8px;padding:10px;
+      font-size:11.5px;overflow:auto;max-height:260px;color:#c9d7f0;white-space:pre-wrap}
+  #stage{margin-top:10px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  #scr{position:relative;background:#000;border:1px solid #25314b;border-radius:8px;
+       width:640px;max-width:100%;overflow:hidden}
+  #scr canvas{display:none;width:100%;height:auto}
+  #scr canvas.show{display:block}
+  #ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+      color:#8b9bc4;font-size:12.5px;pointer-events:none;flex-direction:column;gap:10px}
+  #log{flex:1;min-width:320px}
+</style>
+</head>
+<body>
+<h1>SoulLink H.264 播放器自测</h1>
+<div class="sub">被测代码 = 从 /src（docs/web-index.html）运行时原样抽取，非复制版 · <span id="srcsha">…</span></div>
+<!-- 挡 load 事件：headless 截图在 load 时触发，/hold 等 evidence 落盘才响应
+     （保证截图时测试已结束）。img 无 src 不会真正请求失败前阻塞渲染。 -->
+<img src="/hold" style="display:none" alt="">
+
+<div id="banner"></div>
+
+<table id="report"></table>
+
+<div id="stage">
+  <div id="scr">
+    <canvas id="vframe"></canvas>
+    <div id="ph"><span id="phtxt">连接中…</span><button id="reconn" class="x" style="display:none">重新连接</button></div>
+  </div>
+  <pre id="log"></pre>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const log = s => { $('log').textContent += s + '\n'; };
+const row = (k, v) => { const t = $('report');
+  t.insertAdjacentHTML('beforeend', `<tr><td>${k}</td><td>${v}</td></tr>`); };
+
+const EV = { // 证据对象，结束时 POST /evidence
+  playerCodeSha256: null, configuredCodec: null, configuredOptimizeForLatency: null,
+  decodedFrames: 0, decodeCalls: 0, displayWidth: 0, displayHeight: 0,
+  nalPrescan: null, colorCheck: null, errors: [], pass: null
+};
+
+// ═══════════ 第 0 步：从 /src 抽取播放器函数（词法括号配平，与源同构） ═══════════
+async function extractPlayer() {
+  // ★ 闭合标签拆写是刻意的：内联脚本里出现字面量的「斜杠-s-c-r-i-p-t- greater-than」
+  //   序列会把 HTML 解析器提前终止（第一版实测踩到两次：一次在代码字符串里，
+  //   一次在注释里 —— 注释也不豁免，剩余源码被当正文渲染，整页空白）。
+  const resp = await fetch('/src');
+  const html = await resp.text();
+  const js = html.slice(html.indexOf('<scr' + 'ipt>') + 8, html.lastIndexOf('</scr' + 'ipt>'));
+
+  function extractFn(name) {
+    const m = js.match(new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\('));
+    if (!m) throw new Error('未在 web-index.html 中找到函数: ' + name);
+    const start = m.index;
+    let i = js.indexOf('{', start), depth = 0;
+    for (; i < js.length; i++) {
+      if (js[i] === '{') depth++;
+      else if (js[i] === '}') { depth--; if (depth === 0) break; }
+    }
+    return js.slice(start, i + 1);
+  }
+
+  const names = ['splitAnnexB', 'avcCodecFromSps', 'startStream',
+                 'abortStream', 'stopH264', 'setPh', 'scheduleReconnect'];
+  const fns = names.map(extractFn);
+  const code = fns.join('\n');
+
+  // SHA256 证据（页面显示 + evidence）
+  const sha = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code));
+  const shaHex = [...new Uint8Array(sha)].map(b => b.toString(16).padStart(2, '0')).join('');
+  EV.playerCodeSha256 = shaHex;
+  $('srcsha').textContent = 'player-code SHA256 ' + shaHex;
+  log('[extract] 7 functions, ' + code.length + ' chars, sha256 ' + shaHex.slice(0, 16) + '…');
+
+  // 装配：new Function 沙箱，播放器自由变量 = 沙箱内状态/桩
+  const body =
+    'let h264Gen=0, h264Reader=null, h264Active=false;\n' +
+    'let liveRunning=false, failStreak=0, reconnectTimer=null, paused=false;\n' +
+    'const cur={online:true, directPort:0, sessionId:"selftest", label:"selftest"}; // 线上 startStream 引用的模块级变量\n' +
+    'liveRunning = true; // 自测允许 scheduleReconnect 路径，结束时由 stopAll 收\n' +
+    'const $=$$, directBase=db, directToken=dt, VideoDecoder=VD, __st=st;\n' +
+    code + '\n' +
+    'return { splitAnnexB, avcCodecFromSps, startStream, abortStream, stopH264, setPh,\n' +
+    '  stopAll(){ liveRunning=false; if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;} } };\n';
+
+  const factory = new Function('$$', 'db', 'dt', 'VD', 'st', body);
+  return factory($, () => '', () => '', CountingDecoder, EV);
+}
+
+// ═══════════ VideoDecoder 计数包装（不改播放器逻辑，只记录） ═══════════
+class CountingDecoder extends VideoDecoder {
+  constructor(init) {
+    super({
+      output: f => {
+        __STAT.frames++;
+        __STAT.displayWidth = f.displayWidth; __STAT.displayHeight = f.displayHeight;
+        try { init.output(f); } catch (e) { __STAT.errors.push('output: ' + e.message); }
+      },
+      error: e => { __STAT.errors.push('decoder error: ' + (e && e.message || e)); try { init.error(e); } catch (x) {} }
+    });
+  }
+  configure(cfg) {
+    __STAT.configuredCodec = cfg.codec;
+    __STAT.configuredOptimizeForLatency = !!cfg.optimizeForLatency;
+    super.configure(cfg);
+  }
+  decode(chunk) { __STAT.decodeCalls++; super.decode(chunk); }
+}
+const __STAT = { frames: 0, decodeCalls: 0, displayWidth: 0, displayHeight: 0,
+                 configuredCodec: null, configuredOptimizeForLatency: null, errors: [] };
+window.__STAT = __STAT;
+
+// ═══════════ 主流程 ═══════════
+(async () => {
+  try {
+    // ── 1. 抽取线上播放器代码 ──
+    const P = await extractPlayer();
+    row('1. 播放器代码来源', 'docs/web-index.html 运行时抽取（7 函数），SHA256 ' + EV.playerCodeSha256.slice(0, 24) + '…');
+    log('[extract] OK');
+
+    // ── 2. NAL 预扫描（splitAnnexB 独立验证） ──
+    const sample = new Uint8Array(await (await fetch('/sample')).arrayBuffer());
+    const sentinel = new Uint8Array([0,0,0,1, 0x09, 0x80]);
+    const merged = new Uint8Array(sample.length + sentinel.length);
+    merged.set(sample, 0); merged.set(sentinel, sample.length);
+    const prescan = P.splitAnnexB(merged);
+    let spsCount = 0, ppsCount = 0, idrCount = 0, deltaCount = 0, otherCount = 0, sps = null;
+    for (const u of prescan.units) {
+      const t = u[0] & 0x1f;
+      if (t === 7) { spsCount++; sps = u; }
+      else if (t === 8) ppsCount++;
+      else if (t === 5) idrCount++;
+      else if (t === 1) deltaCount++;
+      else otherCount++;
+    }
+    const expectedCodec = sps ? P.avcCodecFromSps(sps) : null;
+    const expectedFrames = idrCount + deltaCount;
+    EV.nalPrescan = { total: prescan.units.length, sps: spsCount, pps: ppsCount,
+                      idr: idrCount, slice: deltaCount, other: otherCount,
+                      expectedCodec, expectedFrames };
+    row('2. NAL 预扫描', `共 ${prescan.units.length} 个 NAL：SPS×${spsCount} PPS×${ppsCount} IDR×${idrCount} slice×${deltaCount} 其他×${otherCount}，期望帧数 ${expectedFrames}`);
+    row('3. SPS 解析 codec', expectedCodec);
+    log('[prescan] expected codec=' + expectedCodec + ' frames=' + expectedFrames);
+
+    // ── 3. 走真实 startStream（/stream 分块流） ──
+    log('[stream] startStream() …');
+    const t0Real = Date.now();      // 真实时钟（见第 4 步说明）
+    // startStream 是 async：挂 .catch 防未处理拒绝，异常进 evidence
+    Promise.resolve(P.startStream()).catch(e => {
+      EV.errors.push('startStream: ' + (e && e.message || e));
+      log('[stream] threw: ' + (e && e.message || e));
+    });
+
+    // ── 4. 等解码稳定（真实时钟：帧数 800ms 不再增长即完成，上限 15s） ──
+    // ★ 必须用 Date.now() 而不是 performance.now() —— headless
+    //   --virtual-time-budget 会把 performance.now() 虚拟化，
+    //   15 秒"虚拟时间"几十毫秒真实时间就烧完，解码器还没出帧。
+    await new Promise(resolve => {
+      let last = -1, stableSince = 0;
+      const iv = setInterval(() => {
+        const f = __STAT.frames;
+        const now = Date.now();
+        if (f === last) {
+          if (f > 0 && now - stableSince > 800) { clearInterval(iv); resolve(); }
+        } else { last = f; stableSince = now; }
+        if (now - t0Real > 15000) { clearInterval(iv); resolve(); }
+      }, 150);
+    });
+    const elapsed = Date.now() - t0Real;
+    P.stopAll();
+    try { P.stopH264(); } catch (e) {}
+    log('[stream] finished in ' + elapsed + 'ms');
+
+    // ── 5. 汇总 ──
+    EV.decodedFrames = __STAT.frames;
+    EV.decodeCalls = __STAT.decodeCalls;
+    EV.displayWidth = __STAT.displayWidth;
+    EV.displayHeight = __STAT.displayHeight;
+    EV.configuredCodec = __STAT.configuredCodec;
+    EV.configuredOptimizeForLatency = __STAT.configuredOptimizeForLatency;
+    EV.errors = __STAT.errors.slice(0, 20);
+
+    row('4. decoder.configure', `codec=${__STAT.configuredCodec} optimizeForLatency=${__STAT.configuredOptimizeForLatency}`);
+    row('5. 解码输出', `VideoFrame × ${__STAT.frames}（decode() 调用 × ${__STAT.decodeCalls}），分辨率 ${__STAT.displayWidth}×${__STAT.displayHeight}，耗时 ${elapsed}ms`);
+
+    // ── 6. 颜色校验（红/绿/蓝块 + 画面必须非黑） ──
+    const cv = $('vframe');
+    let colorCheck = { sampled: [], red: false, green: false, blue: false, nonBlack: false };
+    if (cv.width > 0) {
+      const ctx = cv.getContext('2d');
+      const probe = (fx, fy, name) => {
+        const d = ctx.getImageData(Math.round(fx * cv.width), Math.round(fy * cv.height), 1, 1).data;
+        colorCheck.sampled.push(`${name}=#${((d[0]<<16)|(d[1]<<8)|d[2]).toString(16).padStart(6,'0')}`);
+        return d;
+      };
+      const r = probe(120/640, 180/360, 'red@120,180');
+      const g = probe(320/640, 180/360, 'green@320,180');
+      const b = probe(520/640, 180/360, 'blue@520,180');
+      // ★ 阈值留 ±40 余量：BT.601 limited-range YUV→RGB 往返对纯色有偏移
+      //   （实测纯绿 (0,255,0) 往返后 ≈ #006d02——这是正常转换偏差不是错误）。
+      //   判定标准改为「该通道显著大于其他通道」而非绝对值。
+      const dom = (c, a, b2) => c > 60 && c > a + 40 && c > b2 + 40;
+      colorCheck.red = dom(r[0], r[1], r[2]);
+      colorCheck.green = dom(g[1], g[0], g[2]);
+      colorCheck.blue = dom(b[2], b[0], b[1]);
+      colorCheck.nonBlack = (r[0] + r[1] + r[2]) + (g[0] + g[1] + g[2]) + (b[0] + b[1] + b[2]) > 200;
+    }
+    EV.colorCheck = colorCheck;
+    row('6. 画面颜色校验', colorCheck.sampled.join(' · ')
+        + (colorCheck.red && colorCheck.green && colorCheck.blue ? ' → RGB 块颜色正确' : ' → 颜色不符！'));
+
+    // ── 7. 判定 ──
+    const checks = [
+      ['SPS 解析出 codec', !!expectedCodec],
+      ['decoder.configure 的 codec 与 SPS 一致', EV.configuredCodec === expectedCodec],
+      ['解码出帧', EV.decodedFrames > 0],
+      ['帧数 ≈ 预扫描（±2，尾部帧受停止时序影响）', Math.abs(EV.decodedFrames - expectedFrames) <= 2],
+      ['分辨率正确(640×360)', EV.displayWidth === 640 && EV.displayHeight === 360],
+      ['RGB 颜色正确', colorCheck.red && colorCheck.green && colorCheck.blue],
+      ['无解码错误', EV.errors.length === 0]
+    ];
+    let pass = true;
+    const summary = checks.map(([n, ok]) => (ok ? '✔ ' : '✘ ') + n).join('  |  ');
+    for (const [n, ok] of checks) if (!ok) pass = false;
+    row('7. 判定汇总', summary);
+    EV.pass = pass;
+
+    const banner = $('banner');
+    banner.className = pass ? 'pass' : 'fail';
+    banner.textContent = pass ? 'PASS — 播放器解码链路完整可用' : 'FAIL — 见判定汇总与日志';
+    log('[result] ' + (pass ? 'PASS' : 'FAIL'));
+
+  } catch (e) {
+    EV.pass = false;
+    EV.errors.push('fatal: ' + (e && e.message || e));
+    const banner = $('banner');
+    banner.className = 'fail';
+    banner.textContent = 'FAIL — ' + (e && e.message || e);
+    log('[fatal] ' + (e && e.stack || e));
+  } finally {
+    // ── 回传证据 ──
+    try {
+      await fetch('/evidence', { method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(EV) });
+      log('[evidence] posted');
+    } catch (e) { log('[evidence] post failed: ' + e.message); }
+  }
+})();
+</script>
+</body>
+</html>

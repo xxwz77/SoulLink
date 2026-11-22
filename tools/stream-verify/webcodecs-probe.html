@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WebCodecs /stream 验证台</title>
+<style>
+  body { font: 13px/1.6 Consolas, monospace; background:#1b1b1f; color:#ddd; padding:16px; }
+  h1 { font-size:15px; color:#8ec07c; }
+  #log { white-space:pre-wrap; }
+  .ok { color:#8ec07c; } .bad { color:#fb4934; } .warn { color:#fabd2f; }
+  canvas { border:1px solid #444; max-width:100%; }
+</style>
+</head>
+<body>
+<h1>WebCodecs /stream 验证台</h1>
+<div id="log"></div>
+<canvas id="cv"></canvas>
+<script>
+// ════════════════════════════════════════════════════════════════════
+// 这个页面**只做验证**，不是产品页面。目的：把「网页到底有没有在跑
+// WebCodecs」变成可复现、可自动判定的证据。
+//
+// ★ 关键：解码方式必须与产品页 docs/web-index.html 完全一致，
+//   否则验证的不是真实链路。具体差异（第一版我写错过）：
+//     ✗ 错：Annex-B → AVCC（4字节长度前缀）逐 NAL 喂 decode()
+//     ✓ 对：**Annex-B 直传**，把「一个 AU 的所有 NAL」拼成一块，
+//           每 NAL 前加 00 00 00 01，作为一条 EncodedVideoChunk
+//   依据：产品页 flushAu()（web-index.html:959-982）用的就是 annexb 模式；
+//         WebCodecs 规范允许 annexb 输入，AVCC 是另一条路。
+//
+// ★ 还必须按 AU 边界组批：一个 AU = SPS/PPS + 一个 VCL(slice)。
+//   逐 NAL 喂会把参数集和图像数据拆成两个 chunk，解码器认为它们不属于
+//   同一帧，表现为「configure 成功但解出 0 帧」。
+// ════════════════════════════════════════════════════════════════════
+const R = {
+  webCodecs: typeof VideoDecoder !== 'undefined' && typeof EncodedVideoChunk !== 'undefined',
+  configured: false, fetched: false, status: 0, bytes: 0,
+  nalCount: 0, keyFrameCount: 0, auCount: 0, decodedFrames: 0,
+  firstFrameW: 0, firstFrameH: 0, drewToCanvas: false, nonBlank: false,
+  error: null, codec: null, stages: []
+};
+window.__RESULT = R;
+
+const logEl = document.getElementById('log');
+function log(msg, cls) {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  logEl.appendChild(d);
+  R.stages.push(msg);
+}
+function finish(tag) {
+  R.done = true; R.tag = tag;
+  log('== 结束：' + tag, tag === 'pass' ? 'ok' : 'bad');
+  report();
+}
+function report() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('report') !== '1') return;
+  try {
+    fetch('/report', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(R)
+    }).catch(() => {});
+  } catch (e) { }
+}
+
+// 从 SPS（含 NAL 头）解析 profile/constraint/level → 'avc1.PPCCLL'
+// 与产品页 avcCodecFromSps 完全相同的算法（含跳过 NAL 头、profile 白名单）
+function avcCodecFromSps(sps) {
+  if (!sps || sps.length < 4) return null;
+  const p = sps[1], c = sps[2], l = sps[3];
+  const known = [44,66,77,83,86,88,100,110,118,122,128,138,139,134,135,244,247];
+  if (!known.includes(p)) return null;
+  const hex = n => n.toString(16).padStart(2,'0').toUpperCase();
+  return 'avc1.' + hex(p) + hex(c) + hex(l);
+}
+
+// Annex-B 切分（与产品页 splitAnnexB 同语义：前导零归属起始码）
+function splitAnnexB(buf) {
+  const units = [], starts = [];
+  let zeros = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const b = buf[i];
+    if (b === 0) { zeros++; continue; }
+    if (b === 1 && zeros >= 2) {
+      starts.push({ at: i - zeros, len: zeros + 1 });
+      zeros = 0; continue;
+    }
+    zeros = 0;
+  }
+  for (let k = 0; k < starts.length - 1; k++) {
+    const from = starts[k].at + starts[k].len, to = starts[k+1].at;
+    if (to > from) units.push(buf.subarray(from, to));
+  }
+  const pending = starts.length ? buf.subarray(starts[starts.length-1].at) : buf;
+  return { units, pending };
+}
+
+async function main() {
+  const q = new URLSearchParams(location.search);
+  const base = q.get('base') || '';
+  const token = q.get('token') || '';
+  const ms = parseInt(q.get('ms') || '8000', 10);
+
+  log('WebCodecs 支持：' + R.webCodecs);
+  if (!R.webCodecs) { R.error = 'no-webcodecs'; finish('fail'); return; }
+
+  const url = base + '/stream' + (token ? '?token=' + encodeURIComponent(token) : '');
+  log('请求 ' + url);
+
+  let decoder = null;
+  const canvas = document.getElementById('cv');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  // ── AU 组批状态（与产品页一致）──
+  let auNals = [], auHasKey = false, auHasData = false, ts = 0;
+  let firstKey = false;
+
+  function flushAu() {
+    if (!auHasData || !R.configured) { auNals = []; auHasKey = auHasData = false; return; }
+    // AU → 单个 Annex-B 字节块（每 NAL 前加 00 00 00 01）
+    let total = 0;
+    for (const n of auNals) total += 4 + n.length;
+    const data = new Uint8Array(total);
+    let off = 0;
+    for (const n of auNals) {
+      data[off]=0; data[off+1]=0; data[off+2]=0; data[off+3]=1;
+      data.set(n, off + 4);
+      off += 4 + n.length;
+    }
+    R.auCount++;
+    try {
+      decoder.decode(new EncodedVideoChunk({
+        type: auHasKey ? 'key' : 'delta',
+        timestamp: ts,
+        data
+      }));
+    } catch (e) { /* 解码器饱和，丢本 AU */ }
+    ts += 66666;   // 15fps 节拍，单调即可
+    auNals = []; auHasKey = auHasData = false;
+  }
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    const resp = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+    R.status = resp.status; R.fetched = true;
+    log('HTTP ' + resp.status);
+    if (!resp.ok || !resp.body) { R.error = 'http-' + resp.status; finish('fail'); clearTimeout(timer); return; }
+
+    const reader = resp.body.getReader();
+    let pending = new Uint8Array(0);
+
+    while (true) {
+      let chunk;
+      try { chunk = await reader.read(); } catch (e) { break; }
+      if (chunk.done) break;
+      R.bytes += chunk.value.length;
+
+      const merged = new Uint8Array(pending.length + chunk.value.length);
+      merged.set(pending, 0); merged.set(chunk.value, pending.length);
+      const parsed = splitAnnexB(merged);
+      pending = parsed.pending;
+
+      for (const nal of parsed.units) {
+        if (nal.length < 1) continue;
+        R.nalCount++;
+        const type = nal[0] & 0x1f;
+        const isKey = (type === 5);
+        const isSps = (type === 7), isPps = (type === 8);
+        const isVcl = (type >= 1 && type <= 5);
+
+        // SPS 到了才 configure（没 configure 就 decode 会抛 InvalidStateError）
+        if (isSps && !R.configured) {
+          const codec = avcCodecFromSps(nal);
+          R.codec = codec;
+          log('SPS → codec=' + (codec || '(解析失败，兜底 avc1.4D4028)')
+              + '（profile=' + nal[1] + ' constraint=' + nal[2] + ' level=' + nal[3] + '）');
+          decoder = new VideoDecoder({
+            output: (frame) => {
+              R.decodedFrames++;
+              if (R.firstFrameW === 0) {
+                R.firstFrameW = frame.displayWidth;
+                R.firstFrameH = frame.displayHeight;
+                log('首帧解码成功 ' + frame.displayWidth + 'x' + frame.displayHeight, 'ok');
+              }
+              if (canvas.width !== frame.displayWidth) {
+                canvas.width = frame.displayWidth;
+                canvas.height = frame.displayHeight;
+              }
+              try {
+                ctx.drawImage(frame, 0, 0);
+                R.drewToCanvas = true;
+                if (!R.nonBlank) {
+                  const d = ctx.getImageData(0, 0, Math.min(64, canvas.width), Math.min(64, canvas.height)).data;
+                  let sum = 0;
+                  for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i+1] + d[i+2];
+                  if (sum > 0) { R.nonBlank = true; log('canvas 非全黑（确实画上了内容）', 'ok'); }
+                }
+              } catch (e) { }
+              frame.close();
+            },
+            error: (e) => { R.error = 'decoder:' + e.message; log('解码器错误：' + e.message, 'bad'); }
+          });
+          try {
+            decoder.configure({ codec: codec || 'avc1.4D4028', optimizeForLatency: true });
+            R.configured = true;
+            log('解码器已配置（Annex-B 直传模式）', 'ok');
+          } catch (e) {
+            R.error = 'configure:' + e.message;
+            log('configure 失败：' + e.message, 'bad');
+          }
+        }
+
+        if (!R.configured) continue;
+
+        // AU 边界：新 VCL 或参数集 → 先结上一 AU
+        if (isVcl && auHasData) flushAu();
+        if ((isSps || isPps) && auHasData) flushAu();
+
+        // 从 IDR 起播
+        if (!firstKey && !isKey && !isSps && !isPps) continue;
+        if (isKey) { firstKey = true; R.keyFrameCount++; }
+
+        auNals.push(nal);
+        if (isVcl) auHasData = true;
+        if (isKey) auHasKey = true;
+      }
+
+      if (R.decodedFrames >= 10) break;
+      if (R.bytes > 8 * 1024 * 1024) break;
+    }
+
+    clearTimeout(timer);
+    try { await reader.cancel(); } catch (e) { }
+    flushAu();          // 喂掉最后一个 AU
+    // 等解码器吐帧（解码是异步的）
+    if (decoder) { try { await decoder.flush(); } catch (e) { } }
+  } catch (e) {
+    if (e.name !== 'AbortError') { R.error = String(e); log('异常：' + e, 'bad'); }
+    else log('到点主动断开（预期行为）');
+  } finally {
+    try { if (decoder && decoder.state !== 'closed') decoder.close(); } catch (e) { }
+  }
+
+  log('汇总：bytes=' + R.bytes + ' nal=' + R.nalCount + ' key=' + R.keyFrameCount
+      + ' au=' + R.auCount + ' decoded=' + R.decodedFrames
+      + ' canvas=' + R.drewToCanvas + ' nonBlank=' + R.nonBlank);
+
+  const pass = R.fetched && R.status === 200 && R.configured
+            && R.decodedFrames > 0 && R.drewToCanvas && R.nonBlank;
+  finish(pass ? 'pass' : 'fail');
+}
+
+main().catch(e => { R.error = String(e); R.done = true; R.tag = 'fail'; log('致命：' + e, 'bad'); report(); });
+</script>
+</body>
+</html>

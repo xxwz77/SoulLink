@@ -13,7 +13,7 @@ namespace SoulLink.Relay
     /// ★ 第一步（本文件）只有一个实现 BitBltCapture，行为与旧 GrabJpeg 完全一致；
     ///   WGC 是第二步，实现同一个接口即可接入（见任务报告「第二步怎么接」）。
     /// </summary>
-    internal interface IScreenCapture
+    internal interface IScreenCapture : IDisposable
     {
         /// <summary>后端名（"BitBlt" / "WGC"），供 recordstatus 与日志回显，便于排障。</summary>
         string Name { get; }
@@ -26,5 +26,8 @@ namespace SoulLink.Relay
         /// ★ width/height 是本次实际抓取的像素尺寸；失败时为 0。
         /// </summary>
         byte[]? CaptureJpeg(int quality, out int width, out int height);
+
+        /// <summary>抓一帧原始 BGRA（top-down，紧凑 stride=width*4）。实时链路禁止 JPEG 中转。</summary>
+        byte[]? CaptureBgra(out int width, out int height);
     }
 }

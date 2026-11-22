@@ -667,7 +667,8 @@ namespace SoulLink.Services
         ///
         ///   SOULLINK_CAPTURE_DIR  录像/截图根目录（必须在主程序目录下，别写 C 盘）
         ///   SOULLINK_WEB_PORT     网页直连端口（0 = 不启用）
-        ///   SOULLINK_WEB_TOKEN    网页直连共享口令（空 = 不校验）
+        ///   SOULLINK_WEB_TOKEN    网页直连共享口令（默认拒绝空口令）
+        ///   SOULLINK_WEB_ALLOW_NO_TOKEN  仅显式允许时才接受空口令（默认 0）
         ///   SOULLINK_ACCOUNT_ID   本代理所属账号 Id（/api/info 回显 + 端口分配依据）
         /// </summary>
         private static Dictionary<string, string> CaptureEnv(string? accountId = null)
@@ -693,7 +694,11 @@ namespace SoulLink.Services
                 //     但中间没有代码把配置转成环境变量 → WGC 永远用不上（默认 BitLlt）。
                 //   0=自动(优先 WGC 失败降级) 1=WGC-Window 2=WGC-Monitor 3=BitLlt
                 if (s0 != null)
+                {
                     env["SOULLINK_CAPTURE_MODE"] = s0.CaptureMode.ToString();
+                    env["SOULLINK_STREAM_FPS"] = Math.Clamp(s0.RecordFps, 1, 60).ToString();
+                    env["SOULLINK_VIDEO_BITRATE"] = Math.Max(500, s0.VideoBitrateKbps).ToString();
+                }
 
                 // ── 网页直连（User 要求：尽量隔离主客户端）──
                 var s = App.Config?.Settings;
@@ -704,6 +709,7 @@ namespace SoulLink.Services
                     {
                         env["SOULLINK_WEB_PORT"] = port.ToString();
                         env["SOULLINK_WEB_TOKEN"] = s.WebPassword ?? "";
+                        env["SOULLINK_WEB_ALLOW_NO_TOKEN"] = s.WebAllowNoToken ? "1" : "0";
                         if (!string.IsNullOrWhiteSpace(accountId))
                             env["SOULLINK_ACCOUNT_ID"] = accountId!;
                     }
