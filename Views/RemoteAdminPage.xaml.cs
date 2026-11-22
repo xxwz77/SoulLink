@@ -221,7 +221,9 @@ namespace SoulLink.Views
                         () => ToggleHiddenAsync(u)));
                 ops.Children.Add(MiniButton("修改密码", "修改 Windows 密码，并同步保存的连接密码", () => ChangePasswordAsync(u)));
                 ops.Children.Add(MiniButton(u.PasswordNeverExpires ? "恢复过期" : "永不过期", "设置密码是否永不过期", () => ToggleExpireAsync(u)));
-                ops.Children.Add(MiniButton("删除", "删除该账户（不可恢复）", () => DeleteUserAsync(u), danger: true));
+                // ★ 文案区分：这里删的是 Windows 账户（不可恢复）。
+        //   「RDP 配置」页的「移除此配置」只删连接配置，两回事。
+        ops.Children.Add(MiniButton("删除账户", "删除该 Windows 账户（不可恢复，同时移除其连接配置）", () => DeleteUserAsync(u), danger: true));
             }
             Grid.SetColumn(ops, 5);
             grid.Children.Add(ops);
@@ -302,11 +304,52 @@ namespace SoulLink.Views
                 "确定删除账户「" + u.Name + "」吗？\n\n" +
                 "这会永久删除该用户的配置文件与个人数据，且不可恢复。\n" +
                 "如果该用户正在挂机，请先关闭其会话。",
-                "删除用户（危险操作）", true))
+                "删除 Windows 账户（危险操作）", true))
                 return;
+
+            // ★ 删除前检测活动/断开会话：该账户可能仍有 RDP 会话在线。
+            //   实测 net user X /delete 即使有会话也能删掉（exit 0），但删掉后
+            //   那些会话会失去账户（变成孤儿会话），中控台里已打开的连接也会失效。
+            //   所以这里明确告知后果，而不是让用户点完才发现画面断了。
+            try
+            {
+                var sessions = await SessionService.QueryAsync();
+                var live = sessions
+                    .Where(s => string.Equals(SessionService.BareName(s.UserName), u.Name,
+                        StringComparison.OrdinalIgnoreCase)
+                        && (s.IsActive || s.IsDisconnected))
+                    .ToList();
+                if (live.Count > 0)
+                {
+                    var states = live.Select(s => s.Badge).Distinct().ToList();
+                    if (!Dialogs.Confirm(
+                        "该账户当前还有会话处于在线/断开状态（" + string.Join("、", states) + "）。\n\n" +
+                        "删除 Windows 账户后，这些会话将失去账户，中控台里对应的连接配置也会一并移除。\n" +
+                        "确定继续删除吗？",
+                        "删除 Windows 账户（仍有活动会话）", true))
+                        return;
+                }
+            }
+            catch { /* 会话查询失败不阻断删除 */ }
 
             var r = await LocalUserService.DeleteAsync(u.Name);
             Log((r.Ok ? "✔ " : "✘ ") + "删除 " + u.Name + "：" + r.Output, !r.Ok);
+
+            if (r.Ok)
+            {
+                // ★ 同步清理中控台（RDP 配置页）里的连接配置。
+                //   否则删除 Windows 账户后，中控台列表仍会显示一个指向已删除账户的
+                //   配置条目——这正是「删除用户会自己回来」的根源之一（两处删除不联动）。
+                int removed = App.Config.Accounts.RemoveAll(a =>
+                    string.Equals(a.UserName, u.Name, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(a.RdpUserName, u.Name, StringComparison.OrdinalIgnoreCase));
+                if (removed > 0)
+                {
+                    ConfigStore.Save(App.Config);
+                    if (Application.Current?.MainWindow is MainWindow main)
+                        main.ConsoleView.RebuildUserList();
+                }
+            }
             await ReloadAsync();
         }
 

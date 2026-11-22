@@ -1,0 +1,273 @@
+<Window x:Class="SoulLink.Views.SessionsSlimPage"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="会话瘦身说明" Width="780" Height="720" WindowStartupLocation="CenterOwner"
+        WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource WindowBackground}" ShowInTaskbar="False"
+        FontFamily="{StaticResource UiFont}">
+
+    <Window.Resources>
+        <!-- 圆点开关：与页面「开关」语义一致，比复选框更直观。 -->
+        <Style x:Key="SlimSwitch" TargetType="ToggleButton">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Grid>
+                            <Border x:Name="Track" CornerRadius="12" Background="#33FFFFFF"
+                                    BorderBrush="#44FFFFFF" BorderThickness="1" />
+                            <Ellipse x:Name="Knob" Width="18" Height="18" Fill="#B0C2E8FF"
+                                     HorizontalAlignment="Left" Margin="3,0,0,0" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="#4D4FE3FF" />
+                                <Setter TargetName="Track" Property="BorderBrush" Value="#AA4FE3FF" />
+                                <Setter TargetName="Knob" Property="Fill" Value="#FFFFFFFF" />
+                                <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
+                                <Setter TargetName="Knob" Property="Margin" Value="0,0,3,0" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Track" Property="BorderBrush" Value="#77FFFFFF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="0">
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
+            <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+
+            <Grid Margin="26,18,26,20">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- 标题区 -->
+                <Grid x:Name="DragArea" Grid.Row="0" Background="Transparent" MouseLeftButtonDown="DragArea_MouseLeftButtonDown">
+                    <StackPanel>
+                        <TextBlock Text="会话瘦身说明" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
+                        <TextBlock Text="减少每个挂机会话里与游戏无关的外围进程，把内存留给游戏本身。"
+                                   FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button Style="{StaticResource WindowButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                            Height="28" Click="Close_Click">
+                        <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10" />
+                    </Button>
+                </Grid>
+
+                <ScrollViewer Grid.Row="1" Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+
+                        <!-- ════════ 区块 A：按账号隔离（默认开启，正常色）════════ -->
+                        <Border Style="{StaticResource GlassPanel}" Padding="18,16">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE7F7;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                               Foreground="{StaticResource MintBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Text="按账号隔离" FontSize="14" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextPrimary}" Margin="7,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,8,0,0" TextWrapping="Wrap" LineHeight="19"
+                                           Text="只影响挂机账号，不影响你自己的主控制台，也不影响你日常使用的其他账号。这些进程结束后不会自动重启，重登才回来。" />
+
+                                <!-- 开关 1：清理外围进程（只读状态） -->
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <TextBlock Text="清理会话外围进程" FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimary}" />
+                                        <TextBlock Text="浏览器窗口 · 手机连接 · 跨设备 · 游戏栏 · 触摸键盘 · OneDrive 授权"
+                                                   FontSize="10.5" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ToggleButton Grid.Column="1" x:Name="KillToggle" Style="{StaticResource SlimSwitch}"
+                                                  VerticalAlignment="Center" IsEnabled="False" />
+                                </Grid>
+
+                                <!-- 开关 2：Edge 预启动 -->
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <TextBlock Text="关闭 Edge 预启动 / 后台自启" FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimary}" />
+                                        <TextBlock Text="让浏览器不再后台偷偷自启；首次打开会稍慢一点，但不影响正常使用。"
+                                                   FontSize="10.5" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ToggleButton Grid.Column="1" x:Name="UserPolicyToggle" Style="{StaticResource SlimSwitch}"
+                                                  VerticalAlignment="Center" IsEnabled="False" />
+                                </Grid>
+
+                                <TextBlock x:Name="ZoneAHint" FontSize="10.5" Margin="0,14,0,0"
+                                           Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" LineHeight="18"
+                                           Text="预计节省：取决于会话里实际开着哪些（浏览器若没开，收益就是 0）。" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ════════ 区块 B：全机设置（默认关闭，警告色）════════ -->
+                        <Border Margin="0,26,0,0" CornerRadius="14" Padding="18,16"
+                                Background="#2AFFC46B" BorderBrush="{StaticResource AmberBrush}" BorderThickness="2">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                               Foreground="{StaticResource AmberBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Text="全机设置（慎用）" FontSize="14" FontWeight="SemiBold"
+                                               Foreground="{StaticResource AmberBrush}" Margin="7,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+
+                                <!-- 警告块：单独一块，不与说明混排 -->
+                                <Border Margin="0,12,0,0" CornerRadius="10" Padding="12,10" Background="#33FFC46B">
+                                    <StackPanel>
+                                        <TextBlock Text="⚠ 这是 Windows 机器级设置，会影响这台电脑上的【所有用户】——包括你自己的主控制台。"
+                                                   FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AmberBrush}"
+                                                   TextWrapping="Wrap" LineHeight="19" />
+                                        <TextBlock Margin="0,6,0,0" FontSize="10.5" Foreground="{DynamicResource TextSecondary}"
+                                                   TextWrapping="Wrap" LineHeight="18"
+                                                   Text="为什么不能只对挂机账号关：任务栏搜索（SearchHost）和小组件（Widgets）是 Windows 系统服务拉起来的，不属于某个账号，所以只能整台机器一起关，无法按账号区分。" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- 开关 3：机器级策略 -->
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <TextBlock Text="关闭任务栏搜索 + 小组件" FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimary}" />
+                                        <TextBlock Text="关掉任务栏搜索框和小组件面板。开始菜单本身、文件搜索、桌面、游戏都不受影响。"
+                                                   FontSize="10.5" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ToggleButton Grid.Column="1" x:Name="MachinePolicyToggle" Style="{StaticResource SlimSwitch}"
+                                                  VerticalAlignment="Center" IsEnabled="False" />
+                                </Grid>
+
+                                <TextBlock x:Name="ZoneBHint" FontSize="10.5" Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" LineHeight="18"
+                                           Text="生效方式：需管理员权限写入系统策略；已登录的会话要注销重登后才生效。关闭开关即恢复系统默认。" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ════════ 收益一览 ════════ -->
+                        <Border Style="{StaticResource GlassPanel}" Margin="0,22,0,0" Padding="18,16">
+                            <StackPanel>
+                                <TextBlock Text="收益一览" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimary}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,7,0,0" TextWrapping="Wrap"
+                                           Text="数字是说明性估算（按单会话），实际以当前会话里真正开着的进程为准。" />
+
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="190" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <Border Grid.Row="0" Grid.ColumnSpan="2" Padding="0,4" Background="Transparent">
+                                        <TextBlock Text="按账号（清理外围进程）" FontSize="11" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource MintBrush}" />
+                                    </Border>
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="浏览器窗口（msedge）" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="约 391 MB（开过才有）" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="手机连接 + 跨设备" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="约 221 MB" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="游戏栏 + 触摸键盘 + 向导 + OneDrive 授权" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="约 100+ MB" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
+
+                                    <Border Grid.Row="4" Grid.ColumnSpan="2" Padding="0,8,0,2" Background="Transparent" Margin="0,6,0,0">
+                                        <TextBlock Text="全机设置（任务栏搜索 + 小组件，按会话）" FontSize="11" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource AmberBrush}" />
+                                    </Border>
+
+                                    <TextBlock Grid.Row="5" Grid.Column="0" Text="任务栏搜索块 + 小组件块（含其浏览器内核子进程）" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" />
+                                    <TextBlock Grid.Row="5" Grid.Column="1" Text="约 490 MB/会话" FontSize="11.5" Foreground="{DynamicResource TextMuted}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ════════ 不影响什么（保留项）════════ -->
+                        <Border Style="{StaticResource GlassPanel}" Margin="0,22,0,0" Padding="18,16">
+                            <StackPanel>
+                                <TextBlock Text="不影响什么" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimary}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,7,0,0" TextWrapping="Wrap"
+                                           Text="这些都是必需组件，本工具不提供关闭选项，也不会去动它们：" />
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Border CornerRadius="8" Padding="10,6" Margin="0,0,8,8" Background="{DynamicResource FieldBackground}">
+                                        <TextBlock Text="桌面 + 文件资源管理器（explorer）" FontSize="11" Foreground="{DynamicResource TextSecondary}" />
+                                    </Border>
+                                    <Border CornerRadius="8" Padding="10,6" Margin="0,0,8,8" Background="{DynamicResource FieldBackground}">
+                                        <TextBlock Text="开始菜单" FontSize="11" Foreground="{DynamicResource TextSecondary}" />
+                                    </Border>
+                                    <Border CornerRadius="8" Padding="10,6" Margin="0,0,8,8" Background="{DynamicResource FieldBackground}">
+                                        <TextBlock Text="输入法候选框" FontSize="11" Foreground="{DynamicResource TextSecondary}" />
+                                    </Border>
+                                    <Border CornerRadius="8" Padding="10,6" Margin="0,0,8,8" Background="{DynamicResource FieldBackground}">
+                                        <TextBlock Text="文件对话框" FontSize="11" Foreground="{DynamicResource TextSecondary}" />
+                                    </Border>
+                                    <Border CornerRadius="8" Padding="10,6" Margin="0,0,8,8" Background="{DynamicResource FieldBackground}">
+                                        <TextBlock Text="游戏本体 / 脚本" FontSize="11" Foreground="{DynamicResource TextSecondary}" />
+                                    </Border>
+                                    <Border CornerRadius="8" Padding="10,6" Margin="0,0,8,8" Background="{DynamicResource FieldBackground}">
+                                        <TextBlock Text="SoulLink 自身 / RDP 连接" FontSize="11" Foreground="{DynamicResource TextSecondary}" />
+                                    </Border>
+                                </WrapPanel>
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap" LineHeight="18"
+                                           Text="说明：关掉上面任何一个都会让正常操作失灵（比如打不了字、打不开文件选择框），所以统一保留、不动。" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ════════ 恢复方法 ════════ -->
+                        <Border Style="{StaticResource GlassPanel}" Margin="0,22,0,0" Padding="18,16">
+                            <StackPanel>
+                                <TextBlock Text="怎么恢复" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimary}" />
+                                <StackPanel Margin="0,10,0,0">
+                                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="19"
+                                               Text="· 每个开关都能单独关回去：关掉即恢复该项的默认状态。"/>
+                                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="19" Margin="0,5,0,0"
+                                               Text="· 全机设置（任务栏搜索 + 小组件）关闭后，已登录的会话要注销重登才彻底恢复。"/>
+                                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="19" Margin="0,5,0,0"
+                                               Text="· 三个开关请在「会话瘦身」操作页里改动，本页只展示当前状态。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                    <Button Style="{StaticResource PrimaryButton}" Padding="16,8" Click="JumpToSettings_Click">
+                                        <TextBlock Text="去设置这三个开关" FontSize="11.5" />
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- 底部操作条 -->
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                    <Button Style="{StaticResource PrimaryButton}" Padding="28,10" Click="Close_Click">
+                        <TextBlock Text="关闭" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -13,29 +13,32 @@ namespace SoulLink.Services
     /// 联机大厅服务端客户端。
     ///
     /// 所有请求都带 X-Device-Code 头（设备码即身份）。
-    /// 服务端地址可配置，默认 http://121.4.78.52:45080。
+    /// 服务端地址可配置（配置为空则联机功能静默，不发任何请求）。
     /// </summary>
     public static class LobbyApi
     {
         private static readonly HttpClient _http;
-        /// <summary>内置默认地址（配置为空时用它）。</summary>
-        public const string DefaultBaseUrl = "http://121.4.78.52:45080";
+        /// <summary>
+        /// 内置默认地址：**空**。旧服务器已停用，代码不再写死任何服务器地址。
+        /// 留空 = 联机功能未配置 → 不发起任何请求（彻底静默）。
+        /// 用户在「服务器」设置里填新地址后才会联网。
+        /// </summary>
+        public const string DefaultBaseUrl = "";
 
         private static string _baseUrl = DefaultBaseUrl;
 
         /// <summary>
-        /// 实际请求使用的地址（含内置默认值）。
+        /// 实际请求使用的地址（配置为空时为空串）。
         /// ★ 仅供内部 HTTP 调用使用，不要绑定到界面输入框 —— 那会把默认地址暴露给用户。
         /// </summary>
         public static string BaseUrl
         {
             get => _baseUrl;
-            set
-            {
-                if (string.IsNullOrWhiteSpace(value)) return;
-                _baseUrl = value.TrimEnd('/');
-            }
+            set => _baseUrl = (value ?? "").Trim().TrimEnd('/');
         }
+
+        /// <summary>是否已配置服务器地址。未配置时所有接口直接返回失败、不发请求。</summary>
+        public static bool HasServer => !string.IsNullOrWhiteSpace(_baseUrl);
 
         /// <summary>
         /// 用户在配置里显式填写的地址（未填则为空串）。
@@ -54,8 +57,8 @@ namespace SoulLink.Services
             }
         }
 
-        /// <summary>当前是否在用内置默认地址（用户没填）。</summary>
-        public static bool UsingDefaultUrl => string.IsNullOrWhiteSpace(ConfiguredUrl);
+        /// <summary>当前是否在使用内置默认地址（用户没填 = 未配置服务器）。</summary>
+        public static bool UsingDefaultUrl => !HasServer;
 
         static LobbyApi()
         {
@@ -68,8 +71,7 @@ namespace SoulLink.Services
             try
             {
                 var s = App.Config.Settings;
-                if (!string.IsNullOrWhiteSpace(s.LobbyServerUrl))
-                    BaseUrl = s.LobbyServerUrl;
+                BaseUrl = string.IsNullOrWhiteSpace(s.LobbyServerUrl) ? "" : s.LobbyServerUrl;
             }
             catch { }
         }
@@ -93,9 +95,7 @@ namespace SoulLink.Services
             var req = new HttpRequestMessage(method, _baseUrl + path);
             req.Headers.Add("X-Device-Code", DeviceIdentity.Code);
             return req;
-        }
-
-        private static readonly JsonSerializerOptions _json = new()
+        }        private static readonly JsonSerializerOptions _json = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -130,6 +130,7 @@ namespace SoulLink.Services
         public static async Task<(bool ok, string message)> PingAsync(
             CancellationToken ct = default)
         {
+            if (!HasServer) return (false, "未配置服务器地址");
             try
             {
                 using var req = new HttpRequestMessage(HttpMethod.Get, _baseUrl + "/api/ping");
@@ -144,15 +145,17 @@ namespace SoulLink.Services
             catch (Exception ex) { return (false, ex.Message); }
         }
 
-        /// <summary>心跳：告诉服务器本机还在线。</summary>
-        public static async Task HeartbeatAsync(CancellationToken ct = default)
+        /// <summary>心跳：告诉服务器本机还在线。返回是否成功。</summary>
+        public static async Task<bool> HeartbeatAsync(CancellationToken ct = default)
         {
+            if (!HasServer) return false;
             try
             {
                 using var req = Req(HttpMethod.Post, "/api/heartbeat");
-                await _http.SendAsync(req, ct).ConfigureAwait(false);
+                using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+                return resp.IsSuccessStatusCode;
             }
-            catch { }
+            catch { return false; }
         }
 
         // ══════════ 房间 ══════════
@@ -167,6 +170,7 @@ namespace SoulLink.Services
             public string PairId { get; set; } = "";
             public string PairRole { get; set; } = "";
             public bool Departed { get; set; }
+            public int DepartSize { get; set; }
             public DateTime LastActiveAt { get; set; }
             public List<SeatDto> Seats { get; set; } = new();
         }
@@ -184,6 +188,7 @@ namespace SoulLink.Services
         public static async Task<(bool ok, string message, List<RoomDto> rooms)> ListRoomsAsync(
             CancellationToken ct = default)
         {
+            if (!HasServer) return (false, "未配置服务器地址", new List<RoomDto>());
             try
             {
                 using var req = Req(HttpMethod.Get, "/api/rooms");
@@ -202,29 +207,32 @@ namespace SoulLink.Services
             public RoomDto? Small { get; set; }
         }
 
-        /// <summary>建私人·四人房。</summary>
+        /// <summary>建私人房（发车人数 2-4 可选）。</summary>
         public static async Task<CreateResult> CreateFourAsync(
-            string title, string code, CancellationToken ct = default)
+            string title, string code, int departSize = 0, CancellationToken ct = default)
         {
+            if (!HasServer) return new CreateResult { Ok = false, Message = "未配置服务器地址" };
             try
             {
                 using var req = Req(HttpMethod.Post, "/api/rooms/create");
                 var r = await SendAsync<CreateResult>(req,
-                    new { title, code, kind = 0 }, ct).ConfigureAwait(false);
+                    new { title, code, kind = 0, departSize }, ct).ConfigureAwait(false);
                 return r ?? new CreateResult { Ok = false, Message = "服务器无响应" };
             }
             catch (Exception ex) { return new CreateResult { Ok = false, Message = ex.Message }; }
         }
 
-        /// <summary>建私人·大小号房（成对）。</summary>
+        /// <summary>建私人·大小号房（成对，每边发车人数 2-4 可选）。</summary>
         public static async Task<CreateResult> CreatePairAsync(
-            string title, string bigCode, string smallCode, CancellationToken ct = default)
+            string title, string bigCode, string smallCode,
+            int bigSize = 0, int smallSize = 0, CancellationToken ct = default)
         {
+            if (!HasServer) return new CreateResult { Ok = false, Message = "未配置服务器地址" };
             try
             {
                 using var req = Req(HttpMethod.Post, "/api/rooms/create-pair");
                 var r = await SendAsync<CreateResult>(req,
-                    new { title, bigCode, smallCode }, ct).ConfigureAwait(false);
+                    new { title, bigCode, smallCode, bigSize, smallSize }, ct).ConfigureAwait(false);
                 return r ?? new CreateResult { Ok = false, Message = "服务器无响应" };
             }
             catch (Exception ex) { return new CreateResult { Ok = false, Message = ex.Message }; }
@@ -235,6 +243,7 @@ namespace SoulLink.Services
             string code, string displayName, string roleName,
             CancellationToken ct = default)
         {
+            if (!HasServer) return new CreateResult { Ok = false, Message = "未配置服务器地址" };
             try
             {
                 using var req = Req(HttpMethod.Post, "/api/rooms/join");
@@ -248,6 +257,7 @@ namespace SoulLink.Services
         /// <summary>离开房间。</summary>
         public static async Task<bool> LeaveAsync(string roomId, CancellationToken ct = default)
         {
+            if (!HasServer) return false;
             try
             {
                 using var req = Req(HttpMethod.Post, "/api/rooms/" + roomId + "/leave");
@@ -305,6 +315,7 @@ namespace SoulLink.Services
         /// <summary>发车。</summary>
         public static async Task<DepartResult> DepartAsync(string roomId, CancellationToken ct = default)
         {
+            if (!HasServer) return new DepartResult { Ok = false, Message = "未配置服务器地址" };
             try
             {
                 using var req = Req(HttpMethod.Post, "/api/rooms/depart");
@@ -319,6 +330,7 @@ namespace SoulLink.Services
         public static async Task<SimpleResult> ChangeCodeAsync(
             string roomId, string newCode, CancellationToken ct = default)
         {
+            if (!HasServer) return new SimpleResult { Ok = false, Message = "未配置服务器地址" };
             try
             {
                 using var req = Req(HttpMethod.Post, "/api/rooms/change-code");
@@ -332,6 +344,7 @@ namespace SoulLink.Services
         /// <summary>关闭房间。</summary>
         public static async Task<SimpleResult> DeleteAsync(string roomId, CancellationToken ct = default)
         {
+            if (!HasServer) return new SimpleResult { Ok = false, Message = "未配置服务器地址" };
             try
             {
                 using var req = Req(HttpMethod.Delete, "/api/rooms/" + roomId);
@@ -346,6 +359,7 @@ namespace SoulLink.Services
         /// <summary>读本设备的发车动作。</summary>
         public static async Task<DepartConfig> GetDepartConfigAsync(CancellationToken ct = default)
         {
+            if (!HasServer) return new DepartConfig();
             try
             {
                 using var req = Req(HttpMethod.Get, "/api/depart-config");
@@ -359,6 +373,7 @@ namespace SoulLink.Services
         public static async Task<bool> SetDepartConfigAsync(
             DepartConfig cfg, CancellationToken ct = default)
         {
+            if (!HasServer) return false;
             try
             {
                 using var req = Req(HttpMethod.Post, "/api/depart-config");

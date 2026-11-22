@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    媒体能力探测程序（只读 Spike）。
+
+    ★ 为什么 TargetFramework 跟主项目一致（net11.0-windows）：
+      要探测的能力（DXGI Desktop Duplication / Media Foundation H.264 硬件编码）
+      都是**运行时**能力，与目标框架无关；但保持一致可以避免「探测用的运行时
+      和实际跑的运行时不是同一套」这种假结论。
+
+    ★ 为什么 OutputType 是 Exe（控制台）而不是 WinExe：
+      这是一个诊断工具，需要把结果打到 stdout 方便直接贴进报告。
+      WinExe 没有控制台，输出会消失。
+
+    ★ 为什么 UseWindowsForms=true：
+      只为了让 System.Drawing 进来做 BitBlt + JPEG 基线测量
+      （现有采集路径就是 GDI+ JPEG 软编，必须有可比基线）。
+      这个程序不创建任何窗口。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>15.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>MediaProbe</RootNamespace>
+    <AssemblyName>media-probe</AssemblyName>
+    <SatelliteResourceLanguages>zh-CN;en-US</SatelliteResourceLanguages>
+    <!-- 诊断工具不需要平台兼容分析（大量 P/Invoke 会刷屏） -->
+    <NoWarn>$(NoWarn);CA1416;CA1420;SYSLIB1054;SYSLIB1096</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+    <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
+  </ItemGroup>
+
+</Project>

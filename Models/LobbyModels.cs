@@ -21,9 +21,9 @@ namespace SoulLink.Models
     /// </summary>
     public enum RoomKind
     {
-        /// <summary>私人·四人：一个房间，满 4 人发车</summary>
+        /// <summary>私人房间：一个房间，满 2-4 人发车（发车人数建房时可选）</summary>
         PrivateFour = 0,
-        /// <summary>私人·大小号：一对房间（大号房 + 小号房），各满 2 人发车</summary>
+        /// <summary>私人·大小号：一对房间（大号房 + 小号房），各自满 2-4 人发车</summary>
         PrivatePair = 1
     }
 
@@ -163,6 +163,9 @@ namespace SoulLink.Models
         /// <summary>配对角色："big" / "small" / 空。</summary>
         public string PairRole { get; set; } = "";
 
+        /// <summary>发车人数（2-4）。0 = 服务端未设置，按房间类型取默认。</summary>
+        public int DepartSize { get; set; }
+
         public List<RoomSeat> Seats { get; set; } = new();
 
         /// <summary>
@@ -184,17 +187,20 @@ namespace SoulLink.Models
         // ── 派生显示 ──
         /// <summary>
         /// 座位容量。
-        /// ★ 用户要求：房间不设人数上限（人多时按需扩展）。
-        ///   发车判定用"需求人数"，而不是容量。
+        /// ★ 房间不设人数上限（人多时按需扩展），发车判定用"需求人数"。
+        ///   容量至少等于发车人数，避免 2 人房显示成 "x/4"。
         /// </summary>
-        public int Capacity => Math.Max(4, Seats.Count);
+        public int Capacity => Math.Max(RequiredCount, Seats.Count);
 
-        /// <summary>发车需要的人数（私人四人 4，大小号每边 2）。</summary>
-        public int RequiredCount => Kind switch
+        /// <summary>发车需要的人数（2-4；未设置时按房间类型取默认：大小号 2，单人房 4）。</summary>
+        public int RequiredCount
         {
-            RoomKind.PrivatePair => 2,
-            _ => 4
-        };
+            get
+            {
+                if (DepartSize >= 2 && DepartSize <= 4) return DepartSize;
+                return Kind == RoomKind.PrivatePair ? 2 : 4;
+            }
+        }
         public int FilledCount
         {
             get
@@ -217,16 +223,15 @@ namespace SoulLink.Models
 
         /// <summary>
         /// 是否可以发车。
-        ///   · 私人·四人：4 人上线
-        ///   · 私人·大小号：本房 2 人（配对房由服务端校验）
+        ///   · 单人房：上线人数达到发车人数（2-4）
+        ///   · 私人·大小号：本房上线人数达到该房发车人数（配对房由服务端整体校验）
         /// </summary>
         public bool CanDepart
         {
             get
             {
                 if (Departed) return false;
-                if (Kind == RoomKind.PrivatePair) return BigCount >= 2;
-                return OnlineCount >= 4;
+                return OnlineCount >= RequiredCount;
             }
         }
 
@@ -267,7 +272,7 @@ namespace SoulLink.Models
         public string KindText => Kind switch
         {
             RoomKind.PrivatePair => PairRole == "small" ? "私人·小号房" : "私人·大号房",
-            _ => "私人·四人"
+            _ => "私人房间"
         };
 
         public event PropertyChangedEventHandler? PropertyChanged;

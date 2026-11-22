@@ -168,6 +168,11 @@ namespace SoulLink.Services
                     flow.RunningActions.Remove(n.Id);
                     result.At = time;
                     flow.ActionResults[n.Id] = result;
+
+                    // ★★ 事件锁存消费：动作执行成功 = 该动作上游日志触点的事件「用完就清空」。
+                    //   失败不消费 —— 事件保留，下一轮按 lastFailed 重试（与既有失败重试语义一致）。
+                    if (result.Ok) LogLatch.ConsumeUpstreamOf(flow, n);
+
                     r.Triggered = true;
                     r.Steps.Add("执行「" + n.Title + "」：" + result.Message);
                     r.Message = result.Ok ? "已执行：" + n.Title : "执行失败：" + n.Title + " · " + result.Message;

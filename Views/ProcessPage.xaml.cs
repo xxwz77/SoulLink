@@ -28,7 +28,46 @@ namespace SoulLink.Views
         {
             RefreshWhitelistText();
             RebuildPolicyRows();
+            RefreshPolicySwitches();
             LoadSessions();
+        }
+
+        /// <summary>把三个开关（清理外围进程/机器级/用户级）与当前配置/注册表状态对齐。</summary>
+        private void RefreshPolicySwitches()
+        {
+            try
+            {
+                _loadingPolicySwitch = true;
+                if (KillEnabledCheck != null)
+                    KillEnabledCheck.IsChecked = App.Config?.Settings?.SessionSlimKillEnabled != false;
+                bool machine = App.Config?.Settings?.SessionSlimMachinePolicyEnabled == true
+                               || Services.SessionSlimmer.IsMachinePolicyEnabled();
+                if (MachinePolicyCheck != null) MachinePolicyCheck.IsChecked = machine;
+                if (UserPolicyCheck != null)
+                    UserPolicyCheck.IsChecked = App.Config?.Settings?.SessionSlimUserPolicyEnabled == true;
+            }
+            catch { }
+            finally { _loadingPolicySwitch = false; }
+        }
+
+        /// <summary>清理会话外围进程总开关（SessionSlimKillEnabled）。</summary>
+        private void KillEnabledCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (KillEnabledCheck == null || _loadingPolicySwitch) return;
+                bool enable = KillEnabledCheck.IsChecked == true;
+                if (App.Config?.Settings != null)
+                {
+                    App.Config.Settings.SessionSlimKillEnabled = enable;
+                    ConfigStore.Save(App.Config);
+                }
+                // 开关变化后刷新「清理」按钮可用性：关闭总开关时不允许点清理。
+                RefreshSlimSummary(_current?.Id ?? 0);
+                Services.LogBus.Write(Services.LogLevel.Ok, "会话瘦身总开关",
+                    enable ? "已开启：可清理外围进程" : "已关闭：不再清理任何外围进程");
+            }
+            catch (Exception ex) { Services.LogBus.Error("会话瘦身总开关设置失败", ex.Message); }
         }
 
         /// <summary>指定要查看的会话（从「在线会话」页跳转过来）。</summary>
@@ -325,7 +364,9 @@ namespace SoulLink.Views
                     parts.Append("　需启动项优化 ").Append(st.PolicyOnly).Append(" 个 / ").Append(policyMb).Append(" MB");
                 SlimSummary.Text = parts.ToString();
 
-                BtnSlim.IsEnabled = st.Killable > 0;
+                // ★ 总开关关闭时，「清理」按钮不可点（Slim() 里也会二次拦截）。
+                bool killEnabled = App.Config?.Settings?.SessionSlimKillEnabled != false;
+                BtnSlim.IsEnabled = killEnabled && st.Killable > 0;
             }
             catch (Exception ex) { SlimSummary.Text = "统计失败：" + ex.Message; }
         }
@@ -335,6 +376,13 @@ namespace SoulLink.Views
             try
             {
                 if (_current == null || _current.Id <= 0) return;
+                // ★ 总开关关闭时直接拒绝（Slim() 内部也会拦截，这里给用户明确反馈）。
+                if (App.Config?.Settings?.SessionSlimKillEnabled == false)
+                {
+                    Views.ThemedMessage.Info(Window.GetWindow(this), "会话瘦身已关闭",
+                        "请先在上方开启「清理会话外围进程」开关。");
+                    return;
+                }
                 int sid = _current.Id;
 
                 BtnSlim.IsEnabled = false;
@@ -382,9 +430,10 @@ namespace SoulLink.Views
                 var names = string.Join("、", picked.Select(x => x.UserName));
                 bool ok = Views.ThemedMessage.Confirm(Window.GetWindow(this),
                     "应用启动项优化",
-                    "将对以下账号关闭「小组件 / Edge 预启动 / 手机连接」的自动启动：\n\n"
+                    "将对以下账号关闭「Edge 预启动 / 后台」的自动启动：\n\n"
                     + "  " + names + "\n\n"
-                    + "只影响这些账号，其他用户完全不受影响。");
+                    + "只影响这些账号，其他用户完全不受影响。\n"
+                    + "（小组件 / 搜索是机器级设置，请用下方「全机设置」开关。）");
                 if (!ok) return;
 
                 BtnPolicy.IsEnabled = false;
@@ -407,6 +456,84 @@ namespace SoulLink.Views
                 Services.LogBus.Error("启动项优化失败", ex.Message);
             }
         }
+
+        private async void MachinePolicyCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (MachinePolicyCheck == null) return;
+                bool enable = MachinePolicyCheck.IsChecked == true;
+                // ★ 首次刷新时 IsChecked 赋值也会触发事件，用 _loadingPolicySwitch 挡住回写
+                if (_loadingPolicySwitch) return;
+
+                if (enable)
+                {
+                    bool ok = Views.ThemedMessage.Confirm(Window.GetWindow(this),
+                        "启用全机设置",
+                        "将写入机器级组策略（HKLM，需管理员）：\n\n"
+                        + "  · 关闭小组件面板（Win+W 失效、任务栏小组件图标消失）\n"
+                        + "  · 关闭任务栏搜索（搜索框消失、开始菜单打字搜索失效）\n\n"
+                        + "影响这台机器的所有用户（含主控制台）。开始菜单本体与资源管理器搜索正常。\n"
+                        + "对已登录会话，杀掉对应进程即不再自动重启。");
+                    if (!ok) { RefreshPolicySwitches(); return; }
+
+                    var r = await Task.Run(() => Services.SessionSlimmer.ApplyMachinePolicy(true)).ConfigureAwait(true);
+                    if (App.Config?.Settings != null) { App.Config.Settings.SessionSlimMachinePolicyEnabled = r.Ok; ConfigStore.Save(App.Config); }
+                    Services.LogBus.Write(r.Ok ? Services.LogLevel.Ok : Services.LogLevel.Error, "全机设置", r.Message);
+                    Views.ThemedMessage.Info(Window.GetWindow(this), "全机设置", r.Message);
+                    if (!r.Ok) RefreshPolicySwitches();
+                }
+                else
+                {
+                    var r = await Task.Run(() => Services.SessionSlimmer.ApplyMachinePolicy(false)).ConfigureAwait(true);
+                    if (App.Config?.Settings != null) { App.Config.Settings.SessionSlimMachinePolicyEnabled = false; ConfigStore.Save(App.Config); }
+                    Services.LogBus.Write(r.Ok ? Services.LogLevel.Ok : Services.LogLevel.Error, "全机设置回滚", r.Message);
+                    Views.ThemedMessage.Info(Window.GetWindow(this), "全机设置回滚", r.Message);
+                    RefreshPolicySwitches();
+                }
+            }
+            catch (Exception ex)
+            {
+                Services.LogBus.Error("全机设置失败", ex.Message);
+                RefreshPolicySwitches();
+            }
+        }
+
+        private async void RevertMachine_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var r = await Task.Run(() => Services.SessionSlimmer.ApplyMachinePolicy(false)).ConfigureAwait(true);
+                if (App.Config?.Settings != null) { App.Config.Settings.SessionSlimMachinePolicyEnabled = false; ConfigStore.Save(App.Config); }
+                RefreshPolicySwitches();
+                Services.LogBus.Write(r.Ok ? Services.LogLevel.Ok : Services.LogLevel.Error, "全机设置回滚", r.Message);
+                Views.ThemedMessage.Info(Window.GetWindow(this), "全机设置回滚", r.Message);
+            }
+            catch (Exception ex)
+            {
+                Services.LogBus.Error("全机设置回滚失败", ex.Message);
+                RefreshPolicySwitches();
+            }
+        }
+
+        private void UserPolicyCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (UserPolicyCheck == null || _loadingPolicySwitch) return;
+                bool enable = UserPolicyCheck.IsChecked == true;
+                if (App.Config?.Settings != null)
+                {
+                    App.Config.Settings.SessionSlimUserPolicyEnabled = enable;
+                    ConfigStore.Save(App.Config);
+                }
+                Services.LogBus.Write(Services.LogLevel.Ok, "Edge 预启动策略",
+                    enable ? "已开启：注入代理下次启动时写入该账号 HKCU" : "已关闭：注入代理下次启动时删值恢复默认");
+            }
+            catch (Exception ex) { Services.LogBus.Error("Edge 预启动策略设置失败", ex.Message); }
+        }
+
+        private bool _loadingPolicySwitch;
 
         private void ApplyFilter()
         {
@@ -456,6 +583,13 @@ namespace SoulLink.Views
 
 
         private void Refresh_Click(object sender, RoutedEventArgs e) => _ = LoadSessionsAsync(_current);
+
+        /// <summary>打开「会话瘦身说明」弹窗。</summary>
+        private void OpenSlimHelp_Click(object sender, RoutedEventArgs e)
+        {
+            try { SessionsSlimPage.ShowFor(Window.GetWindow(this)); }
+            catch (Exception ex) { Services.LogBus.Error("打开会话瘦身说明失败", ex.Message); }
+        }
 
         private void Grid_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {

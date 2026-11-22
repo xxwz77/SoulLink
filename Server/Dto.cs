@@ -25,6 +25,8 @@ public sealed class RoomDto
     public string PairId { get; set; } = "";
     public string PairRole { get; set; } = "";
     public bool Departed { get; set; }
+    /// <summary>发车人数（2-4）。单人房与大小号房的每一间各自独立。</summary>
+    public int DepartSize { get; set; }
     public DateTime LastActiveAt { get; set; }
     public List<SeatDto> Seats { get; set; } = new();
 }
@@ -45,6 +47,8 @@ public sealed class CreateRoomRequest
     public string Title { get; set; } = "";
     public string Code { get; set; } = "";
     public int Kind { get; set; }
+    /// <summary>发车人数（2-4）。缺省/越界时按房间类型取默认（单人房 4）。</summary>
+    public int DepartSize { get; set; }
 }
 
 public sealed class CreatePairRequest
@@ -52,6 +56,10 @@ public sealed class CreatePairRequest
     public string Title { get; set; } = "";
     public string BigCode { get; set; } = "";
     public string SmallCode { get; set; } = "";
+    /// <summary>大号房发车人数（2-4，缺省 2）。</summary>
+    public int BigSize { get; set; }
+    /// <summary>小号房发车人数（2-4，缺省 2）。</summary>
+    public int SmallSize { get; set; }
 }
 
 public sealed class JoinRequest

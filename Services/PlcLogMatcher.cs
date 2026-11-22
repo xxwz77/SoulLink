@@ -32,6 +32,29 @@ namespace SoulLink.Services
             try { _ = new Regex(pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(300)); return true; } catch { return false; }
         }
 
+        /// <summary>
+        /// 对**一行**文本判断是否命中（不查时间戳）。
+        /// 供事件化触点逐行消费使用；时间窗电平查询继续用 <see cref="Contains"/>。
+        /// </summary>
+        public static bool MatchText(string line, string pattern, bool regex, string level)
+        {
+            if (string.IsNullOrWhiteSpace(pattern)) return false;
+            Regex? rx = null;
+            try
+            {
+                if (regex)
+                {
+                    rx = PatternCache.GetOrAdd(pattern, p => new Regex(p, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(300)));
+                    if (PatternCache.Count > 128) PatternCache.Clear();
+                }
+            }
+            catch { return false; }
+            var m = Prefix.Match(line);
+            if (m.Success && level.Length > 0 && !string.Equals(m.Groups["level"].Value, level, StringComparison.OrdinalIgnoreCase))
+                return false;
+            return rx?.IsMatch(line) == true || (!regex && line.Contains(pattern, StringComparison.OrdinalIgnoreCase));
+        }
+
         public static bool HasError(string text, int seconds, DateTime now)
             => Scan(text, "", seconds, now, line => line.Contains("[ERR]", StringComparison.OrdinalIgnoreCase) || line.Contains("执行失败", StringComparison.Ordinal) || line.Contains("未成功完成", StringComparison.Ordinal) || line.Contains("发生异常", StringComparison.Ordinal));
         private static bool Scan(string text, string level, int seconds, DateTime now, Func<string,bool> match)

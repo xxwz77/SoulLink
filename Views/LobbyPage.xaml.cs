@@ -16,8 +16,8 @@ namespace SoulLink.Views
     /// 联机大厅。
     ///
     /// ★ 只有私人房间（无固定房间、无公共池）：
-    ///   · 私人·四人   —— 一个房间，满 4 人发车
-    ///   · 私人·大小号 —— 一对房间（大号房 + 小号房），各满 2 人发车
+    ///   · 私人房   —— 一个房间，满 2-4 人发车（建房时可选）
+    ///   · 私人·大小号 —— 一对房间（大号房 + 小号房），各自满 2-4 人发车
     ///
     /// 房间码 = 通行证，不对外展示（只有创建者能看到）。
     /// 身份 = Windows 账号名，不需要登录。
@@ -28,6 +28,8 @@ namespace SoulLink.Views
         private readonly List<LobbyRoom> _rooms = new();
         private LobbyRoom? _selected;
         private IDisposable? _autoSub;
+        private readonly object _pageKey = new();
+        private bool _isPageActive;
 
         public LobbyPage()
         {
@@ -42,7 +44,7 @@ namespace SoulLink.Views
                 Role = UserRole.Member
             };
 
-            // 服务端地址从配置读（空则用默认）
+            // 服务端地址从配置读（空 = 未配置，不发任何请求）
             LobbyApi.LoadFromConfig();
             UpdateServerText();
 
@@ -51,28 +53,12 @@ namespace SoulLink.Views
             LobbyConnection.Instance.Start();
             UpdateConnIndicator(LobbyConnection.Instance.State, "");
 
-            // 首次加载（异步，不阻塞窗口）
-            _ = ReloadAsync();
-
-            // ★ 每 5 秒自动刷新一次（别人建房/加入/离开都能实时看到）
-            // ★ 改用统一节拍（TickHub）：5 秒一跳。
-            _autoSub = Services.TickHub.Register("LobbyPage", 5, async () =>
-            {
-            try
-            {
-                // 正在拖拽/弹窗时不刷新，避免打断操作
-                if (!IsVisible) return;
-
-                // ReloadAsync 内部已包含详情重渲染
-                await ReloadAsync().ConfigureAwait(true);
-            }
-            catch { }
-            });
-
             Unloaded += (_, __) =>
             {
                 LobbyConnection.Instance.StateChanged -= OnConnStateChanged;
-                // TickHub 自行管理节拍
+                StopPolling();
+                LobbyConnection.Instance.Release(_pageKey);
+                LobbyConnection.Instance.SetInRoom(false);
             };
 
             if (_rooms.Count == 0)
@@ -82,6 +68,63 @@ namespace SoulLink.Views
                     FontSize = 11.5, TextWrapping = TextWrapping.Wrap,
                     Foreground = (Brush)FindResource("TextMuted")
                 });
+        }
+
+        /// <summary>
+        /// 切到本页：声明「正在看联机页」活动 + 启动 5 秒房间列表轮询。
+        /// ★ 只有本页可见时才轮询，离开即停（按需访问）。
+        /// </summary>
+        public void OnPageActivated()
+        {
+            _isPageActive = true;
+            LobbyConnection.Instance.Acquire(_pageKey);
+            StartPolling();
+            _ = ReloadAsync();
+        }
+
+        /// <summary>
+        /// 切走本页：释放「正在看联机页」活动 + 停止轮询。
+        /// ★ 若本机仍在某个房间里，LobbyConnection.SetInRoom 会单独保持心跳。
+        /// </summary>
+        public void OnPageDeactivated()
+        {
+            _isPageActive = false;
+            StopPolling();
+            LobbyConnection.Instance.Release(_pageKey);
+        }
+
+        /// <summary>启动房间列表轮询（每 5 秒，走 TickHub）。</summary>
+        private void StartPolling()
+        {
+            if (_autoSub != null) return;
+            _autoSub = Services.TickHub.Register("LobbyPage", 5, async () =>
+            {
+                try
+                {
+                    if (!_isPageActive) return;
+                    await ReloadAsync().ConfigureAwait(true);
+                }
+                catch { }
+            });
+        }
+
+        private void StopPolling()
+        {
+            _autoSub?.Dispose();
+            _autoSub = null;
+        }
+
+        /// <summary>
+        /// 依据最新房间列表，告知连接层本机是否在房间里（在房间则常驻心跳）。
+        /// 房间列表拉完后调用。
+        /// </summary>
+        private void UpdateInRoomStatus()
+        {
+            string myDevice = DeviceIdentity.Code;
+            bool inRoom = _rooms.Any(r => r.Seats.Any(s =>
+                string.Equals(s.UserId, myDevice, StringComparison.OrdinalIgnoreCase)
+                && (s.State == SeatState.Online || s.State == SeatState.PoolOnline)));
+            LobbyConnection.Instance.SetInRoom(inRoom);
         }
 
         private static bool IsLocalAdmin(string user)
@@ -102,9 +145,7 @@ namespace SoulLink.Views
         {
             _ = ReloadAsync();
             if (_selected != null) RenderDetail(_selected);
-        }
-
-        // ══════════ 数据同步 ══════════
+        }        // ══════════ 数据同步 ══════════
 
         /// <summary>
         /// 从服务器拉取房间列表。
@@ -118,6 +159,30 @@ namespace SoulLink.Views
 
                 if (!ok)
                 {
+                    // ★ 未配置服务器地址：不显示"连不上"报错，静默提示去设置地址。
+                    if (!LobbyApi.HasServer)
+                    {
+                        SubText.Text = "";
+                        _rooms.Clear();
+                        RoomList.Children.Clear();
+                        RoomList.Children.Add(new Border
+                        {
+                            Padding = new Thickness(0, 40, 0, 0),
+                            Child = new TextBlock
+                            {
+                                Text = "尚未配置服务器。\n\n点顶部「服务器」填写新的服务器地址后即可使用联机。",
+                                FontSize = 12,
+                                Foreground = (Brush)FindResource("TextMuted"),
+                                HorizontalAlignment = HorizontalAlignment.Center,
+                                TextAlignment = TextAlignment.Center,
+                                TextWrapping = TextWrapping.Wrap,
+                                LineHeight = 22
+                            }
+                        });
+                        LobbyConnection.Instance.SetInRoom(false);
+                        return;
+                    }
+
                     SubText.Text = "连不上服务器：" + msg;
                     _rooms.Clear();
                     RoomList.Children.Clear();
@@ -138,6 +203,7 @@ namespace SoulLink.Views
                             LineHeight = 22
                         }
                     });
+                    LobbyConnection.Instance.SetInRoom(false);
                     return;
                 }
 
@@ -156,7 +222,8 @@ namespace SoulLink.Views
                         OwnerName = dto.OwnerDevice == myDevice ? "我" : ShortDevice(dto.OwnerDevice),
                         Departed = dto.Departed,
                         PairId = dto.PairId,
-                        PairRole = dto.PairRole
+                        PairRole = dto.PairRole,
+                        DepartSize = dto.DepartSize
                     };
 
                     foreach (var s in dto.Seats)
@@ -172,6 +239,9 @@ namespace SoulLink.Views
                     }
                     _rooms.Add(r);
                 }
+
+                // ★ 本机是否在房间里 → 决定是否常驻心跳
+                UpdateInRoomStatus();
             }
             catch (Exception ex)
             {
@@ -300,7 +370,7 @@ namespace SoulLink.Views
             int mine = _rooms.Count(r =>
                 string.Equals(r.OwnerId, DeviceIdentity.Code, StringComparison.OrdinalIgnoreCase));
 
-            SubText.Text = "共 " + _rooms.Count + " 个房间（四人 " + four
+            SubText.Text = "共 " + _rooms.Count + " 个房间（私人 " + four
                          + " · 大小号 " + pair + "）· 我的 " + mine + " 个";
 
             if (list.Count == 0)
@@ -700,8 +770,12 @@ namespace SoulLink.Views
 
                 int bOn = big?.Seats.Count(s => s.State == SeatState.Online) ?? 0;
                 int sOn = small?.Seats.Count(s => s.State == SeatState.Online) ?? 0;
+                int bNeed = big?.RequiredCount ?? 2;
+                int sNeed = small?.RequiredCount ?? 2;
                 AddRow("在线", "大号 " + bOn + " 人 · 小号 " + sOn + " 人");
-                AddRow("发车", (bOn >= 2 && sOn >= 2) ? "✓ 可以发车" : "两边各满 2 人才能发车");
+                AddRow("发车", (bOn >= bNeed && sOn >= sNeed)
+                    ? "✓ 可以发车"
+                    : "大号满 " + bNeed + " · 小号满 " + sNeed + " 才能发车");
 
                 // ── 两个子区块 ──
                 DetailPanel.Children.Add(PairDetailBlock(big, "大号房", "这里是大号（真人）",
@@ -717,7 +791,7 @@ namespace SoulLink.Views
                           || (small?.Seats.Any(s => string.Equals(s.UserId, myDev, StringComparison.OrdinalIgnoreCase)) ?? false);
 
                 BtnJoin.Visibility = iAmIn ? Visibility.Collapsed : Visibility.Visible;
-                BtnDepart.Visibility = (isOwner && bOn >= 2 && sOn >= 2)
+                BtnDepart.Visibility = (isOwner && bOn >= bNeed && sOn >= sNeed)
                     ? Visibility.Visible : Visibility.Collapsed;
                 BtnEditCode.Visibility = isOwner ? Visibility.Visible : Visibility.Collapsed;
                 BtnLeave.Visibility = iAmIn ? Visibility.Visible : Visibility.Collapsed;
@@ -725,7 +799,7 @@ namespace SoulLink.Views
                 return;
             }
 
-            // ── 普通房间（私人·四人）──
+            // ── 普通房间（私人，发车人数 2-4）──
             DetailTitle.Text = r.Title;
 
             bool isOwner4 = string.Equals(r.OwnerId, DeviceIdentity.Code, StringComparison.OrdinalIgnoreCase);
@@ -737,6 +811,7 @@ namespace SoulLink.Views
             AddRow("房主", r.OwnerName);
             if (r.Code.Length > 0) AddRow("房间码", r.Code, mono: true);
             AddRow("在线", r.Seats.Count(s => s.State == SeatState.Online) + " 人");
+            AddRow("发车", "满 " + r.RequiredCount + " 人发车");
 
             var online = r.Seats.Where(s => s.State == SeatState.Online).ToList();
 
@@ -1001,17 +1076,24 @@ namespace SoulLink.Views
                 r.OwnerId == _me.UserName && r.Kind == RoomKind.PrivateFour);
             if (exist != null)
             {
-                ThemedMessage.Info(Window.GetWindow(this), "提示", "你已经有一个私人·四人房了：「" + exist.Title + "」。\n\n"
+                ThemedMessage.Info(Window.GetWindow(this), "提示", "你已经有一个私人房间了：「" + exist.Title + "」。\n\n"
                     + "每种模式各能建一个，可以先关掉原来的再建。");
                 await SelectRoomAsync(exist);
                 return;
             }
 
-            var nameDlg = new InputDialogWindow("房间名称", "给自己房间起个名字", _me.DisplayName + " 的四人房");
+            var nameDlg = new InputDialogWindow("房间名称", "给自己房间起个名字", _me.DisplayName + " 的房间");
             if (Window.GetWindow(this) is Window o1) nameDlg.Owner = o1;
             if (nameDlg.ShowDialog() != true) return;
             string title = (nameDlg.ResultText ?? "").Trim();
             if (title.Length == 0) { ThemedMessage.Info(Window.GetWindow(this), "提示", "房间名称不能为空。"); return; }
+
+            // ★ 发车人数 2-4 可配
+            var sizeDlg = new LobbyDepartSizeWindow("发车人数",
+                "这个房间满多少人自动发车（2-4 人可选）。", 4);
+            if (Window.GetWindow(this) is Window os) sizeDlg.Owner = os;
+            if (sizeDlg.ShowDialog() != true) return;
+            int departSize = sizeDlg.SelectedSize;
 
             while (true)
             {
@@ -1024,7 +1106,7 @@ namespace SoulLink.Views
                 string code = (codeDlg.ResultText ?? "").Trim();
                 if (code.Length == 0) { ThemedMessage.Info(Window.GetWindow(this), "提示", "房间码不能为空。"); continue; }
 
-                var res = await LobbyApi.CreateFourAsync(title, code).ConfigureAwait(true);
+                var res = await LobbyApi.CreateFourAsync(title, code, departSize).ConfigureAwait(true);
                 if (!res.Ok) { ThemedMessage.Info(Window.GetWindow(this), "提示", res.Message); return; }
 
                 await ReloadAsync();
@@ -1032,6 +1114,7 @@ namespace SoulLink.Views
                 if (created != null) await SelectRoomAsync(created);
 
                 ThemedMessage.Info(Window.GetWindow(this), "提示", "房间已创建。\n\n名称：" + title + "\n房间码：" + code
+                    + "\n发车人数：" + departSize + " 人"
                     + "\n\n★ 房间码只你自己能看到，把它发给队友，他们点「加入房间」填码进来。");
                 return;
             }
@@ -1055,6 +1138,20 @@ namespace SoulLink.Views
             string title = (nameDlg.ResultText ?? "").Trim();
             if (title.Length == 0) { ThemedMessage.Info(Window.GetWindow(this), "提示", "房间名称不能为空。"); return; }
 
+            // ★ 大号房发车人数（2-4）
+            var bigSizeDlg = new LobbyDepartSizeWindow("大号房发车人数",
+                "大号房满多少人发车（2-4 人可选）。", 2);
+            if (Window.GetWindow(this) is Window ob) bigSizeDlg.Owner = ob;
+            if (bigSizeDlg.ShowDialog() != true) return;
+            int bigSize = bigSizeDlg.SelectedSize;
+
+            // ★ 小号房发车人数（2-4）
+            var smallSizeDlg = new LobbyDepartSizeWindow("小号房发车人数",
+                "小号房满多少人发车（2-4 人可选）。", 2);
+            if (Window.GetWindow(this) is Window os2) smallSizeDlg.Owner = os2;
+            if (smallSizeDlg.ShowDialog() != true) return;
+            int smallSize = smallSizeDlg.SelectedSize;
+
             var bigDlg = new InputDialogWindow("大号房房间码", "给大号房设一个码", "");
             if (Window.GetWindow(this) is Window o2) bigDlg.Owner = o2;
             if (bigDlg.ShowDialog() != true) return;
@@ -1072,7 +1169,7 @@ namespace SoulLink.Views
                 if (string.Equals(smallCode, bigCode, StringComparison.OrdinalIgnoreCase))
                 { ThemedMessage.Info(Window.GetWindow(this), "提示", "大号房和小号房不能用同一个码。"); continue; }
 
-                var res = await LobbyApi.CreatePairAsync(title, bigCode, smallCode).ConfigureAwait(true);
+                var res = await LobbyApi.CreatePairAsync(title, bigCode, smallCode, bigSize, smallSize).ConfigureAwait(true);
                 if (!res.Ok) { ThemedMessage.Info(Window.GetWindow(this), "提示", res.Message); return; }
 
                 await ReloadAsync();
@@ -1080,9 +1177,9 @@ namespace SoulLink.Views
                 if (created != null) await SelectRoomAsync(created);
 
                 ThemedMessage.Info(Window.GetWindow(this), "提示", "成对房间已创建。\n\n" + title + "\n"
-                    + "大号房码：" + bigCode + "（满 2 个大号）\n"
-                    + "小号房码：" + smallCode + "（满 2 个小号）\n\n"
-                    + "两边都满 2 人才能发车。这两个码只有你能看到。");
+                    + "大号房码：" + bigCode + "（满 " + bigSize + " 个大号）\n"
+                    + "小号房码：" + smallCode + "（满 " + smallSize + " 个小号）\n\n"
+                    + "两边都满各自人数才能发车。这两个码只有你能看到。");
                 return;
             }
         }

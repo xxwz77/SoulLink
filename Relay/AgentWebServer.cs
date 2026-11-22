@@ -254,8 +254,9 @@ namespace SoulLink.Relay
         ///   直接复用代理既有的指令分发（RelayAgent.Execute），语义与管道通道完全一致，
         ///   所以网页点击/按键与桌面控制台的行为不会出现两套实现漂移。
         ///
-        ///   请求体：{ "action": "click|down|up|move|wheel|key", "x":0.5, "y":0.5,
-        ///              "button":"left", "delta":120, "key":"Ctrl+Shift+A", "count":1 }
+        ///   请求体：{ "action": "click|down|up|move|wheel|key|keydown|keyup|moverel|text",
+        ///              "x":0.5, "y":0.5, "button":"left", "delta":120,
+        ///              "key":"Ctrl+Shift+A", "text":"你好", "dx":10, "dy":-5, "count":1 }
         ///   坐标是 **0~1 的相对值**，由代理按本会话实际分辨率换算。
         /// </summary>
         private static async Task HandleInputAsync(HttpListenerContext ctx)
@@ -279,24 +280,35 @@ namespace SoulLink.Relay
                 string cmd;
                 switch ((dto.action ?? "").ToLowerInvariant())
                 {
-                    case "click": cmd = "click"; break;
-                    case "down":  cmd = "down";  break;
-                    case "up":    cmd = "up";    break;
-                    case "move":  cmd = "move";  break;
-                    case "wheel": cmd = "wheel"; break;
-                    case "key":   cmd = "key";   break;
+                    case "click":   cmd = "click";   break;
+                    case "down":    cmd = "down";    break;
+                    case "up":      cmd = "up";      break;
+                    case "move":    cmd = "move";    break;
+                    case "wheel":   cmd = "wheel";   break;
+                    case "key":     cmd = "key";     break;
+                    case "keydown": cmd = "keydown"; break;
+                    case "keyup":   cmd = "keyup";   break;
+                    case "moverel": cmd = "moverel"; break;
+                    case "text":    cmd = "text";    break;
                     default:
                         await WriteJson(ctx, new { ok = false, error = "未知动作 " + dto.action }).ConfigureAwait(false);
                         return;
                 }
 
+                // key / keydown / keyup 复用 key 字段；text 走 text 字段；
+                // click / down / up 走 button 字段（与老网页语义一致）。
+                string keyName = cmd == "text" ? (dto.text ?? "") : (dto.key ?? "");
                 var req = new RelayAgent.Request
                 {
                     Cmd = cmd,
                     X = Math.Clamp(px, 0, w - 1),
                     Y = Math.Clamp(py, 0, h - 1),
                     Move = (cmd == "click" && px >= 0) ? 1 : 0,
-                    Button = cmd == "key" ? (dto.key ?? "") : (dto.button ?? "left"),
+                    Button = (cmd == "key" || cmd == "keydown" || cmd == "keyup" || cmd == "text")
+                        ? keyName
+                        : (dto.button ?? "left"),
+                    Dx = dto.dx,
+                    Dy = dto.dy,
                     Delta = dto.delta,
                     Count = dto.count
                 };
@@ -316,8 +328,11 @@ namespace SoulLink.Relay
             public string? action { get; set; }
             public double x { get; set; } = -1;
             public double y { get; set; } = -1;
+            public int dx { get; set; }
+            public int dy { get; set; }
             public string? button { get; set; }
             public string? key { get; set; }
+            public string? text { get; set; }
             public int delta { get; set; }
             public int count { get; set; } = 1;
         }

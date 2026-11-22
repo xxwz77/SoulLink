@@ -99,7 +99,7 @@ namespace SoulLink.Services
                 }
 
                 var r = await PlcScanEngine.ScanAsync(flow,
-                    n => ReadContactAsync(n, flow, sessionId, cfg, manual, time),
+                    n => ReadContactAsync(n, flow, sessionId, cfg, manual, time, mutable: true),
                     n => WriteOutputAsync(n, flow, sessionId, cfg), manual,
                     now: time, checkpoint: async _ => { if (cfg.Automations.Contains(flow)) await Task.Run(() => ConfigStore.Save(cfg)).ConfigureAwait(false); }).ConfigureAwait(false);
                 flow.EnsurePlcModel();
@@ -214,9 +214,9 @@ namespace SoulLink.Services
         }
 
         internal static Task<PlcSignal> ReadPreviewContactAsync(FlowNode n, AutomationFlow flow, int sessionId, AppConfig cfg, DateTime time)
-            => ReadContactAsync(n, flow, sessionId, cfg, false, time);
+            => ReadContactAsync(n, flow, sessionId, cfg, false, time, mutable: false);
 
-        private static async Task<PlcSignal> ReadContactAsync(FlowNode n, AutomationFlow flow, int flowSessionId, AppConfig cfg, bool manual, DateTime time)
+        private static async Task<PlcSignal> ReadContactAsync(FlowNode n, AutomationFlow flow, int flowSessionId, AppConfig cfg, bool manual, DateTime time, bool mutable)
         {
             string accountId = TargetAccountId(n, flow.AccountId, cfg);
             int sid = TargetSessionId(n, flow.AccountId, flowSessionId, cfg);
@@ -322,6 +322,18 @@ namespace SoulLink.Services
                     //   未绑定 BGI 路径 → 没有数据 → 条件不满足（编辑器里已不列出这类账号）。
                     string text = state?.RecentLog ?? "";
                     int within = Math.Max(1, n.GetInt("withinSeconds", n.Type == FlowNodeType.TrigLogMatch ? 10 : 120));
+
+                    // ★★ 事件锁存（用户方案）：TrigLogMatch 改成「出现即锁存，动作消费后清空」，
+                    //   不再按最近 N 秒时间窗判断，解决「抓日志只能触发一次」。
+                    //   CondLogContains / CondLogMissing 保持电平语义（见 LOG-LATCH-DESIGN）。
+                    if (n.Type == FlowNodeType.TrigLogMatch)
+                    {
+                        var tail0 = state?.LogTail ?? Array.Empty<BgiLogLine>();
+                        var refs = new LogLineRef[tail0.Count];
+                        for (int i = 0; i < tail0.Count; i++) refs[i] = new LogLineRef(tail0[i].Seq, tail0[i].Level, tail0[i].Text);
+                        return LogLatch.Scan(flow, n, refs, state?.LogTailSeq ?? 0, now, mutable);
+                    }
+
                     if (text.Length == 0 || !PlcLogMatcher.ValidPattern(n.Get("pattern"), n.GetBool("isRegex", false))) return new PlcSignal(false,false);
                     bool hit = PlcLogMatcher.Contains(text, n.Get("pattern"), n.GetBool("isRegex", false), n.Get("level"), within, now);
                     return n.Type == FlowNodeType.CondLogMissing ? !hit : hit;

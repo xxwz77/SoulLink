@@ -99,6 +99,13 @@ namespace SoulLink.Services
             public readonly Queue<BgiLogLine> Tail = new();
             public int TailChars;
 
+            /// <summary>
+            /// 该账号日志流的下一个行序号（单调递增，跨天滚动/文件重建后不归零）。
+            /// ★ 日志触点的「事件锁存」靠它识别「新增行」，与时间窗无关。
+            ///   仅当整份 Entries 被清空（清账号）时才真正归零。
+            /// </summary>
+            public long NextSeq = 1;
+
             public BgiStatus Status = new();
 
             /// <summary>最近一条带时间戳的日志时刻（无时间戳的续行沿用）。</summary>
@@ -139,6 +146,9 @@ namespace SoulLink.Services
                 Status = new BgiStatus();
                 LastEventAt = DateTime.MinValue;
                 Primed = false;
+                // 行序号**不**归零：跨天滚动后新文件首行接着上一行的序号，
+                // 触点事件游标才不会被「同一天的文件重建」误判成回退。
+                _ = NextSeq;
             }
         }
 
@@ -676,6 +686,10 @@ namespace SoulLink.Services
             try { e.Status.Update(chunk); } catch { }
             try { e.Groups.Update(chunk); } catch { }
             try { DailyStatsCache.Accumulate(e.Today, chunk); } catch { }
+            // ★ 台账：把"配置组运行事件 × 收益事件"按时间窗归因成一条条记录。
+            //   只做内存归因，文件写 IO 由 RouteLedger 后台线程承担（不在 UI 线程）。
+            //   挂在这里 = 挂在现有增量解析路径上，不新增定时器。
+            try { RouteLedger.Feed(e.UserName, chunk); } catch { }
 
             // ② 逐行处理：粘性配置组 / 拾取分组 / 报错计数 / 尾窗。
             var lines = chunk.Split('\n');
@@ -790,7 +804,7 @@ namespace SoulLink.Services
         {
             // 太长的行截断，避免单行撑爆预算。
             if (text.Length > 400) text = text.Substring(0, 400) + "…";
-            e.Tail.Enqueue(new BgiLogLine(at, level, text));
+            e.Tail.Enqueue(new BgiLogLine(at, level, text, e.NextSeq++));
             e.TailChars += text.Length + 24;
             while (e.Tail.Count > TailMaxLines || e.TailChars > TailBudgetChars)
             {
@@ -866,6 +880,7 @@ namespace SoulLink.Services
                 WarnCount = e.WarnCount,
                 FailCount = e.FailCount,
                 Tail = e.Tail.ToArray(),
+                LastSeq = e.NextSeq - 1,
                 UpdatedAt = DateTime.Now,
                 Error = e.Error
             };

@@ -93,6 +93,15 @@ tools/*
 !tools/rescue
 !tools/rescue/Program.cs
 !tools/rescue/Rescue.csproj
+
+# ★ 媒体能力探测（DXGI 桌面复制 / 硬件编码器可用性）——
+# 决定 60fps 直播走哪条路；也是以后换抓屏方式时的复用诊断工具，源码必须入库。
+!tools/media-probe
+!tools/media-probe/Program.cs
+!tools/media-probe/MfProbe.cs
+!tools/media-probe/Conclusion.cs
+!tools/media-probe/MediaProbe.csproj
+!tools/media-probe/README.md
 # ── 本地构建 / 发布 / 备份产物（体积大，不入库；2026-11-20 补）────────────
 # 为什么补：git add -A 会把 7.4 GB 的 dist-*/backups/artifacts/releases 全吞进去。
 dist-*/

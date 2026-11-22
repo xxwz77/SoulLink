@@ -77,7 +77,7 @@ namespace SoulLink.Models
             D(FlowNodeType.TrigInterval,FlowNodeKind.Condition,"定时·间隔","每到间隔时满足一次，随后恢复不满足","\uE916",P("intervalSeconds","间隔秒","600",FlowParamKind.Number));
             D(FlowNodeType.TrigSessionOnline,FlowNodeKind.Condition,"会话在线","目标账号的会话当前在线","\uE7EE");
             D(FlowNodeType.TrigManual,FlowNodeKind.Condition,"手动","仅点击「立即运行」时满足","\uE768");
-            D(FlowNodeType.TrigLogMatch,FlowNodeKind.Condition,"日志匹配","目标账号日志在时间窗内匹配关键字或正则","\uE8A5",
+            D(FlowNodeType.TrigLogMatch,FlowNodeKind.Condition,"日志匹配","日志出现一次即锁存并触发，动作执行成功后清空；不依赖最近多少秒","\uE8A5",
                 P("pattern","匹配内容"),P("isRegex","按正则匹配","false",FlowParamKind.Bool),P("withinSeconds","最近多少秒","10",FlowParamKind.Number),
                 P("level","只匹配级别","",FlowParamKind.Select,"",false,"全部|","INF|INF","WRN|WRN","ERR|ERR"));
             D(FlowNodeType.TrigBgiIdle,FlowNodeKind.Condition,"BGI 空闲","BGI 在运行且日志持续 N 秒未更新","\uE916",P("idleSeconds","空闲秒数","300",FlowParamKind.Number));

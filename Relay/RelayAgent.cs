@@ -98,6 +98,16 @@ namespace SoulLink.Relay
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> PressedButtons
             = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// 当前处于按下状态的**键盘虚拟键**（keydown 按下后记录，keyup/释放后移除）。
+        ///
+        /// ★ 会话隔离：代理进程只在**一个目标会话**内运行（宿主按会话各投一个代理），
+        ///   所以这份静态集合天然就是"该会话按住的所有键"；不同会话各有一个代理进程，
+        ///   互不共享。断线释放（ReleaseAllKeys）就靠它。
+        /// </summary>
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<ushort, bool> PressedKeys
+            = new System.Collections.Concurrent.ConcurrentDictionary<ushort, bool>();
+
         // ── 键盘模拟（自动化流程用）──────────────────────────────
 
         [StructLayout(LayoutKind.Sequential)]
@@ -157,6 +167,7 @@ namespace SoulLink.Relay
 
         private const uint INPUT_KEYBOARD = 1;
         private const uint KEYEVENTF_KEYUP = 0x0002;
+        private const uint KEYEVENTF_UNICODE = 0x0004;
 
         /// <summary>发送 "F12" / "Ctrl+A" / "Alt+F4" 这类按键组合。</summary>
         private static bool SendKeyCombo(string spec, out string error)
@@ -211,64 +222,49 @@ namespace SoulLink.Relay
             return false;
         }
 
-        /// <summary>按键名 → 虚拟键码。</summary>
-        private static ushort ParseVk(string name)
+        /// <summary>
+        /// 发送一个 Unicode 标量值（1 或 2 个 UTF-16 码元，成对的代理对）。
+        ///
+        /// ★ KEYEVENTF_UNICODE 必须与 KEYEVENTF_KEYUP 组合使用：
+        ///   按下时 wScan 放 UTF-16 码元、dwFlags=KEYEVENTF_UNICODE；
+        ///   抬起时再 OR KEYEVENTF_KEYUP。代理对要 down+up 连续发送，不拆开。
+        /// </summary>
+        private static bool SendUnicode(string unit)
         {
-            if (string.IsNullOrWhiteSpace(name)) return 0;
-            string u = name.Trim().ToUpperInvariant();
-
-            switch (u)
+            for (int i = 0; i < unit.Length; i++)
             {
-                case "CTRL": case "CONTROL": return 0x11;
-                case "ALT": return 0x12;
-                case "SHIFT": return 0x10;
-                case "WIN": return 0x5B;
-                case "ENTER": case "RETURN": return 0x0D;
-                case "ESC": case "ESCAPE": return 0x1B;
-                case "SPACE": return 0x20;
-                case "TAB": return 0x09;
-                case "BACKSPACE": return 0x08;
-                case "DELETE": case "DEL": return 0x2E;
-                case "INSERT": case "INS": return 0x2D;
-                case "HOME": return 0x24;
-                case "END": return 0x23;
-                case "PAGEUP": return 0x21;
-                case "PAGEDOWN": return 0x22;
-                case "UP": return 0x26;
-                case "DOWN": return 0x28;
-                case "LEFT": return 0x25;
-                case "RIGHT": return 0x27;
-
-                // ★ 2.17.34：符号键。编辑器里的按键捕获会产出这些**字符**，
-                //   原来这里一个都没有 → 录了 "-" 或 "/" 会静默返回 0，
-                //   表现为"录进去了但按下去没反应"（最坑的失败形态）。
-                //   用 OemKey 的虚拟键码，与英文键盘布局一致。
-                case "-": return 0xBD;   // VK_OEM_MINUS
-                case "=": return 0xBB;   // VK_OEM_PLUS
-                case ",": return 0xBC;   // VK_OEM_COMMA
-                case ".": return 0xBE;   // VK_OEM_PERIOD
-                case "/": return 0xBF;   // VK_OEM_2
-                case ";": return 0xBA;   // VK_OEM_1
-                case "'": return 0xDE;   // VK_OEM_7
-                case "[": return 0xDB;   // VK_OEM_4
-                case "]": return 0xDD;   // VK_OEM_6
-                case "\\": return 0xDC;  // VK_OEM_5
-                case "`": return 0xC0;   // VK_OEM_3
+                for (int phase = 0; phase < 2; phase++)
+                {
+                    uint flags = KEYEVENTF_UNICODE | (phase == 1 ? KEYEVENTF_KEYUP : 0);
+                    var input = new KEYINPUT
+                    {
+                        type = INPUT_KEYBOARD,
+                        u = new INPUTUNION
+                        {
+                            ki = new KEYBDINPUT
+                            {
+                                wVk = 0,
+                                wScan = unit[i],
+                                dwFlags = flags,
+                                dwExtraInfo = IntPtr.Zero
+                            }
+                        }
+                    };
+                    uint sent = SendInput(1, new[] { input }, Marshal.SizeOf<KEYINPUT>());
+                    if (sent != 1)
+                    {
+                        int err = Marshal.GetLastWin32Error();
+                        Log("SendUnicode 失败 char=0x" + ((ushort)unit[i]).ToString("X4")
+                            + " phase=" + phase + " err=" + err);
+                        return false;
+                    }
+                }
             }
-
-            if (u.Length >= 2 && u[0] == 'F' && int.TryParse(u.Substring(1), out int fn)
-                && fn >= 1 && fn <= 24)
-                return (ushort)(0x6F + fn);
-
-            if (u.Length == 1 && u[0] >= '0' && u[0] <= '9') return (ushort)u[0];
-            if (u.Length == 1 && u[0] >= 'A' && u[0] <= 'Z') return (ushort)u[0];
-
-            if (u.StartsWith("NUMPAD") && int.TryParse(u.Substring(6), out int np)
-                && np >= 0 && np <= 9)
-                return (ushort)(0x60 + np);
-
-            return 0;
+            return true;
         }
+
+        /// <summary>按键名 → 虚拟键码。统一走 Services.InputKeys.ParseVk，保证与编辑器词表一致。</summary>
+        private static ushort ParseVk(string name) => Services.InputKeys.ParseVk(name);
 
         private static void MouseButton(string button, bool down)
         {
@@ -307,6 +303,27 @@ namespace SoulLink.Relay
                     try { MouseButton(kv.Key, false); } catch { }
                 }
                 PressedButtons.Clear();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 兜底释放：遍历「当前按住的键集合」，逐个发 KEYEVENTF_KEYUP。
+        ///
+        /// ★ 防「摇杆推着时手机断线，角色一直往前跑」：代理与宿主的管道断开
+        ///   （ServePipe 退出）或进程退出时，这里把 keydown 期间按住的键全部抬起。
+        ///   只抬真正按过的键，不无条件扫全键盘（孤立 KEYUP 可能误触别的窗口）。
+        /// </summary>
+        private static void ReleaseAllKeys()
+        {
+            try
+            {
+                foreach (var kv in PressedKeys)
+                {
+                    if (!kv.Value) continue;
+                    try { SendVk(kv.Key, true); } catch { }
+                }
+                PressedKeys.Clear();
             }
             catch { }
         }
@@ -374,6 +391,34 @@ namespace SoulLink.Relay
             if (_logPath.Length > 0) SoulLink.Services.AsyncLog.Append(_logPath, line + Environment.NewLine);
         }
 
+        /// <summary>供 SessionSlimmer 等 Services 层在不引用 Relay 内部状态时安静记日志。</summary>
+        internal static void LogQuiet(string msg)
+        {
+            try { Log(msg); } catch { }
+        }
+
+        /// <summary>
+        /// 代理启动时按环境变量写用户级启动项策略（路径A）。
+        ///
+        /// ★ 环境变量 SOULLINK_USER_POLICY：1=写禁用（默认）；0=删值恢复；缺失=不动作。
+        /// ★ 写失败静默降级：策略失败绝不能拖垮注入代理，只能记日志。
+        /// </summary>
+        private static void ApplyStartupUserPolicy()
+        {
+            try
+            {
+                string raw = Environment.GetEnvironmentVariable("SOULLINK_USER_POLICY") ?? "";
+                if (raw.Length == 0) { Log("用户级策略：未下发开关，跳过"); return; }
+                bool enable = raw != "0";
+                SoulLink.Services.SessionSlimmer.ApplyUserPolicy(enable);
+                Log("用户级策略：已" + (enable ? "写入禁用" : "删值恢复默认") + "（Edge 预启动/后台）");
+            }
+            catch (Exception ex)
+            {
+                Log("用户级策略写入异常（已忽略）：" + ex.Message);
+            }
+        }
+
         /// <summary>
         /// 起代理侧的网页直连服务（端口/口令来自主程序投送时下发的环境变量）。
         ///
@@ -420,6 +465,19 @@ namespace SoulLink.Relay
             ///   拆成 move + click 要等两个 RTT（实测每次 45~64ms，双击就 200ms+）。
             /// </summary>
             public int Move { get; set; }
+
+            /// <summary>
+            /// true = 单向指令：代理执行后**不回写一行回复**，宿主也不等待。
+            ///
+            /// ★ 用途：moverel 这类高频位移不需要确认，等回复纯属浪费一个 RTT。
+            ///   协议对齐保证：宿主每条请求都写一行，代理每条都读一行；
+            ///   代理只在非 NoReply 指令后写一行。NoReply 指令双方都不收发额外字节，
+            ///   所以下一条指令的回复仍然是它自己的回复，通道不会错位。
+            ///
+            /// ⚠ 代理端 ServePipe 读到 NoReply 指令后必须跳过 WriteLine，
+            ///   否则宿主读到的那行会错位（见 ServePipe 的 continue 分支）。
+            /// </summary>
+            public bool NoReply { get; set; }
         }
 
         private sealed class RelayEvent
@@ -473,6 +531,15 @@ namespace SoulLink.Relay
             Log("relay 启动 pid=" + Process.GetCurrentProcess().Id + " pipe=" + pipeName
                 + " session=" + Process.GetCurrentProcess().SessionId);
 
+            // ★★ 3.3.x：代理启动时写当前会话（本账号）的用户级策略 ★★
+            //
+            //   宿主挂载已登录用户的 NTUSER.DAT 会因文件被独占而失败，所以
+            //   class=User 的策略（Edge 预启动/后台）改由**代理**在目标会话内
+            //   直接写自己的 HKCU —— 天然就是目标账号，绕开挂载死结（路径A）。
+            //   是否执行由主程序投送时的环境变量 SOULLINK_USER_POLICY 决定；
+            //   写失败静默降级，绝不阻塞代理进入注入循环。
+            ApplyStartupUserPolicy();
+
             // ★★ 3.3.5：网页直连代理 ★★
             //
             //   用户要求：「网页端尽量隔离主客户端」「模拟按键也有独立出来」。
@@ -512,7 +579,7 @@ namespace SoulLink.Relay
             //     下发 record 命令，代理本身不做账号判断。
 
             int idleRounds = 0;
-            AppDomain.CurrentDomain.ProcessExit += (_, __) => ReleaseAllMouseButtons();
+            AppDomain.CurrentDomain.ProcessExit += (_, __) => { ReleaseAllMouseButtons(); ReleaseAllKeys(); };
             while (!stop.IsSet)
             {
                 try
@@ -549,6 +616,7 @@ namespace SoulLink.Relay
             // ★ 代理退出前收掉录制线程：断开就没有画面，不该留孤儿线程
             try { SessionRecorder.Shutdown(); } catch { }
             ReleaseAllMouseButtons();
+            ReleaseAllKeys();
             try { _hotkeys?.Dispose(); } catch { }
             _hotkeys = null;
             HotkeyEvents.CompleteAdding();
@@ -598,22 +666,28 @@ namespace SoulLink.Relay
                 }
 
                 Response resp;
+                bool noReply = false;
                 try
                 {
                     var req = JsonSerializer.Deserialize<Request>(line, Json);
                     resp = req == null ? Fail("空指令") : Execute(req);
+                    noReply = req != null && req.NoReply;
                 }
                 catch (Exception ex)
                 {
                     resp = Fail("执行异常：" + ex.Message);
                 }
 
+                // ★ NoReply 指令：代理不回写任何字节，宿主也不等。
+                //   若这里照常 WriteLine，宿主读到的行会错位（宿主根本没在等这一行）。
+                if (noReply) continue;
                 try { writer.WriteLine(JsonSerializer.Serialize(resp, Json)); }
                 catch { break; }
             }
 
             ReleaseAllMouseButtons();
-            Log("宿主断开，释放鼠标并退出");
+            ReleaseAllKeys();
+            Log("宿主断开，释放鼠标/键盘并退出");
         }
 
         private static Response Fail(string message) => new Response { Ok = false, Message = message };
@@ -674,20 +748,18 @@ namespace SoulLink.Relay
                 // 相对位移：转游戏视角（游戏读 Raw Input，只有这个有用）
                 case "moverel":
                     {
-                        // 大位移要拆成多段，一次性给人过大的 dx 会被系统截断
+                        // ★ 原注释「大位移一次性给会被系统截断」经查证**不成立**：
+                        //   MOUSEINPUT.dx/dy 是 LONG（32 位带符号），微软文档没有
+                        //   任何"超过 N 像素被截断"的说明。文档明确的副作用只有
+                        //   **指针加速**（相对位移按系统指针速度放大，最多 ×4），
+                        //   方向与"截断"恰好相反。原实现的拆段 + if(steps>4) Sleep(6)
+                        //   会给 20 段注入引入约 120ms 的人工延迟，是转视角手感的
+                        //   最大单一延迟源，直接去掉。
+                        //
+                        //   保留单段直发：mouse_event 相对位移经系统"指针速度"加速，
+                        //   与真实鼠标一致，游戏读 Raw Input 得到完整增量。
                         int totalDx = req.Dx, totalDy = req.Dy;
-                        int steps = Math.Max(1, Math.Min(20, (Math.Abs(totalDx) + Math.Abs(totalDy)) / 120 + 1));
-                        for (int i = 0; i < steps; i++)
-                        {
-                            int sx = totalDx / steps;
-                            int sy = totalDy / steps;
-                            mouse_event(MOUSEEVENTF_MOVE, sx, sy, 0, IntPtr.Zero);
-                            if (steps > 4) Thread.Sleep(6);
-                        }
-                        // 余数补上
-                        int remX = totalDx - (totalDx / steps) * steps;
-                        int remY = totalDy - (totalDy / steps) * steps;
-                        if (remX != 0 || remY != 0) mouse_event(MOUSEEVENTF_MOVE, remX, remY, 0, IntPtr.Zero);
+                        mouse_event(MOUSEEVENTF_MOVE, totalDx, totalDy, 0, IntPtr.Zero);
 
                         // ★ 不再做"贴边回中"。
                         //   原实现：远端光标一旦贴边就 SetCursorPos 到屏幕中心。
@@ -700,7 +772,7 @@ namespace SoulLink.Relay
                             Ok = true,
                             X = pNow.X,
                             Y = pNow.Y,
-                            Message = "相对移动 " + totalDx + "," + totalDy + " (steps=" + steps + ")"
+                            Message = "相对移动 " + totalDx + "," + totalDy
                         };
                     }
 
@@ -732,7 +804,8 @@ namespace SoulLink.Relay
 
                 case "releaseall":
                     ReleaseAllMouseButtons();
-                    return new Response { Ok = true, Message = "全部鼠标按键已释放" };
+                    ReleaseAllKeys();
+                    return new Response { Ok = true, Message = "全部鼠标/键盘按键已释放" };
 
                 case "wheel":
                     {
@@ -755,6 +828,46 @@ namespace SoulLink.Relay
                             if (i + 1 < times) Thread.Sleep(80);
                         }
                         return new Response { Ok = true, Message = "按键 " + spec + " x" + times };
+                    }
+
+                // ★★ 3.3.x 手机端虚拟摇杆：键盘按下 / 抬起分开控制 ★★
+                //   原来只有点按式 key（SendKeyCombo 全按下 → Sleep → 全抬起），
+                //   无法表达"按住方向键不放"。keydown/keyup 复用 SendVk 的键码映射，
+                //   由动作决定 KEYEVENTF_KEYUP 标志，按键名走 req.Button（与 key 一致）。
+                case "keydown":
+                case "keyup":
+                    {
+                        bool isDown = (req.Cmd ?? "").Equals("keydown", StringComparison.OrdinalIgnoreCase);
+                        string spec = req.Button ?? "";
+                        if (string.IsNullOrWhiteSpace(spec)) return Fail("缺少按键");
+
+                        ushort vk = ParseVk(spec);
+                        if (vk == 0) return Fail("无法解析按键名：" + spec);
+
+                        if (!SendVk(vk, up: !isDown))
+                            return Fail((isDown ? "按下 " : "抬起 ") + spec + " 失败（SendInput 被系统拒绝）");
+
+                        if (isDown) PressedKeys[vk] = true;
+                        else PressedKeys.TryRemove(vk, out _);
+
+                        return new Response { Ok = true, Message = (isDown ? "按下 " : "抬起 ") + spec };
+                    }
+
+                // ★★ 3.3.x 中文输入：KEYEVENTF_UNICODE 逐字符注入 ★★
+                //   代理对（emoji）必须成对发送；长度上限由 UnicodeInput.TryValidate 把关。
+                case "text":
+                    {
+                        string text = req.Button ?? "";
+                        if (!Services.UnicodeInput.TryValidate(text, out string textError))
+                            return Fail(textError);
+
+                        var units = Services.UnicodeInput.SplitUtf16(text);
+                        foreach (var unit in units)
+                        {
+                            if (!SendUnicode(unit))
+                                return Fail("文本注入失败（SendInput 被系统拒绝）");
+                        }
+                        return new Response { Ok = true, Message = "已输入 " + units.Count + " 字符" };
                     }
 
                 case "foreground":
@@ -910,6 +1023,7 @@ namespace SoulLink.Relay
                     InputTrace.Write("AGENT_RECV", "收到 exit 指令（宿主让我们退出）pid=" + Process.GetCurrentProcess().Id);
                     Log("收到退出指令");
                     ReleaseAllMouseButtons();
+                    ReleaseAllKeys();
                     return new Response { Ok = true, Message = "bye" };
 
                 default:

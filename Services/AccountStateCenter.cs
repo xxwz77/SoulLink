@@ -56,6 +56,19 @@ namespace SoulLink.Services
         /// <summary>RecentLog 的采集时间。</summary>
         public DateTime RecentLogAt = DateTime.MinValue;
 
+        /// <summary>
+        /// 尾窗的结构化行（含单调行序号），供日志触点「事件锁存」逐行消费。
+        /// ★ RecentLog 是给界面/旧电平触点看的拼接文本；锁存游标必须用带
+        ///   序号的整行列表推进，否则环形队列把旧行挤掉后无法判「新增」。
+        /// </summary>
+        public IReadOnlyList<BgiLogLine> LogTail = Array.Empty<BgiLogLine>();
+
+        /// <summary>LogTail 里最大的行序号；也是该账号日志流的当前游标上界。</summary>
+        public long LogTailSeq;
+
+        /// <summary>LogTail 来源的日志文件（跨天滚动后文件名变化，用来重建游标）。</summary>
+        public string LogTailFile = "";
+
         /// <summary>今日累计统计（经验/摩拉/拾取/狗粮路线），由 BgiLogCenter 维护。</summary>
         public DailyStats Today = new DailyStats();
 
@@ -677,6 +690,9 @@ namespace SoulLink.Services
                 st.BgiLogWrite = DateTime.MinValue;
                 st.RecentLog = "";
                 st.RecentLogAt = DateTime.MinValue;
+                st.LogTail = Array.Empty<BgiLogLine>();
+                st.LogTailSeq = 0;
+                st.LogTailFile = "";
                 st.LastTaskLine = "";
             }
 
@@ -777,6 +793,9 @@ namespace SoulLink.Services
                 st.Today = snap.Today;
                 st.RecentLog = BuildTailText(snap);
                 st.RecentLogAt = snap.UpdatedAt;
+                st.LogTail = snap.Tail;
+                st.LogTailSeq = snap.LastSeq;
+                st.LogTailFile = snap.LogFile ?? "";
                 st.GroupsUpdatedAt = snap.UpdatedAt;
                 st.GroupsSource = snap.LogFile ?? "";
                 st.LogBytes = snap.FileLength;

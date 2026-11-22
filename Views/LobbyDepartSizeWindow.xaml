@@ -1,0 +1,42 @@
+<Window x:Class="SoulLink.Views.LobbyDepartSizeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctl="clr-namespace:SoulLink.Controls"
+        Title="SoulLink" Width="400" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource DialogSurface}"
+        ShowInTaskbar="False" FontFamily="{StaticResource UiFont}">
+
+    <Border CornerRadius="16" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="10">
+        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+
+        <Grid ClipToBounds="True">
+            <ctl:AuroraBackdrop Opacity="0.48" />
+            <StackPanel Margin="22,20,22,18">
+                <TextBlock x:Name="TitleText" Text="发车人数" FontSize="15" FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextPrimary}" />
+                <TextBlock x:Name="HintText" Text="选择这个房间满多少人自动发车。" FontSize="11"
+                           Foreground="{DynamicResource TextMuted}" Margin="0,6,0,0"
+                           TextWrapping="Wrap" />
+                <ComboBox x:Name="SizeCombo" Height="40" Margin="0,14,0,0"
+                          Padding="11,0,6,0" FontSize="13"
+                          Foreground="{DynamicResource TextPrimary}"
+                          Background="#30FFFFFF" BorderBrush="#30FFFFFF" BorderThickness="1"
+                          VerticalContentAlignment="Center">
+                    <ComboBoxItem Content="2 人发车" Tag="2" />
+                    <ComboBoxItem Content="3 人发车" Tag="3" />
+                    <ComboBoxItem Content="4 人发车" Tag="4" />
+                </ComboBox>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                    <Button Style="{StaticResource GhostButton}" Padding="18,8" Click="Cancel_Click">
+                        <TextBlock Text="取消" FontSize="12" />
+                    </Button>
+                    <Button Style="{StaticResource PrimaryButton}" Padding="22,8" Margin="10,0,0,0"
+                            Click="Ok_Click">
+                        <TextBlock Text="确定" FontSize="12.5" FontWeight="SemiBold" />
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

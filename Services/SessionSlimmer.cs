@@ -318,6 +318,18 @@ namespace SoulLink.Services
             var r = new Result();
             if (sessionId <= 0) { r.Message = "无效的会话号"; return r; }
 
+            // ★ 总开关：SessionSlimKillEnabled=false 时直接跳过，不杀任何进程。
+            //   用户关闭「清理会话外围进程」后，这里必须真的不动作，而不是只在界面置灰。
+            try
+            {
+                if (App.Config?.Settings != null && !App.Config.Settings.SessionSlimKillEnabled)
+                {
+                    r.Message = "会话瘦身总开关已关闭，未清理任何进程";
+                    return r;
+                }
+            }
+            catch { }
+
             try
             {
                 var killSet = EffectiveKillNames();
@@ -388,6 +400,15 @@ namespace SoulLink.Services
         ///
         /// ★ 用户正在登录时 NTUSER.DAT 被独占，无法挂载 —— 此时直接跳过并提示，
         ///   不做任何强制操作。
+        ///
+        /// ★★ 2026-11-22 修正（SESSION-POLICY-FIX）：★★
+        ///   这里原来写了 4 个值，其中 2 个是 class=Machine（写用户分支无效）：
+        ///     · Dsh\AllowNewsAndInterests   —— 已移入 ApplyMachinePolicy（HKLM）
+        ///     · Windows\System\EnableMmx    —— class=Machine，与小组件/搜索无关，删除
+        ///   现在这里**只保留 class=User 的 Edge 策略**（StartupBoostEnabled /
+        ///   BackgroundModeEnabled，HKCU 有效）。
+        ///   已登录用户无法挂载 hive，其 Edge 策略改由**代理在会话内写 HKCU**（路径A，
+        ///   见 ApplyUserPolicy 与 RelayAgent），不再依赖本方法的挂载路径。
         /// </summary>
         public static PolicyResult ApplyStartupPolicy(string userName)
         {
@@ -435,20 +456,15 @@ namespace SoulLink.Services
 
             try
             {
-                // 小组件
-                WriteDword(mountKey + @"\SOFTWARE\Policies\Microsoft\Dsh",
-                           "AllowNewsAndInterests", 0);
-                // Edge 预启动 / 后台
+                // ★ 只保留 class=User、写用户分支有效的 Edge 策略（2026-11-22 修正）。
+                //   小组件/搜索是 class=Machine，已移至 ApplyMachinePolicy（HKLM）。
                 WriteDword(mountKey + @"\SOFTWARE\Policies\Microsoft\Edge",
                            "StartupBoostEnabled", 0);
                 WriteDword(mountKey + @"\SOFTWARE\Policies\Microsoft\Edge",
                            "BackgroundModeEnabled", 0);
-                // 手机连接（用户级开关）
-                WriteDword(mountKey + @"\SOFTWARE\Policies\Microsoft\Windows\System",
-                           "EnableMmx", 0);
 
                 res.Ok = true;
-                res.Message = "已关闭小组件 / Edge 预启动 / 手机连接的自动启动（下次登录生效）";
+                res.Message = "已关闭 Edge 预启动/后台的自动启动（下次登录生效）";
             }
             catch (Exception ex)
             {
@@ -482,10 +498,8 @@ namespace SoulLink.Services
 
             try
             {
-                DeleteValue(mountKey + @"\SOFTWARE\Policies\Microsoft\Dsh", "AllowNewsAndInterests");
                 DeleteValue(mountKey + @"\SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled");
                 DeleteValue(mountKey + @"\SOFTWARE\Policies\Microsoft\Edge", "BackgroundModeEnabled");
-                DeleteValue(mountKey + @"\SOFTWARE\Policies\Microsoft\Windows\System", "EnableMmx");
                 res.Ok = true;
                 res.Message = "已撤销策略，恢复系统默认";
             }
@@ -518,6 +532,100 @@ namespace SoulLink.Services
                 return false;
             }
             catch { return true; }
+        }
+
+        // ── 机器级策略（HKLM，class=Machine，全机生效）──────────────────
+
+        /// <summary>
+        /// 机器级「关闭小组件面板 + 任务栏搜索」策略。写 HKLM，全机生效（含主控制台）。
+        ///
+        /// ★★ 为什么必须写 HKLM：★★
+        ///   实测（2026-11-22，SESSION-SLIM-DEEP）这两个策略的 ADMX 定义是
+        ///   class=Machine，写 HKCU / 挂载用户 hive 写用户分支**系统不读、完全无效**：
+        ///     · DisableWidgetsBoard     key=SOFTWARE\Policies\Microsoft\Dsh（NewsAndInterests.admx）
+        ///     · AllowNewsAndInterests   key=SOFTWARE\Policies\Microsoft\Dsh（只关新闻流，不关面板本体）
+        ///     · DisableSearch           key=SOFTWARE\Policies\Microsoft\Windows\Windows Search（Search.admx）
+        ///   写 HKLM 后**杀掉对应进程即不再自动重启**（perfmeasure 实测，已回滚）。
+        ///
+        /// ★ 影响范围（必须写进 UI 警告）：全机所有用户，包括主控制台；
+        ///   开始菜单打字搜索会失效，但开始菜单本体正常、资源管理器内搜索正常。
+        /// ★ 回滚只删值不删键（Dsh 键删完值后会保留空键，reg delete /f 会 Access denied）。
+        /// </summary>
+        /// <param name="enable">true=写入禁用策略；false=删值恢复系统默认。</param>
+        public static PolicyResult ApplyMachinePolicy(bool enable)
+        {
+            var res = new PolicyResult { UserName = "(本机)" };
+            try
+            {
+                // ★ 幂等：写同样的值不会报错（reg add /f），删不存在的值由 DeleteValue 静默忽略。
+                if (enable)
+                {
+                    WriteDword(@"HKLM\SOFTWARE\Policies\Microsoft\Dsh", "DisableWidgetsBoard", 1);
+                    WriteDword(@"HKLM\SOFTWARE\Policies\Microsoft\Dsh", "AllowNewsAndInterests", 0);
+                    WriteDword(@"HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search", "DisableSearch", 1);
+                    res.Ok = true;
+                    res.Message = "已写入机器级策略：关闭小组件面板 + 任务栏搜索（对已登录会话，杀掉对应进程即生效）";
+                }
+                else
+                {
+                    // ★ 回滚只删值，不删键（删键会 Access denied，属正常现象）。
+                    DeleteValue(@"HKLM\SOFTWARE\Policies\Microsoft\Dsh", "DisableWidgetsBoard");
+                    DeleteValue(@"HKLM\SOFTWARE\Policies\Microsoft\Dsh", "AllowNewsAndInterests");
+                    DeleteValue(@"HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search", "DisableSearch");
+                    res.Ok = true;
+                    res.Message = "已删除机器级策略值，恢复系统默认";
+                }
+            }
+            catch (Exception ex)
+            {
+                res.Message = (enable ? "写入" : "回滚") + "机器级策略失败：" + ex.Message;
+            }
+            return res;
+        }
+
+        /// <summary>机器级策略当前是否已启用（只读探测 DisableWidgetsBoard）。</summary>
+        public static bool IsMachinePolicyEnabled()
+        {
+            try
+            {
+                using var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Policies\Microsoft\Dsh");
+                var v = k?.GetValue("DisableWidgetsBoard");
+                return v != null && int.TryParse(v.ToString(), out int i) && i != 0;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// 用户级 Edge 预启动策略（HKCU，class=User）。由**代理在目标会话内**调用，
+        /// 写当前进程（代理）自己的 HKCU —— 天然就是目标账号，绕开「宿主挂载已登录
+        /// 用户 NTUSER.DAT 会失败」的死结（路径A）。
+        ///
+        /// ★ 幂等 + 写失败静默降级：这个方法由后台代理在启动时调用，绝不抛异常、
+        ///   绝不阻塞代理进入注入循环；失败只记一行日志。
+        /// ★ 由配置 SessionSlimUserPolicyEnabled 决定是否执行（主程序投送时经环境变量下发）。
+        /// </summary>
+        /// <param name="enable">true=写入禁用；false=删值恢复默认。</param>
+        public static void ApplyUserPolicy(bool enable)
+        {
+            try
+            {
+                if (enable)
+                {
+                    WriteDword(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled", 0);
+                    WriteDword(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "BackgroundModeEnabled", 0);
+                }
+                else
+                {
+                    DeleteValue(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled");
+                    DeleteValue(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "BackgroundModeEnabled");
+                }
+            }
+            catch (Exception ex)
+            {
+                // ★ 静默降级：只落日志，不抛出，不阻塞代理主循环。
+                try { SoulLink.Relay.RelayAgent.LogQuiet("ApplyUserPolicy 失败：" + ex.Message); } catch { }
+            }
         }
 
         // ── 内部工具 ────────────────────────────────────────────────────

@@ -77,22 +77,40 @@ public sealed class Lobby
         PairId = r.PairId,
         PairRole = r.PairRole,
         Departed = r.Departed,
+        DepartSize = r.DepartSize,
         LastActiveAt = r.LastActiveAt
     };
 
     // ══════════ 建房 ══════════
 
-    /// <summary>建私人·四人房（每设备最多一个）。</summary>
+    /// <summary>发车人数归一化：2-4，越界/缺省取 0（0 表示按房间类型默认）。</summary>
+    private static int NormalizeDepartSize(int size)
+        => size >= 2 && size <= 4 ? size : 0;
+
+    /// <summary>
+    /// 房间实际发车人数。DepartSize=0（旧数据/未设置）时按房间类型取默认：
+    /// 大小号房每边 2，单人房 4。
+    /// </summary>
+    private static int EffectiveDepartSize(RoomRow room)
+    {
+        if (room.DepartSize >= 2 && room.DepartSize <= 4) return room.DepartSize;
+        return room.Kind == RoomKind.PrivatePair ? 2 : 4;
+    }
+
+    /// <summary>建私人房间（每设备最多一个），发车人数 2-4 可选。</summary>
     public (bool ok, string msg, RoomDto? room) CreateFour(
-        string title, string code, string device)
+        string title, string code, string device, int departSize = 0)
     {
         if (string.IsNullOrWhiteSpace(title)) return (false, "房间名称不能为空", null);
         if (string.IsNullOrWhiteSpace(code)) return (false, "房间码不能为空", null);
 
+        int size = NormalizeDepartSize(departSize);
+        int effective = size == 0 ? 4 : size;
+
         var mine = _db.ListRooms().FirstOrDefault(r =>
             r.OwnerDevice == device && r.Kind == RoomKind.PrivateFour && r.PairId == "");
         if (mine != null)
-            return (false, "你已经有一个私人·四人房了：" + mine.Title, null);
+            return (false, "你已经有一个私人房间了：" + mine.Title, null);
 
         if (_db.FindRoomByCode(code) != null)
             return (false, "房间码「" + code + "」已被占用", null);
@@ -103,27 +121,32 @@ public sealed class Lobby
             Code = code.Trim(),
             Title = title.Trim(),
             Kind = RoomKind.PrivateFour,
-            OwnerDevice = device
+            OwnerDevice = device,
+            DepartSize = size
         };
         _db.InsertRoom(row);
 
         // ★ 建房只创建空座位，房主**不自动上线**。
         //   用户要在房间里点「加入房间」才算上线（否则会显示"1 人在线"但没人操作过）。
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < effective; i++)
             _db.UpsertSeat(new SeatRow { RoomId = row.Id, SeatIndex = i });
 
         return (true, "房间已创建", ToDto(row));
     }
 
-    /// <summary>建私人·大小号房：成对创建，每设备最多一对。</summary>
+    /// <summary>建私人·大小号房：成对创建，每设备最多一对。每边发车人数 2-4 可选。</summary>
     public (bool ok, string msg, RoomDto? big, RoomDto? small) CreatePair(
-        string title, string bigCode, string smallCode, string device)
+        string title, string bigCode, string smallCode, string device,
+        int bigSize = 0, int smallSize = 0)
     {
         if (string.IsNullOrWhiteSpace(title)) return (false, "房间名称不能为空", null, null);
         if (string.IsNullOrWhiteSpace(bigCode) || string.IsNullOrWhiteSpace(smallCode))
             return (false, "大号房和小号房的房间码都要填", null, null);
         if (string.Equals(bigCode.Trim(), smallCode.Trim(), StringComparison.OrdinalIgnoreCase))
             return (false, "大号房和小号房不能用同一个房间码", null, null);
+
+        int bSize = NormalizeDepartSize(bigSize);
+        int sSize = NormalizeDepartSize(smallSize);
 
         var mine = _db.ListRooms().FirstOrDefault(r =>
             r.OwnerDevice == device && r.Kind == RoomKind.PrivatePair);
@@ -144,7 +167,8 @@ public sealed class Lobby
             Kind = RoomKind.PrivatePair,
             OwnerDevice = device,
             PairId = pairId,
-            PairRole = "big"
+            PairRole = "big",
+            DepartSize = bSize
         };
         var small = new RoomRow
         {
@@ -154,12 +178,15 @@ public sealed class Lobby
             Kind = RoomKind.PrivatePair,
             OwnerDevice = device,
             PairId = pairId,
-            PairRole = "small"
+            PairRole = "small",
+            DepartSize = sSize
         };
 
         // ★ 成对插入必须原子：半成品（只有大号房）会让存在性检查
         //   （按 PairId 判定）误判，用户既建不了新的也用不了旧的。
-        _db.InsertRoomPair(big, small, seatsEach: 2);
+        //   座位数按各自发车人数创建（2-4）。
+        _db.InsertRoomPair(big, small, seatsEach: Math.Max(2, Math.Max(
+            EffectiveDepartSize(big), EffectiveDepartSize(small))));
 
         return (true, "成对房间已创建", ToDto(big), ToDto(small));
     }
@@ -244,15 +271,19 @@ public sealed class Lobby
             int pOnline = _db.ListSeats(partner.Id).Count(s => s.Online);
             int mOnline = _db.ListSeats(room.Id).Count(s => s.Online);
 
-            if (mOnline < 2) return (false, "本房人数不够（需要 2 人，当前 " + mOnline + "）", new List<DepartTarget>());
-            if (pOnline < 2) return (false, "配对房间人数不够（需要 2 人，当前 " + pOnline + "）", new List<DepartTarget>());
+            int needM = EffectiveDepartSize(room);
+            int needP = EffectiveDepartSize(partner);
+
+            if (mOnline < needM) return (false, "本房人数不够（需要 " + needM + " 人，当前 " + mOnline + "）", new List<DepartTarget>());
+            if (pOnline < needP) return (false, "配对房间人数不够（需要 " + needP + " 人，当前 " + pOnline + "）", new List<DepartTarget>());
 
             rooms.Add(partner);
         }
         else
         {
+            int need = EffectiveDepartSize(room);
             int online = _db.ListSeats(room.Id).Count(s => s.Online);
-            if (online < 4) return (false, "人数不够（需要 4 人，当前 " + online + "）", new List<DepartTarget>());
+            if (online < need) return (false, "人数不够（需要 " + need + " 人，当前 " + online + "）", new List<DepartTarget>());
         }
 
         // 收集所有成员 + 各自的发车动作

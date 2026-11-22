@@ -95,23 +95,23 @@ public static class Program
             return r == null ? Results.NotFound(ApiResult.Bad("房间不存在")) : Results.Json(r);
         });
 
-        // 建四人房
+        // 建私人房（发车人数 2-4 可选）
         app.MapPost("/api/rooms/create", (CreateRoomRequest body, HttpRequest req, Lobby l) =>
         {
             string code = GetDevice(req);
             if (code.Length == 0) return Results.BadRequest(ApiResult.Bad("缺少设备码"));
 
-            var (ok, msg, room) = l.CreateFour(body.Title, body.Code, code);
+            var (ok, msg, room) = l.CreateFour(body.Title, body.Code, code, body.DepartSize);
             return Results.Json(new { ok, message = msg, room });
         });
 
-        // 建大小号房（成对）
+        // 建大小号房（成对，每边发车人数 2-4 可选）
         app.MapPost("/api/rooms/create-pair", (CreatePairRequest body, HttpRequest req, Lobby l) =>
         {
             string code = GetDevice(req);
             if (code.Length == 0) return Results.BadRequest(ApiResult.Bad("缺少设备码"));
 
-            var (ok, msg, big, small) = l.CreatePair(body.Title, body.BigCode, body.SmallCode, code);
+            var (ok, msg, big, small) = l.CreatePair(body.Title, body.BigCode, body.SmallCode, code, body.BigSize, body.SmallSize);
             return Results.Json(new { ok, message = msg, big, small });
         });
 

@@ -36,13 +36,14 @@ namespace SoulLink.Services
         private Task? _sender;
         private readonly struct RelayRequest
         {
-            public RelayRequest(object payload, TaskCompletionSource<RelayResponse?> completion, int timeoutMs)
+            public RelayRequest(object payload, TaskCompletionSource<RelayResponse?> completion, int timeoutMs, bool noReply = false)
             {
-                Payload = payload; Completion = completion; TimeoutMs = timeoutMs;
+                Payload = payload; Completion = completion; TimeoutMs = timeoutMs; NoReply = noReply;
             }
             public object Payload { get; }
             public TaskCompletionSource<RelayResponse?> Completion { get; }
             public int TimeoutMs { get; }
+            public bool NoReply { get; }
         }
         private CancellationTokenSource? _cts;
         private volatile bool _disposed;
@@ -491,6 +492,42 @@ namespace SoulLink.Services
             catch (OperationCanceledException) { return null; }
         }
 
+        /// <summary>
+        /// 单向发送（fire-and-forget）：写一行后**不读回复**，立即返回。
+        ///
+        /// ★ 为什么 moverel 要用它：位移是连续流，等一条 45~64ms 的回复既无意义
+        ///   又拉低了有效注入频率（20ms 节流下，串行等待意味着实际最高 ~15Hz）。
+        ///   去掉等待后单条 moverel 的开销只剩一次 WriteLineAsync 到管道缓冲。
+        ///
+        /// ★ 语义安全：请求必须带 NoReply=true（代理据此不回写），
+        ///   否则代理写的回复会堆在管道里、错位污染下一条指令的回复。
+        ///   所以这里强制把 NoReply 塞进 payload，调用方不用记得传。
+        ///
+        /// ★ 与串行响应的关系：仍走同一单写者队列（SingleWriter=false 但有锁序），
+        ///   排在它前面的请求回复会先被读走，之后才轮到它写；它写完后下一轮
+        ///   请求照常 write→read，通道不会错位。
+        /// </summary>
+        public async Task SendAsyncNoReply(object request, int timeoutMs = 4000)
+        {
+            if (_disposed || !IsConnected || _cts == null || _writer == null) return;
+            var payload = new Dictionary<string, object?>();
+            foreach (var p in request.GetType().GetProperties())
+                payload[p.Name] = p.GetValue(request);
+            payload["NoReply"] = true;
+
+            var completion = new TaskCompletionSource<RelayResponse?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var item = new RelayRequest(payload, completion, timeoutMs, noReply: true);
+            try
+            {
+                using var timeout = new CancellationTokenSource(Math.Min(timeoutMs, 150));
+                await _requests.Writer.WriteAsync(item, timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                LogBus.Warn("注入队列已满，丢弃单向请求", "会话 " + SessionId);
+            }
+        }
+
         private async Task ProcessRequestsAsync()
         {
             try
@@ -508,6 +545,15 @@ namespace SoulLink.Services
                         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_cts!.Token);
                         timeout.CancelAfter(item.TimeoutMs);
                         await _writer.WriteLineAsync(payload.AsMemory(), timeout.Token).ConfigureAwait(false);
+
+                        // ★ NoReply：写出去就完事，不读回复。代理侧约定也不回写，
+                        //   否则这里跳读会让下一条指令读到这条的残留回复而错位。
+                        if (item.NoReply)
+                        {
+                            item.Completion.TrySetResult(new RelayResponse { Ok = true });
+                            continue;
+                        }
+
                         string? line = await _reader.ReadLineAsync(timeout.Token).ConfigureAwait(false);
                         if (line == null)
                         {
@@ -547,6 +593,10 @@ namespace SoulLink.Services
 
         public Task<RelayResponse?> MoveRelAsync(int dx, int dy)
             => SendAsync(new { Cmd = "moverel", Dx = dx, Dy = dy });
+
+        /// <summary>moverel 单向发送：不等待回复（转视角高频位移专用）。</summary>
+        public Task MoveRelNoReplyAsync(int dx, int dy)
+            => SendAsyncNoReply(new { Cmd = "moverel", Dx = dx, Dy = dy });
 
         /// <summary>
         /// 定位 + 点击，**一次往返完成**。
@@ -631,6 +681,12 @@ namespace SoulLink.Services
                 {
                     ["SOULLINK_CAPTURE_DIR"] = System.IO.Path.Combine(dir, "capture")
                 };
+
+                // ── 用户级启动项策略（路径A）：代理在目标会话内写自己的 HKCU ──
+                //   开关来自配置 SessionSlimUserPolicyEnabled；1=写禁用，0=删值恢复。
+                var s0 = App.Config?.Settings;
+                if (s0 != null)
+                    env["SOULLINK_USER_POLICY"] = s0.SessionSlimUserPolicyEnabled ? "1" : "0";
 
                 // ── 网页直连（User 要求：尽量隔离主客户端）──
                 var s = App.Config?.Settings;

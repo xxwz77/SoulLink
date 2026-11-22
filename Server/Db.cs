@@ -7,7 +7,7 @@ namespace SoulLink.Server;
 ///
 /// 表结构：
 ///   Devices —— 设备（一台电脑一个），带设备码
-///   Rooms   —— 房间（大号房 / 小号房 / 四人房）
+///   Rooms   —— 房间（私人房 / 大号房 / 小号房）
 ///   Seats   —— 房间里的座位（谁上线了）
 ///   Departs —— 每个设备的发车动作配置
 /// </summary>
@@ -74,11 +74,12 @@ CREATE TABLE IF NOT EXISTS Rooms (
     Id TEXT PRIMARY KEY,
     Code TEXT NOT NULL,              -- 房间码（通行证）
     Title TEXT NOT NULL,
-    Kind INTEGER NOT NULL,           -- 0=四人  1=大小号
+    Kind INTEGER NOT NULL,           -- 0=单人房(2-4人)  1=大小号
     OwnerDevice TEXT NOT NULL,       -- 创建者的设备码
     PairId TEXT NOT NULL DEFAULT '',
     PairRole TEXT NOT NULL DEFAULT '',
     Departed INTEGER NOT NULL DEFAULT 0,
+    DepartSize INTEGER NOT NULL DEFAULT 0,  -- 发车人数 2-4；0=按房间类型取默认
     CreatedAt TEXT NOT NULL,
     LastActiveAt TEXT NOT NULL
 );
@@ -108,6 +109,33 @@ CREATE TABLE IF NOT EXISTS Departs (
 );
 ";
         cmd.ExecuteNonQuery();
+
+        // ★ 迁移：旧库的 Rooms 没有 DepartSize 列（v1 写死人数），补上。
+        //   DEFAULT 0 = 未设置 → 按房间类型取默认（单人房 4 / 大小号每边 2），
+        //   保证旧数据兼容、旧房间继续按原规则发车。
+        EnsureColumn(c, "Rooms", "DepartSize", "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    /// <summary>
+    /// 若某表缺某列则 ALTER TABLE 补上（幂等）。用于向后兼容的 schema 迁移。
+    /// 表名/列名均为本项目内部常量，不存在注入风险。
+    /// </summary>
+    private static void EnsureColumn(SqliteConnection c, string table, string column, string ddl)
+    {
+        bool exists = false;
+        using (var check = c.CreateCommand())
+        {
+            check.CommandText = "PRAGMA table_info(" + table + ");";
+            using var rd = check.ExecuteReader();
+            while (rd.Read())
+                if (string.Equals(rd.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                    exists = true;
+        }
+        if (exists) return;
+
+        using var alter = c.CreateCommand();
+        alter.CommandText = "ALTER TABLE " + table + " ADD COLUMN " + column + " " + ddl + ";";
+        alter.ExecuteNonQuery();
     }
 
     // ══════════ 设备 ══════════
@@ -167,8 +195,8 @@ CREATE TABLE IF NOT EXISTS Departs (
         using var cmd = c.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = @"INSERT INTO Rooms
-            (Id,Code,Title,Kind,OwnerDevice,PairId,PairRole,Departed,CreatedAt,LastActiveAt)
-            VALUES($i,$code,$t,$k,$o,$p,$pr,$d,$cr,$la)";
+            (Id,Code,Title,Kind,OwnerDevice,PairId,PairRole,Departed,DepartSize,CreatedAt,LastActiveAt)
+            VALUES($i,$code,$t,$k,$o,$p,$pr,$d,$ds,$cr,$la)";
         cmd.Parameters.AddWithValue("$i", r.Id);
         cmd.Parameters.AddWithValue("$code", r.Code);
         cmd.Parameters.AddWithValue("$t", r.Title);
@@ -177,6 +205,7 @@ CREATE TABLE IF NOT EXISTS Departs (
         cmd.Parameters.AddWithValue("$p", r.PairId);
         cmd.Parameters.AddWithValue("$pr", r.PairRole);
         cmd.Parameters.AddWithValue("$d", r.Departed ? 1 : 0);
+        cmd.Parameters.AddWithValue("$ds", r.DepartSize);
         cmd.Parameters.AddWithValue("$cr", r.CreatedAt.ToString("O"));
         cmd.Parameters.AddWithValue("$la", r.LastActiveAt.ToString("O"));
         cmd.ExecuteNonQuery();
@@ -365,11 +394,12 @@ CREATE TABLE IF NOT EXISTS Departs (
     {
         using var c = Open();
         using var cmd = c.CreateCommand();
-        cmd.CommandText = @"UPDATE Rooms SET Code=$code,Title=$t,Departed=$d,LastActiveAt=$la WHERE Id=$i";
+        cmd.CommandText = @"UPDATE Rooms SET Code=$code,Title=$t,Departed=$d,DepartSize=$ds,LastActiveAt=$la WHERE Id=$i";
         cmd.Parameters.AddWithValue("$i", r.Id);
         cmd.Parameters.AddWithValue("$code", r.Code);
         cmd.Parameters.AddWithValue("$t", r.Title);
         cmd.Parameters.AddWithValue("$d", r.Departed ? 1 : 0);
+        cmd.Parameters.AddWithValue("$ds", r.DepartSize);
         cmd.Parameters.AddWithValue("$la", r.LastActiveAt.ToString("O"));
         cmd.ExecuteNonQuery();
     }
@@ -416,6 +446,7 @@ CREATE TABLE IF NOT EXISTS Departs (
         PairId = rd.GetString(rd.GetOrdinal("PairId")),
         PairRole = rd.GetString(rd.GetOrdinal("PairRole")),
         Departed = rd.GetInt64(rd.GetOrdinal("Departed")) != 0,
+        DepartSize = (int)rd.GetInt64(rd.GetOrdinal("DepartSize")),
         CreatedAt = DateTime.Parse(rd.GetString(rd.GetOrdinal("CreatedAt"))),
         LastActiveAt = DateTime.Parse(rd.GetString(rd.GetOrdinal("LastActiveAt")))
     };
@@ -604,6 +635,8 @@ public sealed class RoomRow
     public string PairId { get; set; } = "";
     public string PairRole { get; set; } = "";
     public bool Departed { get; set; }
+    /// <summary>发车人数（2-4）。0 = 未设置 → 按房间类型取默认。</summary>
+    public int DepartSize { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastActiveAt { get; set; } = DateTime.UtcNow;
 }

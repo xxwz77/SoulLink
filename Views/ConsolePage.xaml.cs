@@ -984,6 +984,16 @@ namespace SoulLink.Views
 
         public void Activate()
         {
+            // ★ 首次进入 RDP 配置页：默认选中「通用设置」，右侧直接显示设置内容，
+            //   而不是「请选择一个用户」的空状态（用户反馈）。
+            //   放在 Activate 而非 Loaded：Activate 是「进入本页」的统一入口
+            //   （首次 Loaded 与每次切回都会走这里），且只改 Visibility、不触发
+            //   Loaded/Unloaded；用 _initialized 区分「首次」与「切回」，
+            //   切回时不重置 _showGeneralSettings/_editing，保持用户当前选择。
+            if (!_initialized)
+            {
+                ShowGeneralSettings();
+            }
             RebuildUserList();
             RenderTabs();
             _initialized = true;
@@ -2236,7 +2246,9 @@ namespace SoulLink.Views
 
             menu.Items.Add(new Separator());
 
-            var miDel = new MenuItem { Header = "删除用户" };
+            // ★ 文案区分：这里只删连接配置，不删 Windows 账户（那是远程管理页的事）。
+            //   两处都叫「删除用户」是「删了又回来」的错觉来源。
+            var miDel = new MenuItem { Header = "移除此配置" };
             miDel.Click += (_, __) => RemoveUser(row);
             menu.Items.Add(miDel);
 
@@ -2483,7 +2495,7 @@ namespace SoulLink.Views
         /// <summary>删除一个用户配置（右键菜单与按钮共用）。</summary>
         private void RemoveUser(UserRow row)
         {
-            if (!Dialogs.Confirm("确定移除用户「" + row.Account.Caption + "」吗？\n\n只删除这里的配置，不影响该用户的实际会话。", "移除用户", true)) return;
+            if (!Dialogs.Confirm("确定移除此配置「" + row.Account.Caption + "」吗？\n\n只删除这里的连接配置，**不会删除 Windows 账户**，也不影响该用户的实际会话。\n删除 Windows 账户请到「远程管理」页。", "移除此配置", true)) return;
 
             try { row.Console?.Dispose(); } catch { }
             _openedIds.Remove(row.Account.Id);
@@ -2502,14 +2514,14 @@ namespace SoulLink.Views
             _rows.Remove(row);
             RebuildUserList();
             RenderTabs();
-            LogBus.Ok("已删除用户配置：" + row.Account.Caption);
+            LogBus.Ok("已移除配置：" + row.Account.Caption + "（Windows 账户未删除）");
         }
 
         private void RemoveUser_Click(object sender, RoutedEventArgs e)
         {
             var row = _editing;
             if (row == null) return;
-            if (!Dialogs.Confirm("要从列表移除 " + row.Account.Caption + " 吗？\n只删除配置，不影响该用户会话。", "移除用户", true)) return;
+            if (!Dialogs.Confirm("要从列表移除此配置「" + row.Account.Caption + "」吗？\n\n只删除连接配置，**不会删除 Windows 账户**，也不影响该用户会话。", "移除此配置", true)) return;
 
             try { row.Console?.Dispose(); } catch { }
             _openedIds.Remove(row.Account.Id);

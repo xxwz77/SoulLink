@@ -343,6 +343,38 @@ namespace SoulLink.Models
         /// </summary>
         public List<string> SessionSlimDisabled { get; set; } = new List<string>();
 
+        /// <summary>
+        /// 会话瘦身总开关：是否启用「分账号杀外围进程」。
+        ///
+        /// ★ 对应 SessionSlimmer.Slim（按账号杀 SafeToKill 白名单里不会自动重启的进程）。
+        ///   只影响挂机账号，不影响主控制台与其他日常账号。
+        /// ★ 默认 true：会话瘦身默认开启（白名单制，绝不碰 explorer/dwm/输入法/游戏本体）。
+        /// </summary>
+        public bool SessionSlimKillEnabled { get; set; } = true;
+
+        /// <summary>
+        /// 机器级启动项策略（HKLM，class=Machine，全机生效）。
+        ///
+        /// ★ 对应 SessionSlimmer.ApplyMachinePolicy：写
+        ///   `HKLM\SOFTWARE\Policies\Microsoft\Dsh\DisableWidgetsBoard=1`（关小组件面板）、
+        ///   `...\Dsh\AllowNewsAndInterests=0`（关新闻流）、
+        ///   `HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search\DisableSearch=1`（关任务栏搜索/SearchHost）。
+        /// ★ 这几个策略 ADMX 定义均为 class=Machine，写 HKCU 无效，必须写 HKLM（需要管理员）。
+        /// ★ 默认 false：影响整台机器（含主控制台），需用户显式开启。
+        /// </summary>
+        public bool SessionSlimMachinePolicyEnabled { get; set; }
+
+        /// <summary>
+        /// 用户级启动项策略（HKCU，class=User，按账号生效）。
+        ///
+        /// ★ 对应代理在目标会话启动时写当前用户 HKCU 的
+        ///   `HKCU\SOFTWARE\Policies\Microsoft\Edge\StartupBoostEnabled=0` 与
+        ///   `...\Edge\BackgroundModeEnabled=0`（Edge 预启动/后台，class=User，HKCU 有效）。
+        /// ★ 由代理直接写自己的 HKCU，绕开「宿主挂载已登录用户 NTUSER.DAT 会失败」的死结。
+        /// ★ 默认 false：Edge 预启动在挂机会话里实测收益为 0（msedge 不跑），需用户显式开启。
+        /// </summary>
+        public bool SessionSlimUserPolicyEnabled { get; set; }
+
         /// <summary>允许在找不到会话时回退到当前用户会话</summary>
         public bool AllowCurrentSessionFallback { get; set; } = true;
         /// <summary>仅管理挂机账号：全局隐藏并禁止主用户作为自动化/更新/投送目标。</summary>
@@ -446,8 +478,8 @@ namespace SoulLink.Models
         public bool BgiMigrated { get; set; }
 
         /// <summary>
-        /// 联机大厅服务端地址（例如 http://121.4.78.52:45080）。
-        /// 空 = 用默认地址。
+        /// 联机大厅服务端地址（用户自定义，例如 http://服务器地址:端口）。
+        /// 空 = 未配置服务器，联机功能不发任何请求。
         /// </summary>
         public string LobbyServerUrl { get; set; } = "";
 
@@ -519,6 +551,15 @@ namespace SoulLink.Models
 
         /// <summary>环形缓冲保留秒数。超过即丢弃最旧的帧。</summary>
         public int RecordKeepSeconds { get; set; } = 30;
+
+        /// <summary>
+        /// 抓屏后端模式（预留，第一步只有 BitBlt）。
+        ///
+        /// ★ 0 = BitBlt（默认，现行为）；1 = WGC（Windows.Graphics.Capture，第二步实现）。
+        /// 当前版本只有 BitBlt 实现，此字段仅预留接口与配置，不改变任何行为。
+        /// 第二步接入 WGC 时按此值选择 IScreenCapture 实现（见 Relay/IScreenCapture.cs）。
+        /// </summary>
+        public int CaptureMode { get; set; } = 0;
 
         // ══════════ 网页访问（3.2.8）══════════
         //

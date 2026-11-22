@@ -15,22 +15,22 @@
         <StackPanel Margin="22,20,22,18">
             <TextBlock Text="新建房间" FontSize="16" FontWeight="SemiBold"
                        Foreground="{DynamicResource TextPrimary}" />
-            <TextBlock Text="固定的四人房 / 双人房 / 小号池已经存在，不用新建。这里只用于创建你自己的私人房间。"
+            <TextBlock Text="这里只用于创建你自己的私人房间：单间（发车人数 2-4 可选）或成对的大小号房。"
                        FontSize="11" Foreground="{DynamicResource TextMuted}"
                        Margin="0,6,0,16" TextWrapping="Wrap" />
 
-            <!-- 私人·四人 -->
+            <!-- 私人房间 -->
             <Border x:Name="CardPrivateFour" CornerRadius="12" Padding="16,14" Margin="0,0,0,10"
                     Background="#1AFFB14D" BorderBrush="#55FFB14D" BorderThickness="1"
                     Cursor="Hand" MouseLeftButtonUp="CardPrivateFour_Click">
                 <StackPanel>
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="私人·四人" FontSize="14" FontWeight="Bold"
+                        <TextBlock Text="私人房间" FontSize="14" FontWeight="Bold"
                                    Foreground="#FFFFB14D" />
-                        <TextBlock Text="  自定房间码 · 满 4 人发车" FontSize="10.5"
+                        <TextBlock Text="  自定房间码 · 满 2-4 人发车" FontSize="10.5"
                                    Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" />
                     </StackPanel>
-                    <TextBlock Text="和四人房一样的规则，但房间码只给创建者和加入者看。不会出现在大厅列表里（管理员可见）。"
+                    <TextBlock Text="建房时可选发车人数（2/3/4）。房间码只给创建者和加入者看，不会出现在大厅列表里（管理员可见）。"
                                FontSize="10.5" Foreground="{DynamicResource TextMuted}"
                                TextWrapping="Wrap" Margin="0,6,0,0" />
                 </StackPanel>
@@ -47,7 +47,7 @@
                         <TextBlock Text="  一对房间 · 大号房 + 小号房" FontSize="10.5"
                                    Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" />
                     </StackPanel>
-                    <TextBlock Text="会创建两个绑定的房间（大号房、小号房）。大号房满 2、小号房满 2 才能发车。独立于固定小号池，不与其他房间拉人。"
+                    <TextBlock Text="会创建两个绑定的房间（大号房、小号房）。两边各自可选发车人数（2-4），独立于固定小号池，不与其他房间拉人。"
                                FontSize="10.5" Foreground="{DynamicResource TextMuted}"
                                TextWrapping="Wrap" Margin="0,6,0,0" />
                 </StackPanel>

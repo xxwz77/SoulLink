@@ -73,7 +73,7 @@
                                 VerticalAlignment="Center">
                         <ToggleButton x:Name="TabAll" Content="全部" IsChecked="True" Click="Tab_Click"
                                       Style="{StaticResource ChipToggle}" Tag="all" />
-                        <ToggleButton x:Name="TabFour" Content="私人·四人" Click="Tab_Click"
+                        <ToggleButton x:Name="TabFour" Content="私人房间" Click="Tab_Click"
                                       Style="{StaticResource ChipToggle}" Tag="four" Margin="8,0,0,0" />
                         <ToggleButton x:Name="TabTwo" Content="私人·大小号" Click="Tab_Click"
                                       Style="{StaticResource ChipToggle}" Tag="two" Margin="8,0,0,0" />

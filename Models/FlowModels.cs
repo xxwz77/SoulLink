@@ -134,6 +134,16 @@ namespace SoulLink.Models
         public Dictionary<string, DateTime> DelayUntil { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>本轮已命中的日志/定时/手动等瞬时信号；等待其它条件时不设超时。</summary>
         public HashSet<string> SatisfiedContacts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// 日志触点的「事件锁存」状态：按触点节点 Id 记一个待消费事件 + 已扫描游标。
+        /// ★ [JsonIgnore] 只驻内存：用户要求「只要流程在运行，每出现一次就记住」——
+        ///   「运行」= 本次进程内。重启后从当前尾窗末尾重新建立游标，不补历史，
+        ///   避免重启把当天一堆旧日志重新触发（这也是任务给定的建议）。
+        /// </summary>
+        [JsonIgnore]
+        public Dictionary<string, LogTriggerState> LogTriggers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>本轮实时值，仅用于界面亮/灭及导线通/断，不是历史条件锁存。</summary>
         [JsonIgnore] public Dictionary<string, PlcNodeState> RuntimeStates { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         [JsonIgnore] public List<string> MigrationNotes { get; set; } = new();
@@ -235,6 +245,7 @@ namespace SoulLink.Models
             ScheduleCycleDay ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             DelayUntil ??= new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
             SatisfiedContacts ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            LogTriggers ??= new Dictionary<string, LogTriggerState>(StringComparer.OrdinalIgnoreCase);
             Latched ??= new List<string>();
             RunningActions ??= new Dictionary<string, FlowActionResult>(StringComparer.OrdinalIgnoreCase);
             WaitingActions ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -379,11 +390,45 @@ namespace SoulLink.Models
         public static implicit operator PlcSignal(bool value) => new(value, true);
     }
 
+    /// <summary>
+    /// 日志触点「事件锁存」消费的最小行视图：序号 + 级别 + 原文。
+    /// ★ 刻意不引用 BgiLogSnapshot.BgiLogLine（它带 BgiStatus/ScriptGroupRun/DailyStats 等重依赖），
+    ///   这样 LogLatch 及其测试可以只编译 FlowModels + PlcLogMatcher 即可。
+    /// </summary>
+    public readonly struct LogLineRef
+    {
+        public readonly long Seq;
+        public readonly string Level;
+        public readonly string Text;
+        public LogLineRef(long seq, string level, string text) { Seq = seq; Level = level ?? ""; Text = text ?? ""; }
+    }
+
     public sealed class FlowActionResult
     {
         public bool Ok { get; set; }
         public double ElapsedSeconds { get; set; }
         public string Message { get; set; } = "";
         public DateTime At { get; set; }
+    }
+
+    /// <summary>
+    /// 一个日志触点的锁存状态（事件锁存 + 消费语义）。
+    /// 生命周期：触点命中新日志 → 记下一个待消费事件；动作执行完一轮收尾 → 消费（清空）。
+    /// </summary>
+    public sealed class LogTriggerState
+    {
+        /// <summary>日志流里**已扫描到**的最大行序号（游标）。</summary>
+        public long Cursor { get; set; }
+        /// <summary>已锁存、待消费的匹配事件（可为空 = 没有待处理事件）。</summary>
+        public List<LogLatchEvent> Events { get; set; } = new();
+    }
+
+    /// <summary>锁存下来的一条日志匹配事件（含序号指纹，供界面/调试展示）。</summary>
+    public sealed class LogLatchEvent
+    {
+        /// <summary>命中行的内容（截断后）。</summary>
+        public string Line { get; set; } = "";
+        /// <summary>该行在日志流里的序号。</summary>
+        public long Seq { get; set; }
     }
 }

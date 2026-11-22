@@ -8,8 +8,8 @@
     <AssemblyName>SoulLink.Server</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
 
-    <!-- 版本号跟随客户端 -->
-    <Version>2.0.0</Version>
+    <!-- 版本号跟随客户端；本次联机大厅按需访问 + 发车人数 2-4 改造升版本 -->
+    <Version>2.1.0</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 联机大厅服务端</AssemblyTitle>

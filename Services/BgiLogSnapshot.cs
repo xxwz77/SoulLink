@@ -96,6 +96,12 @@ namespace SoulLink.Services
         /// </summary>
         public IReadOnlyList<BgiLogLine> Tail { get; init; } = Array.Empty<BgiLogLine>();
 
+        /// <summary>
+        /// 该账号日志流**当前最大**行序号（含已经滚出尾窗的行）。
+        /// ★ 触点事件游标用它判断「重启后从哪开始重新建立」；空流时为 0。
+        /// </summary>
+        public long LastSeq { get; init; }
+
         /// <summary>快照生成时间。</summary>
         public DateTime UpdatedAt { get; init; } = DateTime.Now;
 
@@ -115,7 +121,7 @@ namespace SoulLink.Services
             }
         }
 
-        public bool HasData => Cursor > 0 || Tail.Count > 0;
+        public bool HasData => Cursor > 0 || Tail.Count > 0 || LastSeq > 0;
     }
 
     /// <summary>尾窗里的一行日志。level 取自 [INF]/[WRN]/[ERR]，无则空。</summary>
@@ -124,6 +130,13 @@ namespace SoulLink.Services
         public readonly DateTime At;
         public readonly string Level;
         public readonly string Text;
-        public BgiLogLine(DateTime at, string level, string text) { At = at; Level = level ?? ""; Text = text ?? ""; }
+        /// <summary>
+        /// 该账号日志流里单调递增的行序号（跨天滚动/文件重建后不归零）。
+        /// ★ 日志触点的「事件锁存」游标据此推进，而不是靠时间窗；
+        ///   快照每 refresh 一次，序号更大的行就是「新增」。
+        /// </summary>
+        public readonly long Seq;
+        public BgiLogLine(DateTime at, string level, string text, long seq)
+        { At = at; Level = level ?? ""; Text = text ?? ""; Seq = seq; }
     }
 }

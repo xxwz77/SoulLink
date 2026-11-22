@@ -16,10 +16,21 @@
 
             <!-- 标题 -->
             <Grid Grid.Row="0" Margin="2,0,2,12">
-                <StackPanel>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
                     <TextBlock Text="会话瘦身" Style="{StaticResource Title}" />
                     <TextBlock x:Name="SubText" Text="清理会话里与挂机无关的外围进程，降低内存与 CPU 占用" Style="{StaticResource Caption}" Margin="0,3,0,0" />
                 </StackPanel>
+                <Button Grid.Column="1" Style="{StaticResource GhostButton}" Height="36" Padding="14,0"
+                        VerticalAlignment="Top" Click="OpenSlimHelp_Click" ToolTip="查看会话瘦身的详细说明">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE897;" FontFamily="Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" />
+                        <TextBlock Text="说明" Margin="7,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
             </Grid>
 
             <!-- 工具条 -->
@@ -146,6 +157,76 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <!-- ★ 三个开关：清理外围进程 / 全机设置 / Edge 预启动 -->
+                    <Border CornerRadius="8" Padding="12,9" Margin="0,10,0,0"
+                            Background="{DynamicResource FieldBackground}" BorderBrush="#28FFFFFF" BorderThickness="1">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="清理会话外围进程（按账号）" FontSize="11.5"
+                                               FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
+                                    <TextBlock FontSize="10" Margin="0,3,0,0" TextWrapping="Wrap" LineHeight="15"
+                                               Foreground="{DynamicResource TextMuted}"
+                                               Text="结束浏览器窗口、手机连接、跨设备、游戏栏、触摸键盘、OneDrive 授权等不会自动重启的外围进程。只影响挂机账号。" />
+                                </StackPanel>
+                                <CheckBox Grid.Column="1" x:Name="KillEnabledCheck" Content="启用"
+                                          VerticalAlignment="Center"
+                                          Style="{StaticResource GlassCheckBox}"
+                                          Checked="KillEnabledCheck_Changed"
+                                          Unchecked="KillEnabledCheck_Changed" />
+                            </Grid>
+                            <Separator Margin="0,8" Background="#1EFFFFFF" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="全机设置（影响所有用户，需管理员）" FontSize="11.5"
+                                               FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
+                                    <TextBlock x:Name="MachinePolicyHint" FontSize="10" Margin="0,3,0,0"
+                                                TextWrapping="Wrap" LineHeight="15"
+                                                Foreground="{DynamicResource TextMuted}"
+                                                Text="关闭小组件面板 + 任务栏搜索。作用于整台机器（含主控制台）；开始菜单打字搜索会失效，但开始菜单本体与资源管理器搜索正常。" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <CheckBox x:Name="MachinePolicyCheck" Content="启用"
+                                              VerticalAlignment="Center" Margin="0,0,10,0"
+                                              Style="{StaticResource GlassCheckBox}"
+                                              Checked="MachinePolicyCheck_Changed"
+                                              Unchecked="MachinePolicyCheck_Changed" />
+                                    <Button x:Name="BtnRevertMachine" Style="{StaticResource GhostButton}"
+                                            Padding="10,4" Click="RevertMachine_Click">
+                                        <TextBlock Text="恢复默认" FontSize="10.5" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                            <Separator Margin="0,8" Background="#1EFFFFFF" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Edge 预启动/后台（按账号，代理启动时写入）" FontSize="11.5"
+                                               FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
+                                    <TextBlock FontSize="10" Margin="0,3,0,0" TextWrapping="Wrap" LineHeight="15"
+                                               Foreground="{DynamicResource TextMuted}"
+                                               Text="由注入代理在目标会话内写入该账号的 HKCU，绕开「已登录无法挂载配置单元」的限制。挂机会话里 Edge 通常不运行，收益有限。" />
+                                </StackPanel>
+                                <CheckBox Grid.Column="1" x:Name="UserPolicyCheck" Content="启用"
+                                          VerticalAlignment="Center"
+                                          Style="{StaticResource GlassCheckBox}"
+                                          Checked="UserPolicyCheck_Changed"
+                                          Unchecked="UserPolicyCheck_Changed" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 

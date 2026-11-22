@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
@@ -33,53 +30,12 @@ namespace SoulLink.Relay
     /// </summary>
     internal static class SessionRecorder
     {
-        // ── Win32 ────────────────────────────────────────────────────────────
-        [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
-        [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-        [DllImport("user32.dll")] private static extern int GetSystemMetrics(int nIndex);
-        // ── 光标叠加（3.3.18）────────────────────────────────────────────────
-        [StructLayout(LayoutKind.Sequential)]
-        private struct POINT { public int X; public int Y; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct CURSORINFO
-        {
-            public int cbSize;
-            public int flags;
-            public IntPtr hCursor;
-            public POINT ptScreenPos;
-        }
-
-        private const int CURSOR_SHOWING = 0x00000001;
-        private const int DI_NORMAL = 0x0003;
-
-        [DllImport("user32.dll")] private static extern bool GetCursorInfo(ref CURSORINFO pci);
-        [DllImport("user32.dll")] private static extern bool DrawIconEx(IntPtr hdc, int x, int y,
-            IntPtr hIcon, int cx, int cy, int istepIfAniCur, IntPtr hbrFlickerFreeDraw, int diFlags);
-        [DllImport("user32.dll")] private static extern bool GetIconInfo(IntPtr hIcon, out ICONINFO piconinfo);
-        [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr hIcon);
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct ICONINFO
-        {
-            public bool fIcon;
-            public int xHotspot;
-            public int yHotspot;
-            public IntPtr hbmMask;
-            public IntPtr hbmColor;
-        }
-
-        [DllImport("gdi32.dll")] private static extern bool BitBlt(IntPtr hdc, int x, int y, int w, int h,
-            IntPtr hdcSrc, int x1, int y1, uint rop);
-        [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-        [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int w, int h);
-        [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
-        [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
-        [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr h);
-
-        private const uint SRCCOPY = 0x00CC0020;
-        private const int SM_CXSCREEN = 0;
-        private const int SM_CYSCREEN = 1;
+        // ── 抓屏后端（第一步 = BitBlt，第二步 = WGC）──────────────────────────
+        //
+        // ★ 抓帧的 Win32 细节已搬到 IScreenCapture 实现（见 BitBltCapture.cs）。
+        //   SessionRecorder 只负责环形缓冲 / 录制 / 直播调度，不碰抓屏细节。
+        //   换后端只改这一处工厂，其余逻辑零改动。
+        private static IScreenCapture Capture = new BitBltCapture();
 
         // ── 缓存目录：跟程序目录走（用户要求「跟程序一个目录」）─────────────
         /// <summary>
@@ -231,9 +187,10 @@ namespace SoulLink.Relay
                     int interval = Math.Max(1, 1000 / fps);
                     var sw = Stopwatch.StartNew();
 
-                    var jpeg = GrabJpeg(quality);
+                    var jpeg = Capture.CaptureJpeg(quality, out int cw, out int ch);
                     if (jpeg != null)
                     {
+                        if (cw > 0 && ch > 0) { _width = cw; _height = ch; }
                         var now = DateTime.Now;
                         lock (Gate)
                         {
@@ -254,112 +211,6 @@ namespace SoulLink.Relay
             {
                 lock (Gate) { _status = "idle"; _worker = null; }
             }
-        }
-
-        // ── 抓帧 ─────────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// 把当前鼠标光标叠加到已抓取的屏幕位图上。
-        ///
-        /// ★ 为什么要手工画：
-        ///   BitBlt(SRCCOPY) 抓的是屏幕像素，而光标由 DWM 作为独立图层合成，
-        ///   不会出现在抓取结果里。所以录像和网页实时画面里看不到鼠标。
-        ///
-        /// ★ 关键细节（每个都能让光标画歪）：
-        ///   ① **热点**：光标图标左上角不等于实际指向点，
-        ///      GetIconInfo 的 xHotspot/yHotspot 才是。不减去它，
-        ///      光标会整体偏移（箭头尖端不在真正的位置上）。
-        ///   ② **DPI**：本进程已 SetProcessDPIAware（见 Run 里），
-        ///      GetCursorInfo 返回的是物理像素，与 BitBlt 的坐标系一致，
-        ///      所以这里**不做**任何缩放换算 —— 多算一次反而会错。
-        ///   ③ **图标句柄**：GetIconInfo 会创建两个 GDI 位图（mask/color），
-        ///      必须 DeleteObject，否则每帧泄漏两个句柄，几分钟就耗尽 GDI。
-        /// </summary>
-        private static void DrawCursorOn(IntPtr hdc, int w, int h)
-        {
-            var ci = new CURSORINFO();
-            ci.cbSize = Marshal.SizeOf<CURSORINFO>();
-            if (!GetCursorInfo(ref ci)) return;
-            if ((ci.flags & CURSOR_SHOWING) == 0) return;   // 光标隐藏时不画
-            if (ci.hCursor == IntPtr.Zero) return;
-
-            int x = ci.ptScreenPos.X;
-            int y = ci.ptScreenPos.Y;
-
-            // 用热点修正实际绘制的左上角
-            if (GetIconInfo(ci.hCursor, out ICONINFO info))
-            {
-                try
-                {
-                    x -= info.xHotspot;
-                    y -= info.yHotspot;
-                }
-                finally
-                {
-                    if (info.hbmMask != IntPtr.Zero) { try { DeleteObject(info.hbmMask); } catch { } }
-                    if (info.hbmColor != IntPtr.Zero) { try { DeleteObject(info.hbmColor); } catch { } }
-                }
-            }
-
-            // 完全在画面外就不画（省一次绘制）
-            if (x < -64 || y < -64 || x > w + 64 || y > h + 64) return;
-
-            // 0,0 表示用图标原始尺寸
-            DrawIconEx(hdc, x, y, ci.hCursor, 0, 0, 0, IntPtr.Zero, DI_NORMAL);
-        }
-
-        private static byte[]? GrabJpeg(int quality)
-        {
-            IntPtr hScreen = IntPtr.Zero, hMem = IntPtr.Zero, hBmp = IntPtr.Zero, old = IntPtr.Zero;
-            try
-            {
-                int w = GetSystemMetrics(SM_CXSCREEN);
-                int h = GetSystemMetrics(SM_CYSCREEN);
-                if (w <= 0 || h <= 0) return null;
-                _width = w; _height = h;
-
-                hScreen = GetDC(IntPtr.Zero);
-                if (hScreen == IntPtr.Zero) return null;
-                hMem = CreateCompatibleDC(hScreen);
-                hBmp = CreateCompatibleBitmap(hScreen, w, h);
-                if (hMem == IntPtr.Zero || hBmp == IntPtr.Zero) return null;
-                old = SelectObject(hMem, hBmp);
-                if (!BitBlt(hMem, 0, 0, w, h, hScreen, 0, 0, SRCCOPY)) return null;
-
-                // ★★ 把鼠标光标画进画面（3.3.18）★★
-                //
-                //   BitBlt 只抓屏幕像素 —— 光标是 DWM 单独合成的图层，**不在抓取结果里**。
-                //   所以录像/实时画面里永远看不到鼠标（用户反馈「没有同步鼠标轨迹」）。
-                //   RDP 客户端能看到光标，是因为它走的是另一条通道（客户端自己渲染）。
-                //
-                //   这里手工取光标位置+形状，再用 DrawIconEx 叠加到内存 DC 上。
-                //   注意必须在 BitBlt 之后、Image.FromHbitmap 之前，才能进到最终 JPEG。
-                try { DrawCursorOn(hMem, w, h); } catch { }
-
-                using var bmp = Image.FromHbitmap(hBmp);
-                using var ms = new MemoryStream();
-                using var ep = new EncoderParameters(1);
-                ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)quality);
-                bmp.Save(ms, JpegCodec(), ep);
-                return ms.ToArray();
-            }
-            catch { return null; }
-            finally
-            {
-                if (hMem != IntPtr.Zero && old != IntPtr.Zero) { try { SelectObject(hMem, old); } catch { } }
-                if (hBmp != IntPtr.Zero) { try { DeleteObject(hBmp); } catch { } }
-                if (hMem != IntPtr.Zero) { try { DeleteDC(hMem); } catch { } }
-                if (hScreen != IntPtr.Zero) { try { ReleaseDC(IntPtr.Zero, hScreen); } catch { } }
-            }
-        }
-
-        private static ImageCodecInfo? _jpeg;
-        private static ImageCodecInfo JpegCodec()
-        {
-            if (_jpeg != null) return _jpeg;
-            foreach (var c in ImageCodecInfo.GetImageEncoders())
-                if (c.FormatID == ImageFormat.Jpeg.Guid) { _jpeg = c; break; }
-            return _jpeg ?? throw new InvalidOperationException("找不到 JPEG 编码器");
         }
 
         // ── 对外：取帧 / 保存 ────────────────────────────────────────────────
@@ -593,8 +444,9 @@ namespace SoulLink.Relay
             message = "";
             try
             {
-                var jpeg = GrabJpeg(Math.Clamp(quality, 30, 95));
+                var jpeg = Capture.CaptureJpeg(Math.Clamp(quality, 30, 95), out int cw, out int ch);
                 if (jpeg == null) { message = "抓屏失败"; return false; }
+                if (cw > 0 && ch > 0) { _width = cw; _height = ch; }
 
                 string stamp = DateTime.Now.ToString("yyyy-MM-dd-HHmmss");
                 string safeTrigger = Sanitize(trigger);

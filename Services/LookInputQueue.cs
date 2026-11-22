@@ -24,6 +24,17 @@ namespace SoulLink.Services
         private long _buttonsSent;
         private long _movesSent;
 
+        /// <summary>
+        /// 位移合并窗口（毫秒）。原 20ms（50Hz）上限。
+        ///
+        /// ★ 2026-11-22 提到 8ms（≈125Hz）：前提是 moverel 已改单向发送
+        ///   （见 RelayClient.SendAsyncNoReply / SessionInput.LookRawNoReplyAsync）。
+        ///   否则每条 moverel 仍要等一个 45~64ms 的 RTT，提频只会让队列背压更糟。
+        ///   8ms 与 125Hz 鼠标上报速率相当，位移在合并窗口内聚合后一次下发，
+        ///   不会打爆 256 容量的有界通道。
+        /// </summary>
+        private const int WakeIntervalMs = 8;
+
         public LookInputQueue(Func<SessionInput> input, Func<double> sensitivity, Action<string>? diagnostic = null)
         {
             _input = input;
@@ -75,7 +86,7 @@ namespace SoulLink.Services
             {
                 while (!_cts.IsCancellationRequested || HasPending)
                 {
-                    _wake.WaitOne(20);
+                    _wake.WaitOne(WakeIntervalMs);
                     while (true)
                     {
                         Command? command = null;
@@ -107,7 +118,9 @@ namespace SoulLink.Services
                                 double sensitivity = _sensitivity();
                                 int sx = (int)Math.Round(dx * sensitivity);
                                 int sy = (int)Math.Round(dy * sensitivity);
-                                await input.LookRawAsync(sx, sy).ConfigureAwait(false);
+                                // ★ 单向发送：位移不需要确认，省掉 RTT 等待，
+                                //   让 8ms 合并窗口真正能达到 ~125Hz 上限。
+                                await input.LookRawNoReplyAsync(sx, sy).ConfigureAwait(false);
                                 Interlocked.Increment(ref _movesSent);
                             }
                         }

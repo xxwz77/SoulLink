@@ -32,6 +32,9 @@ namespace SoulLink.Services
                 PlcLogic.HasEnd(flow) ? PlcLogic.EndBoundaryHour(flow) : 0);
             flow.SatisfiedContacts.Clear(); flow.WaitingActions.Clear(); flow.RunningActions.Clear();
             flow.PlcPower.Clear(); flow.ActionResults.Clear(); flow.DelayUntil.Clear();
+            // ★ 事件锁存：新一轮开始，丢弃上一轮残留的待消费日志事件与游标。
+            //   游标会在下一轮扫描按「当前尾窗末尾」重建（= 不补历史，重启/跨日语义）。
+            flow.LogTriggers.Clear();
         }
 
         public static void CompleteRun(AutomationFlow flow, DateTime now, bool daily)

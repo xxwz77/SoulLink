@@ -91,6 +91,19 @@ namespace SoulLink.Services
             return r?.Ok == true;
         }
 
+        /// <summary>
+        /// 转视角（单向，不等待回复）。仅供高频位移流使用：
+        /// LookInputQueue 的后台线程用它，省掉每条 moverel 的 RTT 等待。
+        /// 语义与 LookRawAsync 一致，只是不返回确认（位移不需要确认）。
+        /// </summary>
+        public Task<bool> LookRawNoReplyAsync(int dx, int dy)
+        {
+            if (!Relay.IsConnected) return Task.FromResult(false);
+            if (dx == 0 && dy == 0) return Task.FromResult(true);
+            return Relay.MoveRelNoReplyAsync(dx, dy).ContinueWith(_ => true,
+                TaskScheduler.Default);
+        }
+
         /// <summary>按 UI 位移转视角（会按画面缩放补偿，用于非捕获场景）。</summary>
         public async Task<bool> LookAsync(double deltaUiX, double deltaUiY)
         {

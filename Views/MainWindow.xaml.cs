@@ -1326,6 +1326,14 @@ namespace SoulLink.Views
                 try { ConsoleView.OnPageDeactivated(); } catch { }
             }
 
+            // ★ 联机大厅页切走时停止房间列表轮询 + 释放「正在看」活动
+            //   （按需访问：不看联机页就不发请求）。在房间里时心跳仍由
+            //   LobbyConnection.SetInRoom 单独保持。
+            if (tag != "sessions")
+            {
+                try { LobbyView.OnPageDeactivated(); } catch { }
+            }
+
             switch (tag)
             {
                 case "automation": AutomationView.Activate(); break;
@@ -1339,7 +1347,9 @@ namespace SoulLink.Views
                 case "remote": RemoteView.ReloadAsync(); break;
                 case "update": UpdateView.Reload(); break;
                 case "routeupdate": RouteUpdateView.Reload(); break;
-                case "sessions": LobbyView.Refresh(); break;
+                case "sessions":
+                    LobbyView.OnPageActivated();
+                    break;
                 case "procs": ProcsView.Activate(); break;
                 case "cli": CliView.Activate(); break;
                 case "settings": SettingsView.Activate(); break;
