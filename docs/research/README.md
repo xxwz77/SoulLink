@@ -29,6 +29,19 @@
 - [AUTOMATION-BUG-20261122.md](AUTOMATION-BUG-20261122.md) —— **自动化「无 END + 日志触点只触发一次」根因审计**（数据层时间窗语义，非引擎锁存卡死；含最小复现测试 `tools/layout-check/LogRetriggerCheck`）
 - [LOG-LATCH-DESIGN-20261122.md](LOG-LATCH-DESIGN-20261122.md) —— **日志触点「事件锁存 + 消费」实现**（TrigLogMatch 从「最近 N 秒电平」改为「出现即锁存、动作消费后清空」，替代时间窗方案；含 `tools/layout-check/LogLatchCheck`）
 
+## 视频流 / 远程画面（2026-11-22 主线）
+
+- [HANDOFF-VIDEO-20261122.md](HANDOFF-VIDEO-20261122.md) ← **最新交接**（服务端视频流全链路跑通：WGC 2~8ms + NVENC 6~8ms + /stream，端到端 636~742ms 其中 500ms 是 ffplay 缓冲）
+- [STREAM-LATENCY-TEST-20261122.md](STREAM-LATENCY-TEST-20261122.md) —— **延迟实测**（软编 1384ms vs 硬编 636~742ms，各阶段耗时分解）
+- [WGC-SNAPSHOT-20261122.md](WGC-SNAPSHOT-20261122.md) —— **WGC 非黑帧实证**（A1 抓原神 1920x1080 非黑 100%，含截图）
+- [WGC-TFM-VERIFY-20261122.md](WGC-TFM-VERIFY-20261122.md) —— **TFM 多目标方案**（55 个 tools 零改动，publish 加 -f）
+- [WGC-A1-DYNAMIC-20261122.md](WGC-A1-DYNAMIC-20261122.md) —— WGC 帧率实测（31.7fps = 原神锁帧，抓窗口比抓屏快 2.6 倍）
+- [WGC-VERIFY-20261122.md](WGC-VERIFY-20261122.md) —— WGC 在 RDP 可用（身份是关键）
+- [VIDEO-STREAM-RESEARCH-20261122.md](VIDEO-STREAM-RESEARCH-20261122.md) —— 视频流方案对比（MF 软编 mfh264enc 系统自带 Win7+）
+- [NVENC-DESIGN-20261122.md](NVENC-DESIGN-20261122.md) —— 硬件编码设计（多厂商抽象层）
+- [STREAM-GAP-20261122.md](STREAM-GAP-20261122.md) —— **为什么串流软件能 60fps**（BitBlt 是 2006 年的 GDI）
+- [ANDROID-APP-DESIGN-20261122.md](ANDROID-APP-DESIGN-20261122.md) —— **安卓 APP 设计**（Kotlin + SurfaceView + MediaCodec）
+
 ## 性能与架构
 
 - [PERF-3.3.4-20261122.md](PERF-3.3.4-20261122.md) —— **性能基线**（16% 单核的构成分解 + 三个卡顿根因）

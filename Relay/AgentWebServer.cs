@@ -179,6 +179,12 @@ namespace SoulLink.Relay
                 return;
             }
 
+            if (path == "/stream")
+            {
+                await WriteStreamAsync(ctx).ConfigureAwait(false);
+                return;
+            }
+
             if (path == "/api/input" && req.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
             {
                 await HandleInputAsync(ctx).ConfigureAwait(false);
@@ -243,6 +249,132 @@ namespace SoulLink.Relay
             ctx.Response.ContentLength64 = jpeg.Length;
             await ctx.Response.OutputStream.WriteAsync(jpeg).ConfigureAwait(false);
             ctx.Response.Close();
+        }
+
+        /// <summary>
+        /// H.264 直播推流（第1步，单客户端）：chunked 输出 Annex-B NAL。
+        ///
+        /// ★ 数据流：SessionRecorder 环形缓冲最新 JPEG → 解码 BGRA → NV12
+        ///   → MfFrameEncoder（IMFTransform）→ 长度前缀 NAL → Annex-B → chunked 写出。
+        ///
+        /// ★ 第1步从现有 JPEG 帧起步（不新开抓屏后端），保证录像/直播共用同一数据源；
+        ///   后续再让 SessionRecorder 直接产 NV12（省一次 JPEG 编解码）。
+        ///
+        /// ★ 复用 CheckToken（在 HandleAsync 统一校验），/stream 已在 WebDirect 白名单。
+        /// </summary>
+        private static async Task WriteStreamAsync(HttpListenerContext ctx)
+        {
+            // 先等一帧
+            byte[]? jpeg = null;
+            int tries = 0;
+            while (jpeg == null && tries < 50)
+            {
+                try { jpeg = SessionRecorder.GetLatestJpeg(); } catch { }
+                if (jpeg == null) { await Task.Delay(20).ConfigureAwait(false); tries++; }
+            }
+            if (jpeg == null || jpeg.Length == 0)
+            {
+                await WriteText(ctx, 404, "缓冲里没有帧").ConfigureAwait(false);
+                return;
+            }
+
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "video/h264";
+            ctx.Response.Headers["Cache-Control"] = "no-store, no-cache";
+            ctx.Response.SendChunked = true;
+            ctx.Response.KeepAlive = true;
+
+            var enc = new SoulLink.Services.MfFrameEncoder();
+            try
+            {
+                // 首帧解出尺寸
+                int w = 0, h = 0;
+                using (var ms = new MemoryStream(jpeg))
+                using (var bmp = new System.Drawing.Bitmap(ms))
+                {
+                    w = bmp.Width; h = bmp.Height;
+                }
+                if (w <= 0 || h <= 0) { await WriteText(ctx, 404, "无法解析帧").ConfigureAwait(false); return; }
+
+                if (!enc.TryInitialize(w, h, 15, 8000))
+                {
+                    await WriteText(ctx, 500, "编码器初始化失败").ConfigureAwait(false);
+                    return;
+                }
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var stream = ctx.Response.OutputStream;
+                int frames = 0;
+
+                // 推流循环：客户端断开或 30 秒后停止（第1步单客户端演示）。
+                while (frames < 450 && sw.ElapsedMilliseconds < 30000)
+                {
+                    byte[]? cur = null;
+                    try { cur = SessionRecorder.GetLatestJpeg(); } catch { }
+                    if (cur == null || cur.Length == 0) { await Task.Delay(20).ConfigureAwait(false); continue; }
+
+                    byte[]? nv12;
+                    try { nv12 = DecodeJpegToNv12(cur); } catch { nv12 = null; }
+                    if (nv12 == null) { await Task.Delay(20).ConfigureAwait(false); continue; }
+
+                    byte[]? nal = null;
+                    try { nal = enc.EncodeNv12(nv12, frames * 1000000L / 15); } catch { }
+                    if (nal != null && nal.Length > 0)
+                    {
+                        // ★ MF 软 H.264 MFT 输出**已经是 Annex-B**（00 00 00 01 起始码），
+                        //   直接写出即可，不需要再转换（实测首字节 00 00 00 01 09）。
+                        await stream.WriteAsync(nal).ConfigureAwait(false);
+                        await stream.FlushAsync().ConfigureAwait(false);
+                        frames++;
+                    }
+                    await Task.Delay(66).ConfigureAwait(false);  // 约 15fps
+                }
+            }
+            catch (Exception)
+            {
+                // 客户端断开等异常，静默结束流。
+            }
+            finally
+            {
+                enc.Dispose();
+                try { ctx.Response.Close(); } catch { }
+            }
+        }
+
+        /// <summary>JPEG → NV12（复用 MfFrameEncoder 所需输入）。</summary>
+        private static byte[]? DecodeJpegToNv12(byte[] jpeg)
+        {
+            using var ms = new MemoryStream(jpeg);
+            using var bmp = new System.Drawing.Bitmap(ms);
+            int w = bmp.Width, h = bmp.Height;
+            var bd = bmp.LockBits(new System.Drawing.Rectangle(0, 0, w, h),
+                System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            try
+            {
+                var bgra = new byte[Math.Abs(bd.Stride) * h];
+                System.Runtime.InteropServices.Marshal.Copy(bd.Scan0, bgra, 0, bgra.Length);
+                return BgraToNv12(bgra, w, h, Math.Abs(bd.Stride));
+            }
+            finally { bmp.UnlockBits(bd); }
+        }
+
+        private static byte[] BgraToNv12(byte[] bgra, int w, int h, int stride)
+        {
+            int ySize = w * h;
+            var nv12 = new byte[w * h * 3 / 2];
+            for (int y = 0; y < h; y++)
+            {
+                int row = y * stride;
+                int yRow = y * w;
+                for (int x = 0; x < w; x++)
+                {
+                    int i = row + x * 4;
+                    int b = bgra[i], g = bgra[i + 1], r = bgra[i + 2];
+                    nv12[yRow + x] = (byte)((66 * r + 129 * g + 25 * b + 128) >> 8);
+                }
+            }
+            for (int i = ySize; i < nv12.Length; i++) nv12[i] = 128;
+            return nv12;
         }
 
 

@@ -63,6 +63,7 @@ namespace SoulLink.Services
         {
             if (string.IsNullOrEmpty(path)) return false;
             if (path == "/live") return true;
+            if (path == "/stream") return true;
             if (path == "/api/input") return true;
             if (path == "/api/info") return true;
             // 注意：**没有** /file/。历史录像是磁盘文件，主程序直接读，
