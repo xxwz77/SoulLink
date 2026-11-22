@@ -20,6 +20,12 @@
 
 - [PERF-3.3.4-20261122.md](PERF-3.3.4-20261122.md) —— **性能基线**（16% 单核的构成分解 + 三个卡顿根因）
 - [WEB-DIRECT-3.3.5-20261122.md](WEB-DIRECT-3.3.5-20261122.md) —— **网页直连代理**（端口按账号分配 / 端口独占实测 / 路径穿越防护）
+- [REVIEW-20261122.md](REVIEW-20261122.md) —— **三方案对抗性评审**（唯一 P0/P1/P2 顺序、量化复算、风险与遗漏项）
+- [WEB-EXTENSION-PLAN-20261122.md](WEB-EXTENSION-PLAN-20261122.md) —— 网页 BGI 数据与自动化流程扩展（按需 API / 双端乐观锁 / 安全前置）
+- [STREAM-PERF-AUDIT-20261122.md](STREAM-PERF-AUDIT-20261122.md) —— **画面链路性能根因审计 + 最小成本远程控制内核**（逐跳数据流 / CPU 五分解 / 7 方案量化 / 推荐架构 + 分阶段路线）
+- [MOBILE-REMOTE-PLAN-20261122.md](MOBILE-REMOTE-PLAN-20261122.md) —— **手机端远程控制方案**（PWA→壳套 APP 路线 / 手势映射 / 外网穿透与安全边界 / 里程碑）
+- [CITATION-AUDIT-20261122.md](CITATION-AUDIT-20261122.md) —— 上述三份文档的 file:line 引用全量核对（107 条，0 WRONG / 0 MISSING）
+- [PERF-MEASURE-20261122.md](PERF-MEASURE-20261122.md) —— **性能实测方法**（`scripts/measure-soullink-perf.ps1` 用法 + 三个关键数字的验证步骤）
 
 ## 交接与状态文档
 
