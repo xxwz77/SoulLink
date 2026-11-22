@@ -181,18 +181,65 @@
   .dv{color:var(--txt2);flex:1;word-break:break-all}
 
   #viewer{display:none;margin-top:14px}
+
+/* ── 独立窗口模式（?view=账号Id）───────────────────────────
+   用户要求「查看画面要打开一个新页面」：新标签页只显示画面，
+   把总览、账号列表、录像列表全部隐藏，画面占满可视区。 */
+body.viewonly main>.stat,
+body.viewonly main>.sect-t,
+body.viewonly main>#users,
+body.viewonly main>#empty,
+body.viewonly #viewer .sect-t,
+body.viewonly #saved,
+body.viewonly #pback{display:none !important}
+/* 让画面尽可能大：去掉外层留白和卡片内边距，并垂直居中 */
+/* ★ 整个页面**不滚动**：header 固定高度，剩下全给画面。
+   之前留了滚动条是因为 main 的 min-height + 默认 padding 叠加超出视口。 */
+html.viewonly-root,body.viewonly{overflow:hidden;height:100%;margin:0;padding:0}
+body.viewonly{display:flex;flex-direction:column;height:100vh}
+body.viewonly main{flex:1 1 auto;min-height:0;max-width:100%;padding:0;margin:0;
+                   display:flex;align-items:center;justify-content:center;overflow:hidden}
+body.viewonly #viewer{display:flex !important;margin:0;padding:0;width:100%;height:100%;
+                      align-items:center;justify-content:center}
+body.viewonly #viewerBox{padding:0;margin:0;width:100%;height:100%;display:flex;
+                         align-items:center;justify-content:center}
+body.viewonly #viewerTitle{display:none}
+body.viewonly header{padding:6px 12px}
+body.viewonly header .logo{width:26px;height:26px;font-size:14px}
+body.viewonly header .ttl{font-size:13px}
+body.viewonly header .ver{display:none}
+body.viewonly #liveCount{display:none}
+/* 画面：宽度撑满，高度由图片比例决定（16:9 就正好是 16:9）。
+   ★ 不要给 #scr 固定 height —— 那会让图片在容器里居中缩成小块，
+     两侧露出 #scr 的黑色背景，看起来就是"画面很小 + 黑边"。
+   ★ 也不要 height:100%：同理。容器必须由图片撑开。 */
+/* ★ 画面按"能装进可视区"缩放：宽和高都不超过，比例不变。
+   这样无论窗口是宽扁还是竖长，画面都是最大的那一个，
+   多余空间均匀分布在四周（居中），而不是全堆在底部。 */
+body.viewonly #scr{height:auto;background:transparent;width:100%;
+                   display:flex;align-items:center;justify-content:center}
+/* 画面按可用区域缩放：宽高都不越界，比例不变，四周均匀留白 */
+body.viewonly #scr img{width:auto;height:auto;max-width:100%;
+                       max-height:calc(100vh - 46px);object-fit:contain;
+                       margin:0 auto;display:block}
+body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
   #viewerBox{background:linear-gradient(150deg,var(--card),var(--card2));
              border:1px solid var(--border);border-radius:14px;
              padding:13px;box-shadow:var(--shadow);transition:.22s}
   #viewerTitle{font-size:13px;font-weight:600;color:var(--txt);
                margin-bottom:11px;display:flex;align-items:center;gap:8px}
-  #scr{position:relative;background:#000;border-radius:11px;overflow:hidden;
-       border:1px solid var(--border);touch-action:none;cursor:crosshair}
-  #scr img{width:100%;display:block;min-height:120px;object-fit:contain;
-           pointer-events:none}
+  /* 容器宽度决定画面宽度；高度交给图片自己撑（见 img 规则）。
+     背景用透明而不是纯黑 —— 纯黑在画面比容器小时会露出黑边。 */
+  #scr{position:relative;background:transparent;border-radius:11px;overflow:hidden;
+       border:1px solid var(--border);touch-action:none;cursor:default}
+  /* ★ 宽度撑满、高度按比例自适应，并封顶在可视区内。
+     历史教训：写成 height:100% 会让图在容器里居中缩小 → 画面变小 + 黑边。 */
+  #scr img{display:block;width:100%;height:auto;max-height:70vh;
+           object-fit:contain;pointer-events:none}
+  /* 占位提示层不能吃掉指针事件，否则"还没有画面"时鼠标移动完全收不到 */
   #ph{position:absolute;inset:0;display:flex;align-items:center;
       justify-content:center;color:#8b9bc4;font-size:12.5px;
-      padding:20px;text-align:center}
+      padding:20px;text-align:center;pointer-events:none}
   #rip{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;
        border-radius:50%;border:2px solid var(--accent);opacity:0;pointer-events:none}
   #rip.go{animation:rp .5s ease-out}
@@ -209,7 +256,59 @@
   .seg button.on{background:var(--accent-bg);color:var(--accent);
                  border-color:var(--accent-border)}
 
-  #kbTip{display:none;margin-top:10px;padding:10px 12px;border-radius:9px;
+  /* 顶栏里的画面控制（viewonly 时才显示） */
+.hdrinfo{font-size:10.5px;color:var(--txt3);margin-right:4px}
+
+/* ★ 用 flex + 统一间距，保证垂直居中对齐（之前按钮高低不齐就是缺这个） */
+.hdrctrl{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
+
+/* ★ 两组设置各自成块，用底色+边框区分，避免"帧率"到底指哪个的歧义。
+     data-kind 只用于配色，不参与逻辑。 */
+.hgroup{display:flex;align-items:center;gap:6px;padding:3px 8px;
+        border-radius:9px;border:1px solid var(--border);
+        background:color-mix(in srgb, var(--card) 65%, transparent)}
+.hgroup[data-kind="record"]{--gtag:var(--accent)}
+.hgroup[data-kind="view"]{--gtag:#7dd3a0}
+.gtag{font-size:9.5px;font-weight:600;letter-spacing:.4px;
+      color:var(--gtag);white-space:nowrap;padding-right:2px;
+      border-right:1px solid var(--border);margin-right:2px}
+
+/* 每一项 = 小标签 + 下拉，标签在上方不占横向空间 */
+.hfield{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.hfield>span{font-size:10px;color:var(--txt3);white-space:nowrap;letter-spacing:.2px}
+
+/* 原生 select 统一外观：和按钮等高（26px）、同圆角、同配色 */
+.hfield select{
+  height:26px;line-height:1;padding:0 22px 0 8px;font-size:11.5px;
+  color:var(--txt);background:var(--card);border:1px solid var(--border);
+  border-radius:8px;cursor:pointer;white-space:nowrap;
+  /* 右侧留出原生箭头的空间，避免文字被压 */
+  appearance:none;-webkit-appearance:none;-moz-appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
+                   linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 13px) 11px, calc(100% - 9px) 11px;
+  background-size:4px 4px, 4px 4px;background-repeat:no-repeat;
+}
+.hfield select:hover{border-color:var(--accent)}
+.hfield select:focus{outline:none;border-color:var(--accent)}
+
+.hbtn{height:26px;padding:0 12px;font-size:11.5px;border-radius:8px;
+      border:1px solid var(--border);background:var(--card);color:var(--txt);
+      cursor:pointer;white-space:nowrap;display:inline-flex;
+      align-items:center;justify-content:center}
+.hbtn:hover{border-color:var(--accent)}
+.hbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* 可折叠的区块标题（「录像回放」用）：默认收起，点了才取数据 */
+.sect-toggle{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px}
+.sect-toggle:hover{color:var(--accent)}
+.sect-toggle .chev{transition:transform .18s;display:inline-block;font-size:9px}
+.sect-toggle.open .chev{transform:rotate(90deg)}
+body.viewonly header{flex-wrap:nowrap;gap:8px}
+body.viewonly .right{gap:6px;flex-wrap:nowrap}
+/* 键盘状态用小圆点+文字提示，不再占一整行 */
+#kbBadge{display:none;font-size:10.5px;color:var(--accent);white-space:nowrap}
+#kbTip{display:none;margin-top:10px;padding:10px 12px;border-radius:9px;
          background:var(--accent-bg);border:1px solid var(--accent-border);
          color:var(--accent);font-size:11.5px;line-height:1.6}
 
@@ -262,7 +361,68 @@
     <div class="ver" id="ver"></div>
   </div>
   <div class="right">
+    <!-- ★ 3.3.8：实时画面的操作全部移到顶栏。
+         原来它们在画面下方单独占一整行，白吃掉可视高度（用户明确要求）。 -->
+    <span id="kbBadge">⌨ 键盘已开</span>
+    <span id="fpsinfo" class="hdrinfo"></span>
     <span class="pill" id="liveCount">— 在线</span>
+    <div class="hdrctrl" id="viewctrls" style="display:none">
+      <!-- ══════════ 两组设置，含义完全不同，必须分开 ══════════
+
+           ① 录制（代理侧）：决定代理多久截一次屏、压多清、内存留多久。
+              改了会影响**所有**看这个账号的人，并且写回应用配置。
+           ② 播放（本浏览器）：只决定**这个浏览器**多久来取一次图。
+              不影响录制，不影响别人，只影响你自己的流量和 CPU。
+
+           ★ 用户指出：「这是浏览器的帧率吧，那录制帧率呢？要弄完整，让用户分得清」
+             所以两组各自成块、带标题、带颜色区分，不再混在一起。 -->
+
+      <div class="hgroup" data-kind="record" title="录制参数：改这里会同步到应用设置，影响所有观看者">
+        <span class="gtag">录制</span>
+        <label class="hfield">
+          <span>帧率</span>
+          <select id="selFps" title="代理每秒截取多少帧，影响流畅度与 CPU">
+            <option value="5">5 fps</option>
+            <option value="10">10 fps</option>
+            <option value="15">15 fps</option>
+            <option value="30">30 fps</option>
+          </select>
+        </label>
+        <label class="hfield">
+          <span>画质</span>
+          <select id="selQuality" title="JPEG 质量，越高越清晰、单帧越大">
+            <option value="60">标准 60</option>
+            <option value="75">清晰 75</option>
+            <option value="90">高清 90</option>
+          </select>
+        </label>
+        <label class="hfield">
+          <span>保留</span>
+          <select id="selKeep" title="内存环形缓冲保留多少秒">
+            <option value="10">10 秒</option>
+            <option value="30">30 秒</option>
+            <option value="60">60 秒</option>
+            <option value="120">120 秒</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="hgroup" data-kind="view" title="播放参数：只影响本浏览器，不改录制也不影响别人">
+        <span class="gtag">本机播放</span>
+        <label class="hfield">
+          <span>取图</span>
+          <select id="selViewFps" title="本浏览器每秒来取几次画面（不会超过录制帧率）">
+            <option value="2">2 次/秒</option>
+            <option value="5">5 次/秒</option>
+            <option value="10">10 次/秒</option>
+            <option value="0">跟随录制</option>
+          </select>
+        </label>
+      </div>
+
+      <button id="pauseBtn" class="hbtn">暂停</button>
+      <button id="closeViewer" class="hbtn">收起</button>
+    </div>
     <button class="themebtn" id="themeBtn" title="切换明暗主题">
       <span id="themeIcon">🌙</span>
     </button>
@@ -294,34 +454,14 @@
       <div id="ph">连接中…</div>
       <div id="rip"></div>
     </div>
-    <div class="row">
-      <label>刷新</label>
-      <div class="seg" id="speed">
-        <button data-ms="1000">1 秒</button>
-        <button data-ms="500" class="on">0.5 秒</button>
-        <button data-ms="250">0.25 秒</button>
-      </div>
-    </div>
-    <div class="row">
-      <label>操作</label>
-      <div class="seg">
-        <button id="rightBtn">右键</button>
-        <button id="kbBtn">键盘</button>
-        <button id="pauseBtn">暂停</button>
-      </div>
-    </div>
-    <div class="row">
-      <label id="fpsinfo" style="color:#5a6889;font-size:10px"></label>
-      <div class="seg">
-        <button id="wheelUp">滚轮↑</button>
-        <button id="wheelDown">滚轮↓</button>
-        <button id="closeViewer">收起</button>
-      </div>
-    </div>
-    <div id="kbTip">键盘已开启 —— 直接敲键盘发送到当前账号</div>
+    <!-- ★ 3.3.8：这里的操作行已全部移到顶栏（见 <header>）。
+         画面区只留视频本身，不再被按钮占掉可视高度。
+         原来的「刷新 1/0.5/0.25 秒」也已删除：那个间隔对使用者没有意义。 -->
 
-    <div class="sect-t">录像回放</div>
-    <div id="saved"></div>
+    <!-- ★ 3.3.17：录像列表改成**点了才取**。
+         /api/list 要扫磁盘目录 + 读每个 meta.json，打开画面时不需要。 -->
+    <div class="sect-t sect-toggle" id="savedToggle">录像回放 <span class="chev">▸</span></div>
+    <div id="savedWrap" style="display:none"><div id="saved"></div></div>
     <div id="player">
       <video id="vid" controls playsinline preload="metadata"></video>
       <div class="imt" id="pinfo" style="text-align:center;margin-top:8px"></div>
@@ -388,14 +528,45 @@ if (tb) tb.onclick = () => {
   btn.title = '主题：' + tips[themeMode] + '（点击切换）';
 };
 let users = [], cur = null;
-let liveTimer = null, liveMs = 500, paused = false;
-let rightMode = false, kbMode = false;
+// ══════════ 两组完全不同的参数，别混 ══════════
+//
+//   录制（recFps/recQuality/recKeep）
+//     · 由**代理**执行：多久截一次屏、压多清、内存留多久
+//     · 写回应用配置，影响所有观看者
+//
+//   播放（viewFps）
+//     · 由**本浏览器**执行：多久来取一次已经录好的帧
+//     · 只存在本机 localStorage，不改配置、不影响别人
+//     · 0 = 跟随录制帧率（取图频率 = 录制频率，最省事）
+//
+//   ★ 上限关系：实际取图频率 = min(viewFps, recFps)，
+//     取再快也只能拿到同一帧（代理还没录新的）。
+let liveTimer = null, paused = false;
+let recFps = 10, recQuality = 75, recKeep = 30;
+let viewFps = 0;              // 0 = 跟随录制
+let liveMs = 500;
+const VIEWFPS_KEY = 'sl_view_fps';
+
+function computeLiveMs() {
+  const recordHz = Math.max(1, Math.min(30, recFps || 10));
+  let hz = (viewFps > 0) ? viewFps : recordHz;
+  if (hz > recordHz) hz = recordHz;      // 不可能比录制更快拿到新画面
+  liveMs = Math.max(33, Math.round(1000 / hz));
+}
+let kbMode = false;   // 右键已直接支持，不再需要开关
 
 async function loadUsers() {
   try {
     const r = await fetch('/api/sessions');
     const d = await r.json();
     users = (d.sessions || []).filter(s => s.bound);
+
+    // ★ 3.3.5：直连代理的口令（后端随会话列表下发，本接口本身已鉴权）
+    //   必须拿到它，否则 <img src> 打到代理会 401（浏览器不会给 img 加请求头）。
+    window.__slToken = d.directToken || "";
+
+    // ★ 录制参数：以应用设置为准（用户要求「两边同步」）
+    applySettings(d);
 
     // ★ 跟随应用主题：后端下发当前是暗色还是亮色
     if (typeof d.themeDark === 'boolean') {
@@ -473,7 +644,12 @@ function renderUsers() {
       + detail
       + '</div>'
       + '<div class="uact"><button class="ibtn">查看画面</button></div>';
-    row.querySelector('.ibtn').onclick = e => { e.stopPropagation(); openViewer(u); };
+    row.querySelector('.ibtn').onclick = e => {
+      e.stopPropagation();
+      // ★ 用户要求：「查看画面应该要打开一个新页面」
+      //   原来是在当前页把实时画面面板展开，会把下面的账号列表挤走。
+      window.open('?view=' + encodeURIComponent(u.id), '_blank');
+    };
     box.appendChild(row);
   }
 }
@@ -489,7 +665,9 @@ function openViewer(u) {
   $('frame').style.display = 'none';
   $('fpsinfo').textContent = (u.screen || '');
   startLive();
-  loadSaved();
+  // ★ 不在这里读录像列表：那是扫磁盘目录（/api/list），
+  //   而用户此刻要看的是实时画面。等真正展开「录像回放」再取（见 ensureSaved）。
+  resetSavedList();
   setTimeout(() => $('viewer').scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
 }
 
@@ -499,30 +677,128 @@ function closeViewer() {
   const v = $('vid'); v.pause(); v.removeAttribute('src'); v.load();
   cur = null;
   $('viewer').style.display = 'none';
+
+  // ★ 独立窗口模式（?view=）下「收起」= 关掉这个标签页。
+  //   新页面里没有列表可回，退回 / 才是用户预期。
+  if (document.body.classList.contains("viewonly")) {
+    try { window.close(); } catch (e) { }
+    setTimeout(() => { location.href = "/"; }, 120);
+  }
+}
+
+// ══════════ 按需拉帧（3.3.16 重写）══════════════
+//
+// ★★ 用户要求：「两端交互需要 api 按需触发，不要持续不断，否则拖垮性能」★★
+//
+//   原来是 setInterval 固定节奏轮询：不管画面动没动、上一帧回来没有，
+//   到点就发一个新 Image 请求。挂机时 BGI 画面几乎静止，
+//   这些请求 99% 拿到的是同样的内容 —— 纯浪费 CPU。
+//
+//   现在改成**串行 + 自适应**：
+//     · 上一帧没回来，绝不发下一帧（请求永不堆积）
+//     · 页面不可见 / 暂停 / 无会话 → 一个请求都不发
+//     · 连续失败按 1s→2s→4s→8s 退避（不空转打无效请求）
+//     · 连续多帧内容几乎没变 → 自动降频到 1fps（挂机静止画面）
+//     · 一有变化立刻恢复目标帧率
+let liveHandle = null;        // setTimeout 句柄（不再用 setInterval）
+let liveRunning = false;      // 是否处于拉帧循环中
+let failStreak = 0;           // 连续失败次数
+let stillStreak = 0;          // 连续"画面没怎么变"的帧数
+let lastFrameBytes = 0;       // 上一帧体积，用来判断画面是否静止
+let frameGen = 0;             // 换账号/停止时递增，用来丢弃过期的在途请求
+
+function stopLive() {
+  liveRunning = false;
+  frameGen++;                    // 让在途请求的结果作废（换账号时不能串画面）
+  if (liveHandle) { clearTimeout(liveHandle); liveHandle = null; }
 }
 
 function startLive() {
   stopLive();
   if (!cur || !cur.online) return;
-  pullFrame();
-  liveTimer = setInterval(() => { if (!paused) pullFrame(); }, liveMs);
+  liveRunning = true;
+  failStreak = 0;
+  stillStreak = 0;
+  lastFrameBytes = 0;        // 换账号要重置，否则会误判"画面静止"
+  scheduleNext(0);          // 立刻取第一帧
 }
-function stopLive() { if (liveTimer) { clearInterval(liveTimer); liveTimer = null; } }
+
+// 决定下一帧等多久：正常按目标帧率；失败退避；静止降频。
+function nextDelayMs() {
+  if (failStreak > 0) return Math.min(1000 * Math.pow(2, failStreak - 1), 8000);
+  if (stillStreak >= 6) return 1000;                 // 静止：最多 1fps
+  if (stillStreak >= 3) return Math.max(liveMs, 500); // 疑似静止：先降到 2fps
+  return liveMs;
+}
+
+function scheduleNext(delay) {
+  if (!liveRunning) return;
+  if (liveHandle) clearTimeout(liveHandle);
+  liveHandle = setTimeout(pullFrame, delay);
+}
+
+// ── 直连代理（3.3.5）───────────────────────────────────────────
+//   用户在局域网里访问 http://主机:10800，但画面/按键直连代理的端口：
+//     http://主机:(sessions[i].directPort)
+//   这样主程序只在加载列表时被访问一次，之后不碰任何流量。
+//
+//   主机名沿用当前页面访问用的那个（手机连的 192.168.x.x 不会变成 localhost）。
+function directToken() { return window.__slToken || ''; }
+
+function directBase(sess) {
+  const p = sess && sess.directPort;
+  if (!p || p <= 0) return '';
+  return location.protocol + '//' + location.hostname + ':' + p;
+}
 
 function pullFrame() {
-  if (!cur) return;
-  if (document.hidden) return;    // 后台不抓帧
-  const t = new Image();
-  t.onload = () => {
-    const f = $('frame');
-    f.src = t.src; f.style.display = 'block';
-    $('ph').style.display = 'none';
-  };
-  t.onerror = () => {
-    $('ph').style.display = 'flex';
-    $('ph').textContent = '暂时没有画面（该账号未开启录制）';
-  };
-  t.src = '/api/live?sid=' + cur.sessionId + '&t=' + Date.now();
+  if (!cur || !liveRunning) return;
+  // 页面在后台 / 用户暂停 → 彻底停下，不再排下一帧
+  if (document.hidden || paused) { liveHandle = null; return; }
+
+  const base = directBase(cur);
+  const tok = directToken();
+  const url = (base || "") + "/live?t=" + Date.now()
+              + (base && tok ? "&token=" + encodeURIComponent(tok) : "");
+
+  // ★ 用 fetch + Blob 而不是 <img src>：
+  //   ① 能拿到真实字节数 → 可判断"画面有没有动"（静止就降频）
+  //   ② 内部仍是同一个解码器，不额外增加开销
+  let cancelled = false;
+  const myGen = ++frameGen;
+
+  fetch(url, { cache: "no-store" })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+    .then(b => {
+      // 期间换了账号或停了 → 丢弃这帧，别再更新界面
+      if (cancelled || myGen !== frameGen || !liveRunning) return;
+      failStreak = 0;
+
+      // 静止检测：字节数和上一帧完全相同 → 画面没动，降频
+      if (b.size === lastFrameBytes) stillStreak++; else stillStreak = 0;
+      lastFrameBytes = b.size;
+
+      const f = $("frame");
+      const old = f.dataset.objUrl;
+      const objUrl = URL.createObjectURL(b);
+      f.src = objUrl;
+      f.style.display = "block";
+      f.dataset.objUrl = objUrl;
+      if (old) { try { URL.revokeObjectURL(old); } catch (e) { } }   // 及时释放，防内存涨
+
+      $("ph").style.display = "none";
+      scheduleNext(nextDelayMs());
+    })
+    .catch(() => {
+      if (myGen !== frameGen || !liveRunning) return;
+      failStreak++;
+      const ph = $("ph");
+      ph.style.display = "flex";
+      ph.textContent = failStreak >= 3
+        ? "连接不上该账号（连续 " + failStreak + " 次）· 正在退避重试"
+        : "暂时没有画面（该账号未开启录制）";
+      scheduleNext(nextDelayMs());
+    });
 }
 
 // ── 输入 ────────────────────────────────────────────────────
@@ -530,9 +806,14 @@ async function sendInput(action, nx, ny, extra) {
   if (!cur) return null;
   const body = Object.assign({ action, x: nx, y: ny }, extra || {});
   try {
-    const r = await fetch('/api/input?sid=' + cur.sessionId, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+    // ★ 3.3.5：按键/点击也直连代理（用户要求「模拟按键也有独立出来」）
+    const base = directBase(cur);
+    const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
+    const headers = { 'Content-Type': 'application/json' };
+    if (base && directToken()) headers['X-SoulLink-Token'] = directToken();
+    const r = await fetch(url, {
+      method: 'POST', headers: headers,
+      body: JSON.stringify(Object.assign({}, body, base ? { sid: cur.sessionId } : {}))
     });
     return await r.json();
   } catch { return null; }
@@ -558,35 +839,82 @@ function ripple(e) {
 
 let drag = null;
 $('scr').addEventListener('pointerdown', e => {
-  if (e.button === 2) return;
+  // ★ 右键直接支持（用户要求「右键还不支持，要支持」）。
+  //   原来这里 `if (e.button === 2) return;` 把右键整个丢掉了，
+  //   而代理侧本来就能注入右键（实测 /api/input button=right 返回 ok）。
+  //   现在把按键记进 drag，抬起时用它决定 down/up/click 的 button。
+  const btn = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
   const p = norm(e);
-  drag = { sx: e.clientX, sy: e.clientY, moved: false, nx: p.nx, ny: p.ny };
+  drag = { sx: e.clientX, sy: e.clientY, moved: false, nx: p.nx, ny: p.ny, btn };
   $('scr').setPointerCapture(e.pointerId);
 });
-$('scr').addEventListener('pointermove', e => {
-  if (!drag) return;
-  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-  if (!drag.moved && Math.hypot(dx, dy) < 8) return;
-  if (!drag.moved) {
-    drag.moved = true;
-    sendInput('down', drag.nx, drag.ny, { button: rightMode ? 'right' : 'left' });
-  }
+// ★★ 鼠标移动必须**实时跟随**，不需要按下（3.3.19）★★
+//
+//   用户要求：「我移动鼠标，画面就要跟着，不是点下才跟着」
+//
+//   原来的问题：`if (!drag) return;` —— drag 只在 pointerdown 里赋值，
+//   所以不按住鼠标时一个 move 都不发，画面上的光标纹丝不动。
+//   必须按住拖动才动，这跟真实的远程桌面操作完全不一样。
+//
+//   现在拆成两件事：
+//     · 悬停移动 → 立刻发 move（不需要按键）
+//     · 按住拖动 → 发 down + move + up（原有行为保留）
+//
+//   ★ 节流：按当前播放帧率算（liveMs），而不是写死 60ms。
+//     代理那边的光标位置来自它自己的 GetCursorInfo，发太密只是浪费带宽。
+let lastMoveSent = 0, pendingMove = null, moveTimer = null;
+function sendMoveThrottled(nx, ny) {
   const now = Date.now();
-  if (!drag.last || now - drag.last > 60) {
-    drag.last = now;
-    const p = norm(e);
-    sendInput('move', p.nx, p.ny);
+  const gap = Math.max(16, Math.min(50, liveMs));   // 最快 60fps，最慢 20fps
+  if (now - lastMoveSent >= gap) {
+    lastMoveSent = now;
+    pendingMove = null;
+    if (moveTimer) { clearTimeout(moveTimer); moveTimer = null; }
+    sendInput('move', nx, ny);
+  } else {
+    // 节流窗口内的最后一次位置要补发，否则快速滑动时终点会丢
+    pendingMove = { nx, ny };
+    if (!moveTimer) {
+      moveTimer = setTimeout(() => {
+        moveTimer = null;
+        lastMoveSent = Date.now();
+        if (pendingMove) { const p = pendingMove; pendingMove = null; sendInput('move', p.nx, p.ny); }
+      }, gap - (now - lastMoveSent));
+    }
   }
+}
+
+$('scr').addEventListener('pointermove', e => {
+  const p = norm(e);
+
+  // ① 没按住：纯悬停，直接把光标挪过去（这就是用户要的「移动就跟着」）
+  if (!drag) { sendMoveThrottled(p.nx, p.ny); return; }
+
+  // ② 按住：判断是否已越过拖动阈值
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  if (!drag.moved) {
+    if (Math.hypot(dx, dy) < 8) {
+      // 还没开始拖，但也让光标跟上（体验更自然）
+      sendMoveThrottled(p.nx, p.ny);
+      return;
+    }
+    drag.moved = true;
+    sendInput('down', drag.nx, drag.ny, { button: drag.btn });
+  }
+  sendMoveThrottled(p.nx, p.ny);
 });
 $('scr').addEventListener('pointerup', e => {
   if (!drag) return;
-  const moved = drag.moved; drag = null;
+  // ★ 必须先取出 btn 再置空 drag —— 顺序反了会读 null.btn 抛异常，
+  //   表现为"点了完全没反应"（改右键时踩到过）。
+  const moved = drag.moved, btn = drag.btn || 'left';
+  drag = null;
   const p = norm(e);
-  if (moved) sendInput('up', p.nx, p.ny, { button: rightMode ? 'right' : 'left' });
-  else { ripple(e); sendInput('click', p.nx, p.ny, { button: rightMode ? 'right' : 'left' }); }
+  if (moved) sendInput('up', p.nx, p.ny, { button: btn });
+  else { ripple(e); sendInput('click', p.nx, p.ny, { button: btn }); }
 });
 $('scr').addEventListener('pointercancel', () => {
-  if (drag && drag.moved) sendInput('up', -1, -1, { button: 'left' });
+  if (drag && drag.moved) sendInput('up', -1, -1, { button: drag.btn || 'left' });
   drag = null;
 });
 $('scr').addEventListener('wheel', e => {
@@ -620,32 +948,168 @@ document.addEventListener('keydown', e => {
 });
 
 $('closeViewer').onclick = closeViewer;
-$('rightBtn').onclick = () => {
-  rightMode = !rightMode;
-  $('rightBtn').classList.toggle('on', rightMode);
-  $('rightBtn').textContent = rightMode ? '右键开' : '右键';
+
+// 录像回放：点了才展开 + 才取数据（避免打开画面时白扫一遍磁盘）
+const savedToggle = $('savedToggle');
+if (savedToggle) savedToggle.onclick = () => {
+  const wrap = $('savedWrap');
+  const open = savedToggle.classList.toggle('open');
+  if (wrap) wrap.style.display = open ? 'block' : 'none';
+  if (open) ensureSaved();     // ← 只有展开时才请求 /api/list
 };
-$('kbBtn').onclick = () => {
-  kbMode = !kbMode;
-  $('kbBtn').classList.toggle('on', kbMode);
-  $('kbBtn').textContent = kbMode ? '键盘开' : '键盘';
-  $('kbTip').style.display = kbMode ? 'block' : 'none';
+
+// ── 录制参数：与应用设置双向同步（3.3.12）──────────────────
+//
+//   ★ 用户要求：「把这些设置都加到浏览器，两边同步」
+//
+//   单向下发是不够的 —— 网页改了也要回写应用配置，
+//   并且立刻下发给正在录制的代理（不用等用户去应用里重开一次）。
+function applySettings(d) {
+  if (typeof d.recordFps === 'number' && d.recordFps > 0) recFps = d.recordFps;
+  if (typeof d.recordQuality === 'number' && d.recordQuality > 0) recQuality = d.recordQuality;
+  if (typeof d.recordKeepSeconds === 'number' && d.recordKeepSeconds > 0) recKeep = d.recordKeepSeconds;
+
+  // 本机播放帧率：从 localStorage 恢复（每个浏览器独立）
+  try {
+    const v = localStorage.getItem(VIEWFPS_KEY);
+    if (v !== null) viewFps = parseInt(v) || 0;
+  } catch (e) { }
+
+  computeLiveMs();
+  syncDropdowns();
+}
+
+// 把当前值回填到下拉菜单（值不在预设列表里就动态补一个选项）
+function syncDropdowns() {
+  // 先清掉上次补的动态选项，避免反复变化时累积
+  document.querySelectorAll('option[data-dyn]').forEach(o => o.remove());
+  setSelect('selFps', recFps, v => v + ' fps');
+  setSelect('selQuality', recQuality, v => qualityLabel(v));
+  setSelect('selKeep', recKeep, v => v + ' 秒');
+  setSelect('selViewFps', viewFps, v => v === 0 ? '跟随录制' : (v + ' 次/秒'));
+}
+
+function qualityLabel(v) {
+  if (v >= 85) return '高清 ' + v;
+  if (v >= 70) return '清晰 ' + v;
+  return '标准 ' + v;
+}
+
+// 把 value 选中到下拉框。预设里没有这个值就补一项（并标记，下次可清掉）。
+// ★ 补出来的项带 data-dyn="1"，syncDropdowns 开头会先清掉旧的动态项，
+//   否则配置反复变化时选项会越堆越多。
+function setSelect(id, value, fmt) {
+  const el = $(id); if (!el) return;
+  const v = String(value);
+  let opt = el.querySelector('option[value="' + v + '"]:not([data-dyn])');
+  if (!opt) {
+    opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = fmt(value);
+    opt.setAttribute('data-dyn', '1');
+    el.appendChild(opt);
+  }
+  el.value = v;
+}
+
+// 提交改动：先乐观更新界面，再等后端确认（失败就回滚）
+let saveTimer = null;
+async function pushSettings(patch) {
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    });
+    const d = await r.json();
+    if (d && d.ok) {
+      recFps = d.fps; recQuality = d.quality; recKeep = d.keepSeconds;
+      computeLiveMs(); syncDropdowns(); startLive();
+      return true;
+    }
+  } catch (e) { }
+  return false;
+}
+
+function bindSelect(id, onPick) {
+  const el = $(id); if (!el) return;
+  el.onchange = () => { onPick(parseInt(el.value) || 0); };
+}
+// 录制组：改了就回写应用配置 + 通知代理
+bindSelect('selFps',     v => pushSettings({ fps: v }));
+bindSelect('selQuality', v => pushSettings({ quality: v }));
+bindSelect('selKeep',    v => pushSettings({ keepSeconds: v }));
+
+// 本机播放组：**只存本地**，不发服务器、不改配置。
+//   ★ 这是刻意的：如果它也写配置，就等于「我看得慢一点」会让别人也变慢。
+const selView = $('selViewFps');
+if (selView) selView.onchange = () => {
+  viewFps = parseInt(selView.value) || 0;
+  try { localStorage.setItem(VIEWFPS_KEY, String(viewFps)); } catch (e) { }
+  computeLiveMs();
+  syncDropdowns();
+  startLive();
 };
+// ── 键盘：点画面即开启（不再用顶栏按钮）───────────────────
+//   原来有个「键盘」按钮占着顶栏，而页面本来就已经全局监听 keydown。
+//   现在改成 RDP 客户端的习惯：点一下画面 = 键盘发往远程，
+//   点画面外 = 释放（避免 F5/Ctrl+W 被吞掉）。
+function setKbMode(on) {
+  kbMode = on;
+  const badge = $('kbBadge');
+  if (badge) badge.style.display = on ? 'inline' : 'none';
+}
+$('scr').addEventListener('pointerdown', () => setKbMode(true));
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#scr')) setKbMode(false);
+}, true);
+
 $('pauseBtn').onclick = () => {
   paused = !paused;
   $('pauseBtn').classList.toggle('on', paused);
   $('pauseBtn').textContent = paused ? '继续' : '暂停';
+  // 暂停 = 彻底停发请求（不是空转跳帧），继续 = 立刻恢复
+  if (paused) { stopLive(); }
+  else { startLive(); }
 };
-$('wheelUp').onclick = () => sendInput('wheel', -1, -1, { delta: 120 });
-$('wheelDown').onclick = () => sendInput('wheel', -1, -1, { delta: -120 });
-$('speed').onclick = e => {
-  const b = e.target.closest('button'); if (!b) return;
-  liveMs = parseInt(b.dataset.ms);
-  document.querySelectorAll('#speed button').forEach(x => x.classList.toggle('on', x === b));
-  startLive();
-};
+// 滚轮用真实鼠标滚轮（见 #scr 的 wheel 监听），不需要按钮
 
 // ── 录像 ────────────────────────────────────────────────────
+// ── 录像列表：按需加载（3.3.17）───────────────────────────
+//
+//   ★ 用户原则：「网页从应用拿数据，也应该遵循 api 接口按需取用」
+//
+//   /api/list 要扫 录制回放\ 下的所有目录、读每个 meta.json ——
+//   打开画面时根本不需要它。这里改成：
+//     · 打开画面 → 清空列表，不发请求
+//     · 用户真的展开「录像回放」→ 才取一次
+//     · 同一账号 30 秒内重复点开 → 用缓存，不重复扫盘
+let savedFetchedFor = null;   // 已取过哪个账号的列表
+let savedFetchedAt = 0;
+const SAVED_TTL_MS = 30000;
+
+function resetSavedList() {
+  savedFetchedFor = null;
+  savedFetchedAt = 0;
+  const box = $("saved");
+  if (box) box.innerHTML = "";
+  // 收起折叠：换账号后不该默认展开（那就又变成"一打开就扫盘"了）
+  const t = $("savedToggle"), w = $("savedWrap");
+  if (t) t.classList.remove("open");
+  if (w) w.style.display = "none";
+}
+
+// 用户点开「录像回放」时调用：需要才取，且 30 秒内复用。
+function ensureSaved() {
+  if (!cur) return;
+  const key = cur.id || cur.label;
+  const fresh = savedFetchedFor === key && (Date.now() - savedFetchedAt) < SAVED_TTL_MS;
+  if (fresh) return;
+  savedFetchedFor = key;
+  savedFetchedAt = Date.now();
+  loadSaved();
+}
+
 async function loadSaved() {
   try {
     const r = await fetch('/api/list');
@@ -694,9 +1158,61 @@ function esc(s) {
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-try { loadUsers(); } catch (e) { console.error('加载失败', e);
-  const em = $('empty');
-  if (em) { em.style.display = 'block'; em.textContent = '加载失败：' + e.message; } }
+// ── 独立窗口模式 ─────────────────────────────────────────────
+//   ?view=<账号Id> 时，本页只做一件事：全屏显示该账号的实时画面。
+//   由列表页的「查看画面」用 window.open 打开（用户要求开新页面）。
+async function bootViewerMode() {
+  document.body.classList.add('viewonly');      // 隐藏列表/面板，只留画面
+  document.documentElement.classList.add('viewonly-root');
+  const vc = $('viewctrls'); if (vc) vc.style.display = 'flex';   // 顶栏操作按钮
+
+  // 先拿口令 + 账号信息（直连代理需要）
+  let d;
+  try {
+    const r = await fetch('/api/sessions');
+    d = await r.json();
+  } catch (e) {
+    document.body.innerHTML = '<div style="padding:24px;color:#c66">加载失败：' + esc(e.message) + '</div>';
+    return;
+  }
+  window.__slToken = d.directToken || "";
+  if (typeof d.themeDark === 'boolean') { appIsDark = d.themeDark; applyTheme(); }
+
+  // ★★ 必须把后端下发的录制参数回填到下拉菜单。★★
+  //
+  //   漏了这一步就会出现"网页显示 5fps、应用显示 30fps"——
+  //   因为下拉框只显示了 HTML 里写死的第一个 <option>，
+  //   根本不是读到的配置值（实测踩到，排查方向被误导了很久）。
+  applySettings(d);
+
+  const id = decodeURIComponent(location.search.replace(/^.*[?&]view=([^&]*).*$/, "$1"));
+  const u = (d.sessions || []).find(s => s.id === id);
+  if (!u) {
+    document.body.innerHTML = '<div style="padding:24px;color:#c66">找不到该账号</div>';
+    return;
+  }
+
+  document.title = u.label + " · 实时画面";
+  const t = $("viewerTitle"); if (t) t.textContent = "实时画面 · " + u.label;
+  const v = $("viewer"); if (v) v.style.display = "block";
+  const p = $("player"); if (p) p.style.display = "none";
+  const ph = $("ph"); if (ph) { ph.style.display = "flex"; ph.textContent = u.online ? "连接中…" : "该账号不在线"; }
+  const fi = $("fpsinfo"); if (fi) fi.textContent = (u.screen || "");
+
+  cur = u;
+  startLive();
+  // 同上：录像列表按需加载，不在这里扫磁盘
+  resetSavedList();
+}
+
+const __isViewer = /[?&]view=/.test(location.search);
+if (__isViewer) {
+  try { bootViewerMode(); } catch (e) { console.error(e); }
+} else {
+  try { loadUsers(); } catch (e) { console.error('加载失败', e);
+    const em = $('empty');
+    if (em) { em.style.display = 'block'; em.textContent = '加载失败：' + e.message; } }
+}
 </script>
 </body>
 </html>

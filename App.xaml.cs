@@ -17,6 +17,27 @@ namespace SoulLink
     {
         public static AppConfig Config { get; private set; } = new AppConfig();
 
+        /// <summary>
+        /// 配置被**外部**修改后触发（目前唯一来源：网页端 /api/settings）。
+        ///
+        /// ★★ 为什么要有它（2026-11-22 用户反馈）★★
+        ///    「我在网页设置之后，应用里没变」
+        ///
+        ///   网页写的是同一个 App.Config.Settings，但已经打开的控件
+        ///   不会自己重读 —— 界面停在旧值上。而"切页才刷新"也不够：
+        ///   用户可能就停在这一页不动，永远看不到变化。
+        ///
+        ///   所以改成**推**：写配置的地方主动喊一声，订阅者自己刷新。
+        ///   事件在 UI 线程上抛（调用方负责切线程），订阅者可以直接改控件。
+        /// </summary>
+        public static event Action? SettingsChanged;
+
+        /// <summary>由修改配置的一方调用，通知界面刷新。</summary>
+        public static void NotifySettingsChanged()
+        {
+            try { SettingsChanged?.Invoke(); } catch { }
+        }
+
         private static readonly StringBuilder Boot = new StringBuilder();
         /// <summary>启动阶段面包屑，出问题时第一手线索。</summary>
         public static void Breadcrumb(string step)
@@ -404,6 +425,39 @@ namespace SoulLink
                 File.AppendAllText(path, sb.ToString(), new UTF8Encoding(false));
             }
             catch { }
+        }
+
+        /// <summary>
+        /// 写一条**普通诊断**日志（不是异常）。
+        ///
+        /// ★ 为什么需要它：原来有些地方图省事，把正常事件
+        ///   （"投送成功 会话19"）包成 new InvalidOperationException(msg)
+        ///   丢进 AppendErrorLog，结果 error.log 里全是假的异常记录，
+        ///   真出故障时反而找不到。正常事件就该走这里。
+        ///
+        /// 默认不落盘（保持 error.log 干净），需要时设环境变量
+        /// SOULLINK_DIAG_LOG=1 打开，写入 diag-yyyyMMdd.log。
+        /// </summary>
+        public static void AppendDiagLog(string message)
+        {
+            if (!DiagLogEnabled) return;
+            try
+            {
+                Directory.CreateDirectory(ConfigStore.ConfigDir);
+                File.AppendAllText(
+                    Path.Combine(ConfigStore.ConfigDir, "diag-" + DateTime.Now.ToString("yyyyMMdd") + ".log"),
+                    "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] " + message + Environment.NewLine,
+                    new UTF8Encoding(false));
+            }
+            catch { }
+        }
+
+        private static readonly bool DiagLogEnabled = DetectDiagLog();
+
+        private static bool DetectDiagLog()
+        {
+            try { return Environment.GetEnvironmentVariable("SOULLINK_DIAG_LOG") == "1"; }
+            catch { return false; }
         }
 
         /// <summary>把未处理异常写进 %LOCALAPPDATA%\SoulLink\error.log，出问题时好排查。</summary>

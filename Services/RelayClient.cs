@@ -224,7 +224,7 @@ namespace SoulLink.Services
                 {
                     Command = "ensure", SessionId = SessionId, UserName = account.UserName,
                     PipeName = PipeName, Nonce = DeploymentNonce,
-                    Env = CaptureEnv()      // ★ 3.2.8 告知录制目录
+                    Env = CaptureEnv(account.Id)   // ★ 3.2.8 录制目录；3.3.5 网页直连端口/口令
                 }).ConfigureAwait(false);
                 launch = new SystemLauncher.Result
                 {
@@ -239,7 +239,7 @@ namespace SoulLink.Services
                 launch = await SystemLauncher.LaunchAsync(
                     SessionId, agent, "--relay " + PipeName,
                     interactive: false, bootstrapExe: self,
-                    env: CaptureEnv()).ConfigureAwait(false);
+                    env: CaptureEnv(account.Id)).ConfigureAwait(false);
             }
 
             if (!launch.Ok)
@@ -609,18 +609,62 @@ namespace SoulLink.Services
         ///   录制回放目录必须由投送方显式告知，否则会写到安装目录
         ///   （权限不稳、卸载残留、与"跟程序一个目录"的要求不符）。
         /// </summary>
-        private static Dictionary<string, string> CaptureEnv()
+        /// <summary>
+        /// 投送代理时带上的环境变量。
+        ///
+        /// ★ 代理运行在 Program Files，自己推不出主程序位置，也读不到主程序的
+        ///   config.json（那边是另一份 data）。所以所有它需要的东西都从环境变量下发：
+        ///
+        ///   SOULLINK_CAPTURE_DIR  录像/截图根目录（必须在主程序目录下，别写 C 盘）
+        ///   SOULLINK_WEB_PORT     网页直连端口（0 = 不启用）
+        ///   SOULLINK_WEB_TOKEN    网页直连共享口令（空 = 不校验）
+        ///   SOULLINK_ACCOUNT_ID   本代理所属账号 Id（/api/info 回显 + 端口分配依据）
+        /// </summary>
+        private static Dictionary<string, string> CaptureEnv(string? accountId = null)
         {
             try
             {
                 string dir = System.IO.Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? "";
                 if (string.IsNullOrWhiteSpace(dir)) return new Dictionary<string, string>();
-                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+
+                var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["SOULLINK_CAPTURE_DIR"] = System.IO.Path.Combine(dir, "capture")
                 };
+
+                // ── 网页直连（User 要求：尽量隔离主客户端）──
+                var s = App.Config?.Settings;
+                if (s != null && s.WebDirectToAgent && s.WebPort > 0)
+                {
+                    int port = ResolveDirectPort(s, accountId);
+                    if (port > 0)
+                    {
+                        env["SOULLINK_WEB_PORT"] = port.ToString();
+                        env["SOULLINK_WEB_TOKEN"] = s.WebPassword ?? "";
+                        if (!string.IsNullOrWhiteSpace(accountId))
+                            env["SOULLINK_ACCOUNT_ID"] = accountId!;
+                    }
+                }
+
+                return env;
             }
             catch { return new Dictionary<string, string>(); }
+        }
+
+        /// <summary>按账号在配置里的序号算直连端口。规则见 Services/WebDirect.cs。</summary>
+        private static int ResolveDirectPort(Models.AppSettings s, string? accountId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(accountId)) return 0;
+                var accounts = App.Config?.Accounts;
+                if (accounts == null) return 0;
+                int idx = accounts.FindIndex(a =>
+                    string.Equals(a.Id, accountId, StringComparison.OrdinalIgnoreCase));
+                if (idx < 0) return 0;
+                return Services.WebDirect.PortFor(s.WebPort, idx);
+            }
+            catch { return 0; }
         }
 
         /// <summary>

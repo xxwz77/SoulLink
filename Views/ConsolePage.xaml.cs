@@ -533,6 +533,11 @@ namespace SoulLink.Views
             {
                 EnsureShieldWatch();
                 if (_shieldWatch != null && !_isFullScreen && IsVisible) _shieldWatch.Start();
+
+                // ★ 切回本页时刷新设置面板：网页端的 /api/settings 会直接改
+                //   App.Config.Settings，而控件不重读就停在旧值（见 Reload 的注释）。
+                if (GeneralSettingsPanel != null && GeneralSettingsPanel.Visibility == Visibility.Visible)
+                    GeneralSettingsPanel.Reload();
             }
             catch { }
         }
@@ -2186,6 +2191,10 @@ namespace SoulLink.Views
             NoSelectionHint.Visibility = Visibility.Collapsed;
             ConfigPanel.Visibility = Visibility.Collapsed;
             GeneralSettingsPanel.Visibility = Visibility.Visible;
+            // ★ 重新读一遍配置：网页可能改过录制参数（帧率/画质/保留），
+            //   本控件只在 Loaded 时读一次，不重读就会显示旧值，
+            //   而且用户随手一改就会把旧值回写覆盖掉网页的设置。
+            try { GeneralSettingsPanel.Reload(); } catch { }
             SetBusyVisible(false);
             RebuildUserList();
             RenderTabs();

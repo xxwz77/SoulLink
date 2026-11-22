@@ -374,9 +374,34 @@ namespace SoulLink.Relay
             if (_logPath.Length > 0) SoulLink.Services.AsyncLog.Append(_logPath, line + Environment.NewLine);
         }
 
+        /// <summary>
+        /// 起代理侧的网页直连服务（端口/口令来自主程序投送时下发的环境变量）。
+        ///
+        /// ★ 参数一律走环境变量，不走命令行：
+        ///   命令行会出现在任务管理器/进程列表里，口令写在那儿等于公开。
+        /// </summary>
+        private static void StartWebDirect()
+        {
+            try
+            {
+                string portText = Environment.GetEnvironmentVariable("SOULLINK_WEB_PORT") ?? "";
+                if (!int.TryParse(portText, out int port) || port <= 0)
+                {
+                    Log("网页直连：未配置端口，跳过");
+                    return;
+                }
+
+                string token = Environment.GetEnvironmentVariable("SOULLINK_WEB_TOKEN") ?? "";
+                string accountId = Environment.GetEnvironmentVariable("SOULLINK_ACCOUNT_ID") ?? "";
+
+                AgentWebServer.Start(port, token, accountId, Log);
+            }
+            catch (Exception ex) { Log("网页直连启动异常：" + ex.Message); }
+        }
+
         // ── 消息协议 ─────────────────────────────────────────────────────────
 
-        private sealed class Request
+        internal sealed class Request
         {
             public string Cmd { get; set; } = "";
             public int X { get; set; }
@@ -403,7 +428,7 @@ namespace SoulLink.Relay
             public string Value { get; set; } = "";
         }
 
-        private sealed class Response
+        internal sealed class Response
         {
             public bool Ok { get; set; }
             public string Message { get; set; } = "";
@@ -447,6 +472,17 @@ namespace SoulLink.Relay
 
             Log("relay 启动 pid=" + Process.GetCurrentProcess().Id + " pipe=" + pipeName
                 + " session=" + Process.GetCurrentProcess().SessionId);
+
+            // ★★ 3.3.5：网页直连代理 ★★
+            //
+            //   用户要求：「网页端尽量隔离主客户端」「模拟按键也有独立出来」。
+            //   这里让代理自己开一个 HTTP 监听，网页直接连它取画面/录像/注入按键，
+            //   主程序完全不参与流量（只提供"账号 → 端口"的映射表）。
+            //
+            //   端口和口令由主程序投送时通过环境变量下发（见 RelayClient.CaptureEnv）。
+            //   没设 SOULLINK_WEB_PORT 或端口为 0 表示用户没开网页访问，不启动。
+            StartWebDirect();
+
             _hotkeys = new RelayHotkeyReceiver(SendHotkey, Log);
             try
             {
@@ -584,7 +620,7 @@ namespace SoulLink.Relay
 
         // ── 指令实现 ─────────────────────────────────────────────────────────
 
-        private static Response Execute(Request req)
+        internal static Response Execute(Request req)
         {
             switch ((req.Cmd ?? "").ToLowerInvariant())
             {

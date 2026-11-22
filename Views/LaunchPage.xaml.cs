@@ -1035,8 +1035,9 @@ namespace SoulLink.Views
                         {
                             StopFollower();
                             LogMeta.Text = sess.UserName + " · 未发现 BetterGI";
-                            LogText.Text = "该会话中没有正在运行的 BetterGI 进程。\n\n" +
-                                           "启动 BGI 后这里会自动显示它的实时日志。";
+                            _logText = "该会话中没有正在运行的 BetterGI 进程。\n\n" +
+                                       "启动 BGI 后这里会自动显示它的实时日志。";
+                            LogText.Text = _logText;
                             LogTitle.Text = "BGI 实时日志";
                         });
                         return;
@@ -1062,6 +1063,7 @@ namespace SoulLink.Views
                         StopFollower();
                         LogTitle.Text = "BGI 实时日志 · " + user;
                         LogMeta.Text = "PID " + pid + " · 数据中心";
+                        _logText = "";
                         LogText.Text = "";
 
                         // ★★ 架构：日志的唯一读取者是 BgiLogCenter ★★
@@ -1080,7 +1082,8 @@ namespace SoulLink.Views
                         //
                         //   现在只读数据中心的不可变快照 + 订阅它的 Changed 事件。
                         string initial = TailTextOf(BgiLogCenter.SnapshotByUser(user));
-                        LogText.Text = initial.Length > 0 ? initial : "（等待数据中心采集…）";
+                        _logText = initial.Length > 0 ? initial : "（等待数据中心采集…）";
+                        LogText.Text = _logText;
                         try { LogScroll.ScrollToEnd(); } catch { }
                         SubscribeLogCenter();
                     });
@@ -1092,18 +1095,57 @@ namespace SoulLink.Views
         /// <summary>日志文本最多保留的行数（超出丢弃最早的部分）。</summary>
         private const int MaxLogLines = 400;
 
-        /// <summary>裁剪日志文本，避免无限增长。</summary>
+        /// <summary>
+        /// 把界面上的日志压回与 _logText 一致（去掉最早的约 1/3）。
+        ///
+        /// ★★ 2026-11-22：这里的"压回"是必须的，不是优化。★★
+        ///
+        ///   增量追加是把新内容 Add 成新的 Run，Run 会**一直累积**。
+        ///   而 _logText 每秒都会从数据中心重新取一份（快照本身有上限），
+        ///   两者长度就会越差越多 —— 界面越跑越长、内存只增不减、
+        ///   排版成本也跟着涨。所以每次追加后都要把 Inlines 压回等价于 _logText。
+        ///
+        ///   快路径：Run 数量不多且总长没超上限时直接返回，什么都不做。
+        /// </summary>
         private void TrimLogText()
         {
             try
             {
-                string t = LogText.Text;
-                if (t.Length < 60000) return;          // 字符数上限，约 400 行
-                int cut = t.IndexOf('\n', t.Length / 3);
-                if (cut > 0) LogText.Text = t.Substring(cut + 1);
+                var inlines = LogText.Inlines;
+
+                // 估算界面当前文本长度：Run 数量少时直接汇总（Run 通常只有几个）。
+                bool rewrite = false;
+                int total = 0;
+                if (inlines.Count > 64)
+                {
+                    rewrite = true;                    // Run 太碎，合并成一段
+                }
+                else
+                {
+                    foreach (var inl in inlines)
+                    {
+                        if (inl is System.Windows.Documents.Run r) total += r.Text.Length;
+                        else total += 1;
+                    }
+                    if (total > 60000) rewrite = true;
+                }
+
+                if (!rewrite) return;
+
+                // 丢弃最早约 1/3，保留 _logText 的尾部（与 _logText 保持一致）。
+                string keep = _logText;
+                if (keep.Length > 40000)
+                {
+                    int cut = keep.IndexOf('\n', keep.Length / 3);
+                    if (cut > 0) keep = keep.Substring(cut + 1);
+                }
+                _logText = keep;
+                inlines.Clear();
+                inlines.Add(new System.Windows.Documents.Run(keep));
             }
             catch { }
         }
+
 
         /// <summary>
         /// 每个日志文件的状态解析缓存（按"最后写入时间+长度"判断是否需要重算）。
@@ -1697,14 +1739,61 @@ namespace SoulLink.Views
                 var sess = _logSession;
                 if (sess != null)
                 {
+                    // ★★ 2026-11-22 性能修复：不要再把整块文本重新赋值。★★
+                    //
+                    //   原来每次都把最多 400 行（60,000 字符）拼成一个新串
+                    //   整体赋给 LogText.Text，再 ScrollToEnd()。
+                    //   LogText 是 TextWrapping="Wrap" 的 TextBlock，一次赋值要：
+                    //     断行全部文本 → 更新自动化子树 → Arrange → OnRender
+                    //     → SimpleTextLine.Create
+                    //   BGI 满速写日志时这个 Changed 每秒触发，
+                    //   于是**每秒一次整窗文本重排**。
+                    //
+                    //   实测指纹（docs/research/PERF-3.3.4-20261122.md §3.2）：
+                    //     AutomationPeer.UpdateSubtree      1.75%
+                    //     Visual.PrecomputeRecursive        2.34%
+                    //     TextBlock.OnRender → SimpleTextLine.Create
+                    //
+                    //   现在改成**增量追加**：只 append 比上次多出来的部分，
+                    //   内容没变就一个字符都不碰。滚动只在用户本来就贴着底部时跟随。
                     Dispatcher.InvokeAsync(() =>
                     {
                         try
                         {
                             if (_logSession == null) return;
                             string text = TailTextOf(BgiLogCenter.SnapshotByUser(_logSession.UserName));
-                            if (text.Length > 0 && text != _logText)
+                            if (text.Length == 0) return;
+                            if (text == _logText) return;          // 内容没变：零开销
+
+                            // ★ 快照是**滑动尾窗**（BgiLogCenter.TailMaxLines = 800 行 /
+                            //   20 万字符），老行会被从头部丢掉，所以不能指望
+                            //   "上次内容是新内容的前缀"—— 窗口一滑就永远不成立。
+                            //
+                            //   正确做法：求出「已显示内容的尾部」与「新内容开头」的重叠长度，
+                            //   只把重叠之后多出来的部分追加进去。日志面板本来就该保留历史，
+                            //   所以旧行被快照丢掉时我们**不从界面删除**，只由 TrimLogText 封顶。
+                            int overlap = Services.LogTailAppend.Overlap(_logText, text);
+                            if (overlap > 0 && text.Length > overlap)
                             {
+                                string added = text.Substring(overlap);
+                                _logText = _logText + added;
+
+                                // 用户正贴着底部才跟随滚动，否则别抢滚动位置
+                                bool atBottom = false;
+                                try
+                                {
+                                    atBottom = LogScroll.VerticalOffset
+                                               >= LogScroll.ScrollableHeight - 24;
+                                }
+                                catch { }
+
+                                LogText.Inlines.Add(new System.Windows.Documents.Run(added));
+                                if (atBottom) { try { LogScroll.ScrollToEnd(); } catch { } }
+                                TrimLogText();
+                            }
+                            else
+                            {
+                                // 结构变了（轮转/裁剪）：整块替换一次
                                 _logText = text;
                                 LogText.Text = text;
                                 TrimLogText();

@@ -267,6 +267,27 @@ namespace SoulLink.Services
         private static readonly object _discoverGate = new();
         private static readonly TimeSpan DiscoverTtl = TimeSpan.FromMilliseconds(1000);
 
+        // ★★ 2026-11-22 性能修复 ★★
+        //
+        //  实测（dotnet-trace，15 秒采样）：Discover() 7.15% + DiscoverCore() 5.99%
+        //  = 全部自有代码里最贵的一块。虽然这里已经有 1 秒 TTL，但**调用方太多**：
+        //  LaunchPage 每轮 4 次、BgiPathResolver 每账号 1 次、AccountStateCenter
+        //  每秒 1 次、FlowRunner / BgiTaskPreparer 各 1 次。
+        //  而且 BgiLogCenter.DiscoverCached 还有自己的 2 秒 TTL，两个缓存互不相通，
+        //  于是一秒内经常仍跑 1~2 次全量枚举。
+        //
+        //  代价：单次 DiscoverCore = Process.GetProcessesByName（枚举全部进程）
+        //  + 每进程读 MainModule（跨进程读内存）+ 扫日志目录 File.GetLastWriteTime。
+        //  3 个 BGI 在跑时约 20~30ms。
+        //
+        //  修法：TTL 放宽到 3 秒。BGI 的启停是"人点按钮"级别的动作，
+        //  3 秒延迟对界面完全无感，但能把重复枚举压到 1/3。
+        //  需要立即生效的场景（用户点「从进程取路径」）本来就调 ClearDiscoverCache()。
+        //
+        //  ⚠ 不要把这个值放大到 10 秒以上：BGI 重启后新 PID 会被漏判，
+        //     界面会出现"BGI 已在跑但显示未运行"的错觉。
+        private static readonly TimeSpan DiscoverTtlEffective = TimeSpan.FromMilliseconds(3000);
+
         /// <summary>清空缓存，强制下一次 Discover 重新枚举（用户点"从进程取"时用）。</summary>
         public static void ClearDiscoverCache()
         {
@@ -279,21 +300,40 @@ namespace SoulLink.Services
         /// </summary>
         public static Dictionary<int, Instance> Discover()
         {
+            // 快路径：命中缓存时只拿一次短锁，不被正在枚举的线程阻塞。
             lock (_discoverGate)
             {
-                if (_discoverCache != null && (DateTime.UtcNow - _discoverCacheAt) < DiscoverTtl)
+                if (_discoverCache != null
+                    && (DateTime.UtcNow - _discoverCacheAt) < DiscoverTtlEffective)
                     return _discoverCache;
             }
 
-            var fresh = DiscoverCore();
-
-            lock (_discoverGate)
+            // 慢路径：枚举本身也要串行化。
+            // ★ 原来两个线程同时发现缓存过期会各跑一遍 DiscoverCore（20~30ms×2），
+            //   而调用方有 5 个来源，实际放大很明显。
+            //   用独立锁 _discoverFill 保护枚举，拿到锁后再确认一次（双检）。
+            lock (_discoverFill)
             {
-                _discoverCache = fresh;
-                _discoverCacheAt = DateTime.UtcNow;
+                lock (_discoverGate)
+                {
+                    if (_discoverCache != null
+                        && (DateTime.UtcNow - _discoverCacheAt) < DiscoverTtlEffective)
+                        return _discoverCache;
+                }
+
+                var fresh = DiscoverCore();
+
+                lock (_discoverGate)
+                {
+                    _discoverCache = fresh;
+                    _discoverCacheAt = DateTime.UtcNow;
+                }
+                return fresh;
             }
-            return fresh;
         }
+
+        /// <summary>保护 DiscoverCore 的枚举过程，避免多线程重复枚举。</summary>
+        private static readonly object _discoverFill = new();
 
         private static Dictionary<int, Instance> DiscoverCore()
         {

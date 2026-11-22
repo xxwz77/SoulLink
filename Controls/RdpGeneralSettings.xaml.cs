@@ -24,10 +24,50 @@ namespace SoulLink.Controls
   {
    InitializeComponent();
    Loaded += (_, __) => LoadSettings();
+
+   // 订阅全局配置变更：网页改设置后立刻刷新本面板（不用切页）。
+   // ★ 在构造函数里订阅、Unloaded 时退订：
+   //   如果放在 Loaded 里订阅，页面来回切换 N 次就会挂 N 个处理器。
+   //   退订用 -= 是安全的（未订阅时移除不报错），所以不会被重复加成问题。
+   App.SettingsChanged += OnSettingsChanged;
+   Unloaded += (_, __) => App.SettingsChanged -= OnSettingsChanged;
   }
+  /// <summary>
+  /// 外部（设置页）切换到本控件时调用，重新读一遍配置。
+  ///
+  /// ★★ 为什么需要它（2026-11-22）：★★
+  ///   网页可以改录制参数（/api/settings），直接写进 App.Config.Settings。
+  ///   而本控件只在 Loaded 时读一次 —— 页面切换不会重新触发 Loaded，
+  ///   于是控件里显示的还是打开时的旧值（实测：网页改成 5fps，
+  ///   应用里仍显示 30fps）。更糟的是此时只要动任意一项，
+  ///   就会把旧值回写，覆盖掉网页刚改的配置。
+  ///
+  ///   所以：每次切到本页都重新载入一次。
+  /// </summary>
+  public void Reload()
+  {
+   try { LoadSettings(); } catch { }
+  }
+
+  /// <summary>配置被外部改了（网页端）→ 重读配置。</summary>
+  private void OnSettingsChanged()
+  {
+   try { LoadSettings(); } catch { }
+  }
+
   private void LoadSettings()
   {
+   // ★ 用 try/finally 保证 _loading 一定被复位。
+   //   原来没有保护：中途抛异常（比如某个控件还没初始化）就会永久停在 true，
+   //   之后用户改任何一项都会被 `if (_loading) return;` 静默忽略 ——
+   //   表现为"设置改了不生效"，而且完全无声。
    _loading = true;
+   try { LoadSettingsCore(); }
+   finally { _loading = false; }
+  }
+
+  private void LoadSettingsCore()
+  {
    CaptureClickCheck.IsChecked = App.Config.Settings.RdpCaptureOnClick;
 
    // 保护层边框：空配置表示"跟主题默认色"，输入框也保持为空，
@@ -60,7 +100,6 @@ namespace SoulLink.Controls
 
    // 先同步一次文本，避免 Slider 的值被 clamp 后和文字不一致
    SensitivityText.Text = SliderValueToText(SensitivitySlider.Value);
-   _loading = false;
   }
 
   // ══════════ 屏幕录制（3.2.8）══════════

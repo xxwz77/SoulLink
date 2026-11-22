@@ -508,11 +508,15 @@
                         <ScrollViewer x:Name="LogScroll" Grid.Row="2" Margin="0,6,0,0"
                                       MinHeight="80" MaxHeight="220" VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled">
-                            <TextBlock x:Name="LogText" Text=""
+                            <!-- ★ 2026-11-22：内容改由 <Run> 增量追加，不再整块赋值 Text。
+                                 原因见 LaunchPage.OnLogCenterChanged 的注释：
+                                 每秒整块替换会让 Wrap 文本全量重排（AutomationPeer
+                                 UpdateSubtree + SimpleTextLine.Create 各占 1.7~2.3%）。 -->
+                            <TextBlock x:Name="LogText"
                                        FontFamily="{StaticResource MonoFont}"
                                        FontSize="10" LineHeight="15"
                                        Foreground="{DynamicResource TextSecondary}"
-                                       TextWrapping="Wrap" />
+                                       TextWrapping="Wrap"><Run /></TextBlock>
                         </ScrollViewer>
                     </Grid>
                 </Border>

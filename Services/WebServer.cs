@@ -190,6 +190,16 @@ namespace SoulLink.Services
                 var token = _cts.Token;
                 _loop = Task.Run(() => LoopAsync(l, token), token);
 
+                // ★ 3.3.5：网页直连代理时，代理要各自开端口，
+                //   局域网里的设备必须能连到那些端口 —— 一次性放行端口范围，
+                //   而不是每个账号一条规则（账号数会变，规则不该跟着变）。
+                try
+                {
+                    if (App.Config?.Settings?.WebDirectToAgent == true)
+                        WebFirewall.EnsureAllowed(port);
+                }
+                catch { }
+
                 LogBus.Ok("网页服务已启动", "http://" + LocalIp() + ":" + port + "/");
             }
             catch (Exception ex) { LogBus.Error("网页服务异常", ex.Message); }
@@ -204,6 +214,9 @@ namespace SoulLink.Services
             _cts = null;
             _loop = null;
             _port = 0;
+
+            // 关掉网页访问就别留防火墙规则（用户明确不喜欢残留垃圾）
+            try { WebFirewall.Remove(); } catch { }
         }
 
         /// <summary>
@@ -287,10 +300,24 @@ namespace SoulLink.Services
                 string path = (ctx.Request.Url?.AbsolutePath ?? "/").Trim();
                 string method = ctx.Request.HttpMethod ?? "GET";
 
-                // 输入接口是 POST（唯一允许写操作的入口）
+                // POST 白名单：只有这两个接口接受写操作。
+                // ★ 2026-11-22 加 /api/settings 时踩过：这里原来只放行 /api/input，
+                //   新接口被这条前置拦截挡住，返回 404 而代码里明明有路由 —— 
+                //   排查方向很容易跑偏（以为是路由没注册 / 跑的是旧二进制）。
                 if (method.Equals("POST", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (path == "/api/input") { await HandleInput(ctx); return; }
+                    if (path == "/api/input")
+                    {
+                        if (!IsAuthorized(ctx)) { await WriteText(ctx, 401, "未登录"); return; }
+                        await HandleInput(ctx);
+                        return;
+                    }
+                    if (path == "/api/settings")
+                    {
+                        if (!IsAuthorized(ctx)) { await WriteText(ctx, 401, "未登录"); return; }
+                        await HandleSettings(ctx);
+                        return;
+                    }
                     await WriteText(ctx, 404, "404");
                     return;
                 }
@@ -326,11 +353,12 @@ namespace SoulLink.Services
                     return;
                 }
 
-                if (path == "/" || path == "/index.html") { await WriteHtml(ctx, WebPages.Index); return; }
+                if (path == "/" || path == "/index.html") { await WriteHtml(ctx, LoadIndexHtml()); return; }
                 if (path == "/api/list") { await WriteJson(ctx, ApiList()); return; }
                 if (path == "/api/status") { await WriteJson(ctx, ApiStatus()); return; }
                 if (path == "/api/live") { await WriteLiveFrame(ctx); return; }
                 if (path == "/api/sessions") { await WriteJson(ctx, ApiSessions()); return; }
+                if (path == "/api/settings") { await HandleSettings(ctx); return; }
 
                 // 静态文件：/file/<相对路径>
                 if (path.StartsWith("/file/", StringComparison.OrdinalIgnoreCase))
@@ -339,6 +367,40 @@ namespace SoulLink.Services
                 await WriteText(ctx, 404, "404");
             }
             catch { try { ctx.Response.Abort(); } catch { } }
+        }
+
+        // ── 页面加载：磁盘优先（改网页不用重启）────────────────────────
+        //
+        //  ★★ 2026-11-22 用户反馈 ★★
+        //    「让你改网页，每次都要重启主程序吗？重启就要重连，很麻烦啊」
+        //
+        //  原来 index 页面是编译进 exe 的常量（WebPages.Index），
+        //  改一个 CSS 都得重新编译 + 重启程序 + 断开所有 RDP 会话。
+        //  这完全不合理：网页是内容，不是代码。
+        //
+        //  现在：优先读 exe 同目录的 web-index.html，读不到才回退内置常量。
+        //  改样式只要编辑那个文件 + 浏览器刷新 —— 主程序完全不用动。
+        //
+        //  发布时 build 会把 docs/web-index.html 复制到 dist\，
+        //  所以正式用户仍然拿到最新页面；内置常量只是兜底（文件被删也能用）。
+        private static string LoadIndexHtml()
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? "";
+                if (dir.Length > 0)
+                {
+                    string file = Path.Combine(dir, "web-index.html");
+                    if (File.Exists(file))
+                    {
+                        // ★ 每次都读，不缓存：改完刷新就生效（文件很小，几十 KB）
+                        string html = File.ReadAllText(file, Encoding.UTF8);
+                        if (html.Length > 100) return html;
+                    }
+                }
+            }
+            catch { }
+            return WebPages.Index;   // 兜底：内置常量
         }
 
         // ── 输出 ─────────────────────────────────────────────────────────
@@ -752,7 +814,14 @@ namespace SoulLink.Services
                         eta,
                         action,
                         errorCount,
-                        pickTotal
+                        pickTotal,
+
+                        // ★★ 3.3.5：网页直连代理的端口（0 = 该账号没有直连，走主程序转发）★★
+                        //
+                        //   用户要求「网页端尽量隔离主客户端」：
+                        //   网页拿到这个端口后，画面/录像/按键全部直连代理，
+                        //   主程序只在这一次 JSON 里出现，之后不再参与任何流量。
+                        directPort = ResolveDirectPort(acc.Id)
                     });
                 }
             }
@@ -770,7 +839,143 @@ namespace SoulLink.Services
             bool themeDark = true;
             try { themeDark = ThemeManager.IsDark; } catch { }
 
-            return new { ok = true, version, themeDark, sessions = list };
+            // ★ 3.3.5：把直连口令下发给已登录的页面。
+            //
+            //   为什么必须下发：<img src> / <video src> 无法携带自定义请求头，
+            //   浏览器只会发裸 GET。前端需要把口令拼进 URL 查询串，
+            //   代理侧两种都接受（见 Relay/AgentWebServer.CheckToken）。
+            //
+            //   ★ 安全性：本接口本身已经过口令鉴权（见 HandleInputAsync 之前的
+            //     IsAuthorized 检查），所以这里下发不会泄露给未登录用户。
+            // ★ 录制参数（用户要求「两边同步」）
+            //   网页读到这三个值后显示下拉菜单；改了会回写到主程序配置，
+            //   主程序再下发给正在录制的代理 —— 双向同步，不是单向下发。
+            int recordFps = 10, recordQuality = 75, recordKeepSeconds = 30;
+            try
+            {
+                var rs = App.Config?.Settings;
+                if (rs != null)
+                {
+                    recordFps = Math.Max(1, rs.RecordFps);
+                    recordQuality = Math.Clamp(rs.RecordQuality, 10, 100);
+                    recordKeepSeconds = Math.Clamp(rs.RecordKeepSeconds, 5, 600);
+                }
+            }
+            catch { }
+
+            string directToken = "";
+            try
+            {
+                if (App.Config?.Settings?.WebDirectToAgent == true)
+                    directToken = App.Config.Settings.WebPassword ?? "";
+            }
+            catch { }
+
+            return new { ok = true, version, themeDark, directToken, recordFps, recordQuality, recordKeepSeconds, sessions = list };
+        }
+
+        /// <summary>
+        /// 网页修改录制参数（帧率 / 画质 / 保留时长），双向同步。
+        ///
+        /// ★ 用户要求：「把这些设置都加到浏览器，两边同步」
+        ///
+        ///   流程：网页 POST → 主程序写 config.json → 立即下发给正在录的代理
+        ///        → 应用设置界面下次打开时读到新值（同一份 App.Config.Settings）
+        ///
+        /// ★ 只允许改这三项。网页是外部输入，绝不能让它改路径/账号/口令之类。
+        /// </summary>
+        private static async Task HandleSettings(HttpListenerContext ctx)
+        {
+            try
+            {
+                string body;
+                using (var sr = new StreamReader(ctx.Request.InputStream, Encoding.UTF8))
+                    body = await sr.ReadToEndAsync().ConfigureAwait(false);
+
+                var dto = JsonSerializer.Deserialize<SettingsDto>(body,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (dto == null) { await WriteJson(ctx, new { ok = false, error = "格式错误" }).ConfigureAwait(false); return; }
+
+                var s = App.Config?.Settings;
+                if (s == null) { await WriteJson(ctx, new { ok = false, error = "配置未加载" }).ConfigureAwait(false); return; }
+
+                // 逐项校验：网页传来的值必须落在应用支持的范围里
+                if (dto.fps > 0)          s.RecordFps = Math.Clamp(dto.fps, 1, 30);
+                if (dto.quality > 0)      s.RecordQuality = Math.Clamp(dto.quality, 10, 100);
+                if (dto.keepSeconds > 0)  s.RecordKeepSeconds = Math.Clamp(dto.keepSeconds, 5, 600);
+
+                try { ConfigStore.Save(App.Config!); } catch { }
+
+                // ★ 通知界面刷新：已打开的设置面板要立刻显示新值，
+                //   否则用户改完网页回到应用，看到的还是旧数字。
+                //   WindowsBase 的 Dispatcher 只在 UI 线程可用，所以切过去。
+                try
+                {
+                    var app = System.Windows.Application.Current;
+                    if (app != null)
+                        app.Dispatcher.BeginInvoke(new Action(() => App.NotifySettingsChanged()));
+                }
+                catch { }
+
+                // ★ 立即下发给正在录制的代理，不用等用户去应用里点「开始录制」
+                int applied = 0;
+                try
+                {
+                    foreach (var acc in AccountScope.Accounts(App.Config))
+                    {
+                        if (acc == null) continue;
+                        if (!(s.RecordAccountIds?.Contains(acc.Id) ?? false)) continue;
+                        var st = AccountStateCenter.Get(acc.Id);
+                        int sid = st?.SessionId ?? 0;
+                        if (sid <= 0) continue;
+                        var relay = RelayClient.FindBySession(sid);
+                        if (relay == null || !relay.IsConnected) continue;
+                        _ = relay.RecordStartAsync(s.RecordFps, s.RecordQuality, s.RecordKeepSeconds);
+                        applied++;
+                    }
+                }
+                catch { }
+
+                await WriteJson(ctx, new {
+                    ok = true,
+                    fps = s.RecordFps,
+                    quality = s.RecordQuality,
+                    keepSeconds = s.RecordKeepSeconds,
+                    agentsUpdated = applied
+                }).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await WriteJson(ctx, new { ok = false, error = ex.Message }).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>网页提交的录制参数（只这三项可改）。</summary>
+        private sealed class SettingsDto
+        {
+            public int fps { get; set; }
+            public int quality { get; set; }
+            public int keepSeconds { get; set; }
+        }
+
+        /// <summary>
+        /// 该账号的网页直连端口；0 表示不走直连（功能关闭或没配端口）。
+        /// 规则与投送时代理拿到的一致，见 Services/WebDirect.cs。
+        /// </summary>
+        private static int ResolveDirectPort(string accountId)
+        {
+            try
+            {
+                var s = App.Config?.Settings;
+                if (s == null || !s.WebDirectToAgent || s.WebPort <= 0) return 0;
+                var accounts = App.Config?.Accounts;
+                if (accounts == null || string.IsNullOrWhiteSpace(accountId)) return 0;
+                int idx = accounts.FindIndex(a =>
+                    string.Equals(a.Id, accountId, StringComparison.OrdinalIgnoreCase));
+                if (idx < 0) return 0;
+                return WebDirect.PortFor(s.WebPort, idx);
+            }
+            catch { return 0; }
         }
 
         /// <summary>

@@ -61,6 +61,13 @@ namespace SoulLink.Services
         private LowLevelMouseProc? _proc;      // 必须保持引用，否则会被 GC 回收导致回调崩溃
         private int _lastX = int.MinValue, _lastY = int.MinValue;
 
+        /// <summary>
+        /// 复用的鼠标事件对象（见 Callback 里的说明）。
+        /// ★ WH_MOUSE_LL 的回调由系统串行调用，复用同一个实例是安全的；
+        ///   但**Handler 不得把它保存下来跨事件使用** —— 下次回调会覆盖它。
+        /// </summary>
+        private readonly MouseHookEvent _reuse = new MouseHookEvent();
+
         /// <summary>鼠标事件回调。返回 true 表示"吞掉"这个事件（不再传给系统）。</summary>
         public Func<MouseHookEvent, bool>? Handler { get; set; }
 
@@ -98,17 +105,31 @@ namespace SoulLink.Services
             try
             {
                 int msg = wParam.ToInt32();
+
+                // ★★ 2026-11-22 性能修复：复用同一个事件对象，不再每次 new。★★
+                //
+                //   实测（dotnet-trace 15s）：LowLevelMouseHook.Callback 自身占 3.80%，
+                //   排在全部自有代码第 4 位；而且父帧是 Dispatcher.GetMessageW，
+                //   说明它跑在 **UI 线程的消息泵**里。
+                //
+                //   原因：这是 WH_MOUSE_LL 全局钩子，**每一个**系统鼠标事件都要回调一次
+                //   （鼠标移动时每秒几百次），每次都要 Marshal.PtrToStructure + new 一个
+                //   事件对象 → 持续 GC 压力 + UI 线程被占。
+                //
+                //   改成复用单个实例（钩子回调本身是串行的，不存在并发写）。
+                //   注意：Handler 拿到的是同一个对象，**不允许**把它存起来跨事件使用。
                 var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
 
-                var ev = new MouseHookEvent
-                {
-                    Message = msg,
-                    X = info.pt.X,
-                    Y = info.pt.Y,
-                    WheelDelta = msg == WM_MOUSEWHEEL ? (int)(short)((info.mouseData >> 16) & 0xFFFF) : 0,
-                    IsXButton1 = ((info.mouseData >> 16) & 0xFFFF) == 1,
-                    IsInjected = (info.flags & 0x01) != 0
-                };
+                var ev = _reuse;
+                ev.Message = msg;
+                ev.X = info.pt.X;
+                ev.Y = info.pt.Y;
+                ev.WheelDelta = msg == WM_MOUSEWHEEL ? (int)(short)((info.mouseData >> 16) & 0xFFFF) : 0;
+                ev.IsXButton1 = ((info.mouseData >> 16) & 0xFFFF) == 1;
+                ev.IsInjected = (info.flags & 0x01) != 0;
+                ev.HasRawDelta = false;
+                ev.RawDeltaX = 0;
+                ev.RawDeltaY = 0;
 
                 // 逐点差分：两个相邻鼠标事件之间的位移。
                 // 注意 LL 钩子拿到的坐标本身**已受指针加速影响**，

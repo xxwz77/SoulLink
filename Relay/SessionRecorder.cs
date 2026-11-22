@@ -37,6 +37,38 @@ namespace SoulLink.Relay
         [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
         [DllImport("user32.dll")] private static extern int GetSystemMetrics(int nIndex);
+        // ── 光标叠加（3.3.18）────────────────────────────────────────────────
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int X; public int Y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CURSORINFO
+        {
+            public int cbSize;
+            public int flags;
+            public IntPtr hCursor;
+            public POINT ptScreenPos;
+        }
+
+        private const int CURSOR_SHOWING = 0x00000001;
+        private const int DI_NORMAL = 0x0003;
+
+        [DllImport("user32.dll")] private static extern bool GetCursorInfo(ref CURSORINFO pci);
+        [DllImport("user32.dll")] private static extern bool DrawIconEx(IntPtr hdc, int x, int y,
+            IntPtr hIcon, int cx, int cy, int istepIfAniCur, IntPtr hbrFlickerFreeDraw, int diFlags);
+        [DllImport("user32.dll")] private static extern bool GetIconInfo(IntPtr hIcon, out ICONINFO piconinfo);
+        [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr hIcon);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ICONINFO
+        {
+            public bool fIcon;
+            public int xHotspot;
+            public int yHotspot;
+            public IntPtr hbmMask;
+            public IntPtr hbmColor;
+        }
+
         [DllImport("gdi32.dll")] private static extern bool BitBlt(IntPtr hdc, int x, int y, int w, int h,
             IntPtr hdcSrc, int x1, int y1, uint rop);
         [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
@@ -226,6 +258,56 @@ namespace SoulLink.Relay
 
         // ── 抓帧 ─────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// 把当前鼠标光标叠加到已抓取的屏幕位图上。
+        ///
+        /// ★ 为什么要手工画：
+        ///   BitBlt(SRCCOPY) 抓的是屏幕像素，而光标由 DWM 作为独立图层合成，
+        ///   不会出现在抓取结果里。所以录像和网页实时画面里看不到鼠标。
+        ///
+        /// ★ 关键细节（每个都能让光标画歪）：
+        ///   ① **热点**：光标图标左上角不等于实际指向点，
+        ///      GetIconInfo 的 xHotspot/yHotspot 才是。不减去它，
+        ///      光标会整体偏移（箭头尖端不在真正的位置上）。
+        ///   ② **DPI**：本进程已 SetProcessDPIAware（见 Run 里），
+        ///      GetCursorInfo 返回的是物理像素，与 BitBlt 的坐标系一致，
+        ///      所以这里**不做**任何缩放换算 —— 多算一次反而会错。
+        ///   ③ **图标句柄**：GetIconInfo 会创建两个 GDI 位图（mask/color），
+        ///      必须 DeleteObject，否则每帧泄漏两个句柄，几分钟就耗尽 GDI。
+        /// </summary>
+        private static void DrawCursorOn(IntPtr hdc, int w, int h)
+        {
+            var ci = new CURSORINFO();
+            ci.cbSize = Marshal.SizeOf<CURSORINFO>();
+            if (!GetCursorInfo(ref ci)) return;
+            if ((ci.flags & CURSOR_SHOWING) == 0) return;   // 光标隐藏时不画
+            if (ci.hCursor == IntPtr.Zero) return;
+
+            int x = ci.ptScreenPos.X;
+            int y = ci.ptScreenPos.Y;
+
+            // 用热点修正实际绘制的左上角
+            if (GetIconInfo(ci.hCursor, out ICONINFO info))
+            {
+                try
+                {
+                    x -= info.xHotspot;
+                    y -= info.yHotspot;
+                }
+                finally
+                {
+                    if (info.hbmMask != IntPtr.Zero) { try { DeleteObject(info.hbmMask); } catch { } }
+                    if (info.hbmColor != IntPtr.Zero) { try { DeleteObject(info.hbmColor); } catch { } }
+                }
+            }
+
+            // 完全在画面外就不画（省一次绘制）
+            if (x < -64 || y < -64 || x > w + 64 || y > h + 64) return;
+
+            // 0,0 表示用图标原始尺寸
+            DrawIconEx(hdc, x, y, ci.hCursor, 0, 0, 0, IntPtr.Zero, DI_NORMAL);
+        }
+
         private static byte[]? GrabJpeg(int quality)
         {
             IntPtr hScreen = IntPtr.Zero, hMem = IntPtr.Zero, hBmp = IntPtr.Zero, old = IntPtr.Zero;
@@ -243,6 +325,16 @@ namespace SoulLink.Relay
                 if (hMem == IntPtr.Zero || hBmp == IntPtr.Zero) return null;
                 old = SelectObject(hMem, hBmp);
                 if (!BitBlt(hMem, 0, 0, w, h, hScreen, 0, 0, SRCCOPY)) return null;
+
+                // ★★ 把鼠标光标画进画面（3.3.18）★★
+                //
+                //   BitBlt 只抓屏幕像素 —— 光标是 DWM 单独合成的图层，**不在抓取结果里**。
+                //   所以录像/实时画面里永远看不到鼠标（用户反馈「没有同步鼠标轨迹」）。
+                //   RDP 客户端能看到光标，是因为它走的是另一条通道（客户端自己渲染）。
+                //
+                //   这里手工取光标位置+形状，再用 DrawIconEx 叠加到内存 DC 上。
+                //   注意必须在 BitBlt 之后、Image.FromHbitmap 之前，才能进到最终 JPEG。
+                try { DrawCursorOn(hMem, w, h); } catch { }
 
                 using var bmp = Image.FromHbitmap(hBmp);
                 using var ms = new MemoryStream();

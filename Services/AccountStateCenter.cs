@@ -417,7 +417,26 @@ namespace SoulLink.Services
 
         /// <summary>
         /// 事件触发：RDP 重连、新登录、投送前后调一次。
-        /// 会立刻查一轮，并把后续 20 秒切成快档，覆盖"登录后状态还在变"的窗口期。
+        /// 会把后续 45 秒切成快档，覆盖"登录后状态还在变"的窗口期。
+        ///
+        /// ★★ 2026-11-22 性能修复：本方法**绝不阻塞调用方**。★★
+        ///
+        ///   原来是同步调用 RefreshNow() → RefreshOnce()，而后者是一整轮重活：
+        ///   查会话 + 枚举 BGI 进程（跨进程读 MainModule）+ 遍历全系统进程
+        ///   + BgiLogCenter 的文件 IO。耗时几十到上百毫秒。
+        ///
+        ///   四个调用点全部在 **UI 线程**上（见下），于是"连上 RDP / 投送代理"
+        ///   这几个用户操作最密集的时刻，界面正好冻结 —— 表现就是"偶尔卡卡的"。
+        ///
+        ///      · RdpConsole.ConnectAsync      （ConfigureAwait(true)）
+        ///      · RdpConsole.BeginInputCore ×2 （ConfigureAwait(true)）
+        ///      · DataCenterPage 的刷新按钮
+        ///
+        ///   实测依据：docs/research/PERF-3.3.4-20261122.md §4.1。
+        ///
+        ///   现在：只置"快档"标记，把真正的一轮刷新丢到线程池。
+        ///   调用方立刻返回；RefreshOnce 自带 _refreshing 重入保护，
+        ///   连续 Kick 多次也只会串行跑，不会堆积。
         /// </summary>
         public static void Kick(AppConfig? cfg, string reason)
         {
@@ -425,10 +444,22 @@ namespace SoulLink.Services
             {
                 _lastKickAt = DateTime.UtcNow;
                 if (RefreshMs != StartupFastMs) ApplyInterval(StartupFastMs);
+
                 var c = cfg ?? _timerConfig;
-                if (c != null) RefreshNow(c);
-                App.AppendErrorLog("AccountStateCenter: 事件触发刷新",
-                    new InvalidOperationException(reason));
+                if (c != null)
+                {
+                    // ★ 后台执行，不等待。异常在 RefreshOnce 内部已经兜住，
+                    //   这里再包一层防止线程池任务把异常抛到未观察状态。
+                    System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        try { RefreshOnce(c); } catch { }
+                    });
+                }
+
+                // ★ 诊断留痕：原来用 AppendErrorLog 塞了一个**假的** InvalidOperationException，
+                //   导致 error.log 里混满「投送成功 会话19」这种正常事件的"异常"记录，
+                //   真正的故障反而被淹没。改成普通诊断日志。
+                App.AppendDiagLog("AccountStateCenter.Kick: " + reason);
             }
             catch { }
         }

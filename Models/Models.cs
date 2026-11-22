@@ -528,6 +528,22 @@ namespace SoulLink.Models
         /// <summary>网页服务端口。0 = 不启动（默认关闭，避免无谓监听）。</summary>
         public int WebPort { get; set; } = 0;
 
+        /// <summary>
+        /// 网页**直连代理**（3.3.5+）。
+        ///
+        /// ★ 用户要求：「网页端尽量隔离主客户端」「模拟按键也有独立出来」
+        ///
+        ///   true  = 实时画面 / 录像回放 / 按键注入 都由代理自己对外服务，
+        ///           主程序只提供「账号 → 端口」映射表，不碰任何流量；
+        ///   false = 全部经主程序转发（旧的单端口模式，保留以便回退）。
+        ///
+        /// 端口规则见 Services/WebDirect.cs：
+        ///   <c>WebPort + 账号在 Accounts 里的序号 + 1</c>
+        /// 一个账号一个端口，不做汇聚 —— 实测 Windows 端口独占，
+        /// 两个进程绑同一端口时第二个会静默失效（收不到任何连接）。
+        /// </summary>
+        public bool WebDirectToAgent { get; set; } = true;
+
         /// <summary>网页访问是否需要口令（空 = 不需要）。局域网内可选。</summary>
         public string WebPassword { get; set; } = "";
 

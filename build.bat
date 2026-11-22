@@ -74,6 +74,12 @@ rem   publish-release.ps1 只排除 .log/.bak/.old/.tmp/.pdb，.md 会被正常�
 copy /y "README.md" "!STAGE!\README.md" >nul 2>nul
 if exist "README.md" echo   使用手册：README.md
 
+rem ★ 网页界面随包发出（3.3.10）：
+rem   主程序优先读 exe 同目录的 web-index.html，读不到才用内置常量。
+rem   这样改网页样式不需要重编译、不需要重启程序（重启会断开 RDP 会话）。
+copy /y "docs\web-index.html" "!STAGE!\web-index.html" >nul 2>nul
+if exist "docs\web-index.html" echo   网页界面：web-index.html
+
 if not exist dist mkdir dist
 copy /y "!STAGE!\SoulLink.exe" "dist\SoulLink.exe" >nul
 
