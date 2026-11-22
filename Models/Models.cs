@@ -561,6 +561,16 @@ namespace SoulLink.Models
         /// </summary>
         public int CaptureMode { get; set; } = 0;
 
+        /// <summary>
+        /// H.264 直播/录像码率（kbps）。默认 8000 = 8 Mbps。
+        ///
+        /// ★ 用户指定档位（可调）：
+        ///   · 4000 省流 / 8000 标准(默认) / 15000 高画质 / 25000 无损
+        /// ★ 对比：现有 JPEG 方案约 46 Mbps，H.264 8 Mbps 是它的约 1/6。
+        /// ★ 实际输出会波动（CBR 模式 ±20%），建议网络留 20% 余量。
+        /// </summary>
+        public int VideoBitrateKbps { get; set; } = 8000;
+
         // ══════════ 网页访问（3.2.8）══════════
         //
         //  用户需求：「在设置里填写个端口号，ip+端口号可以打开网页」

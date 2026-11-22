@@ -44,11 +44,14 @@
 - [NVENC-DESIGN-20261122.md](NVENC-DESIGN-20261122.md) —— **NVENC 硬编替换 JPEG**（RDP 内可用性实测：NVENC 可用但抓屏 31ms 才是瓶颈；多厂商 IVideoEncoder 抽象层 + 选型 MF MFT 不选 SDK + 4060 Laptop 12 路并发查证 + 回退链 + AMD/Intel 备用记录）
 - [MOBILE-REMOTE-PLAN-20261122.md](MOBILE-REMOTE-PLAN-20261122.md) —— **手机端远程控制方案**（PWA→壳套 APP 路线 / 手势映射 / 外网穿透与安全边界 / 里程碑）
 - [MOBILE-CONTROLS-DESIGN-20261122.md](MOBILE-CONTROLS-DESIGN-20261122.md) —— **手机端控制层设计**（虚拟摇杆数学与事件序列 / 可编辑键位布局 JSON / 中文输入上屏时序 / 断线释放协议）
+- [ANDROID-APP-DESIGN-20261122.md](ANDROID-APP-DESIGN-20261122.md) —— **安卓 APP 协议设计与工程脚手架**（Kotlin + 传统 View/SurfaceView + Compose 混合 / ExoPlayer vs MediaCodec 取舍 / 协议时序 / 目录树 / 类骨架 / 分阶段）
 - [VIRTUAL-CONTROLS-RESEARCH-20261122.md](VIRTUAL-CONTROLS-RESEARCH-20261122.md) —— **虚拟按键/摇杆/键位映射调研**（UU 远程公开资料 / Moonlight OSC 详细拆解 / 开源项目对比表 / 手机端转视角方案对比 / 键位映射 JSON Schema v2 / 许可风险）
 - [MIYOUSHE-RESEARCH-20261122.md](MIYOUSHE-RESEARCH-20261122.md) —— **米游社扫码/短信登录与收益数据获取调研**（开源项目清单 / 扫码+短信登录完整流程含极验 / 收益接口清单 / C# 集成方案含 DS 签名 / 风险合规）
+- [SYSTEM-OPTIMIZE-20261122.md](SYSTEM-OPTIMIZE-20261122.md) —— **系统优化：可关服务白名单 + Defender 目录排除**（6 项服务白名单 / 仅本次停止不改启动类型 / Defender 排除增删 / 风险边界）
 - [OSS-REMOTE-RESEARCH-20261122.md](OSS-REMOTE-RESEARCH-20261122.md) —— **开源远程串流项目调研**（Sunshine/Moonlight/Parsec 替代/候选项目对比 / 转视角实现方案对比 / WGC vs DXGI vs BitBlt 在 RDP 下的可用性 / 可借鉴代码 file:line / 许可风险 / 给 SoulLink 的 3 条建议）
 - [GITHUB-SWEEP-20261122.md](GITHUB-SWEEP-20261122.md) —— **GitHub 地毯式搜索 60 项目清单**（远程/串流/抓屏/虚拟显示器/输入注入 / WGC 与虚拟显示器在 RDP 会话的 issue 级证据 / 最值得看的 5 个项目 / 已证实·传闻·未验证标注）
 - [VDD-RESEARCH-20261122.md](VDD-RESEARCH-20261122.md) —— **虚拟显示器（IddCx）方案深度研究**（parsec-vdd 原理/源码/许可/安装 / 同类方案对比表 / RDP 会话用 RDPDD 而非 IddCx 的关键修正 / 副作用 / 换本地会话方向评估 / 给 SoulLink 的 3 条建议）
+- [VIDEO-STREAM-RESEARCH-20261122.md](VIDEO-STREAM-RESEARCH-20261122.md) —— **视频流方案调研**（MF vs 小型库 vs 精简 ffmpeg 对比 / MF 可用性矩阵与检测逻辑 / 原生安卓 APP 的 MediaCodec 拉流方案 / MSE vs WebCodecs 支持矩阵 / 最终推荐与分阶段路线）
 - [CN-CLOUD-GAMING-20261122.md](CN-CLOUD-GAMING-20261122.md) —— **国内云游戏/云电脑调研**（UU/顺网/达龙/START/云原神/ToDesk·向日葵·RayLink/华为·阿里 对比表 / 多开路线 A(云厂商GPU虚拟化) vs B(远程串流) 架构分析 / 与 SoulLink RDP 差异 / 可借鉴做法 / UU 手机虚拟按键产品级设计参考）
 - [CITATION-AUDIT-20261122.md](CITATION-AUDIT-20261122.md) —— 上述三份文档的 file:line 引用全量核对（107 条，0 WRONG / 0 MISSING）
 - [PERF-MEASURE-20261122.md](PERF-MEASURE-20261122.md) —— **性能实测方法**（`scripts/measure-soullink-perf.ps1` 用法 + 三个关键数字的验证步骤）

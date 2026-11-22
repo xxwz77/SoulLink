@@ -9,12 +9,15 @@
 
 ## 0. 一句话最终推荐
 
-**推荐：Windows 自带 Media Foundation（MF）H.264 硬编直出 fMP4 片段流 + 浏览器 MSE（fMP4）播放。零新增体积、用户零安装、走硬件编码器（NVENC/QSV/AMF）省 CPU。**
+**推荐：Windows 自带 Media Foundation（MF）H.264 编码直出 H.264 裸流/FLV + 原生安卓 APP 用 MediaCodec 硬解渲染。零新增体积、用户零安装、优先走硬件编码器（NVENC/QSV/AMF）、软编 mfh264enc 兜底。**
 
-- **体积**：0 新增（系统自带 `mfplat.dll` / `mfreadwrite.dll` / NVIDIA H.264 Encoder MFT，SoulLink 已实测枚举到）。
+- **体积**：0 新增（系统自带 `mfplat.dll`/`mfreadwrite.dll`/`mfh264enc.dll`，SoulLink 已实测枚举到 NVENC 硬编 MFT）。
 - **是否额外安装**：否（这是决定性优势）。
 - **更新成本**：0（不进安装包）。
-- **兜底**：MF 在极少数环境不可用/要写内存流有坑时，**降级到「精简 ffmpeg 单文件」**（BtbN `ffmpeg-n9.0-latest-win64-gpl-shared` 解压后约 80~190MB，可裁剪；或用 gyan.dev essentials 35MB 7z），进程调用 `-f mp4 -movflags frag_keyframe+empty_moov` 直接吐 fMP4 到 stdout。但**默认不走 ffmpeg**，只作 MF 失败时的 B 计划。
+- **编码器降级链**：硬件 MFT（NVENC/QSV/AMF，驱动提供）→ 软件 MFT（`mfh264enc.dll`，系统自带 Win7+）→ 都没有时退回现有 JPEG。
+- **兜底**：MF 完全不可用时（Windows N 版未装 Media Feature Pack），降级到「gyan.dev ffmpeg essentials」（35MB 7z），进程调用 `-c:v libx264` 或 `h264_nvenc` 吐 H.264 到 stdout。但默认不走 ffmpeg。
+
+> ★ **方向已定：原生安卓 APP（用户原话「必须是原生 app」）**。这使浏览器 MSE/WebCodecs 兼容性问题大幅弱化（见 §7），本方案的「服务端编码」不变，「播放端」从浏览器 MSE 改为 **安卓 MediaCodec 硬解**。
 
 ---
 
@@ -98,6 +101,8 @@ writer.AddStream(outType, out streamIdx);
 ---
 
 ## 4. 浏览器端：MSE vs WebCodecs（已证实，caniuse 官方数据 2026-11-22）
+
+> ★ 注意：用户已定「必须是原生 APP」，浏览器不再是主播放端（见 §7）。本节矩阵仍保留，供「网页也要能看」的降级路径参考，但**不再作为主方案依据**。
 
 ### 4.1 支持矩阵
 
@@ -192,7 +197,126 @@ writer.AddStream(outType, out streamIdx);
 
 ---
 
-## 7. 关于 ffmpeg 的具体规格（兜底 B 计划，非首选）
+## 6.5 MF 可用性矩阵（每台 Windows 都有吗？——不能想当然）
+
+> 已证实：MS Learn《H.264 Video Encoder》官方文档 + Lead 本机核实 + 各版本差异。
+
+### 6.5.1 核心结论
+
+**MF 平台层（mfplat/mfreadwrite）在 Win10/Win11 专业版/家庭版是系统组件，100% 存在；软件 H.264 编码器 `mfh264enc.dll` 自 Windows 7 起系统自带（官方文档「Minimum supported client: Windows 7」）。但有两类缺口：① Windows N 版缺媒体组件；② 硬件编码器 MFT 是显卡驱动提供，不是系统自带。**
+
+| 组件 | 谁提供 | 每台都有？ | 说明 |
+|---|---|---|---|
+| MF 平台层（`mfplat.dll`/`mfreadwrite.dll`/`mfcore.dll`） | 系统 | ✅ Win10/11 全版（除 N 版） | Lead 本机已核实全在 |
+| **软件 H.264 编码器 `mfh264enc.dll`** | 系统 | ✅ Win7 起自带（官方文档已证实） | **这是兜底，不依赖显卡** |
+| 硬件 H.264 编码器 MFT（NVENC/QSV/AMF） | **显卡驱动** | ❌ 取决于显卡 | NVIDIA→NVENC、AMD→AMF、Intel→QSV；**用 Microsoft Basic Display Adapter（无驱动）就没有** |
+| MF 全部组件 | — | ❌ **Windows N 版缺** | 欧盟版，需另装「Media Feature Pack」 |
+
+### 6.5.2 各 Windows 版本/配置差异
+
+| 版本/配置 | MF 平台层 | 软 H.264 编码器 | 硬 H.264 编码器 | 结论 |
+|---|---|---|---|---|
+| Win10/11 家庭版 + 独显/核显 | ✅ | ✅ | ✅ | 全可用 |
+| Win10/11 家庭版 + 无驱动(基础显示适配器) | ✅ | ✅ | ❌ | 软编可用，CPU 高但能跑 |
+| Win10/11 专业版/工作站版 | ✅ | ✅ | ✅（有显卡时） | 全可用（Lead 本机即此） |
+| **Windows N 版** | ❌ 不完整 | ❌ | ❌ | **必须装 Media Feature Pack**，否则 MF 直接失败 |
+| **LTSC / Server** | ✅（Server 需桌面体验角色） | ✅ | ✅（有显卡） | 通常可用；纯 Core 无桌面体验则不可用 |
+| Server Core（无桌面体验） | ❌ | ❌ | ❌ | 无 GUI 会话，本场景不适用 |
+
+### 6.5.3 检测代码逻辑（不要假设，要探测）
+
+```csharp
+// ① 先试 MFStartup，失败 = 平台层缺失（N 版没装 Media Feature Pack）
+int hr = MFStartup(MF_VERSION, MFSTARTUP_LITE);
+if (hr < 0) {
+    // 降级：检查是否 N 版
+    // HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\EditionID 是否含 "N"
+    // → 是 N 版且 MF 失败 → 提示装 Media Feature Pack 或切 ffmpeg/JPEG
+}
+
+// ② 枚举硬件编码器（关键：必须 MFT_ENUM_FLAG_HARDWARE 单独枚举）
+MFTEnumEx(CLSID_MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE, ...)
+  → 有 = 硬编；无 = 软编
+
+// ③ 软编兜底：枚举 SYNCMFT|ASYNCMFT 找 "H264 Encoder MFT"
+  → 有 = 软编可用（mfh264enc.dll）；无 = 连软编都没有，退 JPEG
+
+// ④ 最终降级链：硬编 → 软编 → JPEG → （都不行才）ffmpeg 进程
+```
+
+> 这些探测逻辑 SoulLink 的 `tools/media-probe/MfProbe.cs` **已经实现**（`MFTEnumEx` 硬件/软件分枚举 + MFStartup + 体积自校验），可直接复用为运行时探测。
+
+### 6.5.4 硬件编码器可用率估算（诚实：无权威统计，标注「估算」）
+
+- 没有权威的「多少 Windows 用户无独显/核显」官方统计，只能按常识估算（**估算，非实测**）：
+  - 绝大多数现役 Windows 10/11 机器有核显（Intel UHD/Iris 或 AMD Radeon Vega），即**大部分有硬编**。
+  - 真正的「Microsoft Basic Display Adapter」出现在：未装显卡驱动的裸机、部分云 VM/虚拟化环境、老机器。
+  - **结论：软编 `mfh264enc.dll` 是「100% 有」的兜底**，硬编是「大概率有」的优化。SoulLink 目标机器是多账号挂机（用户会装游戏/显卡驱动），硬编可用率很高；但代码必须按「软编兜底」设计，不能假设硬编一定在。
+
+---
+
+## 7. 原生安卓 APP 的视频流方案（方向已定）
+
+### 7.1 用户原话「必须是原生 app」的含义
+
+- 播放端从「浏览器」变成「原生安卓 APP」，浏览器 MSE/WebCodecs 兼容性**不再是最短板**（但仍需网页能看，见 §7.4）。
+- 原生 APP 可以用 **MediaCodec 硬解 + SurfaceView 渲染**，性能和兼容性都最好（Moonlight Android 同款架构，已证实）。
+
+### 7.2 Moonlight Android 的拉流架构（已证实，源码核对，GPL-3.0 只借思路）
+
+| 组件 | 文件 | 作用 |
+|---|---|---|
+| 解码器 | `binding/video/MediaCodecDecoderRenderer.java`（90KB） | `MediaCodec` 硬解 H.264/HEVC/AV1，`video/avc` + AVCProfileHigh |
+| 解码器选择 | `binding/video/MediaCodecHelper.java`（45KB） | `MediaCodecList(REGULAR_CODECS)` 枚举 + `findProbableSafeDecoder` 避开有 bug 的解码器 + `configure()` 试错 |
+| 渲染 | `ui/StreamView.java` | **`SurfaceView`**（非 TextureView），直接喂 `MediaCodec.configure(format, surface, ...)` |
+| 协议 | `nvstream/`（common-c 的 JNI 绑定） | NVST 协议（RTP + FEC），**私有 UDP 协议** |
+
+**核心结论**：Moonlight 用 `MediaCodec.createDecoderByType("video/avc")` + `configure(format, surface, crypto, 0)` 直接硬解到 SurfaceView，这是安卓最低延迟的渲染路径。
+
+### 7.3 协议选择：原生 APP 下不必被浏览器限制
+
+| 协议 | 延迟 | 实现成本 | 适用 | 建议 |
+|---|---|---|---|---|
+| **HTTP-FLV / 分块 HTTP** | 低 | 低（复用现有 HTTP） | 简单拉流 | 第一版 |
+| **WebSocket** | 低 | 低 | 双向（请求关键帧） | 第一版可选 |
+| **裸 UDP + FEC**（Moonlight/Sunshine 做法） | **最低** | 高（要自己实现 RTP/FEC/丢包重传） | 外网/抖动场景 | 第二阶段，工程量大 |
+| **QUIC** | 低 | 中 | 抗丢包 | 备选 |
+
+**建议**：第一版用 **HTTP（分块 H.264 Annex-B 流）或 WebSocket**，复用 SoulLink 已有的 `AgentWebServer.cs` HTTP 栈，安卓端用 `MediaCodec` 硬解。裸 UDP + FEC 是 Moonlight 的低延迟终极方案，但工程量大，作为第二阶段。
+
+### 7.4 网页端怎么办？（两套还是合并）
+
+用户之前说网页也要能看画面，现在又定了「原生 APP」。结论：
+
+- **网页用现有 MJPEG 方案（简单、已实现、够用）**，不动它——网页看画面是「管理/确认」用途，不追求 60fps。
+- **APP 用 H.264 流（体验最好）**——这是「真正玩游戏/看动态画面」的用途，值得上 MediaCodec 硬解。
+- **建议：两套链路并存，服务端共用一次编码**：
+  - 服务端始终编码 H.264（硬编优先）→ APP 走 H.264 流。
+  - 网页要么继续拉 MJPEG（独立抓 JPEG），要么**把 H.264 解成帧再转 JPEG**（服务端加个 h264→JPEG 桥，成本高）。
+  - **最省事**：网页保留现有 MJPEG（抓屏线程已经能出 JPEG），APP 加一条 H.264 编码路径（复用抓屏的原始帧，只多一次 H.264 编码）。两者共享「抓屏」这一步。
+
+### 7.5 APP 端完整链路（原生安卓）
+
+```
+[服务端代理进程，目标 RDP 会话]
+  WGC/BitBlt 抓帧 (BGRA)
+    → MF SinkWriter H.264 (硬编优先, CBR, 短GOP, low-latency)
+    → 输出 H.264 Annex-B 裸流 (每关键帧一个 NALU 组)
+    → HTTP 分块响应 或 WebSocket 二进制帧
+         │
+         ▼
+[原生安卓 APP]
+  OkHttp/自研 拉流 (字节流)
+    → MediaCodec.createDecoderByType("video/avc")
+    → configure(format, surface, null, 0)   ← 硬解到 Surface
+    → SurfaceView 显示 (最低延迟, 无 YUV 拷贝)
+```
+
+**关键点**：H.264 Annex-B 裸流（`00 00 00 01` 起始码）直接喂 `MediaCodec` 的 `queueInputBuffer`，比 fMP4 更简单（省掉 demux 环节），安卓原生支持。
+
+---
+
+## 8. 关于 ffmpeg 的具体规格（兜底 B 计划，非首选）
 
 ### 7.1 构建选择（已证实，GitHub release API 实测体积 2026-11-22）
 
@@ -227,21 +351,23 @@ writer.AddStream(outType, out streamIdx);
 
 ## 8. 最终结论（一句话 + 完整路径）
 
-**一句话：用 Windows 自带 Media Foundation H.264 硬编直出 fMP4 + WebSocket 推流 + 浏览器 MSE 播放，零体积零安装，ffmpeg 只作兜底。**
+**一句话：用 Windows 自带 Media Foundation H.264 编码（硬编 NVENC/QSV/AMF 优先、软编 mfh264enc 兜底）直出 H.264 Annex-B 裸流 + HTTP/WebSocket 推流 + 原生安卓 APP MediaCodec 硬解到 SurfaceView，零体积零安装，ffmpeg 只作「MF 完全不可用」时的兜底。**
 
 **完整实现路径（每跳）：**
 1. **抓屏**：WGC（RDP 内需实测，参考 BetterGI GraphicsCaptureV2.cs）→ 失败降 BitBlt。
-2. **编码**：MF SinkWriter，H.264 硬编（NVENC），CBR 2~6Mbps，短 GOP 1~2s，`MF_LOW_LATENCY`，无 B 帧。
-3. **封装**：fMP4（fragmented MP4），`frag_keyframe+empty_moov`。
-4. **传输**：WebSocket 二进制帧（fragment 粒度），双向（客户端可请求关键帧/降码率）。
-5. **播放**：浏览器 `MediaSource` + `SourceBuffer.appendBuffer` + `<video>`，小缓冲 0.2~0.5s。
+2. **编码**：MF SinkWriter，H.264（硬编优先），CBR 2~6Mbps，短 GOP 1~2s，`MF_LOW_LATENCY`，无 B 帧，输出 **Annex-B 裸流**（安卓 MediaCodec 直接吃，省 demux）。
+3. **传输**：HTTP 分块（或 WebSocket 二进制帧），复用现有 `AgentWebServer.cs`。
+4. **播放（APP）**：`MediaCodec.createDecoderByType("video/avc")` + `configure(format, surface, null, 0)` → `SurfaceView` 硬解渲染。
+5. **播放（网页，保留）**：现有 MJPEG 不动（管理/确认用途够用）。
 
 **体积**：0 新增（MF）；ffmpeg 兜底 +35MB（gyan essentials 7z）。
 **额外安装**：无。
-**更新成本**：0（MF 方案）；ffmpeg 兜底每用户 +35MB（但用户已声明不考虑流量/体积）。
+**更新成本**：0（MF 方案）；ffmpeg 兜底每用户 +35MB（用户已声明不考虑流量/体积）。
+
+**编码器降级链（运行时探测，不要假设）**：硬件 MFT（NVENC/QSV/AMF）→ 软件 MFT（mfh264enc.dll，Win7+ 系统自带）→ JPEG（现有）→ ffmpeg（最后兜底）。
 
 **分阶段落地建议**：
-- **第一阶段（P0）**：MF SinkWriter 写临时 fMP4 + 边写边读 + WebSocket + MSE，先把「H.264 直播」跑通（复用 Mp4Writer 最多，风险最低）。
+- **第一阶段（P0）**：MF SinkWriter 直出 H.264 Annex-B + HTTP 分块 + 安卓 MediaCodec 硬解，把「APP 拉流」跑通（复用 Mp4Writer 的 MF 封装最多，风险最低）。
 - **第二阶段（P1）**：换 WGC 抓屏（解决 17~20ms 瓶颈，60fps 的前提）。
-- **第三阶段（P2）**：MF 内存流（`SinkWriterFromMediaSink`）替代临时文件，减少磁盘 I/O。
+- **第三阶段（P2）**：裸 UDP + FEC 低延迟协议（对标 Moonlight NVST，工程量大，仅外网低延迟需要）。
 - **兜底**：MF 探测失败 → 切 gyan essentials ffmpeg 进程。

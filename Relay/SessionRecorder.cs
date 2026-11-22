@@ -32,10 +32,35 @@ namespace SoulLink.Relay
     {
         // ── 抓屏后端（第一步 = BitBlt，第二步 = WGC）──────────────────────────
         //
-        // ★ 抓帧的 Win32 细节已搬到 IScreenCapture 实现（见 BitBltCapture.cs）。
+        // ★ 抓帧的 Win32 细节已搬到 IScreenCapture 实现（见 BitBltCapture.cs / WgcCapture.cs）。
         //   SessionRecorder 只负责环形缓冲 / 录制 / 直播调度，不碰抓屏细节。
-        //   换后端只改这一处工厂，其余逻辑零改动。
-        private static IScreenCapture Capture = new BitBltCapture();
+        //
+        // ★ 后端选择（CaptureMode）：
+        //   0 = BitBlt（默认）；1 = WGC（版本化 TFM 才有实现）。
+        //   代理进程读环境变量 SOULLINK_CAPTURE_MODE（主程序投送时下发，与 SOULLINK_REC_FPS 同模式）。
+        //   WGC 初始化失败 → 回退 BitBlt，保证画面永不消失。
+        private static IScreenCapture Capture = CreateCapture();
+
+        private static IScreenCapture CreateCapture()
+        {
+            int mode = 0;
+            string raw = Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE") ?? "";
+            if (int.TryParse(raw, out int parsed)) mode = parsed;
+
+            if (mode == 1)
+            {
+#if WGC
+                try
+                {
+                    var wgc = new WgcCapture();
+                    // 首次抓帧探活：成功才用 WGC，失败回退 BitBlt
+                    if (wgc.CaptureJpeg(75, out _, out _) != null) return wgc;
+                }
+                catch { }
+#endif
+            }
+            return new BitBltCapture();
+        }
 
         // ── 缓存目录：跟程序目录走（用户要求「跟程序一个目录」）─────────────
         /// <summary>

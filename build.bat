@@ -62,7 +62,8 @@ set "STAGE=artifacts\dist-!VER!"
 if exist "!STAGE!" rmdir /s /q "!STAGE!"
 
 rem ★ 注意：框架依赖发布不能同时开压缩（会报 NETSDK1176），所以没有 EnableCompressionInSingleFile。
-dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o "!STAGE!" --nologo
+rem ★ 多目标 TFM 后必须显式 -f 指定要发布的框架（WGC 需要版本化 TFM 的 WinRT 投影）。
+dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -f net11.0-windows10.0.26100.0 -o "!STAGE!" --nologo
 if errorlevel 1 goto :fail
 
 rem 运行时检测脚本随包发出，用户双击 exe 前先跑它
