@@ -135,6 +135,12 @@ namespace SoulLink.Relay
             {
                 long bytes = 0;
                 foreach (var f in Ring) bytes += f.Jpeg.Length;
+                // ★ 2026-11-22：把「实际在用的抓屏后端」报上去。
+                //   用户诉求：「界面显示当前实际用的哪个」，因为配置选了 WGC 也可能
+                //   因显存不足/身份不对而静默降级到 BitBlt，光看配置看不出来。
+                string backend = "unknown";
+                try { backend = Capture?.Name ?? "unknown"; } catch { }
+
                 return _status
                     + "|fps=" + _fps
                     + "|quality=" + _quality
@@ -142,7 +148,8 @@ namespace SoulLink.Relay
                     + "|bytes=" + bytes
                     + "|total=" + _totalFrames
                     + "|size=" + _width + "x" + _height
-                    + "|session=" + _sessionId;
+                    + "|session=" + _sessionId
+                    + "|capture=" + backend;
             }
         }
 

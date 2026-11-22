@@ -295,12 +295,15 @@ namespace SoulLink.Relay
                     w = bmp.Width; h = bmp.Height;
                 }
                 if (w <= 0 || h <= 0) { await WriteText(ctx, 404, "无法解析帧").ConfigureAwait(false); return; }
+                Log("[stream] 首帧 " + w + "x" + h + " jpeg=" + jpeg.Length + "B");
 
                 if (!enc.TryInitialize(w, h, 15, 8000))
                 {
+                    Log("[stream] 编码器初始化失败 " + w + "x" + h);
                     await WriteText(ctx, 500, "编码器初始化失败").ConfigureAwait(false);
                     return;
                 }
+                Log("[stream] 编码器就绪，开始推流");
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var stream = ctx.Response.OutputStream;
@@ -318,7 +321,8 @@ namespace SoulLink.Relay
                     if (nv12 == null) { await Task.Delay(20).ConfigureAwait(false); continue; }
 
                     byte[]? nal = null;
-                    try { nal = enc.EncodeNv12(nv12, frames * 1000000L / 15); } catch { }
+                    try { nal = enc.EncodeNv12(nv12, frames * 1000000L / 15); }
+                    catch (Exception exNal) { if (frames < 3) Log("[stream] EncodeNv12 异常: " + exNal.Message); }
                     if (nal != null && nal.Length > 0)
                     {
                         // ★ MF 软 H.264 MFT 输出**已经是 Annex-B**（00 00 00 01 起始码），

@@ -688,6 +688,13 @@ namespace SoulLink.Services
                 if (s0 != null)
                     env["SOULLINK_USER_POLICY"] = s0.SessionSlimUserPolicyEnabled ? "1" : "0";
 
+                // ── 抓屏后端（2026-11-22 补）──
+                //   ★ 之前漏了这一环：AppSettings.CaptureMode 有字段、SessionRecorder 读环境变量，
+                //     但中间没有代码把配置转成环境变量 → WGC 永远用不上（默认 BitLlt）。
+                //   0=自动(优先 WGC 失败降级) 1=WGC-Window 2=WGC-Monitor 3=BitLlt
+                if (s0 != null)
+                    env["SOULLINK_CAPTURE_MODE"] = s0.CaptureMode.ToString();
+
                 // ── 网页直连（User 要求：尽量隔离主客户端）──
                 var s = App.Config?.Settings;
                 if (s != null && s.WebDirectToAgent && s.WebPort > 0)
@@ -700,6 +707,25 @@ namespace SoulLink.Services
                         if (!string.IsNullOrWhiteSpace(accountId))
                             env["SOULLINK_ACCOUNT_ID"] = accountId!;
                     }
+                    // ★ 2026-11-23 诊断：确认环境变量真的组进去了（排查「网页没画面」）
+                    try
+                    {
+                        LogBus.Info("投送环境变量", "账号 " + (accountId ?? "?")
+                            + " → 直连端口 " + (port > 0 ? port.ToString() : "未分配")
+                            + " · CaptureMode=" + (env.TryGetValue("SOULLINK_CAPTURE_MODE", out var cm) ? cm : "?")
+                            + " · WebPort=" + (env.TryGetValue("SOULLINK_WEB_PORT", out var wp) ? wp : "?"));
+                    }
+                    catch { }
+                }
+                else
+                {
+                    try
+                    {
+                        LogBus.Warn("网页直连未启用", "账号 " + (accountId ?? "?")
+                            + " · WebDirectToAgent=" + (s?.WebDirectToAgent.ToString() ?? "?")
+                            + " · WebPort=" + (s?.WebPort.ToString() ?? "?"));
+                    }
+                    catch { }
                 }
 
                 return env;

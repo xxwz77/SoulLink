@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -30,7 +31,107 @@ namespace SoulLink.Controls
    //   如果放在 Loaded 里订阅，页面来回切换 N 次就会挂 N 个处理器。
    //   退订用 -= 是安全的（未订阅时移除不报错），所以不会被重复加成问题。
    App.SettingsChanged += OnSettingsChanged;
-   Unloaded += (_, __) => App.SettingsChanged -= OnSettingsChanged;
+
+   // ★ 2026-11-22：状态轮询（显示「实际在用的抓屏后端」）
+   //   为什么需要：配置里选了 WGC，也可能因显存不足/身份不对而静默降级到 BitLlt，
+   //   光看下拉框看不出来。这里每 5 秒问一次代理，把真实后端显示出来。
+   //   ★ 用 TickHub 而不是新建 DispatcherTimer（AGENTS.md 性能约束）。
+   //   ★ Unloaded 必须退订，否则页面来回切换会挂 N 个订阅者。
+   Loaded += (_, __) => StartStatusPolling();
+   Unloaded += (_, __) =>
+   {
+    App.SettingsChanged -= OnSettingsChanged;
+    StopStatusPolling();
+   };
+  }
+
+  private IDisposable? _statusTick;
+
+  private void StartStatusPolling()
+  {
+   StopStatusPolling();
+   try
+   {
+    _statusTick = TickHub.Register("RdpGeneralSettings.recordstatus", 5, () => _ = RefreshBackendStatusAsync());
+    _ = RefreshBackendStatusAsync();   // 进来先查一次，不用等 5 秒
+   }
+   catch { }
+  }
+
+  private void StopStatusPolling()
+  {
+   try { _statusTick?.Dispose(); } catch { }
+   _statusTick = null;
+  }
+
+  /// <summary>
+  /// 问代理「你现在实际用哪个抓屏后端」，只对**开了录制的账号**有意义
+  ///（没开录制时代理根本不抓屏，问也是 idle）。
+  /// </summary>
+  private async Task RefreshBackendStatusAsync()
+  {
+   try
+   {
+    if (BackendStatusText == null) return;
+    var s = App.Config?.Settings;
+    if (s == null) return;
+
+    var recIds = s.RecordAccountIds ?? new System.Collections.Generic.List<string>();
+    if (recIds.Count == 0)
+    {
+     BackendStatusText.Text = "当前没有账号开启录制 —— 代理不抓屏，抓屏方式暂不生效。";
+     return;
+    }
+
+    // 只查第一个开录制的账号（避免一次打多个代理）
+    string accId = recIds[0];
+    var acc = App.Config.Accounts?.FirstOrDefault(a => a.Id == accId);
+    string label = acc?.UserName ?? accId;
+
+    // ★ 代理按会话注册，所以要先把账号 ID 换成会话号再取 relay。
+    //   没有会话 = 该账号当前没连上，直接告诉用户，不去打不存在的代理。
+    int sid = 0;
+    try
+    {
+     var st = AccountStateCenter.Get(accId);
+     sid = st?.SessionId ?? 0;
+    }
+    catch { }
+    if (sid <= 0)
+    {
+     BackendStatusText.Text = label + "：当前没有活动会话（账号未连接）";
+     return;
+    }
+
+    var relay = RelayClient.FindBySession(sid);
+    if (relay == null)
+    {
+     BackendStatusText.Text = label + "：会话 " + sid + " 的代理通道未建立";
+     return;
+    }
+    var resp = await relay.RecordStatusAsync().ConfigureAwait(true);
+    string msg = resp?.Message ?? "";
+    if (msg.Length == 0) { BackendStatusText.Text = label + "：代理无响应"; return; }
+
+    // 解析 |capture=WGC 这种键值
+    string backend = "?";
+    foreach (var part in msg.Split('|'))
+    {
+     int eq = part.IndexOf('=');
+     if (eq > 0 && part.Substring(0, eq).Trim().Equals("capture", StringComparison.OrdinalIgnoreCase))
+     { backend = part.Substring(eq + 1).Trim(); break; }
+    }
+    string status = msg.Split('|')[0];
+
+    string human = backend switch
+    {
+     "WGC" => "GPU 抓屏（WGC）✅",
+     "BitBlt" => "兼容模式（BitLlt）⚠ 如果你的设置是 GPU 抓屏，说明降级了",
+     _ => backend
+    };
+    BackendStatusText.Text = "实际在跑：" + label + " · " + human + " · 状态 " + status;
+   }
+   catch { try { if (BackendStatusText != null) BackendStatusText.Text = ""; } catch { } }
   }
   /// <summary>
   /// 外部（设置页）切换到本控件时调用，重新读一遍配置。
@@ -117,6 +218,10 @@ namespace SoulLink.Controls
     SelectComboByTag(RecordFpsCombo, settings.RecordFps);
     SelectComboByTag(RecordQualityCombo, settings.RecordQuality);
     RecordKeepBox.Text = settings.RecordKeepSeconds.ToString();
+    // ★ 2026-11-22：抓屏方式与视频码率（之前只有配置字段、无界面入口）
+    SelectComboByTag(CaptureModeCombo, settings.CaptureMode);
+    SelectComboByTag(BitrateCombo, settings.VideoBitrateKbps);
+    UpdateVideoHintText();
 
     // 账号多选
     // ★★ 3.2.8：**排除主账号** ★★
@@ -193,6 +298,75 @@ namespace SoulLink.Controls
 
    Save();
    UpdateRecordHint();
+  }
+
+  /// <summary>
+  /// 抓屏方式切换（对应 AppSettings.CaptureMode）。
+  /// ★ 值语义与 Relay/SessionRecorder.cs 的 CreateCapture() 一致：
+  ///   0=自动(优先 WGC 失败降级) 1=WGC-窗口 2=WGC-显示器 3=BitLlt
+  /// ★ 改动会经 RelayClient.CaptureEnv 下发给代理的 SOULLINK_CAPTURE_MODE 环境变量，
+  ///   代理**重新投送后**才生效（不是即时热切）。
+  /// </summary>
+  private void CaptureMode_Changed(object sender, SelectionChangedEventArgs e)
+  {
+   try
+   {
+    if (CaptureModeCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
+        && int.TryParse(tag, out int mode))
+    {
+     App.Config.Settings.CaptureMode = mode;
+     ConfigStore.Save(App.Config);
+     UpdateVideoHintText();
+    }
+   }
+   catch { }
+  }
+
+  /// <summary>视频码率切换（对应 AppSettings.VideoBitrateKbps）。</summary>
+  private void Bitrate_Changed(object sender, SelectionChangedEventArgs e)
+  {
+   try
+   {
+    if (BitrateCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
+        && int.TryParse(tag, out int kbps))
+    {
+     App.Config.Settings.VideoBitrateKbps = kbps;
+     ConfigStore.Save(App.Config);
+     UpdateVideoHintText();
+    }
+   }
+   catch { }
+  }
+
+  /// <summary>
+  /// 显示「当前设置意味着什么」——用具体数字讲，不堆术语。
+  /// ★ 用户诉求：「明确告知用户它们是干嘛的，让人好判断」。
+  /// </summary>
+  private void UpdateVideoHintText()
+  {
+   try
+   {
+    if (VideoHintText == null) return;
+    var s = App.Config?.Settings;
+    if (s == null) return;
+
+    string capText = s.CaptureMode switch
+    {
+        1 => "GPU 抓窗口（单帧 2~8ms，能抓到被遮挡的窗口）",
+        2 => "GPU 抓显示器（画面不动时帧率低）",
+        3 => "兼容模式（单帧 17~34ms，一定能用但慢）",
+        _ => "自动（优先 GPU，失败降级到兼容模式）"
+    };
+
+    double hourGb = s.VideoBitrateKbps / 8.0 * 3600 / 1024.0;
+    string brText = (s.VideoBitrateKbps / 1000.0).ToString("0.#") + " Mbps（约 "
+        + hourGb.ToString("0.0") + " GB/小时）";
+
+    VideoHintText.Text = "抓屏：" + capText + "\n码率：" + brText
+        + "（只在 H.264 直播/录像启用时生效；JPEG 模式忽略码率）"
+        + "\n\n★ 抓屏方式的改动，需要重新投送代理才生效。";
+   }
+   catch { }
   }
 
   private void RecordFps_Changed(object sender, SelectionChangedEventArgs e)

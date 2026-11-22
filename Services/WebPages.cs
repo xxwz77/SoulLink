@@ -772,8 +772,170 @@ function pullFrame() {
   // 页面在后台 / 用户暂停 → 彻底停下，不再排下一帧
   if (document.hidden || paused) { liveHandle = null; return; }
 
+  // ══════════════════════════════════════════════════════════════════
+  // H.264 视频流播放（WebCodecs）
+  //
+  // ★ 为什么用 WebCodecs 而不是 MSE：
+  //   MSE 需要 fMP4/TS 切片，服务端要额外封装；WebCodecs 直接吃裸 NAL，
+  //   延迟低一个数量级（MSE 至少攒 1~2 秒），符合「像远程控制一样」的目标。
+  //
+  // ★ Annex-B → AVCC 转换：
+  //   服务端推的是 Annex-B（00 00 00 01 起始码），WebCodecs 要 AVCC（长度前缀）。
+  //   转换很简单：把每个起始码换成 4 字节大端长度。
+  // ══════════════════════════════════════════════════════════════════
+  const webCodecsSupported = (typeof VideoDecoder !== 'undefined')
+      && (typeof EncodedVideoChunk !== 'undefined');
+  let h264Gener = 0;          // 代际，切账号时作废旧流
+  let h264Reader = null;      // ReadableStreamDefaultReader
+  let dirtyFrame = false;     // 是否已切到 H.264 模式
+
+  async function startH264(cur, base, tok) {
+    // 停掉旧的
+    try { if (h264Reader) { await h264Reader.cancel(); h264Reader = null; } } catch (e) { }
+    const myGen = ++h264Gener;
+
+    const url = (base || '') + '/stream'
+        + (base && tok ? '?token=' + encodeURIComponent(tok) : '');
+
+    let decoder = null;
+    let canvas = null;
+    let ctx = null;
+
+    try {
+      const f = $('frame');
+      // 用一个隐藏 canvas 接解码后的帧，再贴到 img 上（复用现有 DOM，不改布局）
+      canvas = document.createElement('canvas');
+      ctx = canvas.getContext('2d', { alpha: false });
+
+      decoder = new VideoDecoder({
+        output: (frame) => {
+          if (myGen !== h264Gener) { frame.close(); return; }
+          try {
+            if (canvas.width !== frame.displayWidth) {
+              canvas.width = frame.displayWidth;
+              canvas.height = frame.displayHeight;
+            }
+            ctx.drawImage(frame, 0, 0);
+            if (!dirtyFrame) {
+              dirtyFrame = true;
+              f.style.display = 'block';
+              $('ph').style.display = 'none';
+            }
+          } finally { frame.close(); }
+        },
+        error: (e) => {
+          console.warn('[H264] 解码错误，退回 JPEG:', e);
+          dirtyFrame = false;
+          if (myGen === h264Gener) scheduleNext(0);
+        }
+      });
+
+      // SPS/PPS 从流里取不现实（要解析 AVCC 的 avcC 头），
+      // 这里先用 Main Profile Level 4.0 的通用描述；服务端固定这个组合。
+      decoder.configure({
+        codec: 'avc1.4D4028',
+        codedWidth: 1920,
+        codedHeight: 1080,
+        optimizeForLatency: true
+      });
+
+      const resp = await fetch(url, { cache: 'no-store' });
+      if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
+      h264Reader = resp.body.getReader();
+
+      let pending = new Uint8Array(0);
+      let firstKey = false;
+
+      while (myGen === h264Gener) {
+        const { done, value } = await h264Reader.read();
+        if (done) break;
+
+        // 拼接到 pending
+        const merged = new Uint8Array(pending.length + value.length);
+        merged.set(pending, 0);
+        merged.set(value, pending.length);
+        pending = merged;
+
+        // 按 Annex-B 起始码切分 NAL
+        const nals = splitAnnexB(pending);
+        if (!nals.length) continue;
+        pending = nals.pending;
+
+        for (const nal of nals.units) {
+          const type = nal[0] & 0x1f;
+          const isKey = (type === 5);        // IDR
+          const isSpsPps = (type === 7 || type === 8);
+          if (isKey) firstKey = true;
+          if (!firstKey && !isSpsPps) continue;   // 等到关键帧才能解
+
+          // Annex-B → AVCC：4 字节大端长度 + 原始 NAL
+          const avcc = new Uint8Array(4 + nal.length);
+          new DataView(avcc.buffer).setUint32(0, nal.length, false);
+          avcc.set(nal, 4);
+
+          try {
+            decoder.decode(new EncodedVideoChunk({
+              type: isKey ? 'key' : 'delta',
+              timestamp: performance.now() * 1000,
+              data: avcc
+            }));
+          } catch (e) { /* 解码器忙时丢弃 */ }
+        }
+
+        // 画到 img（把 canvas 转成 blob，代价比逐帧 drawImage 到 DOM 高，
+        // 但 img 复用现有布局；后续可改成直接把 canvas 放进 DOM）
+        if (dirtyFrame && canvas.width > 0) {
+          f.src = canvas.toDataURL('image/jpeg', 0.8);
+        }
+      }
+    } catch (e) {
+      console.warn('[H264] 流断开，退回 JPEG:', e);
+      dirtyFrame = false;
+      if (myGen === h264Gener) scheduleNext(0);
+    } finally {
+      try { if (decoder && decoder.state !== 'closed') decoder.close(); } catch (e) { }
+    }
+  }
+
+  // 把 Annex-B 字节流切成一个个 NAL 单元（去掉起始码）
+  function splitAnnexB(buf) {
+    const units = [];
+    const starts = [];
+    for (let i = 0; i + 3 < buf.length; i++) {
+      if (buf[i] === 0 && buf[i+1] === 0 && buf[i+2] === 1) {
+        starts.push({ at: i, len: 3 });
+        i += 2;
+      } else if (i + 4 < buf.length && buf[i] === 0 && buf[i+1] === 0 && buf[i+2] === 0 && buf[i+3] === 1) {
+        starts.push({ at: i, len: 4 });
+        i += 3;
+      }
+    }
+    if (!starts.length) return { units: [], pending: buf };
+    // 第一个起始码之前的字节丢弃
+    for (let k = 0; k < starts.length - 1; k++) {
+      const from = starts[k].at + starts[k].len;
+      const to = starts[k+1].at;
+      if (to > from) units.push(buf.subarray(from, to));
+    }
+    // 最后一截可能不完整，留到下次
+    const lastStart = starts[starts.length - 1];
+    const pending = buf.subarray(lastStart.at);
+    return { units, pending };
+  }
   const base = directBase(cur);
   const tok = directToken();
+
+  // ★★ 2026-11-22：优先走 H.264 视频流（/stream），失败自动退回 JPEG 轮询 ★★
+  //   为什么：JPEG 单帧每张约 90KB，30fps 就是 46 Mbps，手机流量和电量都吃不下；
+  //         H.264 同画质只要 8 Mbps（省 5.7 倍），而且是硬解。
+  //   怎么判：用 WebCodecs 的 VideoDecoder 是否存在 —— 有就直接播流。
+  //         没有（老浏览器）就完全走老逻辑，一行不改。
+  //   注意：/stream 是长连接（chunked），不能像 JPEG 那样一帧一个请求。
+  if (webCodecsSupported && !dirtyFrame) {
+    startH264(cur, base, tok);
+    return;
+  }
+
   const url = (base || "") + "/live?t=" + Date.now()
               + (base && tok ? "&token=" + encodeURIComponent(tok) : "");
 

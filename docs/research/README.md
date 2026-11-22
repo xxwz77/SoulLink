@@ -31,7 +31,10 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
-- [HANDOFF-VIDEO-20261122.md](HANDOFF-VIDEO-20261122.md) ← **最新交接**（服务端视频流全链路跑通：WGC 2~8ms + NVENC 6~8ms + /stream，端到端 636~742ms 其中 500ms 是 ffplay 缓冲）
+## 视频流 / 远程画面（2026-11-22 主线）
+
+- [HANDOFF-STREAM-STATUS-20261123.md](HANDOFF-STREAM-STATUS-20261123.md) ← **最新交接（修正上一份）**：服务端链路跑通但 `/stream` 在真实 Agent 里不可用；含端口分配实测（`PortFor` 有 +1）、两套鉴权、5 个环境坑、下一步 P0~P3
+- [HANDOFF-VIDEO-20261122.md](HANDOFF-VIDEO-20261122.md) —— 昨晚交接（**`/stream` 可用的结论已被修正**，其余数据仍有效）
 - [STREAM-LATENCY-TEST-20261122.md](STREAM-LATENCY-TEST-20261122.md) —— **延迟实测**（软编 1384ms vs 硬编 636~742ms，各阶段耗时分解）
 - [WGC-SNAPSHOT-20261122.md](WGC-SNAPSHOT-20261122.md) —— **WGC 非黑帧实证**（A1 抓原神 1920x1080 非黑 100%，含截图）
 - [WGC-TFM-VERIFY-20261122.md](WGC-TFM-VERIFY-20261122.md) —— **TFM 多目标方案**（55 个 tools 零改动，publish 加 -f）
