@@ -333,7 +333,7 @@ namespace SoulLink.Services
                     return;
                 }
 
-                if (path == "/" || path == "/index.html") { await WriteHtml(ctx, IndexHtml()); return; }
+                if (path == "/" || path == "/index.html") { await WriteHtml(ctx, WebPages.Index); return; }
                 if (path == "/api/list") { await WriteJson(ctx, ApiList()); return; }
                 if (path == "/api/status") { await WriteJson(ctx, ApiStatus()); return; }
                 if (path == "/api/live") { await WriteLiveFrame(ctx); return; }
@@ -657,19 +657,46 @@ namespace SoulLink.Services
             catch (Exception ex) { await WriteJson(ctx, new { ok = false, error = ex.Message }); }
         }
 
-        /// <summary>在线会话列表（含是否在录制）。</summary>
+        /// <summary>
+        /// 网页可见的账号列表。
+        ///
+        /// ★ 「绑定」= **BetterGI 路径绑定**（设置页那个），不是录制勾选。
+        ///   用户明确纠正过这一点。判定交给 BgiPathResolver.IsPinned，
+        ///   它内部已经要求"账号仍在 App.Config.Accounts 里"。
+        /// ★ 未绑定的账号完全不返回给网页 —— 连存在都不暴露。
+        ///
+        /// ★ 附带运行状态（BGI 进程 / 日志空闲时长），
+        ///   与桌面版「运行状态」用同一个数据源 AccountStateCenter。
+        /// </summary>
         private static object ApiSessions()
         {
             var list = new List<object>();
             try
             {
-                var ids = App.Config?.Settings?.RecordAccountIds ?? new List<string>();
-                foreach (var acc in App.Config.Accounts)
+                var cfg = App.Config;
+                var recordIds = cfg?.Settings?.RecordAccountIds ?? new List<string>();
+                var bgiPaths = cfg?.Settings?.BgiPaths
+                    ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                // ★ 用 AccountScope.Accounts：它排除主用户（不参与挂机）
+                foreach (var acc in AccountScope.Accounts(cfg))
                 {
-                    int sid = AccountStateCenter.Get(acc.Id)?.SessionId ?? 0;
-                    bool recording = ids.Contains(acc.Id);
+                    if (acc == null || string.IsNullOrWhiteSpace(acc.UserName)) continue;
+                    if (!BgiPathResolver.IsPinned(acc.UserName)) continue;   // 未绑定 → 不返回
+
+                    var st = AccountStateCenter.Get(acc.Id);
+                    int sid = st?.SessionId ?? 0;
                     var relay = sid > 0 ? RelayClient.FindBySession(sid) : null;
-                    if (relay == null) continue;
+                    bool online = relay != null && relay.IsConnected;
+
+                    // BGI 日志多久没更新（判断"运行中但空闲"）
+                    double logIdleMin = -1;
+                    try
+                    {
+                        if (st != null && st.BgiRunning && st.BgiLogWrite > DateTime.MinValue)
+                            logIdleMin = Math.Round((DateTime.Now - st.BgiLogWrite).TotalMinutes, 1);
+                    }
+                    catch { }
 
                     list.Add(new
                     {
@@ -677,15 +704,31 @@ namespace SoulLink.Services
                         user = acc.UserName,
                         nick = acc.DisplayName ?? "",
                         label = string.IsNullOrWhiteSpace(acc.DisplayName)
-                                ? acc.UserName : acc.UserName + "-" + acc.DisplayName,
+                                ? acc.UserName
+                                : acc.UserName + "-" + acc.DisplayName,
                         sessionId = sid,
-                        recording,
-                        screen = relay.ScreenWidth + "x" + relay.ScreenHeight
+                        bound = true,
+                        online,
+                        bgiRunning = st?.BgiRunning == true,
+                        bgiPid = st?.BgiPid ?? 0,
+                        bgiLogIdleMinutes = logIdleMin,
+                        recording = recordIds.Contains(acc.Id),
+                        bgiPath = bgiPaths.TryGetValue(acc.UserName, out var bp) ? bp : "",
+                        screen = online ? (relay!.ScreenWidth + "x" + relay.ScreenHeight) : ""
                     });
                 }
             }
             catch { }
-            return new { ok = true, sessions = list };
+
+            string version = "";
+            try
+            {
+                var v = typeof(WebServer).Assembly.GetName().Version;
+                if (v != null) version = v.Major + "." + v.Minor + "." + v.Build;
+            }
+            catch { }
+
+            return new { ok = true, version, sessions = list };
         }
 
         /// <summary>
@@ -801,446 +844,6 @@ async function login() {
 $('go').onclick = login;
 $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 $('pw').focus();
-</script>
-</body>
-</html>
-""";
-
-        private static string IndexHtml() => """
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>SoulLink 实时控制</title>
-<style>
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;
-    -webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none}
-  body{margin:0;background:#080b16;color:#e6ecff;
-       font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;
-       overscroll-behavior:none}
-  /* ★ 画面区彻底禁掉选中与拖拽，否则双击会触发浏览器"选中图片/文字"，
-     出现整片蓝色遮罩（用户实测反馈）。 */
-  #screen,#screen *,#stage,#stage *{-webkit-user-select:none;user-select:none;
-    -webkit-user-drag:none;-khtml-user-drag:none;-moz-user-drag:none;user-drag:none}
-  header{position:sticky;top:0;z-index:20;padding:11px 14px 8px;
-         background:rgba(8,11,22,.96);backdrop-filter:blur(14px);border-bottom:1px solid #1a2238}
-  h1{font-size:15px;margin:0;font-weight:600;display:flex;align-items:center;gap:8px}
-  .dot{width:7px;height:7px;border-radius:50%;background:#4fe3ff;box-shadow:0 0 6px #4fe3ff;
-       animation:pulse 1.6s infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-  .sub{color:#6f7fa8;font-size:11px;margin-top:3px}
-  main{padding:10px 12px 30px}
-  #screen{position:relative;background:#000;border-radius:12px;overflow:hidden;
-          border:1px solid #1e2742;touch-action:none;cursor:crosshair}
-  #screen img{width:100%;display:block;min-height:120px;object-fit:contain;pointer-events:none}
-  #placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-               color:#5a6889;font-size:12.5px;text-align:center;padding:20px}
-  #ripple{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;
-          border:2px solid #4fe3ff;opacity:0;pointer-events:none}
-  #ripple.go{animation:rip .5s ease-out}
-  @keyframes rip{0%{opacity:.95;transform:scale(.35)}100%{opacity:0;transform:scale(1.5)}}
-  .tabs{display:flex;gap:6px;margin-top:12px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
-  .tabs::-webkit-scrollbar{display:none}
-  .tab{flex:0 0 auto;padding:7px 13px;border-radius:9px;border:1px solid #232d4a;
-       background:#111729;color:#8b9bc4;font-size:12px;cursor:pointer;white-space:nowrap}
-  .tab.on{background:linear-gradient(135deg,#6c5ce7,#4fe3ff);color:#fff;border-color:transparent}
-  .row{display:flex;align-items:center;justify-content:space-between;margin-top:13px;gap:10px}
-  .row label{font-size:12px;color:#8b9bc4;flex:0 0 auto}
-  .seg{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
-  .seg button{padding:5px 11px;border-radius:7px;border:1px solid #232d4a;background:#111729;
-              color:#8b9bc4;font-size:11.5px;cursor:pointer}
-  .seg button.on{background:#22315c;color:#7fd8ff;border-color:#2f4372}
-  .sect{margin-top:18px;border-top:1px solid #1a2238;padding-top:14px}
-  .sect h2{font-size:12.5px;margin:0 0 10px;color:#8b9bc4;font-weight:500}
-  .item{background:#111729;border:1px solid #232d4a;border-radius:9px;padding:11px;
-        margin-bottom:8px;cursor:pointer}
-  .item:active{background:#18203a}
-  .iname{font-size:12.5px;color:#d3ddff}
-  .imeta{font-size:10.5px;color:#6f7fa8;margin-top:3px}
-  .badge{display:inline-block;padding:1px 6px;border-radius:5px;font-size:10px;
-         background:#22315c;color:#7fd8ff;margin-left:5px}
-  #player{display:none}
-  .ctrl{display:flex;align-items:center;gap:10px;margin-top:10px}
-  .ctrl button{flex:0 0 auto;width:42px;height:42px;border-radius:50%;border:none;
-               background:linear-gradient(135deg,#6c5ce7,#4fe3ff);color:#fff;font-size:15px}
-  .ctrl input[type=range]{flex:1;accent-color:#4fe3ff}
-  .tools{display:flex;gap:7px;margin-top:10px}
-  .tools button{flex:1;padding:8px;border-radius:8px;border:1px solid #232d4a;
-                background:#111729;color:#a8b6d8;font-size:11.5px}
-  .empty{color:#5a6889;font-size:12px;padding:16px 0;text-align:center}
-</style>
-</head>
-<body>
-
-<header>
-  <h1><span class="dot" id="dot"></span><span id="title">实时控制</span></h1>
-  <div class="sub" id="sub">正在加载…</div>
-</header>
-
-<main>
-  <div class="tabs" id="tabs"></div>
-
-  <div id="live">
-    <div id="screen">
-      <img id="frame" alt="" style="display:none">
-      <div id="placeholder">选择一个账号</div>
-      <div id="ripple"></div>
-    </div>
-
-    <div class="row">
-      <label>刷新频率</label>
-      <div class="seg" id="speed">
-        <button data-ms="1000">1 秒</button>
-        <button data-ms="500" class="on">0.5 秒</button>
-        <button data-ms="250">0.25 秒</button>
-      </div>
-    </div>
-
-    <div class="row">
-      <label>鼠标</label>
-      <div class="seg">
-        <button id="rightBtn">右键</button>
-        <button id="kbBtn">键盘</button>
-        <button id="pauseBtn">暂停画面</button>
-      </div>
-    </div>
-
-    <div id="kbTip" style="display:none;margin-top:10px;padding:8px 11px;border-radius:8px;
-         background:#1a2340;border:1px solid #2f4372;color:#7fd8ff;font-size:11.5px">
-      键盘已开启 —— 直接敲键盘即可发送到当前账号。点画面可先聚焦目标窗口。
-    </div>
-
-    <div class="row">
-      <label id="fpsinfo" style="color:#5a6889;font-size:11px"></label>
-      <div class="seg">
-        <button id="wheelUp">滚轮↑</button>
-        <button id="wheelDown">滚轮↓</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="player">
-    <video id="vid" controls playsinline preload="metadata"
-           style="width:100%;display:block;background:#000;border-radius:12px;border:1px solid #1e2742">
-    </video>
-    <div class="imeta" id="pinfo" style="text-align:center;margin-top:8px"></div>
-    <div class="tools">
-      <button id="pback">返回实时</button>
-      <button id="dl">下载视频</button>
-    </div>
-  </div>
-
-  <div class="sect">
-    <h2>已保存的录像</h2>
-    <div id="saved"></div>
-  </div>
-</main>
-
-<script>
-const $ = id => document.getElementById(id);
-let sessions = [], curSid = 0, liveTimer = null, liveMs = 500;
-let paused = false, lastOk = 0;
-let rightClickMode = false;
-// 播放器交给原生 <video>，这些逐帧相关变量不再需要
-
-// ── 会话 ───────────────────────────────────────────────────
-async function loadSessions() {
-  try {
-    const r = await fetch('/api/sessions');
-    const d = await r.json();
-    sessions = (d.sessions || []).filter(s => s.recording);
-    const box = $('tabs');
-    box.innerHTML = '';
-    if (!sessions.length) {
-      $('sub').textContent = '没有正在录制的账号';
-      $('placeholder').textContent = '在「RDP 通用设置 → 屏幕录制」里勾选账号后，这里会出现实时画面。';
-      return;
-    }
-    $('sub').textContent = sessions.length + ' 个账号 · 实时';
-    for (const s of sessions) {
-      const b = document.createElement('button');
-      b.className = 'tab' + (s.sessionId === curSid ? ' on' : '');
-      b.textContent = s.label;
-      b.onclick = () => { curSid = s.sessionId; refreshTabs(); startLive(); };
-      box.appendChild(b);
-    }
-    if (!curSid) { curSid = sessions[0].sessionId; refreshTabs(); startLive(); }
-  } catch { $('sub').textContent = '加载失败'; }
-}
-function refreshTabs() {
-  document.querySelectorAll('#tabs .tab').forEach((b,i)=>{
-    b.classList.toggle('on', sessions[i] && sessions[i].sessionId === curSid);
-  });
-}
-
-// ── 实时画面 ───────────────────────────────────────────────
-function startLive() {
-  stopLive(); showLive();
-  const s = sessions.find(x => x.sessionId === curSid);
-  $('title').textContent = s ? ('实时 · ' + s.label) : '实时控制';
-  if (s) $('fpsinfo').textContent = s.screen + ' · ' + s.user;
-  pullFrame();
-  liveTimer = setInterval(() => { if (!paused) pullFrame(); }, liveMs);
-}
-function stopLive(){ if(liveTimer){clearInterval(liveTimer);liveTimer=null;} }
-function pullFrame() {
-  const img = new Image();
-  img.onload = () => {
-    const f = $('frame');
-    f.src = img.src; f.style.display='block';
-    $('placeholder').style.display='none';
-    lastOk = Date.now();
-  };
-  img.onerror = () => {
-    if (Date.now() - lastOk > 4000) {
-      $('placeholder').style.display='flex';
-      $('placeholder').textContent = '暂时没有画面（会话可能未连接）';
-    }
-  };
-  img.src = '/api/live?sid=' + curSid + '&t=' + Date.now();
-}
-
-// ── 鼠标输入 ───────────────────────────────────────────────
-// ★ 只作用于当前选中的账号，各账号互不影响
-async function sendInput(action, nx, ny, extra) {
-  const body = Object.assign({ action, x: nx, y: ny }, extra || {});
-  try {
-    const r = await fetch('/api/input?sid=' + curSid, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    return await r.json();
-  } catch (e) { return null; }
-}
-
-function norm(e) {
-  const el = $('screen');
-  const rect = el.getBoundingClientRect();
-  const img = $('frame');
-  // 图片用 object-fit:contain，要按实际显示区域算
-  const iw = img.naturalWidth || 16, ih = img.naturalHeight || 9;
-  const boxW = rect.width, boxH = rect.height;
-  const scale = Math.min(boxW / iw, boxH / ih);
-  const dw = iw * scale, dh = ih * scale;
-  const ox = (boxW - dw) / 2, oy = (boxH - dh) / 2;
-  const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left - ox;
-  const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top - oy;
-  return { nx: Math.max(0, Math.min(1, cx / dw)), ny: Math.max(0, Math.min(1, cy / dh)) };
-}
-
-function ripple(e) {
-  const el = $('ripple'), rect = $('screen').getBoundingClientRect();
-  const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-  const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
-  el.style.left = cx + 'px'; el.style.top = cy + 'px';
-  el.classList.remove('go'); void el.offsetWidth; el.classList.add('go');
-}
-
-// ── 鼠标：点击 / 拖拽 ──────────────────────────────────────
-// ★ 拖拽用 down → move(节流) → up，需要区分"点击"和"拖动"：
-//   按下后位移超过 8px 才算拖动，否则按点击处理。
-let dragState = null;   // {sx, sy, moved, lastX, lastY}
-
-$('screen').addEventListener('pointerdown', e => {
-  if (e.button === 2) return;              // 右键走 click
-  const p = norm(e);
-  dragState = { sx: e.clientX, sy: e.clientY, moved: false, nx: p.nx, ny: p.ny };
-  $('screen').setPointerCapture(e.pointerId);
-});
-
-$('screen').addEventListener('pointermove', e => {
-  if (!dragState) return;
-  const dx = e.clientX - dragState.sx, dy = e.clientY - dragState.sy;
-  if (!dragState.moved && Math.hypot(dx, dy) < 8) return;
-
-  if (!dragState.moved) {
-    // 刚判定为拖动：先按下（在起始点）
-    dragState.moved = true;
-    sendInput('down', dragState.nx, dragState.ny,
-      { button: rightClickMode ? 'right' : 'left' });
-  }
-  // 节流：最多每 60ms 发一次移动，避免打爆投送通道
-  const now = Date.now();
-  if (!dragState.lastSent || now - dragState.lastSent > 60) {
-    dragState.lastSent = now;
-    const p = norm(e);
-    sendInput('move', p.nx, p.ny);
-  }
-});
-
-$('screen').addEventListener('pointerup', e => {
-  if (!dragState) return;
-  const wasDrag = dragState.moved;
-  dragState = null;
-  const p = norm(e);
-  if (wasDrag) {
-    sendInput('up', p.nx, p.ny, { button: rightClickMode ? 'right' : 'left' });
-  } else {
-    ripple(e);
-    sendInput('click', p.nx, p.ny, { button: rightClickMode ? 'right' : 'left' });
-  }
-});
-
-$('screen').addEventListener('pointercancel', () => {
-  if (dragState && dragState.moved) sendInput('up', -1, -1, { button: 'left' });
-  dragState = null;
-});
-
-// ★ 双击：阻止浏览器默认的"选中"行为，并照常发两次点击
-$('screen').addEventListener('dblclick', e => { e.preventDefault(); });
-$('screen').addEventListener('mousedown', e => { if (e.detail > 1) e.preventDefault(); });
-// 长按选中（移动端）
-$('screen').addEventListener('selectstart', e => e.preventDefault());
-$('screen').addEventListener('contextmenu', e => e.preventDefault());
-
-// 滚轮
-$('screen').addEventListener('wheel', e => {
-  e.preventDefault();
-  sendInput('wheel', -1, -1, { delta: e.deltaY > 0 ? -120 : 120 });
-}, { passive: false });
-
-// ── 键盘输入 ──────────────────────────────────────────────
-// ★ 网页拿到的是 key 字符串，代理侧 SendKeyCombo 认 "F12" / "Ctrl+A" 这种写法，
-//   这里负责把浏览器事件翻译成那个格式。
-let kbMode = false;
-
-function keyName(e) {
-  const k = e.key;
-  if (k === ' ') return 'Space';
-  if (k === 'Enter') return 'Enter';
-  if (k === 'Escape') return 'Esc';
-  if (k === 'Backspace') return 'Backspace';
-  if (k === 'Tab') return 'Tab';
-  if (k === 'Delete') return 'Delete';
-  if (k === 'ArrowUp') return 'Up';
-  if (k === 'ArrowDown') return 'Down';
-  if (k === 'ArrowLeft') return 'Left';
-  if (k === 'ArrowRight') return 'Right';
-  if (k === 'Home') return 'Home';
-  if (k === 'End') return 'End';
-  if (k === 'PageUp') return 'PageUp';
-  if (k === 'PageDown') return 'PageDown';
-  if (k.length === 1) return k.toUpperCase();
-  return k;
-}
-
-function comboOf(e) {
-  const parts = [];
-  if (e.ctrlKey) parts.push('Ctrl');
-  if (e.altKey) parts.push('Alt');
-  if (e.shiftKey) parts.push('Shift');
-  // 纯修饰键不单独发送
-  if (['Control','Alt','Shift','Meta'].includes(e.key)) return '';
-  const k = keyName(e);
-  parts.push(k);
-  return parts.join('+');
-}
-
-document.addEventListener('keydown', e => {
-  if (!kbMode) return;
-  if (e.target.tagName === 'INPUT') return;   // 输入框里不拦截
-  const combo = comboOf(e);
-  if (!combo) return;
-  e.preventDefault();
-  sendInput('key', -1, -1, { key: combo });
-});
-
-$('rightBtn').onclick = () => {
-  rightClickMode = !rightClickMode;
-  $('rightBtn').classList.toggle('on', rightClickMode);
-  $('rightBtn').textContent = rightClickMode ? '右键模式' : '右键';
-};
-$('kbBtn').onclick = () => {
-  kbMode = !kbMode;
-  $('kbBtn').classList.toggle('on', kbMode);
-  $('kbBtn').textContent = kbMode ? '键盘开' : '键盘';
-  if (kbMode) {
-    $('kbTip').style.display = 'block';
-    document.body.focus();
-  } else {
-    $('kbTip').style.display = 'none';
-  }
-};
-$('wheelUp').onclick = () => sendInput('wheel', -1, -1, { delta: 120 });
-$('wheelDown').onclick = () => sendInput('wheel', -1, -1, { delta: -120 });
-
-$('speed').onclick = e => {
-  const b = e.target.closest('button'); if (!b) return;
-  liveMs = parseInt(b.dataset.ms);
-  document.querySelectorAll('#speed button').forEach(x=>x.classList.toggle('on', x===b));
-  startLive();
-};
-$('pauseBtn').onclick = () => {
-  paused = !paused;
-  $('pauseBtn').textContent = paused ? '继续画面' : '暂停画面';
-  $('pauseBtn').classList.toggle('on', paused);
-};
-
-// ── 保存的录像 ─────────────────────────────────────────────
-async function loadSaved() {
-  try {
-    const r = await fetch('/api/list');
-    const d = await r.json();
-    const box = $('saved'); box.innerHTML = '';
-    if (!d.count) { box.innerHTML = '<div class="empty">还没有保存的录像</div>'; return; }
-    for (const it of d.items) {
-      let trig = '';
-      try { if (it.meta) trig = (JSON.parse(it.meta).trigger || ''); } catch {}
-      const div = document.createElement('div');
-      div.className = 'item';
-      const short = it.name.replace(/^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}-?/, '');
-      div.innerHTML = '<div class="iname">' + esc(it.user) + ' · ' + esc(short || it.name)
-        + (trig ? '<span class="badge">' + esc(trig) + '</span>' : '') + '</div>'
-        + '<div class="imeta">' + it.frames + ' 帧</div>';
-      div.onclick = () => openPlayer(it);
-      box.appendChild(div);
-    }
-  } catch {}
-}
-
-// ── 播放器 ─────────────────────────────────────────────────
-function showLive(){ $('live').style.display='block'; $('player').style.display='none'; }
-function showPlayer(){ $('live').style.display='none'; $('player').style.display='block'; }
-
-// ★ 3.2.8：录像已改成 MP4，播放器直接交给浏览器原生 <video>。
-//   不再逐帧加载 JPEG —— 那样几十兆流量、还不能拖动进度条。
-function openPlayer(item) {
-  stopLive(); showPlayer();
-  $('title').textContent = item.name;
-  const vid = $('vid');
-  const url = '/file/' + encodeURI(item.path) + '/replay.mp4';
-  vid.src = url;
-  vid.load();
-
-  let fps = 10, frames = 0, trig = '';
-  try {
-    if (item.meta) {
-      const m = JSON.parse(item.meta);
-      if (m.fps) fps = m.fps;
-      if (m.frames) frames = m.frames;
-      if (m.trigger) trig = m.trigger;
-    }
-  } catch {}
-
-  $('pinfo').textContent = (frames ? frames + ' 帧 · ' : '') + fps + ' fps'
-    + (trig ? ' · ' + trig : '');
-  $('dl').onclick = () => { window.open(url, '_blank'); };
-}
-
-$('pback').onclick = () => {
-  const vid = $('vid');
-  vid.pause(); vid.removeAttribute('src'); vid.load();
-  loadSessions();
-};
-
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-loadSessions();
-loadSaved();
 </script>
 </body>
 </html>
