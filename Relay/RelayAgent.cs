@@ -458,6 +458,11 @@ namespace SoulLink.Relay
             public int Count { get; set; } = 1;
             public string Hotkey { get; set; } = "";
             public bool Trace { get; set; }
+            public int VideoBitrateKbps { get; set; }
+            public int NvencPreset { get; set; }
+            public int VbvBufferIncreasePercent { get; set; }
+            public int StreamFps { get; set; }
+            public int RecordFps { get; set; }
 
             /// <summary>
             /// 非 0 表示"先定位到 X,Y 再点击"。
@@ -922,6 +927,11 @@ namespace SoulLink.Relay
                 //   ★ 尺寸取**代理所在会话**（目标 RDP 会话），不是主程序桌面。
                 //   ★ 录制走内存环形缓冲，只留最近 N 秒；SSD 平时零写入。
                 //   ★ 保存时才落盘到 <程序目录>\capture\s<会话>\...
+
+                case "videoparams":
+                    SessionRecorder.UpdateVideoParameters(req.VideoBitrateKbps, req.NvencPreset,
+                        req.VbvBufferIncreasePercent, req.StreamFps, req.RecordFps);
+                    return new Response { Ok = true, Message = "视频参数已接收，编码器将在视频线程内热更新" };
 
                 case "record":
                     {

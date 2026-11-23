@@ -339,6 +339,7 @@ namespace SoulLink.Controls
    if (kbps == App.Config.Settings.VideoBitrateKbps) return;
    App.Config.Settings.VideoBitrateKbps = kbps;
    Save();
+   RelayClient.PushVideoParametersToConnectedAgents();
    UpdateVideoHintText();
   }
 
@@ -350,6 +351,7 @@ namespace SoulLink.Controls
    {
     App.Config.Settings.NvencPreset = preset;
     Save();
+    RelayClient.PushVideoParametersToConnectedAgents();
     UpdateVideoHintText();
    }
   }
@@ -363,6 +365,7 @@ namespace SoulLink.Controls
    if (pct == App.Config.Settings.VbvBufferIncreasePercent) return;
    App.Config.Settings.VbvBufferIncreasePercent = pct;
    Save();
+   RelayClient.PushVideoParametersToConnectedAgents();
    UpdateVideoHintText();
   }
 
@@ -402,7 +405,7 @@ namespace SoulLink.Controls
         + " · 直播帧率 " + s.StreamFps + "fps"
         + "\nNVENC 预设：" + presetName + " · " + vbvText
         + "\n（码率/预设/缓冲只在 H.264 硬编启用时生效；JPEG 模式忽略）"
-        + "\n\n★ 抓屏方式与码率/预设的改动，需要重新投送代理才生效。";
+        + "\n\n★ 码率/预设/缓冲/帧率会实时下发，正在观看的直播连接不断开；抓屏方式仍需重新投送代理。";
    }
    catch { }
   }
@@ -415,6 +418,7 @@ namespace SoulLink.Controls
    {
     App.Config.Settings.RecordFps = fps;
     Save();
+    RelayClient.PushVideoParametersToConnectedAgents();
     UpdateRecordHint();
    }
   }
@@ -428,6 +432,7 @@ namespace SoulLink.Controls
    if (fps == App.Config.Settings.StreamFps) return;
    App.Config.Settings.StreamFps = fps;
    Save();
+   RelayClient.PushVideoParametersToConnectedAgents();
   }
 
   private void RecordQuality_Changed(object sender, SelectionChangedEventArgs e)

@@ -48,19 +48,47 @@ namespace SoulLink.Relay
         private static int _configuredBitrate, _negotiatedBitrate;
         private static readonly AutoResetEvent LifecycleChanged = new(false);
         private static bool _forceKeyFrame;
+        private static int _videoParameterVersion;
+        private static VideoParameters _videoParameters = VideoParameters.ReadEnvironment();
+
+        private sealed record VideoParameters(int Bitrate, int Preset, int Vbv, int Stream, int Record)
+        {
+            public static VideoParameters ReadEnvironment() => new(
+                ReadInt("SOULLINK_VIDEO_BITRATE", 500, 50000, 8000),
+                ReadInt("SOULLINK_NVENC_PRESET", 1, 7, 3),
+                ReadInt("SOULLINK_VBV_INCREASE_PERCENT", 0, 200, 0),
+                ReadInt("SOULLINK_STREAM_FPS", 1, 120, 30),
+                ReadInt("SOULLINK_REC_FPS", 1, 30, 5));
+            public string Describe() => "bitrate=" + Bitrate + "kbps preset=P" + Preset + " vbv=+" + Vbv + "% stream=" + Stream + "fps record=" + Record + "fps";
+        }
+        private static int ReadInt(string key, int min, int max, int fallback)
+            => int.TryParse(Environment.GetEnvironmentVariable(key), out int value) ? Math.Clamp(value, min, max) : fallback;
 
         private static int StreamFps
         {
             get
             {
-                string? raw = Environment.GetEnvironmentVariable("SOULLINK_STREAM_FPS");
-                return int.TryParse(raw, out int value) ? Math.Clamp(value, 1, 60) : 30;
+                lock (Gate) return _videoParameters.Stream;
             }
         }
-        private static int RecordFps
-            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_REC_FPS"), out int value) ? Math.Clamp(value, 1, 30) : _fps;
-        private static int StreamBitrate
-            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_VIDEO_BITRATE"), out int value) ? Math.Max(500, value) : 8000;
+        private static int RecordFps { get { lock (Gate) return _videoParameters.Record; } }
+        private static int StreamBitrate { get { lock (Gate) return _videoParameters.Bitrate; } }
+
+        /// <summary>接收运行时编码参数；不改变录像/直播生命周期，不重建 agent 或 viewer。</summary>
+        public static void UpdateVideoParameters(int bitrateKbps, int preset, int vbvPercent, int streamFps, int recordFps)
+        {
+            var value = new VideoParameters(
+                Math.Clamp(bitrateKbps, 500, 50000), Math.Clamp(preset, 1, 7),
+                Math.Clamp(vbvPercent, 0, 200), Math.Clamp(streamFps, 1, 120), Math.Clamp(recordFps, 1, 30));
+            lock (Gate)
+            {
+                if (_videoParameters == value) return;
+                _videoParameters = value;
+                _videoParameterVersion++;
+                // 空闲时只保存参数；下次有观众/录像才用新值创建编码器。
+                RecomputeLifecycle();
+            }
+        }
 
         private static IScreenCapture CreateCapture()
         {
@@ -227,10 +255,24 @@ namespace SoulLink.Relay
             long frameIndex = 0;
             byte[]? previousBgra = null;
             long nextAt = Stopwatch.GetTimestamp();
+            int appliedVersion = -1;
+            VideoParameters? applied = null;
             try
             {
                 while (!_stopRequested)
                 {
+                    VideoParameters parameters;
+                    int parameterVersion;
+                    lock (Gate) { parameters = _videoParameters; parameterVersion = _videoParameterVersion; }
+                    if (parameterVersion != appliedVersion && encoder != null)
+                    {
+                        string oldDescription = applied?.Describe() ?? "未记录";
+                        RelayAgent.LogQuiet("[video] 参数热更新：" + oldDescription + " → " + parameters.Describe());
+                        // 仅 worker 替换编码器；保留观众 HTTP 连接、字典和各自 Pending 队列。
+                        encoder.Dispose(); encoder = null;
+                        frameIndex = 0; previousBgra = null;
+                        // 保留 Pending：旧帧之后由新 IDR 续接，viewer 不重建、不断开。
+                    }
                     int fps, keepSec;
                     lock (Gate)
                     {
@@ -275,6 +317,7 @@ namespace SoulLink.Relay
                         previousBgra = null;
                         encoder?.Dispose();
                         encoder = CreateEncoder(ew, eh, fps);
+                        applied = parameters; appliedVersion = parameterVersion;
                         encodedWidth = ew; encodedHeight = eh;
                         RelayAgent.LogQuiet("[video] 编码器=" + encoder.Name + " 配置码率=" + encoder.ConfiguredBitrateKbps
                             + "kbps MFT读回=" + encoder.NegotiatedBitrateKbps + "kbps fps=" + fps + " 尺寸=" + ew + "x" + eh);

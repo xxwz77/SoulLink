@@ -888,6 +888,7 @@ namespace SoulLink.Services
             //   网页读到这三个值后显示下拉菜单；改了会回写到主程序配置，
             //   主程序再下发给正在录制的代理 —— 双向同步，不是单向下发。
             int recordFps = 5, recordQuality = 75, recordKeepSeconds = 30, streamFps = 30;
+            int videoBitrate = 8000, nvencPreset = 3, vbvBufferIncreasePercent = 0;
             try
             {
                 var rs = App.Config?.Settings;
@@ -897,6 +898,9 @@ namespace SoulLink.Services
                     recordQuality = Math.Clamp(rs.RecordQuality, 10, 100);
                     recordKeepSeconds = Math.Clamp(rs.RecordKeepSeconds, 5, 600);
                     streamFps = Math.Clamp(rs.StreamFps, 30, 60);
+                    videoBitrate = Math.Clamp(rs.VideoBitrateKbps, 1000, 50000);
+                    nvencPreset = Math.Clamp(rs.NvencPreset, 1, 7);
+                    vbvBufferIncreasePercent = Math.Clamp(rs.VbvBufferIncreasePercent, 0, 200);
                 }
             }
             catch { }
@@ -909,7 +913,7 @@ namespace SoulLink.Services
             }
             catch { }
 
-            return new { ok = true, version, themeDark, directToken, recordFps, recordQuality, recordKeepSeconds, streamFps, sessions = list };
+            return new { ok = true, version, themeDark, directToken, recordFps, recordQuality, recordKeepSeconds, streamFps, videoBitrate, nvencPreset, vbvBufferIncreasePercent, sessions = list };
         }
 
         /// <summary>
@@ -941,6 +945,13 @@ namespace SoulLink.Services
                 if (dto.fps > 0)          s.RecordFps = Math.Clamp(dto.fps, 1, 30);
                 if (dto.quality > 0)      s.RecordQuality = Math.Clamp(dto.quality, 10, 100);
                 if (dto.keepSeconds > 0)  s.RecordKeepSeconds = Math.Clamp(dto.keepSeconds, 5, 600);
+
+                // ★ 直播画质（2026-11-23 网页端手机原型）：码率/帧率/preset/vbv
+                if (dto.streamFps > 0)     s.StreamFps = Math.Clamp(dto.streamFps, 30, 60);
+                if (dto.videoBitrate > 0)  s.VideoBitrateKbps = Math.Clamp(dto.videoBitrate, 1000, 50000);
+                if (dto.nvencPreset > 0)   s.NvencPreset = Math.Clamp(dto.nvencPreset, 1, 7);
+                if (dto.vbvBufferIncreasePercent.HasValue)
+                    s.VbvBufferIncreasePercent = Math.Clamp(dto.vbvBufferIncreasePercent.Value, 0, 200);
 
                 try { ConfigStore.Save(App.Config!); } catch { }
 
@@ -974,11 +985,17 @@ namespace SoulLink.Services
                 }
                 catch { }
 
+                RelayClient.PushVideoParametersToConnectedAgents();
+
                 await WriteJson(ctx, new {
                     ok = true,
                     fps = s.RecordFps,
                     quality = s.RecordQuality,
                     keepSeconds = s.RecordKeepSeconds,
+                    streamFps = s.StreamFps,
+                    videoBitrate = s.VideoBitrateKbps,
+                    nvencPreset = s.NvencPreset,
+                    vbvBufferIncreasePercent = s.VbvBufferIncreasePercent,
                     agentsUpdated = applied
                 }).ConfigureAwait(false);
             }
@@ -988,12 +1005,17 @@ namespace SoulLink.Services
             }
         }
 
-        /// <summary>网页提交的录制参数（只这三项可改）。</summary>
+        /// <summary>网页提交的设置参数（录制三项 + 直播画质四项可改）。</summary>
         private sealed class SettingsDto
         {
             public int fps { get; set; }
             public int quality { get; set; }
             public int keepSeconds { get; set; }
+            public int streamFps { get; set; }
+            public int videoBitrate { get; set; }
+            public int nvencPreset { get; set; }
+            // 0 是合法值（不额外缓冲），用可空区分「未传」与「传 0」。
+            public int? vbvBufferIncreasePercent { get; set; }
         }
 
         /// <summary>

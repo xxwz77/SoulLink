@@ -645,6 +645,39 @@ namespace SoulLink.Services
         public Task<RelayResponse?> RecordStartAsync(int fps, int quality, int keepSeconds)
             => SendAsync(new { Cmd = "record", Button = "start", Count = fps, X = quality, Delta = keepSeconds }, 6000);
 
+        /// <summary>把编码参数发给本代理；只改代理内快照，不启动/停止视频生命周期。</summary>
+        public Task<RelayResponse?> UpdateVideoParametersAsync()
+        {
+            var s = App.Config?.Settings;
+            if (s == null) return Task.FromResult<RelayResponse?>(null);
+            return SendAsync(new
+            {
+                Cmd = "videoParams", VideoBitrateKbps = Math.Clamp(s.VideoBitrateKbps, 500, 50000),
+                NvencPreset = Math.Clamp(s.NvencPreset, 1, 7),
+                VbvBufferIncreasePercent = Math.Clamp(s.VbvBufferIncreasePercent, 0, 200),
+                StreamFps = Math.Clamp(s.StreamFps, 1, 120), RecordFps = Math.Clamp(s.RecordFps, 1, 30)
+            });
+        }
+
+        /// <summary>设置变更后同步给已连接代理；不扫描进程，不触发 RefreshAll。</summary>
+        public static int PushVideoParametersToConnectedAgents()
+        {
+            int count = 0;
+            try
+            {
+                foreach (var account in AccountScope.Accounts(App.Config))
+                {
+                    int sid = AccountStateCenter.Get(account.Id)?.SessionId ?? 0;
+                    var relay = sid > 0 ? FindBySession(sid) : null;
+                    if (relay == null || !relay.IsConnected) continue;
+                    _ = relay.UpdateVideoParametersAsync();
+                    count++;
+                }
+            }
+            catch { }
+            return count;
+        }
+
         /// <summary>停止录制。</summary>
         public Task<RelayResponse?> RecordStopAsync()
             => SendAsync(new { Cmd = "record", Button = "stop" }, 4000);

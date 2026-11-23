@@ -195,6 +195,17 @@
   .uact-btn:hover{border-color:var(--accent);filter:brightness(1.08)}
   .uact-btn:active{transform:scale(.97)}
 
+  /* ══════════ 直播画质设置（滑杆/下拉，2026-11-23 手机端原型）══════════ */
+  .qgroup{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .qgroup>span{font-size:10px;color:var(--txt3);white-space:nowrap}
+  .qgroup input[type=range]{width:76px;height:20px;cursor:pointer;accent-color:var(--accent)}
+  .qgroup .qval{font-size:10.5px;color:var(--txt2);min-width:40px;text-align:right;
+                 font-variant-numeric:tabular-nums}
+  .qguide{font-size:10px;color:var(--txt4);line-height:1.6;margin-top:6px}
+  .select-mini{height:26px;line-height:1;padding:0 16px 0 6px;font-size:11px;
+                color:var(--txt);background:var(--card);border:1px solid var(--border);
+                border-radius:8px;cursor:pointer}
+
   /* ══════════ 功能页（hash 路由：配置组分析 / 摩拉收益）══════════ */
   body.page-func main>.stat,
   body.page-func main>.sect-t,
@@ -486,6 +497,19 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
           <button id="mmRel" type="button">相对</button>
         </div>
       </div>
+      <div class="hgroup" data-kind="live" title="直播画质：码率/帧率/NVENC 预设/VBV 缓冲，改动回写应用配置并即时下发代理">
+        <span class="gtag">直播画质</span>
+        <label class="qgroup"><span>码率</span><input id="qBitrate" type="range" min="1000" max="25000" step="1000" value="8000"><span class="qval" id="qBitrateV">8M</span></label>
+        <label class="qgroup"><span>帧率</span><input id="qStreamFps" type="range" min="30" max="60" step="15" value="30"><span class="qval" id="qStreamFpsV">30fps</span></label>
+        <label class="qgroup"><span>预设</span><select id="qPreset" class="hfield select-mini">
+          <option value="1">P1 最快</option>
+          <option value="3">P3 均衡</option>
+          <option value="5">P5 高质</option>
+          <option value="7">P7 最慢</option>
+        </select></label>
+        <label class="qgroup"><span>VBV</span><input id="qVbv" type="range" min="0" max="200" step="10" value="0"><span class="qval" id="qVbvV">0%</span></label>
+        <div class="qguide">挂机用默认 · vbv 50-100% 画质更清晰 · preset 复杂画面调高</div>
+      </div>
       <button id="pauseBtn" class="hbtn">暂停</button>
       <button id="closeViewer" class="hbtn">收起</button>
     </div>
@@ -629,6 +653,7 @@ let users = [], cur = null;
 //     取再快也只能拿到同一帧（代理还没录新的）。
 let paused = false;
 let recFps = 5, recQuality = 75, recKeep = 30, streamFps = 30, actualLiveFps = 0;
+let videoBitrate = 8000, nvencPreset = 3, vbvBufferIncreasePercent = 0;   // 直播画质（2026-11-23）
 let viewFps = 0;              // 0 = 跟随录制（2026-11-23 起只用于鼠标移动节流，
                               // 不再控制拉帧 —— 画面是 /stream 视频流直推）
 let liveMs = 500;
@@ -1588,6 +1613,9 @@ function applySettings(d) {
   if (typeof d.recordQuality === 'number' && d.recordQuality > 0) recQuality = d.recordQuality;
   if (typeof d.recordKeepSeconds === 'number' && d.recordKeepSeconds > 0) recKeep = d.recordKeepSeconds;
   if (typeof d.streamFps === 'number' && d.streamFps > 0) streamFps = d.streamFps;
+  if (typeof d.videoBitrate === 'number' && d.videoBitrate > 0) videoBitrate = d.videoBitrate;
+  if (typeof d.nvencPreset === 'number' && d.nvencPreset > 0) nvencPreset = d.nvencPreset;
+  if (typeof d.vbvBufferIncreasePercent === 'number') vbvBufferIncreasePercent = d.vbvBufferIncreasePercent;
 
   // viewFps 从 localStorage 恢复（2026-11-23 起仅用于鼠标移动节流，
   // 「取图」下拉框已随 JPEG 轮询通路移除）
@@ -1608,6 +1636,22 @@ function syncDropdowns() {
   setSelect('selLiveFps', streamFps, v => v + ' fps');
   setSelect('selQuality', recQuality, v => qualityLabel(v));
   setSelect('selKeep', recKeep, v => v + ' 秒');
+  syncQuality();
+}
+
+// 直播画质滑杆/下拉回显
+function syncQuality() {
+  const bit = $('qBitrate'), bitV = $('qBitrateV');
+  if (bit) bit.value = videoBitrate;
+  if (bitV) bitV.textContent = Math.round(videoBitrate / 1000) + 'M';
+  const fps = $('qStreamFps'), fpsV = $('qStreamFpsV');
+  if (fps) fps.value = streamFps;
+  if (fpsV) fpsV.textContent = streamFps + 'fps';
+  const pre = $('qPreset');
+  if (pre) pre.value = String(nvencPreset);
+  const vbv = $('qVbv'), vbvV = $('qVbvV');
+  if (vbv) vbv.value = vbvBufferIncreasePercent;
+  if (vbvV) vbvV.textContent = vbvBufferIncreasePercent + '%';
 }
 
 function qualityLabel(v) {
@@ -1645,7 +1689,11 @@ async function pushSettings(patch) {
     const d = await r.json();
     if (d && d.ok) {
       recFps = d.fps; recQuality = d.quality; recKeep = d.keepSeconds;
-      if (typeof d.liveFps === 'number' && d.liveFps > 0) streamFps = d.liveFps;
+      if (typeof d.streamFps === 'number' && d.streamFps > 0) streamFps = d.streamFps;
+      else if (typeof d.liveFps === 'number' && d.liveFps > 0) streamFps = d.liveFps;
+      if (typeof d.videoBitrate === 'number' && d.videoBitrate > 0) videoBitrate = d.videoBitrate;
+      if (typeof d.nvencPreset === 'number' && d.nvencPreset > 0) nvencPreset = d.nvencPreset;
+      if (typeof d.vbvBufferIncreasePercent === 'number') vbvBufferIncreasePercent = d.vbvBufferIncreasePercent;
       computeLiveMs(); syncDropdowns(); startLive();
       return true;
     }
@@ -1662,6 +1710,20 @@ bindSelect('selFps',     v => pushSettings({ fps: v }));
 bindSelect('selLiveFps', v => pushSettings({ liveFps: v }));
 bindSelect('selQuality', v => pushSettings({ quality: v }));
 bindSelect('selKeep',    v => pushSettings({ keepSeconds: v }));
+
+// 直播画质组（2026-11-23 手机端原型）：改完回写应用配置 + 即时下发
+function bindRange(id, valId, fmt, onPick) {
+  const el = $(id), val = $(valId);
+  if (!el) return;
+  const update = () => { if (val) val.textContent = fmt(el.value); };
+  el.oninput = update;
+  el.onchange = () => { onPick(parseInt(el.value) || 0); };
+}
+bindRange('qBitrate',   'qBitrateV',   v => Math.round(v / 1000) + 'M', v => pushSettings({ videoBitrate: v }));
+bindRange('qStreamFps', 'qStreamFpsV', v => v + 'fps',                  v => pushSettings({ streamFps: v }));
+bindRange('qVbv',       'qVbvV',       v => v + '%',                    v => pushSettings({ vbvBufferIncreasePercent: v }));
+const qPre = $('qPreset');
+if (qPre) qPre.onchange = () => pushSettings({ nvencPreset: parseInt(qPre.value) || 3 });
 
 // 「本机播放」下拉框已随 JPEG 轮询通路移除（2026-11-23）：
 //   画面帧率由服务端 /stream 直推，本机没有取图频率概念。
