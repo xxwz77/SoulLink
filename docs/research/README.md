@@ -61,7 +61,8 @@
 - [STREAM-VERIFY-20261123.md](STREAM-VERIFY-20261123.md) ← **`/stream` 端到端验收报告**：两个 TFM 均 0 error；ffprobe 实测 h264/Main@5.0/2560x1368/25fps 且 ffmpeg 与 WebCodecs 都解码成功；缺 DLL 已给出中文 500 + 日志堆栈（此前的连接重置已修好）；无头 Edge 实测 WebCodecs **解出 13 帧并上屏**、SPS 动态解析出 `avc1.4D4032`；**发现 P0 缺陷：画面全黑，根因为 `RelayAgent.cs:523` 的 `SetProcessDPIAware()` 使 `GetSystemMetrics` 返回缩放尺寸 2560x1368 而真实合成尺寸是 1707x960**（含对照实验证据链与 4 条修复建议）；附最短手动验收 3 步
 - [MEMORY-LEAK-VERIFY-20261123.md](MEMORY-LEAK-VERIFY-20261123.md) ← **内存泄漏验证基座 + 修复后回归清单**（`tools/mem-probe` 量具 / 含 `--selftest` 6/6 证判据可区分真假泄漏 / 实测「`using var` 修复后仍泄漏 46.3MB/s R²=0.998」/ 新发现句柄漏 1454 个/秒 / 24 项回归清单含 401、颜色、错误可诊断）
 - [LATENCY-BENCHMARK-20261123.md](LATENCY-BENCHMARK-20261123.md) ← **延迟归因与业界对标**：把「卡」拆成抓屏/编码/传输/解码/上屏逐段（实测采集 12.14fps、推流 13.56fps，串行双节拍 ≈157ms）；7 个业界参照物及可信度分级；指出瓶颈是「15fps 硬编码 + 软编优先 + 无帧间去重」而非传输（实测 0.8ms）；5 条落地建议含收益/成本/风险；专项评估 `optimizeForLatency` / `AVLowLatencyMode` / 「不攒帧直接推」
-- [HANDOFF-20261123-LATENCY.md](HANDOFF-20261123-LATENCY.md) <- **最新交接（上午）**：3.3.20 全部修复已落地，但端到端延迟 4 秒；根因三层（软编优先/NVENC 闲置、每秒 95KB IDR、解码积压不丢帧）；含 NVENC 3 个时序 bug、四个架构要求、ICodecAPI 手写要点、验证方法
+- [HANDOFF-20261123-LATENCY.md](HANDOFF-20261123-LATENCY.md)
+- [HANDOFF-VIDEO-LATENCY-DONE-20261123.md](HANDOFF-VIDEO-LATENCY-DONE-20261123.md) ← **视频流延迟/撕裂攻坚收官交接**（4s→453ms、DXGI DDA 根治撕裂、NVENC 直通；代码已推送 3.3.33 但未部署 A2，下一步第一件事=部署） <- **最新交接（上午）**：3.3.20 全部修复已落地，但端到端延迟 4 秒；根因三层（软编优先/NVENC 闲置、每秒 95KB IDR、解码积压不丢帧）；含 NVENC 3 个时序 bug、四个架构要求、ICodecAPI 手写要点、验证方法
 - [HANDOFF-STREAM-STATUS-20261123.md](HANDOFF-STREAM-STATUS-20261123.md) ← **最新交接（修正上一份）**：服务端链路跑通但 `/stream` 在真实 Agent 里不可用；含端口分配实测（`PortFor` 有 +1）、两套鉴权、5 个环境坑、下一步 P0~P3
 - [HANDOFF-VIDEO-20261122.md](HANDOFF-VIDEO-20261122.md) —— 昨晚交接（**`/stream` 可用的结论已被修正**，其余数据仍有效）
 - [STREAM-LATENCY-TEST-20261122.md](STREAM-LATENCY-TEST-20261122.md) —— **延迟实测**（软编 1384ms vs 硬编 636~742ms，各阶段耗时分解）
