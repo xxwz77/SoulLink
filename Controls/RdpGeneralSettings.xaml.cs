@@ -223,7 +223,7 @@ namespace SoulLink.Controls
     // ★ 2026-11-22：抓屏方式（之前只有配置字段、无界面入口）
     SelectComboByTag(CaptureModeCombo, settings.CaptureMode);
     // ★ 2026-11-23：码率改滑动条（1~50 Mbps），NVENC 预设 + 关键帧缓冲上调
-    BitrateSlider.Value = Math.Clamp(settings.VideoBitrateKbps, 1000, 50000) / 1000.0;
+    BitrateSlider.Value = Math.Clamp(settings.VideoBitrateKbps, 1000, 500000) / 1000.0;
     BitrateText.Text = (settings.VideoBitrateKbps / 1000.0).ToString("0") + " Mbps";
     SelectComboByTag(NvencPresetCombo, settings.NvencPreset);
     VbvIncreaseSlider.Value = Math.Clamp(settings.VbvBufferIncreasePercent, 0, 200);

@@ -183,7 +183,7 @@
                  ToolTip="H.264 直播/录像的码率。8 Mbps 约合每小时 3.6 GB；静态挂机画面 4 Mbps 就够，打斗场景建议 15 Mbps。" />
             <StackPanel Grid.Column="1" Orientation="Horizontal">
        <Slider x:Name="BitrateSlider" Style="{StaticResource GlassSlider}"
-               Minimum="1" Maximum="50" TickFrequency="1" SmallChange="1" LargeChange="5"
+               Minimum="1" Maximum="500" TickFrequency="1" SmallChange="1" LargeChange="50"
                Width="180" VerticalAlignment="Center" IsSnapToTickEnabled="True"
                ValueChanged="BitrateSlider_Changed" />
        <TextBlock x:Name="BitrateText" Text="8 Mbps" Style="{StaticResource Mono}"

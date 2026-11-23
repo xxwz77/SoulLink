@@ -61,7 +61,7 @@ namespace SoulLink.Relay
         private sealed record VideoParameters(int Bitrate, int Preset, int Vbv, int Stream, int Record)
         {
             public static VideoParameters ReadEnvironment() => new(
-                ReadInt("SOULLINK_VIDEO_BITRATE", 500, 50000, 8000),
+                ReadInt("SOULLINK_VIDEO_BITRATE", 500, 500000, 8000),
                 ReadInt("SOULLINK_NVENC_PRESET", 1, 7, 3),
                 ReadInt("SOULLINK_VBV_INCREASE_PERCENT", 0, 200, 0),
                 ReadInt("SOULLINK_STREAM_FPS", 1, 120, 30),
@@ -101,7 +101,7 @@ namespace SoulLink.Relay
         public static void UpdateVideoParameters(int bitrateKbps, int preset, int vbvPercent, int streamFps, int recordFps)
         {
             var value = new VideoParameters(
-                Math.Clamp(bitrateKbps, 500, 50000), Math.Clamp(preset, 1, 7),
+                Math.Clamp(bitrateKbps, 500, 500000), Math.Clamp(preset, 1, 7),
                 Math.Clamp(vbvPercent, 0, 200), Math.Clamp(streamFps, 1, 120), Math.Clamp(recordFps, 1, 30));
             lock (Gate)
             {
@@ -313,7 +313,7 @@ namespace SoulLink.Relay
         {
             lock (Gate)
             {
-                _fps = Math.Clamp(fps, 1, 30);
+                _fps = Math.Clamp(fps, 1, 120);
                 _quality = Math.Clamp(quality, 30, 95);
                 _keepSeconds = Math.Clamp(keepSeconds, 5, 600);
                 _sessionId = sessionId;

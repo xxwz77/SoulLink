@@ -652,7 +652,7 @@ namespace SoulLink.Services
             if (s == null) return Task.FromResult<RelayResponse?>(null);
             return SendAsync(new
             {
-                Cmd = "videoParams", VideoBitrateKbps = Math.Clamp(s.VideoBitrateKbps, 500, 50000),
+                Cmd = "videoParams", VideoBitrateKbps = Math.Clamp(s.VideoBitrateKbps, 500, 500000),
                 NvencPreset = Math.Clamp(s.NvencPreset, 1, 7),
                 VbvBufferIncreasePercent = Math.Clamp(s.VbvBufferIncreasePercent, 0, 200),
                 StreamFps = Math.Clamp(s.StreamFps, 1, 120), RecordFps = Math.Clamp(s.RecordFps, 1, 30)
@@ -752,7 +752,7 @@ namespace SoulLink.Services
                     env["SOULLINK_CAPTURE_MODE"] = Math.Clamp(s0.CaptureMode, 0, 3).ToString();
                     env["SOULLINK_STREAM_FPS"] = Math.Clamp(s0.StreamFps, 1, 120).ToString();
                     env["SOULLINK_REC_FPS"] = Math.Clamp(s0.RecordFps, 1, 30).ToString();
-                    env["SOULLINK_VIDEO_BITRATE"] = Math.Clamp(s0.VideoBitrateKbps, 1000, 50000).ToString();
+                    env["SOULLINK_VIDEO_BITRATE"] = Math.Clamp(s0.VideoBitrateKbps, 1000, 500000).ToString();
                     env["SOULLINK_NVENC_PRESET"] = Math.Clamp(s0.NvencPreset, 1, 7).ToString();
                     env["SOULLINK_VBV_INCREASE_PERCENT"] = Math.Clamp(s0.VbvBufferIncreasePercent, 0, 200).ToString();
                 }
