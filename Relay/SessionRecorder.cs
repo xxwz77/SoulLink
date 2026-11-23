@@ -48,6 +48,7 @@ namespace SoulLink.Relay
         private static int _configuredBitrate, _negotiatedBitrate;
         private static readonly AutoResetEvent LifecycleChanged = new(false);
         private static bool _forceKeyFrame;
+        private static Stopwatch? _probeClock;
         private static int _videoParameterVersion;
         private static VideoParameters _videoParameters = VideoParameters.ReadEnvironment();
 
@@ -92,15 +93,51 @@ namespace SoulLink.Relay
 
         private static IScreenCapture CreateCapture()
         {
-            string raw = Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE") ?? "";
-            if (int.TryParse(raw, out int mode) && mode == 1)
+            int mode = int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE"), out int value) ? value : 0;
+            if (mode == 3)
             {
-#if WGC
-                try { return new WgcCapture(); }
-                catch (Exception ex) { _lastError = "WGC 创建失败：" + ex.Message; }
-#endif
+                RelayAgent.LogQuiet("[capture] 使用显式 BitBlt 后端");
+                return new BitBltCapture();
             }
+#if WGC
+            return new WgcCapture();
+#else
             return new BitBltCapture();
+#endif
+        }
+
+        /// <summary>自动抓屏探测只在视频 worker 运行，成功帧保留给正常编码，失败静默降级。</summary>
+        private static byte[]? CaptureBgraWithProbe(out int width, out int height)
+        {
+#if WGC
+            if (Capture is WgcCapture wgc && Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE") != "1")
+            {
+                _probeClock ??= Stopwatch.StartNew();
+                byte[]? frame = null;
+                string reason = "";
+                try { frame = wgc.CaptureBgra(out width, out height); }
+                catch (Exception ex) { width = height = 0; reason = ex.GetType().Name; }
+                if (frame != null && frame.Length > 0 && wgc.IsActive && wgc.FrameSequence > 0)
+                {
+                    RelayAgent.LogQuiet("[capture] 自动探测采用 WGC（实际出帧 sequence=" + wgc.FrameSequence + "）");
+                    _probeClock = null;
+                    return frame;
+                }
+                if (reason.Length == 0) reason = !wgc.IsActive ? "WGC 未进入 running 状态"
+                    : wgc.FrameSequence == 0 ? "WGC 300ms 内无真实首帧" : "WGC 帧读回失败";
+                if (_probeClock.ElapsedMilliseconds >= 300)
+                {
+                    RelayAgent.LogQuiet("[capture] 自动探测降级 BitBlt：" + reason);
+                    wgc.Dispose(); Capture = new BitBltCapture(); _probeClock = null;
+                    byte[]? fallback = Capture.CaptureBgra(out width, out height);
+                    if (fallback != null) RelayAgent.LogQuiet("[capture] BitBlt 降级后已抓到首帧");
+                    return fallback;
+                }
+                Thread.Sleep(10);
+                return null;
+            }
+#endif
+            return Capture.CaptureBgra(out width, out height);
         }
 
         /// <summary>
@@ -281,11 +318,11 @@ namespace SoulLink.Relay
                         _fps = fps;
                     }
                     var frameStart = Stopwatch.StartNew();
-                    var bgra = Capture.CaptureBgra(out int width, out int height);
+                    var bgra = CaptureBgraWithProbe(out int width, out int height);
                     long captureMs = frameStart.ElapsedMilliseconds;
                     if (bgra == null || width <= 0 || height <= 0)
                     {
-                        lock (Gate) { _status = "waiting"; _lastError = "抓屏没有返回原始帧"; }
+                        lock (Gate) { _status = "waiting"; if (_probeClock == null) _lastError = "抓屏没有返回原始帧"; }
                         SleepUntil(ref nextAt, fps);
                         continue;
                     }
