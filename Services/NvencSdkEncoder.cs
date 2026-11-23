@@ -17,7 +17,7 @@ namespace SoulLink.Services
         string LastError { get; }
         int ConfiguredBitrateKbps { get; }
         int NegotiatedBitrateKbps { get; }
-        bool TryInitialize(int width, int height, int fps, int bitrateKbps);
+        bool TryInitialize(int width, int height, int fps, int bitrateKbps, int preset, int vbvPercent);
         byte[]? EncodeNv12(byte[] nv12, long timestampUs);
         void RequestKeyFrame();
     }
@@ -476,17 +476,15 @@ namespace SoulLink.Services
             1 => P1_GUID, 2 => P2_GUID, 4 => P4_GUID, 5 => P5_GUID, 6 => P6_GUID, 7 => P7_GUID, _ => P3_GUID
         };
 
-        public bool TryInitialize(int width, int height, int fps, int bitrateKbps)
+        public bool TryInitialize(int width, int height, int fps, int bitrateKbps, int preset, int vbvPercent)
         {
             if (_disposed) return false;
             if (_enc != IntPtr.Zero) return true;   // 已初始化
             LastError = "";
 
-            // ★ 惰性读配置环境变量（在后台视频线程，不进启动路径）：
-            //   SOULLINK_NVENC_PRESET（1~7）、SOULLINK_VBV_INCREASE_PERCENT（0~200）。
-            //   这些由 RelayClient.CaptureEnv 在投送代理时下发。
-            if (int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_NVENC_PRESET"), out int preset)) _preset = Math.Clamp(preset, 1, 7);
-            if (int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_VBV_INCREASE_PERCENT"), out int vbvPct)) _vbvIncreasePercent = Math.Clamp(vbvPct, 0, 200);
+            // preset/VBV 是调用方的参数快照，支持 relay 热更新；不读取进程环境变量。
+            _preset = Math.Clamp(preset, 1, 7);
+            _vbvIncreasePercent = Math.Clamp(vbvPercent, 0, 200);
             if (width <= 0 || height <= 0) { LastError = "帧尺寸无效"; return false; }
             if ((width & 1) != 0) width--;
             if ((height & 1) != 0) height--;

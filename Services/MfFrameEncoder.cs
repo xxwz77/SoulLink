@@ -116,7 +116,7 @@ namespace SoulLink.Services
 
         private static ulong Pack(uint hi, uint lo) => ((ulong)hi << 32) | lo;
 
-        public bool TryInitialize(int width, int height, int fps, int bitrateKbps)
+        public bool TryInitialize(int width, int height, int fps, int bitrateKbps, int preset, int vbvPercent)
             => TryInitializeCore(width, height, fps, bitrateKbps, allowHardware: true);
 
         private bool TryInitializeCore(int width, int height, int fps, int bitrateKbps, bool allowHardware)
