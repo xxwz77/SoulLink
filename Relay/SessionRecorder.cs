@@ -362,7 +362,7 @@ namespace SoulLink.Relay
             long frameIndex = 0;
             byte[]? previousBgra = null;
             long previousFrameSeq = -1;   // DDA 后端上一次的 FrameSequence（-1=尚未取得）
-            long nextAt = Stopwatch.GetTimestamp();
+            long nextAt = Stopwatch.GetTimestamp();   // ★ A2：下一次允许抓屏/编码的时间戳（fps 上限门槛）
             int appliedVersion = -1;
             VideoParameters? applied = null;
             int appliedCaptureVersion = _captureModeVersion;
@@ -407,6 +407,15 @@ namespace SoulLink.Relay
                         keepSec = _keepSeconds;
                         _fps = fps;
                     }
+                    // ★ A2：抓屏前节流——帧到达即编码 + fps 上限，消除「先抓后等」的陈旧帧。
+                    //   到拍（距上次编码 ≥ 1/fps）才抓屏，抓到即编码；未到拍则挂起等到拍，
+                    //   期间被生命周期事件（stop/热切/参数更新/IDR 请求）唤醒则回顶重新判断。
+                    //   forceKeyFrame（按需 IDR）必须立即编码，绕过节流。
+                    bool forceKeyFrame = ConsumeKeyFrameRequest();
+                    if (!forceKeyFrame && !WaitUntilNextSlot(ref nextAt))
+                    {
+                        continue;
+                    }
                     var frameStart = Stopwatch.StartNew();
                     var bgra = CaptureBgraWithProbe(out int width, out int height);
                     _loopSequence++; _lastCaptureAt = DateTime.UtcNow;
@@ -414,10 +423,9 @@ namespace SoulLink.Relay
                     if (bgra == null || width <= 0 || height <= 0)
                     {
                         lock (Gate) { _status = "waiting"; if (_probeClock == null) _lastError = "抓屏没有返回原始帧"; }
-                        SleepUntil(ref nextAt, fps);
+                        IdleWait();
                         continue;
                     }
-                    bool forceKeyFrame = ConsumeKeyFrameRequest();
                     if (forceKeyFrame && encoder != null)
                     {
                         if (encoder is NvencSdkEncoder)
@@ -438,11 +446,11 @@ namespace SoulLink.Relay
                     //   超时复用旧 _lastBgra，字节比对的基准帧陈旧，操作画面被误判静止 → staticSkipped 暴涨。
                     //   DDA 出帧序号增长 = 桌面确实更新 → 绝不跳过（操作画面绝不误判静止）。
                     bool desktopChanged;
+                    long currentFrameSeq = -1;
                     if (Capture is DxgiDdaCapture ddaBackend)
                     {
-                        long seq = ddaBackend.FrameSequence;
-                        desktopChanged = previousFrameSeq < 0 || seq != previousFrameSeq;
-                        previousFrameSeq = seq;
+                        currentFrameSeq = ddaBackend.FrameSequence;
+                        desktopChanged = previousFrameSeq < 0 || currentFrameSeq != previousFrameSeq;
                     }
                     else
                     {
@@ -453,25 +461,14 @@ namespace SoulLink.Relay
                     if (!forceKeyFrame && !desktopChanged)
                     {
                         _skippedStaticFrames++;
-                        SleepUntil(ref nextAt, fps);
+                        IdleWait();
                         continue;
                     }
-                    if (forceKeyFrame)
-                    {
-                        previousBgra = bgra;
-                        RelayAgent.LogQuiet("[video] 新观众按需 IDR：即使画面静止也强制编码，不再被去重跳过");
-                    }
+                    // 到拍或按需 IDR：提交 previous 供下一轮静止判定（latest-wins）。
+                    if (Capture is DxgiDdaCapture) previousFrameSeq = currentFrameSeq;
                     previousBgra = bgra;
-
-                    // ★ A2：帧到达即编码 + 帧率上限——编码前用时间戳节流。
-                    //   帧已到达且判定变化，只有到拍（距上次编码 ≥ 1/fps）才编码；未到拍则
-                    //   等到拍；等待期间若被生命周期事件唤醒（stop/热切/参数更新），回循环顶
-                    //   重新抓最新帧（latest-wins，不编过期中间帧）。forceKeyFrame（按需 IDR）
-                    //   必须立即编码，故绕过节流。
-                    if (!forceKeyFrame && !WaitUntilEncodingAllowed(ref nextAt, fps))
-                    {
-                        continue;
-                    }
+                    if (forceKeyFrame)
+                        RelayAgent.LogQuiet("[video] 新观众按需 IDR：即使画面静止也强制编码，不再被去重跳过");
 
                     if (encoder == null || encodedWidth != ew || encodedHeight != eh)
                     {
@@ -524,6 +521,9 @@ namespace SoulLink.Relay
                         }
                     }
                     if (nal == null || nal.Length == 0) _noNalFrames++;
+                    // ★ A2：本拍已编码，推进下一允许抓屏时刻（forceKeyFrame 绕过 WaitUntilNextSlot，
+                    //   这里统一推进，防止 IDR 后立即再编码超速）。
+                    nextAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency / (double)fps);
                     if (_loopSequence % 150 == 0)
                         RelayAgent.LogQuiet("[video] 活性 loop=" + _loopSequence + " total=" + _totalFrames
                             + " lastCapture=" + _lastCaptureAt.ToString("HH:mm:ss.fff") + " lastEncode=" + _lastEncodeAt.ToString("HH:mm:ss.fff")
@@ -600,35 +600,29 @@ namespace SoulLink.Relay
             }
         }
 
-        private static void SleepUntil(ref long nextAt, int fps)
+        /// <summary>
+        /// ★ A2：抓屏前节流——等到「允许抓屏/编码」的绝对时刻 nextAt（fps 上限门槛）。
+        /// nextAt 由上一次编码完成时统一推进（= 编码完成 + 1/fps），本方法只等待、不推进：
+        /// 到拍立即 true；未到拍挂起，期间被生命周期事件（stop/热切/参数更新/IDR，
+        /// 均经 RecomputeLifecycle→LifecycleChanged.Set）唤醒返回 false，调用方回顶重新判断。
+        /// </summary>
+        private static bool WaitUntilNextSlot(ref long nextAt)
         {
-            nextAt += (long)(Stopwatch.Frequency / (double)fps);
-            int wait = (int)Math.Ceiling((nextAt - Stopwatch.GetTimestamp()) * 1000d / Stopwatch.Frequency);
-            if (wait > 0) LifecycleChanged.WaitOne(wait);
-            else if (wait < -1000 / fps) nextAt = Stopwatch.GetTimestamp();
+            long now = Stopwatch.GetTimestamp();
+            if (now >= nextAt) return true;
+            int wait = (int)Math.Ceiling((nextAt - now) * 1000d / Stopwatch.Frequency);
+            if (LifecycleChanged.WaitOne(wait)) return false;   // 被唤醒 → 回顶重新判断
+            return true;   // 到拍
         }
 
         /// <summary>
-        /// ★ A2：编码前 fps 节流（帧到达即编码 + 帧率上限）。
-        /// 帧到达后只有到拍（距上次编码 ≥ 1/fps）才允许编码；未到拍则等到拍。
-        /// 等待期间若被 LifecycleChanged 唤醒（stop/热切/参数更新/IDR 请求），
-        /// 返回 false 让调用方回循环顶重新抓最新帧（latest-wins）。
+        /// ★ A2：空闲兜底——无新帧（抓屏 null）或静止跳过时挂起，可被生命周期事件
+        ///   （stop/热切/参数更新/IDR 请求）立即唤醒；短超时兜底后回循环顶重试抓屏，
+        ///   绝不退化成 while(true) 空转（BitBlt/WGC 抓屏不阻塞，必须靠这里兜底）。
         /// </summary>
-        private static bool WaitUntilEncodingAllowed(ref long nextAt, int fps)
+        private static void IdleWait()
         {
-            long period = (long)(Stopwatch.Frequency / (double)fps);
-            long now = Stopwatch.GetTimestamp();
-            if (now >= nextAt)
-            {
-                // 已到拍（含首帧/长时间静止后落后）：立即允许，并把下一拍定在 now+period。
-                nextAt = now + period;
-                return true;
-            }
-            int wait = (int)Math.Ceiling((nextAt - now) * 1000d / Stopwatch.Frequency);
-            if (wait <= 0) { nextAt = now + period; return true; }
-            if (LifecycleChanged.WaitOne(wait)) return false;   // 被唤醒 → 回循环顶重抓
-            nextAt += period;   // 到拍，推进下一拍
-            return true;
+            LifecycleChanged.WaitOne(5);
         }
 
         /// <summary>取一个已编码帧；没有新帧时返回 null，不做抓屏或编码。</summary>
