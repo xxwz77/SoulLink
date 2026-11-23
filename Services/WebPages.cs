@@ -332,6 +332,12 @@ body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
   #rip{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;
        border-radius:50%;border:2px solid var(--accent);opacity:0;pointer-events:none}
   #rip.go{animation:rp .5s ease-out}
+  /* 可见光标指示（2026-11-24）：绝对模式跟随鼠标 move 的小圆点，锁定态隐藏。
+     叠在 canvas 上、pointer-events:none 不挡点击；margin 负偏移使圆心对准落点。 */
+  #plCursor{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;
+            border:1.5px solid var(--accent);border-radius:50%;
+            background:rgba(255,255,255,.16);box-shadow:0 0 4px rgba(0,0,0,.45);
+            pointer-events:none;display:none;z-index:12}
   @keyframes rp{0%{opacity:.95;transform:scale(.3)}100%{opacity:0;transform:scale(1.6)}}
 
   .row{display:flex;align-items:center;justify-content:space-between;
@@ -619,6 +625,7 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
       <canvas id="vframe"></canvas>
       <div id="ph"><span id="phtxt">连接中…</span><button id="reconn" class="hbtn" style="display:none">重新连接</button></div>
       <div id="rip"></div>
+      <div id="plCursor"></div>
     </div>
     <!-- ★ 3.3.8：这里的操作行已全部移到顶栏（见 <header>）。
          画面区只留视频本身，不再被按钮占掉可视高度。
@@ -1420,16 +1427,49 @@ function norm(e) {
   // ★ 画面唯一来源是 <canvas id="vframe">（JPEG img 已随轮询通路一起移除）。
   //   canvas.width/height 是解码帧的原始分辨率；还没出画面时退回 16:9 兜底，
   //   此时点击坐标本来就不该生效（ph 提示层挡着）。
-  const el = $('scr'), rect = el.getBoundingClientRect();
   const cv = $('vframe');
   const iw = (cv && cv.width > 0) ? cv.width : 16;
   const ih = (cv && cv.height > 0) ? cv.height : 9;
-  const sc = Math.min(rect.width / iw, rect.height / ih);
-  const dw = iw * sc, dh = ih * sc;
-  const ox = (rect.width - dw) / 2, oy = (rect.height - dh) / 2;
+  // ★ 2026-11-24 修落点偏移：用 canvas 自身实际显示矩形（含 max-height 夹住 +
+  //   object-fit letterbox 黑边），而非 #scr 的 rect。#scr 高度可能 > canvas 显示高度，
+  //   旧实现按 #scr 算居中偏移 → 纵向落点系统性偏移（见 CURSOR-AND-POINTER-LOCK）。
+  const rect = cv && cv.classList.contains('show') ? cv.getBoundingClientRect() : $('scr').getBoundingClientRect();
+  // canvas 内 object-fit:contain 的黑边：视频内容区 = min(rect.w, rect.h * 比例)
+  const dwContent = Math.min(rect.width, rect.height * iw / ih);
+  const dhContent = Math.min(rect.height, rect.width * ih / iw);
+  const ox = (rect.width - dwContent) / 2, oy = (rect.height - dhContent) / 2;
   const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left - ox;
   const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top - oy;
-  return { nx: Math.max(0, Math.min(1, cx / dw)), ny: Math.max(0, Math.min(1, cy / dh)) };
+  return { nx: Math.max(0, Math.min(1, cx / dwContent)), ny: Math.max(0, Math.min(1, cy / dhContent)) };
+}
+
+// ══════════ 可见光标指示（2026-11-24）═════════════
+//   绝对模式（非锁定态）跟随鼠标 move 显示小圆点；锁定态/触屏隐藏。
+//   复用 norm 的同一套 canvas 实际矩形 + object-fit 黑边，保证指示位置 = 实际落点。
+const plCursorEl = $('plCursor');
+function plCursorGeometry() {
+  const cv = $('vframe');
+  const iw = (cv && cv.width > 0) ? cv.width : 16;
+  const ih = (cv && cv.height > 0) ? cv.height : 9;
+  const rect = cv && cv.classList.contains('show') ? cv.getBoundingClientRect() : $('scr').getBoundingClientRect();
+  const dwContent = Math.min(rect.width, rect.height * iw / ih);
+  const dhContent = Math.min(rect.height, rect.width * ih / iw);
+  const ox = (rect.width - dwContent) / 2, oy = (rect.height - dhContent) / 2;
+  return { rect, ox, oy, dwContent, dhContent };
+}
+function updateVisibleCursor(nx, ny) {
+  if (!plCursorEl) return;
+  const g = plCursorGeometry();
+  // ★ 相对 #scr：cursor 是 #scr 的绝对定位子元素，需把 rect(视口坐标) 转 #scr 局部坐标
+  const scrRect = $('scr').getBoundingClientRect();
+  const x = (g.rect.left - scrRect.left) + g.ox + nx * g.dwContent;
+  const y = (g.rect.top - scrRect.top) + g.oy + ny * g.dhContent;
+  plCursorEl.style.left = x + 'px';
+  plCursorEl.style.top = y + 'px';
+  plCursorEl.style.display = 'block';
+}
+function hideVisibleCursor() {
+  if (plCursorEl) plCursorEl.style.display = 'none';
 }
 
 function ripple(e) {
@@ -1473,6 +1513,7 @@ const PL_SENS_KEY = 'sl_pl_sens';
 const PL_ESC_KEY = 'sl_pl_escape';
 const PL_SUPPORTED = ('pointerLockElement' in document) && ('requestPointerLock' in document.body);
 let pointerLocked = false;
+let plLockPending = null;      // 首击挂起：{nx,ny} 待锁定结果决定是否补发 click
 let plExitByShortcut = false;    // 快捷键逃生门主动退出（不补发 ESC）
 let plExitByLifecycle = false;   // 生命周期/断线/关画面主动退出（不补发 ESC）
 let plLockCooldownUntil = 0;     // Esc 后重锁冷却（规范：立即重锁会被拒）
@@ -1546,6 +1587,8 @@ document.addEventListener('pointerlockchange', () => {
     pointerLocked = true;
     plExitByShortcut = false;
     plExitByLifecycle = false;
+    plLockPending = null;    // 首击挂起 → 吃掉（对齐月光：进锁定那次不点远端）
+    hideVisibleCursor();     // 锁定态隐藏落点指示（转视角无落点概念）
     return;
   }
   if (!nowLocked && pointerLocked) {
@@ -1566,13 +1609,18 @@ document.addEventListener('pointerlockchange', () => {
     }
     // Esc 后冷却：规范要求 default unlock gesture 后立即重锁会被拒
     plLockCooldownUntil = Date.now() + 500;
+    hideVisibleCursor();     // 解锁后隐藏（等下次 pointermove 再按落点显示）
     return;
   }
 });
 
 document.addEventListener('pointerlockerror', () => {
-  // 请求锁定失败（非手势/不支持/冷却期内）：保持未锁定
+  // 请求锁定失败（非手势/不支持/冷却期内）：保持未锁定，并补发挂起的首击
   if (!document.pointerLockElement) pointerLocked = false;
+  if (plLockPending) {
+    const p = plLockPending; plLockPending = null;
+    sendInputOrdered('click', p.nx, p.ny, { button: 'left' });
+  }
 });
 
 // 锁定态 mousemove：movementX/Y × sensitivity → 复用 lookDelta 8ms 合并
@@ -1669,10 +1717,15 @@ $('scr').addEventListener('pointerdown', e => {
 
   // 鼠标 / 触控笔：保持桌面原有行为不变
   const btn = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
-  // ★ Pointer Lock（2026-11-23）：桌面左键且未锁定 → 请求锁定，吃掉本次点击。
-  //   对齐月光 input.cpp MOUSE_DOWN 先 LockMouse 再 return，避免「点进锁定=远端也点一下」。
-  if (e.pointerType === 'mouse' && btn === 'left' && PL_SUPPORTED
+  // ★ Pointer Lock（2026-11-24 修吞点击死循环）：桌面左键且未锁定 → 发起锁定请求并挂起首击。
+  //   requestPointerLock 是异步，成功/失败由 pointerlockchange/error 决定：
+  //     · 锁定成功 → 吃掉首击（不补发 click，对齐月光）
+  //     · 锁定失败 → 补发 click（回退绝对模式，本次点击不丢）
+  //   挂起期间 return，绝不吞掉首击；失败后 pointerLocked 保持 false，下次点击重试。
+  if (e.pointerType === 'mouse' && btn === 'left' && PL_SUPPORTED && window.isSecureContext
       && !pointerLocked && Date.now() >= plLockCooldownUntil) {
+    const p0 = norm(e);
+    plLockPending = { nx: p0.nx, ny: p0.ny };
     try { $('scr').requestPointerLock(); } catch (err) {}
     return;
   }
@@ -1737,6 +1790,11 @@ $('scr').addEventListener('pointermove', e => {
   // ★ 锁定态：转视角已由 document mousemove（movementX/Y）处理；clientX/Y 冻结为常量，
   //   跳过绝对 move，避免重复发固定坐标。点击（down/up/click）仍走下面状态机。
   if (pointerLocked && e.pointerType === 'mouse') return;
+  // ★ 可见光标：非锁定态 + 非触屏 → 跟随 move 显示落点指示
+  if (!pointerLocked && e.pointerType !== 'touch') {
+    const pc = norm(e);
+    updateVisibleCursor(pc.nx, pc.ny);
+  }
   // ── 相对模式（月光）：单指滑动转视角 / 双指滚轮 ──
   if (e.pointerType === 'touch' && mouseMode === 'relative' && relPoints.has(e.pointerId)) {
     const pt = relPoints.get(e.pointerId);
@@ -1848,6 +1906,12 @@ $('scr').addEventListener('pointerup', e => {
   }
 
   // ── 鼠标 / 触控笔 ──
+  // ★ 首击挂起兜底：requestPointerLock 既未成功也未报错（罕见），pointerup 时补发 click
+  if (!drag && plLockPending) {
+    const p = plLockPending; plLockPending = null;
+    sendInputOrdered('click', p.nx, p.ny, { button: 'left' });
+    return;
+  }
   if (!drag) return;
   const moved = drag.moved, btn = drag.btn || 'left';
   drag = null;
