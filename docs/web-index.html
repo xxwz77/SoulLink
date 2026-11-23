@@ -507,6 +507,19 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
             </div>
           </div>
           <div class="mgroup">
+            <div class="mtitle">鼠标锁定（桌面转视角）</div>
+            <label class="hfield"><span>逃生门</span>
+              <select id="plEscape" class="hfield select-mini">
+                <option value="ctrl_alt_shift">Ctrl+Alt+Shift</option>
+                <option value="ctrl_alt">Ctrl+Alt</option>
+                <option value="alt">单纯 Alt</option>
+                <option value="alt_hold">长按 Alt</option>
+              </select>
+            </label>
+            <label class="qgroup"><span>灵敏度</span><input id="plSens" type="range" min="0.1" max="3" step="0.1" value="1.0"><span class="qval" id="plSensV">1.0</span></label>
+            <div class="qguide">ESC 一键开菜单 · 逃生门纯解锁 · 移动端自动禁用</div>
+          </div>
+          <div class="mgroup">
             <div class="mtitle">直播画质</div>
             <label class="qgroup"><span>码率</span><input id="qBitrate" type="range" min="1000" max="25000" step="1000" value="8000"><span class="qval" id="qBitrateV">8M</span></label>
             <label class="qgroup"><span>帧率</span><input id="qStreamFps" type="range" min="30" max="60" step="15" value="30"><span class="qval" id="qStreamFpsV">30fps</span></label>
@@ -827,6 +840,7 @@ function renderUsers() {
 }
 
 function closeViewer() {
+  plLifecycleExit();
   stopLive();
   $('player').style.display = 'none';
   const v = $('vid'); v.pause(); v.removeAttribute('src'); v.load();
@@ -1432,6 +1446,131 @@ if (__mmAbs) __mmAbs.onclick = () => { mouseMode = 'absolute'; try { localStorag
 if (__mmRel) __mmRel.onclick = () => { mouseMode = 'relative'; try { localStorage.setItem(MOUSE_MODE_KEY, 'relative'); } catch (e) {} applyMouseMode(); };
 applyMouseMode();
 
+// ══════════ Pointer Lock（桌面鼠标转视角，2026-11-23）═════════════
+// ★ 对齐 POINTER-LOCK-DESIGN-20261123.md + decision/pointer-lock-esc-shortcut。
+//   进入：桌面左键点画面 → requestPointerLock()，成功 pointerLocked=true，光标隐藏（浏览器自动）。
+//   转视角：锁定态 mousemove 的 movementX/Y × sensitivity → 复用 lookDelta/lookAcc/flushLook 8ms 合并。
+//   点击：复用现有 pointerdown/up drag 状态机（锁定态 pointermove 被跳过，单击=click）。
+//   逃生门：ESC = 浏览器强制解锁 + 补发一次 Esc 开菜单（方案 C）；自定义快捷键 = 纯解锁不弹菜单。
+const PL_SENS_KEY = 'sl_pl_sens';
+const PL_ESC_KEY = 'sl_pl_escape';
+const PL_SUPPORTED = ('pointerLockElement' in document) && ('requestPointerLock' in document.body);
+let pointerLocked = false;
+let plExitByShortcut = false;    // 快捷键逃生门主动退出（不补发 ESC）
+let plExitByLifecycle = false;   // 生命周期/断线/关画面主动退出（不补发 ESC）
+let plLockCooldownUntil = 0;     // Esc 后重锁冷却（规范：立即重锁会被拒）
+let plSensitivity = 1.0;         // movementX/Y 灵敏度（浏览器单位不统一）
+let plEscape = 'ctrl_alt_shift'; // 逃生门快捷键
+let plAltHoldTimer = null;       // 长按 Alt 计时器
+
+try {
+  const s = parseFloat(localStorage.getItem(PL_SENS_KEY));
+  if (isFinite(s) && s >= 0.1 && s <= 3) plSensitivity = s;
+  const esc = localStorage.getItem(PL_ESC_KEY);
+  if (esc === 'ctrl_alt_shift' || esc === 'alt' || esc === 'alt_hold' || esc === 'ctrl_alt') plEscape = esc;
+} catch (e) {}
+
+function applyPlEscape() {
+  const el = $('plEscape');
+  if (el) el.value = plEscape;
+  const r = $('plSens');
+  if (r) r.value = String(plSensitivity);
+  const sv = $('plSensV');
+  if (sv) sv.textContent = plSensitivity.toFixed(1);
+}
+
+// 逃生门快捷键命中判定（全部为修饰键组合，不会误注入远端——现有 keydown 会过滤纯修饰键）
+function matchPlEscape(e) {
+  if (plEscape === 'ctrl_alt_shift') return e.ctrlKey && e.altKey && e.shiftKey;
+  if (plEscape === 'ctrl_alt') return e.ctrlKey && e.altKey;
+  if (plEscape === 'alt') return e.altKey && (e.key === 'Alt');
+  return false;
+}
+
+document.addEventListener('keydown', e => {
+  if (!pointerLocked) return;
+  // 长按 Alt：按下即计时，800ms 后仍按住 → 触发（alt_hold 不走 matchPlEscape）
+  if (plEscape === 'alt_hold' && e.key === 'Alt' && !e.repeat) {
+    if (plAltHoldTimer) clearTimeout(plAltHoldTimer);
+    plAltHoldTimer = setTimeout(() => {
+      plAltHoldTimer = null;
+      if (pointerLocked) doPlShortcutExit();
+    }, 800);
+    return;
+  }
+  if (plEscape !== 'alt_hold' && matchPlEscape(e)) {
+    doPlShortcutExit();
+  }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.key === 'Alt' && plAltHoldTimer) { clearTimeout(plAltHoldTimer); plAltHoldTimer = null; }
+});
+
+function doPlShortcutExit() {
+  if (!pointerLocked) return;
+  plExitByShortcut = true;
+  try { document.exitPointerLock(); } catch (err) {}
+}
+
+// 生命周期/断线/关画面主动退出锁定（不补发 ESC，不弹菜单）
+function plLifecycleExit() {
+  if (pointerLocked) {
+    plExitByLifecycle = true;
+    try { document.exitPointerLock(); } catch (err) {}
+  }
+  if (plAltHoldTimer) { clearTimeout(plAltHoldTimer); plAltHoldTimer = null; }
+}
+
+document.addEventListener('pointerlockchange', () => {
+  const nowLocked = document.pointerLockElement === $('scr');
+  if (nowLocked && !pointerLocked) {
+    // 锁定成功
+    pointerLocked = true;
+    plExitByShortcut = false;
+    plExitByLifecycle = false;
+    return;
+  }
+  if (!nowLocked && pointerLocked) {
+    // 解锁
+    pointerLocked = false;
+    if (plAltHoldTimer) { clearTimeout(plAltHoldTimer); plAltHoldTimer = null; }
+    // 冲刷残留相对位移
+    if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
+    flushLook();
+    const byShortcut = plExitByShortcut;
+    const byLifecycle = plExitByLifecycle;
+    plExitByShortcut = false;
+    plExitByLifecycle = false;
+    // ★ 方案 C：ESC 一键开菜单。排除法判定触发源：
+    //   非快捷键退出、非生命周期退出、且页面仍聚焦 → 只剩浏览器 ESC 强制解锁 → 补发 Esc 开菜单。
+    if (!byShortcut && !byLifecycle && document.hasFocus()) {
+      sendInput('key', -1, -1, { key: 'Esc' });
+    }
+    // Esc 后冷却：规范要求 default unlock gesture 后立即重锁会被拒
+    plLockCooldownUntil = Date.now() + 500;
+    return;
+  }
+});
+
+document.addEventListener('pointerlockerror', () => {
+  // 请求锁定失败（非手势/不支持/冷却期内）：保持未锁定
+  if (!document.pointerLockElement) pointerLocked = false;
+});
+
+// 锁定态 mousemove：movementX/Y × sensitivity → 复用 lookDelta 8ms 合并
+document.addEventListener('mousemove', e => {
+  if (!pointerLocked) return;
+  if (e.movementX || e.movementY) {
+    lookDelta(e.movementX * plSensitivity, e.movementY * plSensitivity);
+  }
+});
+
+// 设置控件绑定
+const __plEscape = $('plEscape'), __plSens = $('plSens');
+if (__plEscape) __plEscape.onchange = () => { plEscape = __plEscape.value; try { localStorage.setItem(PL_ESC_KEY, plEscape); } catch (e) {} };
+if (__plSens) __plSens.oninput = () => { plSensitivity = parseFloat(__plSens.value) || 1.0; const sv = $('plSensV'); if (sv) sv.textContent = plSensitivity.toFixed(1); try { localStorage.setItem(PL_SENS_KEY, String(plSensitivity)); } catch (e) {} };
+applyPlEscape();
 // 相对模式手势状态（月光：单指滑动转视角 / 点按点击 / 双指滚轮或右键）
 const REL_TAP_PX = 10;
 let relPoints = new Map();   // pointerId -> { sx, sy, lx, ly, total }
@@ -1513,6 +1652,13 @@ $('scr').addEventListener('pointerdown', e => {
 
   // 鼠标 / 触控笔：保持桌面原有行为不变
   const btn = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
+  // ★ Pointer Lock（2026-11-23）：桌面左键且未锁定 → 请求锁定，吃掉本次点击。
+  //   对齐月光 input.cpp MOUSE_DOWN 先 LockMouse 再 return，避免「点进锁定=远端也点一下」。
+  if (e.pointerType === 'mouse' && btn === 'left' && PL_SUPPORTED
+      && !pointerLocked && Date.now() >= plLockCooldownUntil) {
+    try { $('scr').requestPointerLock(); } catch (err) {}
+    return;
+  }
   const p = norm(e);
   // ★ 右键 = 转视角模式（与桌面版 RdpConsole「按住右键拖动」一致）：
   //   按住右键 + 移动 → 复用触屏的 lookDelta/flushLook（8ms 合并 + moverel）。
@@ -1571,6 +1717,9 @@ function pumpMove() {
 }
 
 $('scr').addEventListener('pointermove', e => {
+  // ★ 锁定态：转视角已由 document mousemove（movementX/Y）处理；clientX/Y 冻结为常量，
+  //   跳过绝对 move，避免重复发固定坐标。点击（down/up/click）仍走下面状态机。
+  if (pointerLocked && e.pointerType === 'mouse') return;
   // ── 相对模式（月光）：单指滑动转视角 / 双指滚轮 ──
   if (e.pointerType === 'touch' && mouseMode === 'relative' && relPoints.has(e.pointerId)) {
     const pt = relPoints.get(e.pointerId);
@@ -1734,6 +1883,9 @@ function keyName(e) {
 document.addEventListener('keydown', e => {
   if (!kbMode || e.target.tagName === 'INPUT') return;
   if (['Control','Alt','Shift','Meta'].includes(e.key)) return;
+  // 锁定态 ESC 由 pointerlockchange 统一补发（浏览器解锁 + 补发一次 Esc 开菜单）；
+  // 这里拦掉，避免「ESC keydown 派发时」键盘注入又发一次导致双重开菜单。
+  if (pointerLocked && e.key === 'Escape') return;
   const parts = [];
   if (e.ctrlKey) parts.push('Ctrl');
   if (e.altKey) parts.push('Alt');
@@ -1969,6 +2121,7 @@ document.addEventListener('pointerdown', e => {
 //   ★ pause 状态下不自动恢复（用户点了暂停就尊重暂停）。
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    plLifecycleExit();        // ★ 页面隐藏 → 退出 Pointer Lock（浏览器也会自动解锁，这里主动清状态）
     releaseAllInputs();       // ★ 切后台先释放所有按住的键，防「松手远端没松开」
     if (liveRunning && h264Active) {
       abortStream();          // 只断流，画面冻在最后一帧
@@ -2295,6 +2448,19 @@ function route() {
 const lb = $('ledgerBack'); if (lb) lb.onclick = () => { location.hash = '#/'; };
 const eb = $('earningsBack'); if (eb) eb.onclick = () => { location.hash = '#/'; };
 window.addEventListener('hashchange', route);
+/* ══════════ Pointer Lock 真机验收清单（2026-11-23，部署后实测）══════════
+   对应 POINTER-LOCK-DESIGN-20261123.md §7.2 V1-V10：
+   V1 进入锁定：桌面左键点画面 → 光标隐藏、pointerLockElement===#scr、移动转视角
+   V2 相对位移正确：缓慢匀速移动鼠标 → 远端视角方向/幅度一致，无反向/漂移
+   V3 点击不粘连：锁定态点击 → 远端正确点击，无「进锁定那次被误点」
+   V4 ESC 一键开菜单：锁定态按 ESC → 光标恢复 + 远端弹出游戏菜单（补发一次 Esc）
+   V5 快捷键逃生门：命中 Ctrl+Alt+Shift(默认) → 光标恢复，远端不弹菜单（纯解锁）
+   V6 ESC 后重锁冷却：ESC 退出后立即点画面 → 500ms 内不重锁，无 error 抖动
+   V7 触屏回退：触屏打开 → 无锁定，单指滑动仍转视角（moverel），不触发锁定
+   V8 不支持浏览器降级：无 Pointer Lock → 走绝对模式 + 右键 look，无报错
+   V9 锁死兜底：锁定态断网/JS 抛异常 → 按 ESC 仍退出（浏览器层），光标恢复
+   V10 灵敏度：同机锁定态转 90° 视角 → 记录鼠标位移标定 sensitivity，二次进入一致
+══════════════════════════════════════════════════════════════════ */
 
 route();
 </script>
