@@ -52,6 +52,7 @@
 - [MATURE-LATENCY-PLAYBOOK-20261123.md](MATURE-LATENCY-PLAYBOOK-20261123.md) —— **成熟串流项目延迟处理 Playbook**（Sunshine/Moonlight/OBS/Parsec/云游戏 在 采集节拍/编码参数/客户端解码丢帧/输入解耦/网络传输 五方面逐项拆解 + file:line 证据，映射成 SoulLink 具体改动项：P1=ICodecAPI低延迟+绝对时间节拍，P2=按需IDR，P3=帧边界元数据/网络升级缓做）
 
 - [GPU-ZERO-COPY-20261123.md](GPU-ZERO-COPY-20261123.md) —— **GPU 截图→GPU 编码零拷贝路径调研**（当前是「CPU 读回 + CPU BGRA→NV12 + 系统内存 MF」，确认无疑；GPU 零拷贝唯一路线是 NVENC SDK D3D11 直通，本机 NVIDIA MF MFT 非 D3D11 使 MF 直通死路；附 Sunshine/OBS file:line 证据 + 三阶段改造路线收益/成本/风险）
+- [DDA-TEXTURE-SHARED-HANDLE-20261124.md](DDA-TEXTURE-SHARED-HANDLE-20261124.md) —— **DDA 纹理跨设备共享句柄可行性**（DDA surface 非 SHARED 创建不可直接 GetSharedHandle 跨设备；Sunshine DDA 分支 DuplicateOutput 建在编码同 device 零拷贝无需共享；跨设备须 CopyResource 到 SHARED_NTHANDLE|SHARED_KEYEDMUTEX 纹理再 CreateSharedHandle+OpenSharedResource1+KeyedMutex；正确时序=先 CopyResource 再 ReleaseFrame）
 
 ## 视频流差距审计（2026-11-23 下午 · 对照成熟项目五线并行审计）
 
