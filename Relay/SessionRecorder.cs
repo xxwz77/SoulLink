@@ -66,6 +66,11 @@ namespace SoulLink.Relay
         private const int BackendDeadStreakLimit = 5;      // D04：后端连续不健康拍数上限
         private static DateTime _lastCaptureAt, _lastEncodeAt, _lastNalAt;
         private static long _loopSequence, _skippedStaticFrames, _noNalFrames;
+        // ★ P0-D（2026-11-24）：有观众时静止桌面保活——按 500ms（2fps，对齐 Moonlight 500ms ping）
+        //   重编码重复帧维持 /stream 帧流，防前端看门狗「长时间无新帧 → 断流重连」。
+        private static long _keepaliveNextAt;         // 下次保活编码时刻（Stopwatch ticks；仅 worker 读写）
+        private static long _keepaliveFrames;         // 已发出的保活帧计数（可观测指标）
+        private const int KeepaliveIntervalMs = 500;  // 保活节拍：2fps
         private static int _captureMode = int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE"), out int initialMode) ? Math.Clamp(initialMode, 0, 3) : 0;
         private static int _captureModeVersion;
         private static volatile bool _captureSwitchRequested;
@@ -555,6 +560,7 @@ namespace SoulLink.Relay
                     + "|loop=" + _loopSequence + "|lastCaptureAt=" + _lastCaptureAt.ToString("HH:mm:ss.fff")
                     + "|lastEncodeAt=" + _lastEncodeAt.ToString("HH:mm:ss.fff") + "|lastNalAt=" + _lastNalAt.ToString("HH:mm:ss.fff")
                     + "|staticSkipped=" + _skippedStaticFrames + "|noNal=" + _noNalFrames
+                    + "|keepalive=" + _keepaliveFrames
                     + "|fallbackReason=" + _captureFallbackReason
                     + "|fallbackAtUtc=" + (_captureFallbackAtUtc == default ? "" : _captureFallbackAtUtc.ToString("yyyy-MM-dd HH:mm:ss"))
                     + "|gpuRetryInMs=" + GpuRetryCountdown()
@@ -677,9 +683,11 @@ namespace SoulLink.Relay
                         // 保留 Pending：旧帧之后由新 IDR 续接，viewer 不重建、不断开。
                     }
                     int fps, keepSec;
+                    bool hasViewers;
                     lock (Gate)
                     {
-                        fps = Viewers.Count > 0 ? StreamFps : RecordFps;
+                        hasViewers = Viewers.Count > 0;
+                        fps = hasViewers ? StreamFps : RecordFps;
                         keepSec = _keepSeconds;
                         _fps = fps;
                     }
@@ -824,7 +832,16 @@ namespace SoulLink.Relay
                         desktopChanged = previousBgra == null || !previousBgra.AsSpan().SequenceEqual(bgra);
                     }
                     int ew = width & ~1, eh = height & ~1;
-                    if (!forceKeyFrame && !desktopChanged)
+                    // ★ P0-D（2026-11-24）帧 pacing 与保活策略：
+                    //   1) 真实帧 = 桌面更新帧，到达即编码（A2 的 fps 上限节拍门只限速不积压）；
+                    //   2) 静止 + 有观众 = 每 KeepaliveIntervalMs 重编码一帧重复帧（2fps），
+                    //      维持 /stream 帧流；真机实测静止桌面 25s 仅 3 帧 → 前端看门狗断流重连；
+                    //   3) 静止 + 无观众（仅录制）= 完全跳过（录像不掺重复帧，只收真实帧）；
+                    //   4) 新观众 = forceKeyFrame 绕过静止判定立即出 IDR（既有逻辑）。
+                    bool keepaliveDue = hasViewers && encoder != null
+                        && Stopwatch.GetTimestamp() >= _keepaliveNextAt;
+                    bool keepaliveFrame = !forceKeyFrame && !desktopChanged && keepaliveDue;
+                    if (!forceKeyFrame && !desktopChanged && !keepaliveDue)
                     {
                         _skippedStaticFrames++;
                         IdleWait();
@@ -876,6 +893,7 @@ namespace SoulLink.Relay
                         {
                             Ring.Add(frame);
                             _totalFrames++;
+                            if (keepaliveFrame) _keepaliveFrames++;   // ★ P0-D：保活帧计数（验证指标）
                             _captureMs = captureMs; _convertMs = convertMs; _encodeMs = encodeMs;
                             _status = "recording"; _lastError = "";
                             if (_totalFrames % 30 == 0)
@@ -883,7 +901,7 @@ namespace SoulLink.Relay
                                     + " captureMs=" + captureMs + " convertMs=" + convertMs + " encodeMs=" + encodeMs
                                     + " loop=" + _loopSequence + " lastCapture=" + _lastCaptureAt.ToString("HH:mm:ss.fff")
                                     + " lastEncode=" + _lastEncodeAt.ToString("HH:mm:ss.fff") + " lastNal=" + _lastNalAt.ToString("HH:mm:ss.fff")
-                                    + " staticSkipped=" + _skippedStaticFrames);
+                                    + " staticSkipped=" + _skippedStaticFrames + " keepalive=" + _keepaliveFrames);
                             DateTime cutoff = frame.At.AddSeconds(-keepSec);
                             while (Ring.Count > 0 && (Ring[0].At < cutoff || Ring.Count > Math.Max(300, fps * keepSec * 2))) Ring.RemoveAt(0);
                             foreach (var viewer in Viewers.Values)
@@ -910,6 +928,10 @@ namespace SoulLink.Relay
                         //   _forceKeyFrame，让下一轮继续强制喂帧，直到 MF 吐出首个 IDR（受 nextAt fps 节流约束不超速）。
                         if (forceKeyFrame) { lock (Gate) { _forceKeyFrame = true; } }
                     }
+                    // ★ P0-D：本拍保活节拍到点（无论编码是否产出 NAL）→ 推进下一次保活时刻。
+                    //   真实帧拍不推进（桌面活动期间保活不需要；静止恢复后立即补上）。
+                    if (keepaliveDue)
+                        _keepaliveNextAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * (double)KeepaliveIntervalMs / 1000);
                     // ★ A2：本拍已编码，推进下一允许抓屏时刻（forceKeyFrame 绕过 WaitUntilNextSlot，
                     //   这里统一推进，防止 IDR 后立即再编码超速）。
                     nextAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency / (double)fps);

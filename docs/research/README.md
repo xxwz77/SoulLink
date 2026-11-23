@@ -52,7 +52,8 @@
 - [MATURE-LATENCY-PLAYBOOK-20261123.md](MATURE-LATENCY-PLAYBOOK-20261123.md) —— **成熟串流项目延迟处理 Playbook**（Sunshine/Moonlight/OBS/Parsec/云游戏 在 采集节拍/编码参数/客户端解码丢帧/输入解耦/网络传输 五方面逐项拆解 + file:line 证据，映射成 SoulLink 具体改动项：P1=ICodecAPI低延迟+绝对时间节拍，P2=按需IDR，P3=帧边界元数据/网络升级缓做）
 
 - [GPU-ZERO-COPY-20261123.md](GPU-ZERO-COPY-20261123.md) —— **GPU 截图→GPU 编码零拷贝路径调研**（当前是「CPU 读回 + CPU BGRA→NV12 + 系统内存 MF」，确认无疑；GPU 零拷贝唯一路线是 NVENC SDK D3D11 直通，本机 NVIDIA MF MFT 非 D3D11 使 MF 直通死路；附 Sunshine/OBS file:line 证据 + 三阶段改造路线收益/成本/风险）
-- [DDA-TEXTURE-SHARED-HANDLE-20261124.md](DDA-TEXTURE-SHARED-HANDLE-20261124.md) —— **DDA 纹理跨设备共享句柄可行性**（DDA surface 非 SHARED 创建不可直接 GetSharedHandle 跨设备；Sunshine DDA 分支 DuplicateOutput 建在编码同 device 零拷贝无需共享；跨设备须 CopyResource 到 SHARED_NTHANDLE|SHARED_KEYEDMUTEX 纹理再 CreateSharedHandle+OpenSharedResource1+KeyedMutex；正确时序=先 CopyResource 再 ReleaseFrame）
+- [DDA-TEXTURE-SHARED-HANDLE-20261124.md](DDA-TEXTURE-SHARED-HANDLE-20261124.md) —— **DDA 纹理跨设备共享句柄可行性**（DDA surface 非 SHARED 创建不可直接 GetSharedHandle 跨设备；跨设备须 CopyResource 到 SHARED_NTHANDLE|SHARED_KEYEDMUTEX 纹理再 CreateSharedHandle+OpenSharedResource1+KeyedMutex；正确时序=先 CopyResource 再 ReleaseFrame。**其「Sunshine DDA 同 device」结论已被下条源码深读纠正**）
+- [DEEP-SUNSHINE-SOURCE-20261124.md](DEEP-SUNSHINE-SOURCE-20261124.md) —— **Sunshine GPU 直通与帧节拍源码深读**（纠正「DDA/NVENC 同 device」：实际双 device + NT handle + keyed mutex；PS 两 pass 写 NV12、无 VideoProcessor；像素无 CPU 回读但 bitstream 会复制到 CPU；DDA 光标与 cursor-only 帧、WGC 生产者/消费者、SetMaximumFrameLatency 所在设备、pacing group；末尾给 SoulLink 函数级改动清单与收益边界）
 
 ## 视频流差距审计（2026-11-23 下午 · 对照成熟项目五线并行审计）
 
@@ -186,4 +187,5 @@
 - `DEPLOY-3.3.33-VERIFY-20261123.md` 3.3.33 部署 + 一直连接中修复验收（IDR死锁/探测锁定/活性探针/前端看门狗闭环通过）
 
 - [HANDOFF-VIDEO-LATENCY-GPU-20261124.md](HANDOFF-VIDEO-LATENCY-GPU-20261124.md) ← **最新交接（2026-11-24 凌晨）**：GPU直通攻坚——首帧25s死锁根治/吞点击/落点偏移/可见光标/GPU零拷贝(WGC+DDA)全部提交，但延迟仍444ms(GPU零拷贝未生效,DDA仍走CPU读回)；下一步P0=查零拷贝为何没生效(agent日志PSNR/降级线索)，P3=安卓真机联调对标月光5-12ms
+- [LOW-LATENCY-DEEP-DIVE-20261124.md](LOW-LATENCY-DEEP-DIVE-20261124.md) ← **四产品延迟工程深挖（2026-11-24）**：Parsec/Moonlight/Guacamole/RustDesk 一手源码级拆解（Moonlight 输入 1ms 微批+16位拆包+50ms 丢帧上报+RFI 细节；Guacamole 1000ms 轮询+事件插队+sync/ack 帧界语义；RustDesk 每 viewer ACK 背压+TestDelay 闭环 QoS「先码率后帧率」）；浏览器端天花板推导：1080p60 视频单程 37~60ms、闭环跟手 ~42ms，SoulLink 444ms 差距在管线税不在网络；附 10 项可落地参数清单（P0=帧边界消息+客户端按需 IDR 回传）
 - [AUDIT-20261124-00-EVIDENCE-BASELINE.md](AUDIT-20261124-00-EVIDENCE-BASELINE.md) ← **取证与测量基准（2026-11-24）**：444ms 拆段实测（agent 侧 captureMs≈25+convertMs≈8+encodeMs≈3=36ms，其余在「有效帧率仅~14fps + 浏览器侧 + 前端断流重连」）；GPU 零拷贝**代码存在但从未生效**（日志 0 条 PSNR/降级行，静默 fall-through 证据穷举到行号：DxgiDdaCapture.TryCaptureBgraTexture:265/297、GpuColorConverter:191/192）；「零拷贝导致回到444」被推翻；附最小验证清单 V1~V5
