@@ -1279,21 +1279,110 @@ function directBase(sess) {
   }
 
 // ── 输入 ────────────────────────────────────────────────────
+// ★ 2026-11-23 输入链路修复（INPUT-CHANNEL-GAP-20261123.md）：
+//   · down/up/click 走**同一 FIFO 串行队列**（sendInputOrdered）→ 保序，
+//     替代旧「每个 pointer 事件一次独立 fetch 并发无序」导致的 up 丢失/粘键；
+//   · up/releaseall 传输失败重试 1 次（幂等，重发无害）；down/click 不重试（避免双按/双击）；
+//   · move 走 noWait 不等回包（RTT 不再拖慢拖动，latest-wins 由 movePending 保留）；
+//   · 页面 pagehide/beforeunload/visibilitychange(hidden) → releaseAllInputs 防粘键。
+async function postInputRaw(body) {
+  const base = directBase(cur);
+  const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
+  const headers = { 'Content-Type': 'application/json' };
+  if (base && directToken()) headers['X-SoulLink-Token'] = directToken();
+  const r = await fetch(url, {
+    method: 'POST', headers: headers,
+    body: JSON.stringify(Object.assign({}, body, base ? { sid: cur.sessionId } : {}))
+  });
+  return r.json();
+}
+
+// 通用发送（仍可 await 结果；wheel/key/moverel 等非保序、非高频动作沿用）
 async function sendInput(action, nx, ny, extra) {
   if (!cur) return null;
+  try { return await postInputRaw(Object.assign({ action, x: nx, y: ny }, extra || {})); }
+  catch { return null; }
+}
+
+// ── 按键状态动作的 FIFO 串行队列（保序）──────────────────────
+// down/up/click 是「状态转移」，必须严格按产生顺序送达代理：
+//   拖动 = down → (n×move) → up，若 down/up 并发乱序，远端会停在按下态。
+// 这里所有 down/up/click 进同一个队列，单 in-flight 逐条 await 发送，天然保序。
+let inputQueue = [];           // FIFO：{ body, resolve }
+let inputSending = false;      // 队列是否正在发送头部
+const INPUT_RETRYABLE = new Set(['up', 'releaseall']);   // 幂等：重发无害
+
+function sendInputOrdered(action, nx, ny, extra) {
+  if (!cur) return Promise.resolve(null);
   const body = Object.assign({ action, x: nx, y: ny }, extra || {});
+  return new Promise(resolve => {
+    inputQueue.push({ body, resolve });
+    pumpInput();
+  });
+}
+
+function pumpInput() {
+  if (inputSending || inputQueue.length === 0) return;
+  const item = inputQueue.shift();
+  inputSending = true;
+  (async () => {
+    let resp = null;
+    try { resp = await postInputRaw(item.body); }
+    catch (e) { resp = null; }
+    // up/releaseall 幂等：传输失败（fetch 抛异常）重试 1 次；
+    // down/click 不重试——down 重试可能双 LEFTDOWN 反而粘键，click 重试会双击。
+    if (resp == null && INPUT_RETRYABLE.has(item.body.action)) {
+      try { resp = await postInputRaw(item.body); }
+      catch (e) { resp = null; }
+    }
+    if (resp == null || resp.ok === false) {
+      console.warn('[input] ' + item.body.action + ' 发送失败', resp);
+    }
+    item.resolve(resp);
+    inputSending = false;
+    pumpInput();               // 串行发下一条
+  })();
+}
+
+// 单向发送：fire-and-forget，不等回包（move/moverel 高频位移专用）
+function sendInputNoWait(action, nx, ny, extra) {
+  if (!cur) return;
+  const body = Object.assign({ action, x: nx, y: ny }, extra || {});
+  postInputRaw(body).catch(() => {});
+}
+
+// ── 按住心跳（Web 前端断连看门狗的「我还活着」信号）────────────
+// 代理端只能通过「是否有输入活动」判断前端是否断连；但「按住不动」是正常操作，
+// 会产生 0 输入活动。所以按住期间每 2s 发一次 noop 心跳，代理据此区分：
+//   活着但静止按住（有心跳） ≠ 前端已断开（心跳停了 → 看门狗释放）。
+// 阈值：代理 WebIdleReleaseMs=5000 > 2×2000，静止按住不会误释放。
+function hasHeldInput() {
+  if (drag && drag.moved) return true;
+  if (look && look.mode === 'drag') return true;
+  return false;
+}
+let heldHeartbeat = null;
+function ensureHeldHeartbeat() {
+  if (heldHeartbeat) return;
+  heldHeartbeat = setInterval(() => {
+    if (hasHeldInput()) sendInputNoWait('noop', -1, -1, {});
+  }, 2000);
+}
+ensureHeldHeartbeat();
+
+// ★ 释放所有按住的键：切后台/刷新/关页时兜底（防「松手远端没松开」）。
+//   直接 fire-and-forget + keepalive（卸载阶段仍能送达）；幂等，重发无害。
+function releaseAllInputs() {
+  if (!cur) return;
+  inputQueue.length = 0;       // 丢弃未发送的 down/up/click，避免它们在 releaseall 之后到达又粘键
+  const base = directBase(cur);
+  const body = Object.assign({ action: 'releaseall', x: -1, y: -1 }, base ? { sid: cur.sessionId } : {});
+  const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
+  const headers = { 'Content-Type': 'application/json' };
+  if (base && directToken()) headers['X-SoulLink-Token'] = directToken();
   try {
-    // ★ 3.3.5：按键/点击也直连代理（用户要求「模拟按键也有独立出来」）
-    const base = directBase(cur);
-    const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
-    const headers = { 'Content-Type': 'application/json' };
-    if (base && directToken()) headers['X-SoulLink-Token'] = directToken();
-    const r = await fetch(url, {
-      method: 'POST', headers: headers,
-      body: JSON.stringify(Object.assign({}, body, base ? { sid: cur.sessionId } : {}))
-    });
-    return await r.json();
-  } catch { return null; }
+    fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body), keepalive: true }).catch(() => {});
+  } catch (e) {}
 }
 
 function norm(e) {
@@ -1415,7 +1504,7 @@ $('scr').addEventListener('pointerdown', e => {
       // 长按阈值内没怎么动 → 进入拖动模式：先按住左键
       if (look && look.mode === 'pending') {
         look.mode = 'drag';
-        sendInput('down', look.nx, look.ny, { button: 'left' });
+        sendInputOrdered('down', look.nx, look.ny, { button: 'left' });
       }
     }, LOOK_TAP_MS);
     $('scr').setPointerCapture(e.pointerId);
@@ -1450,15 +1539,13 @@ $('scr').addEventListener('pointerdown', e => {
 //
 //   新版：与 lookAcc(moverel) 同源的「合并 + 8ms 节流」策略——
 //     · pointermove 只更新 pending（绝不发 fetch）；
-//     · 同一时刻最多 1 个 move fetch 在飞（单 in-flight）；
-//     · fetch 返回时若 pending 有新位置立刻补发（latest-wins，
-//       过时的中间位置永远不发，光标永远走最新坐标）；
+//     · move 走 noWait 不等回包（RTT 不再拖慢拖动）；
+//     · latest-wins：movePending 永远只记最新位置，中间位置不发；
 //     · 8ms 节流窗口与画面帧率完全解耦（MOVE_MIN_INTERVAL_MS）。
 //   实测（60Hz 滑动 3s、RTT 3ms）：旧版 3s 只发 46 个请求（≈15/s，
 //   全被 50ms 窗口夹死）；新版跟随到 125Hz 且并发恒为 1。
 const MOVE_MIN_INTERVAL_MS = 8;   // 与 LOOK_HZ_MS 对齐；125Hz 上限足够顺滑
 let movePending = null;           // 待发的最新位置（latest-wins）
-let moveInFlight = false;         // 是否有 move fetch 在飞
 let moveLastSentAt = 0;           // 上次实际发出的时刻（节流用）
 
 function sendMoveThrottled(nx, ny) {
@@ -1467,7 +1554,7 @@ function sendMoveThrottled(nx, ny) {
 }
 
 function pumpMove() {
-  if (moveInFlight || !movePending) return;      // 单 in-flight + 有货才发
+  if (!movePending) return;                      // 有货才发；move 已改 noWait，不再有 in-flight 等待
   const now = Date.now();
   const wait = MOVE_MIN_INTERVAL_MS - (now - moveLastSentAt);
   if (wait > 0) {                                 // 节流窗口内：只排一个 timer
@@ -1477,12 +1564,10 @@ function pumpMove() {
     return;
   }
   const p = movePending; movePending = null;
-  moveInFlight = true;
   moveLastSentAt = Date.now();
-  sendInput('move', p.nx, p.ny).finally(() => {
-    moveInFlight = false;
-    pumpMove();                    // 回来立刻发最新的（不靠 setTimeout 堆叠）
-  });
+  // ★ noWait：不等回包，仅靠 8ms 节流 + timer 控制频率；latest-wins 由 movePending 保留。
+  //   单 in-flight 语义改为「节流窗口内最多排一条」——避免 RTT 拖慢拖动（WAN 下旧实现退化 1/RTT）。
+  sendInputNoWait('move', p.nx, p.ny);
 }
 
 $('scr').addEventListener('pointermove', e => {
@@ -1549,7 +1634,7 @@ $('scr').addEventListener('pointermove', e => {
       return;
     }
     drag.moved = true;
-    sendInput('down', drag.nx, drag.ny, { button: drag.btn });
+    sendInputOrdered('down', drag.nx, drag.ny, { button: drag.btn });
   }
   sendMoveThrottled(p.nx, p.ny);
 });
@@ -1561,9 +1646,9 @@ $('scr').addEventListener('pointerup', e => {
     if (relPoints.size === 0) {
       const p = norm(e);
       if (relWasTwo) {
-        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInput('click', p.nx, p.ny, { button: 'right' }); }
+        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'right' }); }
       } else {
-        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInput('click', p.nx, p.ny, { button: 'left' }); }
+        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'left' }); }
       }
       if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
       flushLook();
@@ -1578,16 +1663,16 @@ $('scr').addEventListener('pointerup', e => {
     if (was.mode === 'pending') {
       // 没动就抬起 → 左键单击
       const p = norm(e);
-      ripple(e); sendInput('click', p.nx, p.ny, { button: 'left' });
+      ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'left' });
     } else if (was.mode === 'drag') {
-      sendInput('up', -1, -1, { button: 'left' });
+      sendInputOrdered('up', -1, -1, { button: 'left' });
     } else if (was.mode === 'look' && was.mouseRight) {
       // ★ 鼠标右键转视角结束：几乎没动 = 右键单击（菜单照常出）；
       //   拖动过 = 纯转视角，不发 click（不然转完视角还会弹出菜单）。
       const movedTotal = Math.hypot(e.clientX - was.sx, e.clientY - was.sy);
       if (movedTotal < LOOK_SLIDE_PX) {
         const p = norm(e);
-        ripple(e); sendInput('click', p.nx, p.ny, { button: 'right' });
+        ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'right' });
       }
     }
     // 转视角模式：最后残留的位移已由 timer 冲刷，无需额外动作
@@ -1601,8 +1686,8 @@ $('scr').addEventListener('pointerup', e => {
   const moved = drag.moved, btn = drag.btn || 'left';
   drag = null;
   const p = norm(e);
-  if (moved) sendInput('up', p.nx, p.ny, { button: btn });
-  else { ripple(e); sendInput('click', p.nx, p.ny, { button: btn }); }
+  if (moved) sendInputOrdered('up', p.nx, p.ny, { button: btn });
+  else { ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: btn }); }
 });
 $('scr').addEventListener('pointercancel', () => {
   if (mouseMode === 'relative' && relPoints.size > 0) {
@@ -1612,7 +1697,7 @@ $('scr').addEventListener('pointercancel', () => {
     return;
   }
   if (look) {
-    if (look.mode === 'drag') sendInput('up', -1, -1, { button: 'left' });
+    if (look.mode === 'drag') sendInputOrdered('up', -1, -1, { button: 'left' });
     if (look.mode === 'look' && look.mouseRight) {
       // 右键转视角被系统打断：不补发 click（无法区分用户意图），只退出
       if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
@@ -1625,7 +1710,7 @@ $('scr').addEventListener('pointercancel', () => {
     flushLook();
     return;
   }
-  if (drag && drag.moved) sendInput('up', -1, -1, { button: drag.btn || 'left' });
+  if (drag && drag.moved) sendInputOrdered('up', -1, -1, { button: drag.btn || 'left' });
   drag = null;
 });
 $('scr').addEventListener('wheel', e => {
@@ -1884,6 +1969,7 @@ document.addEventListener('pointerdown', e => {
 //   ★ pause 状态下不自动恢复（用户点了暂停就尊重暂停）。
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    releaseAllInputs();       // ★ 切后台先释放所有按住的键，防「松手远端没松开」
     if (liveRunning && h264Active) {
       abortStream();          // 只断流，画面冻在最后一帧
       setPh('页面已隐藏，流已暂停 · 回到页面自动重连', false);
@@ -1895,6 +1981,11 @@ document.addEventListener('visibilitychange', () => {
     }
   }
 });
+
+// ★ 卸载/切后台释放按键：pagehide/beforeunload 触发时 fire-and-forget 发 releaseall。
+//   只释放真正按过的键（代理侧 PressedButtons/PressedKeys 只抬按过的键，不会误触）。
+window.addEventListener('pagehide', () => releaseAllInputs());
+window.addEventListener('beforeunload', () => releaseAllInputs());
 
 $('pauseBtn').onclick = () => {
   paused = !paused;

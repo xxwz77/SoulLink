@@ -499,6 +499,7 @@ namespace SoulLink.Relay
                     case "keyup":   cmd = "keyup";   break;
                     case "moverel": cmd = "moverel"; break;
                     case "text":    cmd = "text";    break;
+                    case "noop":    cmd = "noop";    break;
                     default:
                         await WriteJson(ctx, new { ok = false, error = "未知动作 " + dto.action }).ConfigureAwait(false);
                         return;
@@ -522,7 +523,7 @@ namespace SoulLink.Relay
                     Count = dto.count
                 };
 
-                var resp = RelayAgent.Execute(req);
+                var resp = RelayAgent.ExecuteWeb(req);
                 await WriteJson(ctx, new { ok = resp.Ok, error = resp.Ok ? null : resp.Message }).ConfigureAwait(false);
             }
             catch (Exception ex)

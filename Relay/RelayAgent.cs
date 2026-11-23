@@ -108,6 +108,12 @@ namespace SoulLink.Relay
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<ushort, bool> PressedKeys
             = new System.Collections.Concurrent.ConcurrentDictionary<ushort, bool>();
 
+        /// <summary>最近一次收到 **Web 来源**输入指令的 UTC 时间（Web 前端断连看门狗用）。</summary>
+        private static DateTime _lastWebActivityUtc = DateTime.UtcNow;
+
+        /// <summary>是否有 Web 来源的按键仍在按下（down/keydown 后未 up/releaseall）。</summary>
+        private static bool _webHeldInput;
+
         // ── 键盘模拟（自动化流程用）──────────────────────────────
 
         [StructLayout(LayoutKind.Sequential)]
@@ -326,6 +332,60 @@ namespace SoulLink.Relay
                 PressedKeys.Clear();
             }
             catch { }
+        }
+
+        /// <summary>
+        /// 公开给 Web 直连层调用：网页前端断开时释放按键。
+        /// 与管道断开（ServePipe 结束 / Run 结束）的 ReleaseAllMouseButtons/ReleaseAllKeys 同一语义，
+        /// 只抬真正按过的键（PressedButtons/PressedKeys），不会误触别的窗口。
+        /// </summary>
+        public static void ReleaseAllInputs()
+        {
+            ReleaseAllMouseButtons();
+            ReleaseAllKeys();
+        }
+
+        /// <summary>由 Web 直连层（AgentWebServer.HandleInputAsync）调用：以 Web 来源语义执行一条输入指令。</summary>
+        internal static Response ExecuteWeb(Request req)
+        {
+            _lastWebActivityUtc = DateTime.UtcNow;
+            var resp = Execute(req);
+            string cmd = (req.Cmd ?? "").ToLowerInvariant();
+            if (cmd == "down" || cmd == "keydown") _webHeldInput = true;
+            else if (cmd == "up" || cmd == "keyup" || cmd == "releaseall") _webHeldInput = false;
+            return resp;
+        }
+
+        private const int WebIdleReleaseMs = 5000;   // Web 无输入活动超过此值且仍有按键按下 → 释放
+        private static Timer? _idleReleaseTimer;
+
+        /// <summary>
+        /// 启动「Web 前端断连」看门狗（代理进程级周期任务，非 WPF DispatcherTimer）。
+        ///
+        /// 为什么需要：网页 /api/input 是**无状态 HTTP POST**，没有持久连接；
+        /// 前端刷新/关页/切后台时浏览器未必来得及发出 releaseall（keepalive 也有失败窗口）。
+        /// 兜底：仅当 **Web 来源**的按键仍在按下（_webHeldInput）且连续 3 秒无 Web 输入活动时，
+        /// 判定前端已断开，释放按键。
+        /// ★ 只对 Web 来源生效：桌面端（命名管道）长按右键/方向键几秒是正常操作，绝不误释放。
+        /// </summary>
+        private static void StartIdleReleaseWatchdog()
+        {
+            if (_idleReleaseTimer != null) return;
+            _idleReleaseTimer = new Timer(_ =>
+            {
+                try
+                {
+                    if (!_webHeldInput) return;
+                    if ((DateTime.UtcNow - _lastWebActivityUtc).TotalMilliseconds >= WebIdleReleaseMs)
+                    {
+                        Log("Web 前端断连看门狗：无输入活动超时，释放按键");
+                        ReleaseAllMouseButtons();
+                        ReleaseAllKeys();
+                        _webHeldInput = false;
+                    }
+                }
+                catch { }
+            }, null, WebIdleReleaseMs, WebIdleReleaseMs);
         }
 
         private const int SM_CXSCREEN = 0;
@@ -555,6 +615,7 @@ namespace SoulLink.Relay
             //   端口和口令由主程序投送时通过环境变量下发（见 RelayClient.CaptureEnv）。
             //   没设 SOULLINK_WEB_PORT 或端口为 0 表示用户没开网页访问，不启动。
             StartWebDirect();
+            StartIdleReleaseWatchdog();
 
             _hotkeys = new RelayHotkeyReceiver(SendHotkey, Log);
             try
@@ -711,6 +772,10 @@ namespace SoulLink.Relay
                         return new Response { Ok = message == "已安装" || message.StartsWith("鼠标") || message == "配置已排队", Message = message };
                     }
                     catch (Exception ex) { return Fail("配置热键失败：" + ex.Message); }
+
+                case "noop":
+                    // 心跳占位：仅刷新 _lastWebActivityUtc（ExecuteWeb 已做），不注入任何东西。
+                    return new Response { Ok = true, Message = "noop" };
 
                 case "ping":
                     return new Response
