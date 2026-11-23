@@ -31,6 +31,10 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [DXGI-DDA-CAPTURE-20261123.md](DXGI-DDA-CAPTURE-20261123.md) —— **DXGI Desktop Duplication 抓屏后端接入降级链**（新增 Relay/DxgiDdaCapture.cs 339行实现 IScreenCapture，syncThreadDesktop+Hardware D3D11+DuplicateOutput+AcquireNextFrame；降级链 DDA→WGC→BitBlt，DDA优先因独占全屏+无撕裂+0.13ms；处理脏矩形静止复用/ACCESS_LOST重建/DPI物理尺寸/显存降级四边界；两TFM 0 error）
+
+- [DXGI-DDA-RDP-20261123.md](DXGI-DDA-RDP-20261123.md) —— **DXGI Desktop Duplication RDP 可行性实测（推翻旧死路结论）**（A2 RDP SessionId=4 内 DuplicateOutput 成功 + AcquireNextFrame 出帧 18ms；根因是旧实测显存耗尽 E_OUTOFMEMORY 非 RDP 架构限制；syncThreadDesktop 必需、D3D11 Hardware 即可、单N卡无需 Optimus hook；DDA 可作独占全屏+无撕裂抓屏后端，接入方案 WGC→DXGI DDA→BitBlt）
+
 - [MF-LOWLATENCY-20261123.md](MF-LOWLATENCY-20261123.md) —— **非N卡低延迟 ICodecAPI 码流实测**（手写 ICodecAPI 接入 MfFrameEncoder，SetOutputType 前设 AVLowLatencyMode/关B帧/CBR；码流级实锤微软软 MFT「SetValue S_OK 但完全忽略」，三模式 MD5 相同 B 帧仍 20；软编唯一有效手段是 MaxKeyframeSpacing=60；QSV/AMF 同构留待硬件；附 ffmpeg mfenc.c/qsvenc.c/amfenc 权威 file:line）
 
 - [NVENC-SDK-QUALITY-PRESETS-20261123.md](NVENC-SDK-QUALITY-PRESETS-20261123.md) —— **画质自由档位**（NVENC preset P1~P7 下拉默认P3 + 码率/帧率滑动条(帧率上限120/码率1~50Mbps) + 关键帧缓冲上调0~200%对齐Sunshine vbv_percentage_increase；配置落AppSettings持久化+RelayClient下发环境变量；实测vbv 0%→100% IDR 33KB→58KB/QP33→31）
@@ -151,3 +155,4 @@
 当前有效的规则见项目根的 `AGENTS.md` 与 `docs/RELEASE-RULES.md`。
 - `HOT-RELOAD-E2E-VERIFY-20261123.md` 视频参数热更新 + 生命周期端到端验收（码率/帧率热更新生效，preset/vbv 缺陷）
 - `DEPLOY-3.3.25-VERIFY-20261123.md` 3.3.25 本地部署 + 真机端到端验收（Broker 重启 + A2 换新代码 + NVENC SDK 出帧 + preset/vbv 热更新修复）
+- `DEPLOY-3.3.27-VERIFY-20261123.md` 3.3.27 本地部署 + WGC 不撕裂验收（探测式抓屏 WGC 优先 + BitBlt 兜底）

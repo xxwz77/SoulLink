@@ -1,0 +1,338 @@
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using SharpGen.Runtime;
+using Vortice.Direct3D;
+using Vortice.Direct3D11;
+using Vortice.DXGI;
+
+namespace SoulLink.Relay
+{
+    /// <summary>
+    /// DXGI Desktop Duplication（DDA）抓屏后端。
+    ///
+    /// ★ 为什么 DDA 优先级最高（2026-11-23，DXGI-DDA-RDP-20261123.md 实测）：
+    ///   · 唯一能抓「独占全屏」的 API（WGC 抓独占全屏可能黑屏）；
+    ///   · 直接拿合成帧，**无撕裂**；
+    ///   · GPU 桌面复制，单帧 0.13ms（对比 BitBlt 17~31ms、WGC 2~8ms）。
+    ///   · RDP 会话内实测可用（旧「死路」结论被推翻：根因是显存耗尽 E_OUTOFMEMORY，
+    ///     非 RDP 架构限制，见 DXGI-DDA-RDP-20261123.md）。
+    ///
+    /// ★ 三个前提（对齐 Sunshine display_base.cpp / misc.cpp）：
+    ///   1. syncThreadDesktop（OpenInputDesktop + SetThreadDesktop）——旧探针跑在不可见
+    ///      窗口站导致失败，这个步骤是必须的；
+    ///   2. D3D11 用 DriverType.Hardware（本机 Unknown 需枚举 adapter，Hardware 即可）；
+    ///   3. Optimus hook 仅 Intel+NVIDIA 混合本需要，单 N 卡跳过。
+    ///
+    /// ★ 边界处理：
+    ///   · 脏矩形/静止不产帧：AcquireNextFrame 超时（DXGI_ERROR_WAIT_TIMEOUT）是正常的，
+    ///     此时返回 null（调用方跳过，或按上一帧处理）；
+    ///   · 独占全屏切换：AcquireNextFrame 返回 ACCESS_LOST 时重建 duplication；
+    ///   · DPI：用模式列表（Description.ModeDescription）取物理尺寸，不用 GetSystemMetrics；
+    ///   · 显存失败：DuplicateOutput 失败/设备创建失败 → 抛异常，由 SessionRecorder 降级链接住。
+    /// </summary>
+    internal sealed class DxgiDdaCapture : IScreenCapture
+    {
+        public string Name => "DXGI-DDA";
+
+        [DllImport("user32.dll")] static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+        [DllImport("user32.dll")] static extern bool SetThreadDesktop(IntPtr hDesktop);
+        [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr hDesktop);
+        const uint DF_ALLOWOTHERACCOUNTHOOK = 0x0001;
+        const uint GENERIC_ALL = 0x10000000;
+        const int DXGI_ERROR_WAIT_TIMEOUT = unchecked((int)0x887A0027);
+        const int DXGI_ERROR_ACCESS_LOST = unchecked((int)0x887A0026);
+
+        private ID3D11Device? _device;
+        private ID3D11DeviceContext? _context;
+        private IDXGIOutputDuplication? _duplication;
+        private int _width, _height;
+        private bool _active;
+        private bool _disposed;
+        private readonly object _gate = new();
+        /// <summary>最近一次成功抓到的 BGRA 帧（静止画面 AcquireNextFrame 超时时复用）。</summary>
+        private byte[]? _lastBgra;
+        private int _lastWidth, _lastHeight;
+
+        /// <summary>是否已成功建立 duplication（供 SessionRecorder 探测降级用）。</summary>
+        public bool IsActive => _active;
+
+        /// <summary>最近一次降级/失败原因（供日志）。</summary>
+        public string LastError { get; private set; } = "";
+
+        private void EnsureRunning()
+        {
+            if (_active) return;
+            try { Start(); } catch (Exception ex) { LastError = ex.GetType().Name + "：" + ex.Message; }
+        }
+
+        private void Start()
+        {
+            if (_active) return;
+
+            // 前提1：syncThreadDesktop（Sunshine misc.cpp L247-264）
+            SyncThreadDesktop();
+
+            // 前提2：硬件 D3D11 设备（DriverType.Hardware，单 N 卡无需 Optimus hook）
+            var levels = new[]
+            {
+                FeatureLevel.Level_11_1, FeatureLevel.Level_11_0, FeatureLevel.Level_10_1, FeatureLevel.Level_10_0
+            };
+            var hr = Vortice.Direct3D11.D3D11.D3D11CreateDevice(
+                IntPtr.Zero, DriverType.Hardware, DeviceCreationFlags.BgraSupport, levels,
+                out var device, out _, out var context);
+            if (!hr.Success || device == null)
+                throw new InvalidOperationException("D3D11 硬件设备失败 0x" + hr.Code.ToString("X8")
+                    + "（显存不足时可能发生，降级到 WGC/BitBlt）");
+            _device = device;
+            _context = context;
+
+            // 前提3：DuplicateOutput（枚举输出，Sunshine display_base.cpp L427）
+            using var dxgiDev = device.QueryInterface<IDXGIDevice>();
+            using var adapter = dxgiDev.GetAdapter();
+
+            string failReason = "0 个可枚举输出";
+            for (int oi = 0; ; oi++)
+            {
+                Result ohr = adapter.EnumOutputs((uint)oi, out IDXGIOutput output);
+                if (!ohr.Success || output == null) break;
+                using (output)
+                {
+                    try
+                    {
+                        using var output1 = output.QueryInterface<IDXGIOutput1>();
+                        try
+                        {
+                            var dup = output1.DuplicateOutput(device);
+                            _duplication = dup;
+                            var dd = dup.Description;
+                            // 用模式列表取物理尺寸（DPI 缩放安全）
+                            _width = (int)dd.ModeDescription.Width;
+                            _height = (int)dd.ModeDescription.Height;
+                            if (_width <= 0 || _height <= 0)
+                            {
+                                // 回退到 DesktopCoordinates
+                                var od = output.Description;
+                                _width = od.DesktopCoordinates.Right - od.DesktopCoordinates.Left;
+                                _height = od.DesktopCoordinates.Bottom - od.DesktopCoordinates.Top;
+                            }
+                            _active = true;
+                            LastError = "";
+                            RelayAgent.LogQuiet("[capture] DXGI-DDA 建立成功：" + _width + "x" + _height);
+                            return;
+                        }
+                        catch (SharpGenException ex)
+                        {
+                            failReason = "DuplicateOutput 0x" + ex.ResultCode.Code.ToString("X8");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        failReason = ex.GetType().Name + "：" + ex.Message;
+                    }
+                }
+            }
+            throw new InvalidOperationException("DDA 建立失败：" + failReason);
+        }
+
+        /// <summary>Sunshine 的 syncThreadDesktop：把线程绑到输入桌面。</summary>
+        private static void SyncThreadDesktop()
+        {
+            IntPtr hDesk = OpenInputDesktop(DF_ALLOWOTHERACCOUNTHOOK, false, GENERIC_ALL);
+            if (hDesk == IntPtr.Zero) return;   // 失败不阻塞（某些环境可能仍可用）
+            try
+            {
+                SetThreadDesktop(hDesk);
+            }
+            catch { }
+            finally { CloseDesktop(hDesk); }
+        }
+
+        /// <summary>抓一帧原始 BGRA。静止画面（AcquireNextFrame 超时）复用上一帧。</summary>
+        public byte[]? CaptureBgra(out int width, out int height)
+        {
+            width = 0; height = 0;
+            if (_disposed) return null;
+            EnsureRunning();
+            if (!_active || _duplication == null || _device == null || _context == null)
+            {
+                width = _lastWidth; height = _lastHeight;
+                return _lastBgra;   // 降级后返回上一帧，让调用方继续
+            }
+
+            lock (_gate)
+            {
+                try
+                {
+                    Result hr = _duplication.AcquireNextFrame(16, out _, out IDXGIResource resource);
+                    if (hr.Success && resource != null)
+                    {
+                        try
+                        {
+                            // IDXGIResource → ID3D11Texture2D
+                            using var tex = resource.QueryInterface<ID3D11Texture2D>();
+                            var desc = tex.Description;
+                            int w = (int)desc.Width, h = (int)desc.Height;
+                            var bgra = ReadBackTexture(tex, w, h);
+                            if (bgra != null)
+                            {
+                                _lastBgra = bgra;
+                                _lastWidth = w; _lastHeight = h;
+                                width = w; height = h;
+                                return bgra;
+                            }
+                            width = _lastWidth; height = _lastHeight;
+                            return _lastBgra;
+                        }
+                        finally
+                        {
+                            resource.Dispose();
+                            _duplication.ReleaseFrame();
+                        }
+                    }
+                    else if (hr.Code == DXGI_ERROR_WAIT_TIMEOUT)
+                    {
+                        // 静止画面：复用上一帧
+                        width = _lastWidth; height = _lastHeight;
+                        return _lastBgra;
+                    }
+                    else if (hr.Code == DXGI_ERROR_ACCESS_LOST)
+                    {
+                        // 独占全屏切换/模式变化：重建 duplication
+                        LastError = "ACCESS_LOST（模式切换），重建 duplication";
+                        RelayAgent.LogQuiet("[capture] DXGI-DDA ACCESS_LOST，重建");
+                        Rebuild();
+                        width = _lastWidth; height = _lastHeight;
+                        return _lastBgra;
+                    }
+                    else
+                    {
+                        LastError = "AcquireNextFrame 0x" + hr.Code.ToString("X8");
+                        width = _lastWidth; height = _lastHeight;
+                        return _lastBgra;
+                    }
+                }
+                catch (SharpGenException ex) when (ex.ResultCode.Code == DXGI_ERROR_ACCESS_LOST)
+                {
+                    LastError = "ACCESS_LOST（异常），重建 duplication";
+                    RelayAgent.LogQuiet("[capture] DXGI-DDA ACCESS_LOST 异常，重建");
+                    Rebuild();
+                    width = _lastWidth; height = _lastHeight;
+                    return _lastBgra;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.GetType().Name + "：" + ex.Message;
+                    width = _lastWidth; height = _lastHeight;
+                    return _lastBgra;
+                }
+            }
+        }
+
+        /// <summary>重建 duplication（独占全屏切换后）。失败则标记 inactive，由调用方降级。</summary>
+        private void Rebuild()
+        {
+            try
+            {
+                _duplication?.Dispose();
+                _duplication = null;
+                _active = false;
+                Start();
+            }
+            catch (Exception ex)
+            {
+                LastError = "重建失败：" + ex.Message;
+                RelayAgent.LogQuiet("[capture] DXGI-DDA 重建失败：" + ex.Message);
+                _active = false;
+                _duplication?.Dispose();
+                _duplication = null;
+            }
+        }
+
+        /// <summary>GPU 纹理 → CPU BGRA（staging + CopyResource + Map，与 WgcCapture 同款）。</summary>
+        private byte[]? ReadBackTexture(ID3D11Texture2D srcTex, int width, int height)
+        {
+            try
+            {
+                if (_device == null || _context == null) return null;
+                var desc = new Texture2DDescription
+                {
+                    Width = (uint)width,
+                    Height = (uint)height,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = Format.B8G8R8A8_UNorm,
+                    SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Staging,
+                    BindFlags = BindFlags.None,
+                    CPUAccessFlags = CpuAccessFlags.Read,
+                    MiscFlags = ResourceOptionFlags.None
+                };
+                var staging = _device.CreateTexture2D(desc);
+                try
+                {
+                    _context.CopyResource(staging, srcTex);
+                    var mapped = _context.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+                    try
+                    {
+                        int rowPitch = (int)mapped.RowPitch;
+                        var tight = new byte[width * 4 * height];
+                        if (rowPitch == width * 4)
+                        {
+                            Marshal.Copy(mapped.DataPointer, tight, 0, tight.Length);
+                        }
+                        else
+                        {
+                            for (int y = 0; y < height; y++)
+                                Marshal.Copy(IntPtr.Add(mapped.DataPointer, y * rowPitch), tight, y * width * 4, width * 4);
+                        }
+                        return tight;
+                    }
+                    finally { _context.Unmap(staging, 0); }
+                }
+                finally { staging.Dispose(); }
+            }
+            catch { return null; }
+        }
+
+        /// <summary>DDA 抓的是 BGRA，JPEG 编码与 BitBlt 同款（供截图协议用）。</summary>
+        public byte[]? CaptureJpeg(int quality, out int width, out int height)
+        {
+            var bgra = CaptureBgra(out width, out height);
+            if (bgra == null) return null;
+            try
+            {
+                using var bmp = new System.Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var bd = bmp.LockBits(new System.Drawing.Rectangle(0, 0, width, height), System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                try { Marshal.Copy(bgra, 0, bd.Scan0, bgra.Length); }
+                finally { bmp.UnlockBits(bd); }
+                using var ms = new MemoryStream();
+                using var ep = new System.Drawing.Imaging.EncoderParameters(1);
+                ep.Param[0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)quality);
+                bmp.Save(ms, JpegCodec(), ep);
+                return ms.ToArray();
+            }
+            catch { return null; }
+        }
+
+        private static System.Drawing.Imaging.ImageCodecInfo? _jpeg;
+        private static System.Drawing.Imaging.ImageCodecInfo JpegCodec()
+        {
+            if (_jpeg != null) return _jpeg;
+            foreach (var c in System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders())
+                if (c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid) { _jpeg = c; break; }
+            return _jpeg ?? throw new InvalidOperationException("找不到 JPEG 编码器");
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            try { _duplication?.Dispose(); } catch { }
+            try { _context?.Dispose(); } catch { }
+            try { _device?.Dispose(); } catch { }
+            _duplication = null; _context = null; _device = null;
+            _active = false;
+        }
+    }
+}

@@ -94,21 +94,57 @@ namespace SoulLink.Relay
         private static IScreenCapture CreateCapture()
         {
             int mode = int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE"), out int value) ? value : 0;
-            if (mode == 3)
+            switch (mode)
             {
-                RelayAgent.LogQuiet("[capture] 使用显式 BitBlt 后端");
-                return new BitBltCapture();
-            }
+                case 3:
+                    RelayAgent.LogQuiet("[capture] 显式 BitBlt 后端");
+                    return new BitBltCapture();
+                case 1:   // 显式 WGC（跳过 DDA 探测）
 #if WGC
-            return new WgcCapture();
+                    return new WgcCapture();
 #else
-            return new BitBltCapture();
+                    return new BitBltCapture();
 #endif
+                default:  // 0 = auto：DDA → WGC → BitBlt
+                    return new DxgiDdaCapture();
+            }
         }
 
-        /// <summary>自动抓屏探测只在视频 worker 运行，成功帧保留给正常编码，失败静默降级。</summary>
+        /// <summary>自动抓屏探测只在视频 worker 运行，成功帧保留给正常编码，失败静默降级。
+        /// 降级链：DXGI DDA → WGC → BitBlt。</summary>
         private static byte[]? CaptureBgraWithProbe(out int width, out int height)
         {
+            // ★ DDA 探测：DxgiDdaCapture 构造时即尝试 DuplicateOutput，失败抛异常
+            //   → 降级 WGC；WGC 300ms 无首帧 → 降级 BitBlt。
+            if (Capture is DxgiDdaCapture dda)
+            {
+                _probeClock ??= Stopwatch.StartNew();
+                byte[]? frame = null;
+                string reason = "";
+                try { frame = dda.CaptureBgra(out width, out height); }
+                catch (Exception ex) { width = height = 0; reason = ex.GetType().Name + "：" + ex.Message; }
+                if (frame != null && frame.Length > 0 && dda.IsActive)
+                {
+                    RelayAgent.LogQuiet("[capture] 采用 DXGI-DDA（出帧 " + width + "x" + height + "）");
+                    _probeClock = null;
+                    return frame;
+                }
+                if (reason.Length == 0) reason = dda.LastError.Length > 0 ? dda.LastError : "DDA 未出帧";
+                if (_probeClock.ElapsedMilliseconds >= 300)
+                {
+                    RelayAgent.LogQuiet("[capture] DXGI-DDA 降级：" + reason);
+                    dda.Dispose();
+#if WGC
+                    Capture = new WgcCapture();
+#else
+                    Capture = new BitBltCapture();
+#endif
+                    _probeClock = null;
+                    return CaptureBgraWithProbe(out width, out height);
+                }
+                Thread.Sleep(10);
+                return null;
+            }
 #if WGC
             if (Capture is WgcCapture wgc && Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE") != "1")
             {

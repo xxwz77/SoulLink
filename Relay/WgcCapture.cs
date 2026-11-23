@@ -42,6 +42,7 @@ namespace SoulLink.Relay
         private volatile bool _running;
         public bool IsActive => _running;
         public long FrameSequence { get { lock (_stashLock) return _frameSeq; } }
+        private long _lastBlackFrameLog;
 
         private ID3D11Device? _device;
         private ID3D11DeviceContext? _context;
@@ -248,8 +249,38 @@ namespace SoulLink.Relay
             {
                 if (_stashedTexture == IntPtr.Zero) { width = 0; height = 0; return null; }
                 width = _stashedWidth; height = _stashedHeight;
-                return ReadBackTexture(_stashedTexture, width, height);
+                var bgra = ReadBackTexture(_stashedTexture, width, height);
+                if (bgra == null) return null;
+                if (IsMostlyBlack(bgra, width, height))
+                {
+                    width = height = 0;
+                    long now = Environment.TickCount64;
+                    if (now - _lastBlackFrameLog >= 5000)
+                    {
+                        _lastBlackFrameLog = now;
+                        RelayAgent.LogQuiet("[capture] 丢弃 WGC 黑帧（降采样纯黑像素超过50%，最多5秒记一次）");
+                    }
+                    return null;
+                }
+                return bgra;
             }
+        }
+
+        /// <summary>只检查 WGC 读回帧；自适应步长保证采样少于10万点，不做逐像素全扫。</summary>
+        private static bool IsMostlyBlack(byte[] bgra, int width, int height)
+        {
+            if (width <= 0 || height <= 0) return false;
+            int cellsX = (width + 7) / 8, cellsY = (height + 7) / 8;
+            int stride = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(cellsX * (double)cellsY / 90000.0)));
+            int samples = 0, black = 0;
+            for (int y = 0; y < height; y += 8 * stride)
+            for (int x = 0; x < width; x += 8 * stride)
+            {
+                int p = (y * width + x) * 4;
+                samples++;
+                if (bgra[p] == 0 && bgra[p + 1] == 0 && bgra[p + 2] == 0) black++;
+            }
+            return samples > 0 && black * 2 > samples;
         }
 
         private void DrainFramePool()
