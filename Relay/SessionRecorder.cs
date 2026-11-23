@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using SoulLink.Services;
@@ -31,6 +32,12 @@ namespace SoulLink.Relay
         private static IScreenCapture Capture = CreateCapture();
         private static readonly object Gate = new();
         private static readonly List<VideoFrame> Ring = new();
+
+        // ★ P0-E：1ms 系统定时器精度——WaitOne(ms) 在默认 15.6ms 粒度下每次节拍超调 0~15ms，
+        //   30fps 节拍会被拖到 ~25fps；timeBeginPeriod(1) 后粒度 ~1ms。Windows 全局引用计数，
+        //   worker 起止成对调用。
+        [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint uMilliseconds);
+        [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint uMilliseconds);
         private static readonly Dictionary<int, Viewer> Viewers = new();
         private static Thread? _worker;
         private static volatile bool _stopRequested;
@@ -71,6 +78,7 @@ namespace SoulLink.Relay
         private static long _keepaliveNextAt;         // 下次保活编码时刻（Stopwatch ticks；仅 worker 读写）
         private static long _keepaliveFrames;         // 已发出的保活帧计数（可观测指标）
         private const int KeepaliveIntervalMs = 500;  // 保活节拍：2fps
+        private const int ZeroCopyFailDisableThreshold = 3;   // P0-E：零拷贝连续失败 ≥3 禁用 GPU 直通（防吞帧）
         private static int _captureMode = int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE"), out int initialMode) ? Math.Clamp(initialMode, 0, 3) : 0;
         private static int _captureModeVersion;
         private static volatile bool _captureSwitchRequested;
@@ -631,6 +639,7 @@ namespace SoulLink.Relay
             long previousFrameSeq = -1;   // DDA 后端上一次的 FrameSequence（-1=尚未取得）
             long previousZeroSeq = -1;    // GPU 后端（WGC/DDA）上一次的 FrameSequence（零拷贝分支静止判定用）
             bool zeroCopyPsnrDone = false;   // 零拷贝首帧 PSNR 诊断只跑一次
+            int zeroCopyFailStreak = 0;      // ★ P0-E：零拷贝转换/编码连续失败计数（达阈值禁用，防吞帧）
             long nextAt = Stopwatch.GetTimestamp();   // ★ A2：下一次允许抓屏/编码的时间戳（fps 上限门槛）
             int appliedVersion = -1;
             VideoParameters? applied = null;
@@ -638,6 +647,7 @@ namespace SoulLink.Relay
             long appliedCaptureGeneration = -1;   // ★ P0-A：后端实例替换代数（探测/重试/降级/D04 后重置静止基准）
             try
             {
+                timeBeginPeriod(1);   // ★ P0-E：定时器精度 1ms，消除节拍超调
                 while (!_stopRequested)
                 {
                     if (_captureSwitchRequested)
@@ -726,6 +736,7 @@ namespace SoulLink.Relay
                                         byte[]? zNal = nvencZero.EncodeD3D11Texture(nv12Tex, frameIndex * 1_000_000L / fps);
                                         if (zNal != null && zNal.Length > 0)
                                         {
+                                            zeroCopyFailStreak = 0;   // ★ P0-E：成功清零连续失败计数
                                             frameIndex++; _noNalFrames = 0; _lastNalAt = DateTime.UtcNow;
                                             var zFrame = new VideoFrame { Nal = zNal, At = DateTime.Now, KeyFrame = IsKeyFrame(zNal) };
                                             lock (Gate)
@@ -768,6 +779,24 @@ namespace SoulLink.Relay
                                             previousZeroSeq = curSeq;
                                             zeroHandled = true;
                                         }
+                                        else
+                                        {
+                                            // ★ P0-E：本拍纹理已被消费但编码无输出 → 不回退 CPU
+                                            //   （回退只会把陈旧 _lastBgra 当新帧编码成重复帧）；
+                                            //   对齐 CPU 静止判定基准，防止下一拍把陈旧帧当新帧。
+                                            zeroHandled = true;
+                                            previousFrameSeq = curSeq;
+                                            zeroCopyFailStreak++;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // ★ P0-E：转换失败（RDP 内 VideoProcessor 不可用等）→ 同样不回退 CPU：
+                                        //   每次失败若回退 CPU 都会把刚被零拷贝消费掉的一帧变成「陈旧帧重编码」，
+                                        //   动态场景直接砍半帧率。
+                                        zeroHandled = true;
+                                        previousFrameSeq = curSeq;
+                                        zeroCopyFailStreak++;
                                     }
                                 }
                                 if (curSeq != previousZeroSeq) previousZeroSeq = curSeq;
@@ -775,16 +804,26 @@ namespace SoulLink.Relay
                         }
                         catch (Exception ex)
                         {
-                            // 零拷贝任何异常 → 静默降级 CPU，绝不进入崩溃路径
+                            // 零拷贝任何异常 → 禁用 GPU 直通回退 CPU，绝不进入崩溃路径；
+                            // 本拍不回退 CPU（纹理可能已被消费，回退会编码陈旧帧）。
                             RelayAgent.LogQuiet("[video] 零拷贝失败，降级 CPU：" + ex.Message);
+                            gpuConverter?.Dispose(); gpuConverter = null;
+                            zeroHandled = true;
+                        }
+                        // ★ P0-E：连续失败达阈值 → 禁用 GPU 直通（当前 RDP 内跨设备共享转换不可用，
+                        //   每次失败都吞掉一帧真实画面，直接把帧率砍半）。D03/D14 修好转换器后，
+                        //   编码器重建会重新创建 converter 自动重试。
+                        if (zeroCopyFailStreak >= ZeroCopyFailDisableThreshold && gpuConverter != null)
+                        {
+                            RelayAgent.LogQuiet("[video] 零拷贝连续失败 " + zeroCopyFailStreak + " 次，禁用 GPU 直通回退纯 CPU 路径（防吞帧）");
                             gpuConverter?.Dispose(); gpuConverter = null;
                         }
                         if (zeroHandled)
                         {
-                            nextAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency / (double)fps);
-                            continue;   // 零拷贝成功产出 NAL，本拍结束
+                            AdvanceSlot(ref nextAt, fps);
+                            continue;   // 零拷贝成功产出 NAL / 已消费本拍纹理，本拍结束
                         }
-                        // zeroHandled=false：静止 / 无帧 / 转换失败 / 编码无输出 → 落到下方 CPU 路径兜底
+                        // zeroHandled=false：静止 / 无帧 / 共享句柄拿不到 → 落到下方 CPU 路径兜底
                     }
 
                     var frameStart = Stopwatch.StartNew();
@@ -868,7 +907,7 @@ namespace SoulLink.Relay
                             try
                             {
                                 var conv = new GpuColorConverter(nvencEnc.Device, nvencEnc.Context);
-                                if (conv.TryInitialize(ew, eh)) { gpuConverter = conv; }
+                                if (conv.TryInitialize(ew, eh)) { gpuConverter = conv; zeroCopyFailStreak = 0; }
                                 else { RelayAgent.LogQuiet("[video] GPU 转换器不可用，零拷贝降级 CPU：" + conv.LastError); conv.Dispose(); }
                             }
                             catch (Exception ex) { RelayAgent.LogQuiet("[video] GPU 转换器创建失败，降级 CPU：" + ex.Message); }
@@ -932,9 +971,12 @@ namespace SoulLink.Relay
                     //   真实帧拍不推进（桌面活动期间保活不需要；静止恢复后立即补上）。
                     if (keepaliveDue)
                         _keepaliveNextAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * (double)KeepaliveIntervalMs / 1000);
-                    // ★ A2：本拍已编码，推进下一允许抓屏时刻（forceKeyFrame 绕过 WaitUntilNextSlot，
-                    //   这里统一推进，防止 IDR 后立即再编码超速）。
-                    nextAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency / (double)fps);
+                    // ★ P0-F（2026-11-24）：改用累积式节拍器 AdvanceSlot —— 旧写法
+                    //   「now + 1/fps」把本拍工作耗时（capture+convert+encode）叠加在等待之上，
+                    //   实际周期 = 工作耗时 + 1/fps。1920x1080 实测工作 24ms + 33ms = 57ms/帧
+                    //   → 仅 17fps（真机实测 15fps），配置 30fps 名不副实。
+                    //   累积式让工作耗时包含在周期内，稳定跑到目标 fps。
+                    AdvanceSlot(ref nextAt, fps);
                     if (_loopSequence % 150 == 0)
                         RelayAgent.LogQuiet("[video] 活性 loop=" + _loopSequence + " total=" + _totalFrames
                             + " lastCapture=" + _lastCaptureAt.ToString("HH:mm:ss.fff") + " lastEncode=" + _lastEncodeAt.ToString("HH:mm:ss.fff")
@@ -948,6 +990,7 @@ namespace SoulLink.Relay
             }
             finally
             {
+                timeEndPeriod(1);   // ★ P0-E：与 timeBeginPeriod 配对
                 try { encoder?.Dispose(); } catch { }
                 // 静态 Capture 跨订阅复用；仅热切/Shutdown 释放，避免二次订阅拿到已 disposed 后端。
                 lock (Gate)
@@ -1022,8 +1065,37 @@ namespace SoulLink.Relay
         }
 
         /// <summary>
+        /// ★ P0-F（2026-11-24）：累积式帧节拍器——保证**平均**稳定跑到目标 fps。
+        ///
+        /// ★ 为什么不能用「now + 1/fps」（旧写法，真机实测 30fps 配置只跑出 15fps）：
+        ///   旧写法在「本拍工作全部做完之后」才设置下一次时刻，
+        ///   所以真实周期 = 工作耗时 + 1/fps。
+        ///   1920x1080 实测：captureMs≈16 + convertMs≈5 + encodeMs≈3 = 24ms 工作，
+        ///   加 33.3ms 等待 = 57ms/帧 → 17.5fps（实测 15fps，因为还有零碎开销）。
+        ///   配置写 30fps，用户看到的是 15fps，与 Sunshine 的 120fps 差距巨大。
+        ///
+        /// ★ 累积式做法：nextAt += 周期，让工作耗时**包含在**周期内。
+        ///   工作 24ms < 周期 33.3ms → 每拍只等 9.3ms → 稳定 30fps。
+        ///   工作超过周期时（如 4K / 高负载）nextAt 落后于 now：
+        ///   此时按「上一拍 + 周期」累加会无限追不上，故做**追帧补偿**：
+        ///   若落后超过一个周期，直接把 nextAt 对齐到 now（不补发积压帧，
+        ///   实时链路要的是最新画面，不是补播旧帧）。
+        /// </summary>
+        private static void AdvanceSlot(ref long nextAt, int fps)
+        {
+            if (fps <= 0) fps = 1;
+            long period = (long)(Stopwatch.Frequency / (double)fps);
+            long now = Stopwatch.GetTimestamp();
+            long next = nextAt + period;
+            // 落后超过一个周期（本拍工作超时 / 长时间挂起）→ 重新对齐到 now，
+            // 否则会连续多拍疯狂追帧，把 CPU 打满且画面不连贯。
+            if (next < now - period) next = now;
+            nextAt = next;
+        }
+
+        /// <summary>
         /// ★ A2：抓屏前节流——等到「允许抓屏/编码」的绝对时刻 nextAt（fps 上限门槛）。
-        /// nextAt 由上一次编码完成时统一推进（= 编码完成 + 1/fps），本方法只等待、不推进：
+        /// nextAt 由 AdvanceSlot() 累积推进，本方法只等待、不推进：
         /// 到拍立即 true；未到拍挂起，期间被生命周期事件（stop/热切/参数更新/IDR，
         /// 均经 RecomputeLifecycle→LifecycleChanged.Set）唤醒返回 false，调用方回顶重新判断。
         /// </summary>
