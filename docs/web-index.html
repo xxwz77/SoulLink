@@ -1404,16 +1404,20 @@ function norm(e) {
   // ★ 画面唯一来源是 <canvas id="vframe">（JPEG img 已随轮询通路一起移除）。
   //   canvas.width/height 是解码帧的原始分辨率；还没出画面时退回 16:9 兜底，
   //   此时点击坐标本来就不该生效（ph 提示层挡着）。
-  const el = $('scr'), rect = el.getBoundingClientRect();
   const cv = $('vframe');
   const iw = (cv && cv.width > 0) ? cv.width : 16;
   const ih = (cv && cv.height > 0) ? cv.height : 9;
-  const sc = Math.min(rect.width / iw, rect.height / ih);
-  const dw = iw * sc, dh = ih * sc;
-  const ox = (rect.width - dw) / 2, oy = (rect.height - dh) / 2;
+  // ★ 2026-11-24 修落点偏移：用 canvas 自身实际显示矩形（含 max-height 夹住 +
+  //   object-fit letterbox 黑边），而非 #scr 的 rect。#scr 高度可能 > canvas 显示高度，
+  //   旧实现按 #scr 算居中偏移 → 纵向落点系统性偏移（见 CURSOR-AND-POINTER-LOCK）。
+  const rect = cv && cv.classList.contains('show') ? cv.getBoundingClientRect() : $('scr').getBoundingClientRect();
+  // canvas 内 object-fit:contain 的黑边：视频内容区 = min(rect.w, rect.h * 比例)
+  const dwContent = Math.min(rect.width, rect.height * iw / ih);
+  const dhContent = Math.min(rect.height, rect.width * ih / iw);
+  const ox = (rect.width - dwContent) / 2, oy = (rect.height - dhContent) / 2;
   const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left - ox;
   const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top - oy;
-  return { nx: Math.max(0, Math.min(1, cx / dw)), ny: Math.max(0, Math.min(1, cy / dh)) };
+  return { nx: Math.max(0, Math.min(1, cx / dwContent)), ny: Math.max(0, Math.min(1, cy / dhContent)) };
 }
 
 function ripple(e) {
@@ -1457,6 +1461,7 @@ const PL_SENS_KEY = 'sl_pl_sens';
 const PL_ESC_KEY = 'sl_pl_escape';
 const PL_SUPPORTED = ('pointerLockElement' in document) && ('requestPointerLock' in document.body);
 let pointerLocked = false;
+let plLockPending = null;      // 首击挂起：{nx,ny} 待锁定结果决定是否补发 click
 let plExitByShortcut = false;    // 快捷键逃生门主动退出（不补发 ESC）
 let plExitByLifecycle = false;   // 生命周期/断线/关画面主动退出（不补发 ESC）
 let plLockCooldownUntil = 0;     // Esc 后重锁冷却（规范：立即重锁会被拒）
@@ -1530,6 +1535,7 @@ document.addEventListener('pointerlockchange', () => {
     pointerLocked = true;
     plExitByShortcut = false;
     plExitByLifecycle = false;
+    plLockPending = null;    // 首击挂起 → 吃掉（对齐月光：进锁定那次不点远端）
     return;
   }
   if (!nowLocked && pointerLocked) {
@@ -1555,8 +1561,12 @@ document.addEventListener('pointerlockchange', () => {
 });
 
 document.addEventListener('pointerlockerror', () => {
-  // 请求锁定失败（非手势/不支持/冷却期内）：保持未锁定
+  // 请求锁定失败（非手势/不支持/冷却期内）：保持未锁定，并补发挂起的首击
   if (!document.pointerLockElement) pointerLocked = false;
+  if (plLockPending) {
+    const p = plLockPending; plLockPending = null;
+    sendInputOrdered('click', p.nx, p.ny, { button: 'left' });
+  }
 });
 
 // 锁定态 mousemove：movementX/Y × sensitivity → 复用 lookDelta 8ms 合并
@@ -1653,10 +1663,15 @@ $('scr').addEventListener('pointerdown', e => {
 
   // 鼠标 / 触控笔：保持桌面原有行为不变
   const btn = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
-  // ★ Pointer Lock（2026-11-23）：桌面左键且未锁定 → 请求锁定，吃掉本次点击。
-  //   对齐月光 input.cpp MOUSE_DOWN 先 LockMouse 再 return，避免「点进锁定=远端也点一下」。
-  if (e.pointerType === 'mouse' && btn === 'left' && PL_SUPPORTED
+  // ★ Pointer Lock（2026-11-24 修吞点击死循环）：桌面左键且未锁定 → 发起锁定请求并挂起首击。
+  //   requestPointerLock 是异步，成功/失败由 pointerlockchange/error 决定：
+  //     · 锁定成功 → 吃掉首击（不补发 click，对齐月光）
+  //     · 锁定失败 → 补发 click（回退绝对模式，本次点击不丢）
+  //   挂起期间 return，绝不吞掉首击；失败后 pointerLocked 保持 false，下次点击重试。
+  if (e.pointerType === 'mouse' && btn === 'left' && PL_SUPPORTED && window.isSecureContext
       && !pointerLocked && Date.now() >= plLockCooldownUntil) {
+    const p0 = norm(e);
+    plLockPending = { nx: p0.nx, ny: p0.ny };
     try { $('scr').requestPointerLock(); } catch (err) {}
     return;
   }
@@ -1832,6 +1847,12 @@ $('scr').addEventListener('pointerup', e => {
   }
 
   // ── 鼠标 / 触控笔 ──
+  // ★ 首击挂起兜底：requestPointerLock 既未成功也未报错（罕见），pointerup 时补发 click
+  if (!drag && plLockPending) {
+    const p = plLockPending; plLockPending = null;
+    sendInputOrdered('click', p.nx, p.ny, { button: 'left' });
+    return;
+  }
   if (!drag) return;
   const moved = drag.moved, btn = drag.btn || 'left';
   drag = null;

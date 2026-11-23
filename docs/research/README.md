@@ -32,6 +32,7 @@
 ## 视频流 / 远程画面（2026-11-22 主线）
 
 - [ENCODER-REBUILD-HANG-20261123.md](ENCODER-REBUILD-HANG-20261123.md) —— **编码器频繁重建与产帧中断根因**（DDA ACCESS_LOST 仅重建 duplication；静止复用+去重导致 total 中断，新 viewer IDR 与去重冲突致起播失败；自恢复与参数去抖方案）
+- [FIRST-FRAME-25S-DIAGNOSIS-20261124.md](FIRST-FRAME-25S-DIAGNOSIS-20261124.md) —— **首帧 25 秒超时根因**（静止起播 IDR 死锁未根治：`_forceKeyFrame` 只保首帧一帧，MF 编码器需连续多帧才吐 IDR，静止去重第二帧起切断输入 → Ring 永不产帧 → 25s 上限 503；最小修复=编码失败且 forceKeyFrame 时重新置位直到出 IDR；附完整链路 file:line 证据）
 - [WGC-V2-RESEARCH-20261123.md](WGC-V2-RESEARCH-20261123.md) —— **WGC V2 帧完整性与撕裂规避调研（对齐 BGI）**（拆解 BGI GraphicsCaptureV2.cs 到达即取+单槽stash+帧池容量2+帧池代数+无新帧跳过读回+GPU打包BGR24；对照微软官方 WGC 与我们的 WgcCapture 538行；结论：核心模型已对齐，建议补帧池代数+无新帧跳过读回两条，作为 DDA 失败时 WGC 兜底增强；MIT 许可只读不抄）
 
 - [DXGI-DDA-CAPTURE-20261123.md](DXGI-DDA-CAPTURE-20261123.md) —— **DXGI Desktop Duplication 抓屏后端接入降级链**（新增 Relay/DxgiDdaCapture.cs 339行实现 IScreenCapture，syncThreadDesktop+Hardware D3D11+DuplicateOutput+AcquireNextFrame；降级链 DDA→WGC→BitBlt，DDA优先因独占全屏+无撕裂+0.13ms；处理脏矩形静止复用/ACCESS_LOST重建/DPI物理尺寸/显存降级四边界；两TFM 0 error）
