@@ -348,6 +348,27 @@ body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
 
 /* ★ 用 flex + 统一间距，保证垂直居中对齐（之前按钮高低不齐就是缺这个） */
 .hdrctrl{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
+  /* ══════════ 顶栏收敛（2026-11-23：抓屏/鼠标/直播画质折进紧凑单行）══════════
+     ★ 原来 hgroup 各自 padding 3px 8px + gap 6px，三组叠加顶栏过高。
+       这里收紧：hdrctrl 允许换行但不撑高、hgroup 降 padding、gtag 更小、
+       select/range 降高度，qguide 改单行省略。 */
+  .hdrctrl{flex-wrap:wrap;row-gap:4px}
+  .hgroup{padding:1px 6px;gap:4px;border-radius:7px}
+  .gtag{font-size:9px}
+  .hfield>span,.qgroup>span{font-size:9.5px}
+  .hfield select,.select-mini{height:22px;padding:0 14px 0 5px;font-size:10.5px;
+      background-position:calc(100% - 9px) 9px, calc(100% - 5px) 9px;background-size:3px 3px,3px 3px}
+  .qgroup{height:22px}
+  .qgroup input[type=range]{width:64px;height:16px}
+  .qgroup .qval{font-size:9.5px;min-width:32px}
+  .qguide{font-size:9px;line-height:1.4;margin-top:2px;white-space:nowrap;
+           overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .hbtn{height:22px;padding:0 10px;font-size:10.5px}
+  .capbackend{font-size:10px}
+  .hdrinfo{font-size:9.5px}
+  #kbBadge{font-size:9.5px}
+  .pill{font-size:10px;padding:3px 9px}
+  header{padding:8px 12px 7px;gap:8px}
 
 /* ★ 两组设置各自成块，用底色+边框区分，避免"帧率"到底指哪个的歧义。
      data-kind 只用于配色，不参与逻辑。 */
@@ -1080,6 +1101,20 @@ function directBase(sess) {
       const reader = resp.body.getReader();
       h264Reader = reader;
 
+      // ── 拉流自愈：无数据超时 → 断流重连（2026-11-23）──
+      //   修「DXGI 播一会儿自己停」：服务端 /stream 断开不一定走 done/异常，
+      //   可能只是编码器停转/后端切换卡住后不再吐数据，read() 永远 pending。
+      //   只在**出过画面之后**才启用看门狗 —— 首帧慢（软编 warmup/等 IDR）不算断流。
+      const STALL_MS = 10000;       // 出过画面后 10s 无任何数据 = 断流，触发带退避重连
+      let lastDataAt = Date.now();
+      const stallTimer = setInterval(() => {
+        if (myGen !== h264Gen) return;
+        if (gotFrame && Date.now() - lastDataAt >= STALL_MS) {
+          console.warn('[H264] 拉流无数据超时 ' + STALL_MS + 'ms，自动重连');
+          fail('[H264] 拉流无数据超时', null);
+        }
+      }, 1000);
+
       let pending = new Uint8Array(0);
       // ── AU（access unit）攒批 ──
       // ★ WebCodecs 的 chunk.data 必须是完整 AU（AVC Registration §2/§4）：
@@ -1160,6 +1195,7 @@ function directBase(sess) {
         const { done, value } = await reader.read();
         if (myGen !== h264Gen) break;      // 换代：立刻退出，不碰已换人的 reader
         if (done) break;
+        lastDataAt = Date.now();           // 有数据到达 → 重置无数据看门狗
 
         const merged = new Uint8Array(pending.length + value.length);
         merged.set(pending, 0);
@@ -1234,6 +1270,7 @@ function directBase(sess) {
     } catch (e) {
       fail('[H264] 流断开:', e);
     } finally {
+      clearInterval(stallTimer);
       if (myGen === h264Gen) {
         h264Active = false;
         h264Reader = null;
@@ -1780,13 +1817,26 @@ bindRange('qVbv',       'qVbvV',       v => v + '%',                    v => pus
 const qPre = $('qPreset');
 if (qPre) qPre.onchange = () => pushSettings({ nvencPreset: parseInt(qPre.value) || 3 });
 
-// 抓屏方式（2026-11-23）：切换 → pushSettings 改 CaptureMode → 下发 agent 热切 → 刷新实际后端
+// 抓屏方式（2026-11-23）：切换 → pushSettings 改 CaptureMode → 下发 agent 热切
+//   → 延时等 agent 帧边界切换完成 → 断开旧 /stream reader 重连拿新 SPS/IDR。
+//   为什么不立即重连：热切在 worker 帧边界排队，立即重连会拿到旧后端；
+//   且后端分辨率可能变化，旧 decoder 配置对新 SPS 会花屏，必须重连重新 configure。
 const capSel = $('capMode');
 if (capSel) capSel.onchange = async () => {
   const mode = parseInt(capSel.value) || 0;
   const ok = await pushSettings({ captureMode: mode });
-  if (ok) { setTimeout(refreshCaptureBackend, 1200); }   // 热切是帧边界排队，稍等再读实际后端
-  else syncCapture();
+  if (ok) {
+    if (liveRunning && !paused) {
+      setTimeout(() => {
+        refreshCaptureBackend();
+        if (liveRunning && !paused) {
+          failStreak = 0;
+          setPh('抓屏后端已切换 · 正在重连画面…', false);
+          startLive();      // stopLive + startStream：断旧 reader 重连新流
+        }
+      }, 1200);
+    }
+  } else syncCapture();
 };
 
 // 「本机播放」下拉框已随 JPEG 轮询通路移除（2026-11-23）：
