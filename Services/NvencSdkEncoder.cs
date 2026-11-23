@@ -465,6 +465,12 @@ namespace SoulLink.Services
         public int NegotiatedBitrateKbps { get; private set; }
         public string LastError { get; private set; } = "";
 
+        // ★ 零拷贝（阶段B）：暴露设备/上下文/NV12 纹理给 GpuColorConverter，
+        //   使转换器产出的 NV12 与本编码器在同一 device 上（避免跨设备注册）。
+        internal ID3D11Device? Device => _device;
+        internal ID3D11DeviceContext? Context => _context;
+        internal ID3D11Texture2D? Nv12InputTexture => _nv12Tex;
+
         /// <summary>
         /// 惰性初始化：载入 nvEncodeAPI64.dll → D3D11 设备 → 编码会话 → 注册 NV12 纹理。
         /// 只在 SessionRecorder 后台视频线程首次真正需要硬编时调用，不进启动路径、不阻塞 UI。
@@ -703,6 +709,71 @@ namespace SoulLink.Services
             }
         }
 
+        /// <summary>
+        /// 编码一帧「已写入 _nv12Tex 的 GPU NV12 纹理」，跳过 UpdateSubresource 上传段（零拷贝）。
+        /// 传入的 nv12Tex 必须就是本编码器注册的 Nv12InputTexture（GpuColorConverter 写的就是它）；
+        /// 不符则抛异常（接线错误，不应发生）。返回 null = 无输出；异常 = 编码器故障（调用方降级）。
+        /// </summary>
+        public byte[]? EncodeD3D11Texture(ID3D11Texture2D nv12Tex, long timestampUs)
+        {
+            if (_disposed || _enc == IntPtr.Zero || _nv12Tex == null || _context == null) return null;
+            if (_mapRes == null || _encodePic == null || _lockBs == null) return null;
+            if (!ReferenceEquals(nv12Tex, _nv12Tex))
+                throw new InvalidOperationException("EncodeD3D11Texture 收到的纹理不是已注册的 Nv12InputTexture（接线错误）");
+
+            try
+            {
+                // ★ 零拷贝关键：不做 UpdateSubresource（像素已在 GPU 上，由 VideoProcessor 写入 _nv12Tex），
+                //   直接 Map 已注册纹理 → Encode → Lock。
+                var map = new NV_ENC_MAP_INPUT_RESOURCE();
+                map.version = StructVersion(4);
+                map.registeredResource = _registered;
+                int hr = _mapRes(_enc, ref map);
+                if (hr != 0) throw new InvalidOperationException("NvEncMapInputResource hr=0x" + hr.ToString("X8"));
+
+                try
+                {
+                    var pic = new NV_ENC_PIC_PARAMS();
+                    pic.version = StructVersionEx(7);
+                    pic.inputWidth = (uint)_width; pic.inputHeight = (uint)_height;
+                    pic.inputPitch = (uint)_width;
+                    bool forceIdr = _firstFrame || _forceIdr;
+                    pic.encodePicFlags = forceIdr ? (NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS) : 0u;
+                    pic.frameIdx = (uint)_frameIndex;
+                    pic.inputTimeStamp = (ulong)timestampUs;
+                    pic.inputDuration = 10_000_000L / (ulong)_fps;
+                    pic.inputBuffer = map.mappedResource;
+                    pic.outputBitstream = _bitstream;
+                    pic.completionEvent = IntPtr.Zero;
+                    pic.bufferFmt = map.mappedBufferFmt;
+                    pic.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+                    hr = _encodePic(_enc, ref pic);
+                    if (hr != 0) throw new InvalidOperationException("NvEncEncodePicture hr=0x" + hr.ToString("X8"));
+
+                    var lb = new NV_ENC_LOCK_BITSTREAM();
+                    lb.version = StructVersionEx(2);
+                    lb.outputBitstream = _bitstream;
+                    lb.bitField = 0;
+                    hr = _lockBs(_enc, ref lb);
+                    if (hr != 0) throw new InvalidOperationException("NvEncLockBitstream hr=0x" + hr.ToString("X8"));
+
+                    byte[] nal = new byte[lb.bitstreamSizeInBytes];
+                    if (nal.Length > 0) Marshal.Copy(lb.bitstreamBufferPtr, nal, 0, nal.Length);
+                    _unlockBs!(_enc, _bitstream);
+                    _forceIdr = false;
+                    _firstFrame = false;
+                    _frameIndex++;
+                    return nal.Length > 0 ? nal : null;
+                }
+                finally { _unmapRes!(_enc, map.mappedResource); }
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.GetType().Name + "：" + ex.Message;
+                throw;
+            }
+        }
+
         /// <summary>请求下一帧为关键帧（按需 IDR）。新观众接入/丢帧重同步时调用。</summary>
         public void RequestKeyFrame() => _forceIdr = true;
 
@@ -716,7 +787,9 @@ namespace SoulLink.Services
                     Format = Format.NV12,
                     SampleDescription = new SampleDescription(1, 0),
                     Usage = ResourceUsage.Default,
-                    BindFlags = BindFlags.None,
+                    // ★ 零拷贝：BindFlags=RenderTarget 让 VideoProcessor 能写此纹理（BGRA→NV12）。
+                    //   UpdateSubresource（CPU 路径）不要求 BindFlags，此改动不影响现状 CPU 上传。
+                    BindFlags = BindFlags.RenderTarget,
                     CPUAccessFlags = CpuAccessFlags.None,
                     MiscFlags = ResourceOptionFlags.None
                 };

@@ -319,6 +319,31 @@ namespace SoulLink.Relay
             => ConsumeBgra(true, out width, out height);
 
         /// <summary>
+        /// 零拷贝（阶段B）：返回私有 _gpuTexture（B8G8R8A8，已在显存）+ 其跨设备共享句柄，不读回 CPU。
+        /// 供 GpuColorConverter 在编码器设备上 OpenSharedResource + VideoProcessorBlt 转 NV12。
+        /// 无有效帧时返回 false（sharedHandle=0，width/height=0）。
+        /// </summary>
+        public bool TryCaptureBgraTexture(out IntPtr sharedHandle, out int width, out int height)
+        {
+            sharedHandle = IntPtr.Zero; width = 0; height = 0;
+            if (!_running) return false;
+            lock (_captureGate)
+            {
+                var gpuTex = _gpuTexture;
+                if (gpuTex == null || _gpuFrameTs == 0) return false;
+                try
+                {
+                    using var dxgiRes = gpuTex.QueryInterface<IDXGIResource>();
+                    sharedHandle = dxgiRes.SharedHandle;
+                    if (sharedHandle == IntPtr.Zero) return false;
+                }
+                catch { return false; }
+                width = _gpuWidth; height = _gpuHeight;
+                return true;
+            }
+        }
+
+        /// <summary>
         /// 抓一帧 JPEG（截图路径）。常驻会话运行时读私有纹理；无常驻则临时单帧抓取。
         /// </summary>
         public byte[]? CaptureJpeg(int quality, out int width, out int height)
@@ -472,7 +497,9 @@ namespace SoulLink.Relay
                 Usage = ResourceUsage.Default,
                 BindFlags = BindFlags.None,
                 CPUAccessFlags = CpuAccessFlags.None,
-                MiscFlags = ResourceOptionFlags.None
+                // ★ 零拷贝：Shared 使本纹理可被同进程其他 D3D11 设备打开（跨设备 CopyResource）。
+                //   不影响现有 CopyResource/读回路径。
+                MiscFlags = ResourceOptionFlags.Shared
             });
             _gpuWidth = width; _gpuHeight = height;
         }

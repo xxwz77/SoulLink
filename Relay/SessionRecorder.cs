@@ -363,10 +363,13 @@ namespace SoulLink.Relay
         private static void Loop()
         {
             IFrameH264Encoder? encoder = null;
+            GpuColorConverter? gpuConverter = null;   // ★ 零拷贝伴生资源：与 encoder 同生命周期
             int encodedWidth = 0, encodedHeight = 0;
             long frameIndex = 0;
             byte[]? previousBgra = null;
             long previousFrameSeq = -1;   // DDA 后端上一次的 FrameSequence（-1=尚未取得）
+            long previousWgcSeq = -1;      // WGC 后端上一次的 FrameSequence（零拷贝分支静止判定用）
+            bool zeroCopyPsnrDone = false;   // 零拷贝首帧 PSNR 诊断只跑一次
             long nextAt = Stopwatch.GetTimestamp();   // ★ A2：下一次允许抓屏/编码的时间戳（fps 上限门槛）
             int appliedVersion = -1;
             VideoParameters? applied = null;
@@ -385,6 +388,7 @@ namespace SoulLink.Relay
                             Capture.Dispose(); _probeClock = null; _captureProbeComplete = false;
                             Capture = CreateCapture();
                             encoder?.Dispose(); encoder = null;
+                            gpuConverter?.Dispose(); gpuConverter = null;
                             frameIndex = 0; previousBgra = null; previousFrameSeq = -1;
                             appliedCaptureVersion = version;
                         }
@@ -398,6 +402,7 @@ namespace SoulLink.Relay
                         RelayAgent.LogQuiet("[video] 参数热更新：" + oldDescription + " → " + parameters.Describe());
                         // 仅 worker 替换编码器；保留观众 HTTP 连接、字典和各自 Pending 队列。
                         encoder.Dispose(); encoder = null;
+                        gpuConverter?.Dispose(); gpuConverter = null;
                         frameIndex = 0; previousBgra = null;
                         // ★ 热切后强制按需 IDR：与 432 行静止判定解耦。即使画面完全静止，
                         //   也必须让重建后的编码器首帧必出 SPS/PPS+IDR，否则前端 10s 看门狗
@@ -421,6 +426,85 @@ namespace SoulLink.Relay
                     {
                         continue;
                     }
+#if WGC
+                    // ★★ 零拷贝分支（GPU 零拷贝阶段B）：WGC 纹理直通 NVENC，不读回 CPU、不做 CPU 转换。
+                    //   触发条件：converter 已建 + WGC 后端 + NVENC SDK 编码器，三者齐备才走。
+                    //   任一步失败（TryCaptureBgraTexture/Convert/Encode 返回 false 或抛异常）→
+                    //   置 gpuConverter=null 静默回退 CPU 路径，本帧不产出，下一轮走现有 CPU 分支。
+                    if (gpuConverter != null && Capture is WgcCapture wgcZero && encoder is NvencSdkEncoder nvencZero)
+                    {
+                        try
+                        {
+                            if (wgcZero.TryCaptureBgraTexture(out IntPtr sharedHandle, out int zw, out int zh)
+                                && sharedHandle != IntPtr.Zero && zw > 0 && zh > 0)
+                            {
+                                // 静止判定：WGC FrameSequence 变化才编码（与 DDA 的 FRAME_INFO 同构，不读回 CPU 比对）
+                                bool zChanged = previousWgcSeq < 0 || wgcZero.FrameSequence != previousWgcSeq;
+                                if (forceKeyFrame || zChanged)
+                                {
+                                    // 按需 IDR：NVENC 精确按需（不重建，下一帧 FORCEIDR）
+                                    if (forceKeyFrame) nvencZero.RequestKeyFrame();
+                                    if (gpuConverter.ConvertFromSharedHandle(sharedHandle, zw, zh, out var nv12Tex) && nv12Tex != null)
+                                    {
+                                        byte[]? zNal = nvencZero.EncodeD3D11Texture(nv12Tex, frameIndex * 1_000_000L / fps);
+                                        if (zNal != null && zNal.Length > 0)
+                                        {
+                                            frameIndex++; _noNalFrames = 0; _lastNalAt = DateTime.UtcNow;
+                                            var zFrame = new VideoFrame { Nal = zNal, At = DateTime.Now, KeyFrame = IsKeyFrame(zNal) };
+                                            lock (Gate)
+                                            {
+                                                Ring.Add(zFrame);
+                                                _totalFrames++;
+                                                _captureMs = 0; _convertMs = 0; _encodeMs = 0;   // 零拷贝：CPU 段为 0
+                                                _status = "recording"; _lastError = "";
+                                                DateTime cutoff = zFrame.At.AddSeconds(-keepSec);
+                                                while (Ring.Count > 0 && (Ring[0].At < cutoff || Ring.Count > Math.Max(300, fps * keepSec * 2))) Ring.RemoveAt(0);
+                                                foreach (var viewer in Viewers.Values)
+                                                {
+                                                    lock (viewer.Sync)
+                                                    {
+                                                        if (viewer.Closed) continue;
+                                                        if (zFrame.KeyFrame) viewer.Pending.Clear();
+                                                        while (viewer.Pending.Count >= 4 && !IsKeyFrame(viewer.Pending.Peek())) viewer.Pending.Dequeue();
+                                                        viewer.Pending.Enqueue(zFrame.Nal);
+                                                    }
+                                                }
+                                            }
+                                            // ★ 零拷贝首帧 PSNR 诊断（只跑一次）：GPU NV12 vs CPU 路径 NV12 同帧对比
+                                            if (!zeroCopyPsnrDone)
+                                            {
+                                                zeroCopyPsnrDone = true;
+                                                try
+                                                {
+                                                    int zew = zw & ~1, zeh = zh & ~1;
+                                                    var gpuNv12 = gpuConverter.ReadBackNv12(nv12Tex, zew, zeh);
+                                                    var cpuBgra = CaptureBgraWithProbe(out int cw, out int ch);
+                                                    if (gpuNv12 != null && cpuBgra != null && cw > 0 && ch > 0)
+                                                    {
+                                                        var cpuNv12 = BgraToNv12(cpuBgra, zew, zeh, cw * 4);
+                                                        double psnr = GpuColorConverter.ComputePsnrY(gpuNv12, cpuNv12, zew, zeh);
+                                                        RelayAgent.LogQuiet("[video] 零拷贝色差 PSNR(Y) = " + (psnr >= 99 ? "∞(完全相同)" : psnr.ToString("0.0") + " dB") + " 尺寸=" + zew + "x" + zeh + "（≥40dB 达标）");
+                                                    }
+                                                }
+                                                catch (Exception ex) { RelayAgent.LogQuiet("[video] 零拷贝 PSNR 诊断异常：" + ex.Message); }
+                                            }
+                                        }
+                                    }
+                                }
+                                previousWgcSeq = wgcZero.FrameSequence;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // 零拷贝任何异常 → 静默降级 CPU，绝不进入崩溃路径
+                            RelayAgent.LogQuiet("[video] 零拷贝失败，降级 CPU：" + ex.Message);
+                            gpuConverter?.Dispose(); gpuConverter = null;
+                        }
+                        nextAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency / (double)fps);
+                        continue;   // 本拍由零拷贝分支处理（或降级后下一轮走 CPU），不落入下方 CPU 流程
+                    }
+#endif
+
                     var frameStart = Stopwatch.StartNew();
                     var bgra = CaptureBgraWithProbe(out int width, out int height);
                     _loopSequence++; _lastCaptureAt = DateTime.UtcNow;
@@ -479,9 +563,22 @@ namespace SoulLink.Relay
                     {
                         previousBgra = null;
                         encoder?.Dispose();
+                        gpuConverter?.Dispose(); gpuConverter = null;
                         encoder = CreateEncoder(ew, eh, fps, parameters);
                         applied = parameters; appliedVersion = parameterVersion;
                         encodedWidth = ew; encodedHeight = eh;
+                        // ★ 零拷贝伴生：编码器是 NVENC SDK 时创建 GPU 转换器（复用其 device）。
+                        //   转换器创建失败（RDP 内 VideoDevice 不可用）→ IsAvailable=false，上层走 CPU 路径。
+                        if (encoder is NvencSdkEncoder nvencEnc && nvencEnc.Device != null && nvencEnc.Context != null)
+                        {
+                            try
+                            {
+                                var conv = new GpuColorConverter(nvencEnc.Device, nvencEnc.Context);
+                                if (conv.TryInitialize(ew, eh)) { gpuConverter = conv; }
+                                else { RelayAgent.LogQuiet("[video] GPU 转换器不可用，零拷贝降级 CPU：" + conv.LastError); conv.Dispose(); }
+                            }
+                            catch (Exception ex) { RelayAgent.LogQuiet("[video] GPU 转换器创建失败，降级 CPU：" + ex.Message); }
+                        }
                         RelayAgent.LogQuiet("[video] 编码器=" + encoder.Name + " 配置码率=" + encoder.ConfiguredBitrateKbps
                             + "kbps MFT读回=" + encoder.NegotiatedBitrateKbps + "kbps fps=" + fps + " 尺寸=" + ew + "x" + eh);
                         lock (Gate) { _width = ew; _height = eh; _configuredBitrate = encoder.ConfiguredBitrateKbps; _negotiatedBitrate = encoder.NegotiatedBitrateKbps; }
