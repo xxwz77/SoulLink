@@ -160,7 +160,10 @@ namespace SoulLink.Relay
                     return frame;
                 }
                 if (reason.Length == 0) reason = dda.LastError.Length > 0 ? dda.LastError : "DDA 未出帧";
-                if (_probeClock.ElapsedMilliseconds >= 300)
+                // ★ P1：DDA 已建立（IsActive）却返回 null = 静止桌面未出新帧（AcquireNextFrame 超时复用 _lastBgra==null），
+                //   再等 300ms 也不会出帧，立即降级 WGC，省掉静止起播的探测窗口。
+                //   仅当 DDA 尚未建立（建立失败/仍在重试）才保留 300ms 窗口，不误伤正常出帧路径。
+                if (dda.IsActive || _probeClock.ElapsedMilliseconds >= 300)
                 {
                     RelayAgent.LogQuiet("[capture] DXGI-DDA 降级：" + reason);
                     dda.Dispose();
@@ -191,8 +194,10 @@ namespace SoulLink.Relay
                     return frame;
                 }
                 if (reason.Length == 0) reason = !wgc.IsActive ? "WGC 未进入 running 状态"
-                    : wgc.FrameSequence == 0 ? "WGC 300ms 内无真实首帧" : "WGC 帧读回失败";
-                if (_probeClock.ElapsedMilliseconds >= 300)
+                    : wgc.FrameSequence == 0 ? "WGC 无真实首帧" : "WGC 帧读回失败";
+                // ★ P1：WGC 已 running 但 FrameSequence==0 = 静止桌面无 FrameArrived，再等 300ms 也不会出帧，
+                //   立即降级 BitBlt；仅当 WGC 未 running（建立失败）才保留 300ms 窗口，不误伤正常出帧路径。
+                if (wgc.IsActive || _probeClock.ElapsedMilliseconds >= 300)
                 {
                     RelayAgent.LogQuiet("[capture] 自动探测降级 BitBlt：" + reason);
                     wgc.Dispose(); Capture = new BitBltCapture(); _probeClock = null; _captureProbeComplete = true;
@@ -520,7 +525,17 @@ namespace SoulLink.Relay
                             }
                         }
                     }
-                    if (nal == null || nal.Length == 0) _noNalFrames++;
+                    if (nal == null || nal.Length == 0)
+                    {
+                        _noNalFrames++;
+                        // ★ P0 死锁修复：MF 编码器需连续多帧才吐首个 IDR（AgentWebServer.cs:413 注释自证），
+                        //   但 _forceKeyFrame 是「一次性」标志，首帧喂给 MF 后即归零；静止画面第二帧起命中
+                        //   :461 的 !forceKeyFrame && !desktopChanged 直接 continue，不再喂帧 → MF 永远凑不齐
+                        //   输入帧 → Ring 永不产帧 → 首帧 25s 超时 503。
+                        //   修复：本帧若因 forceKeyFrame（按需 IDR）进入编码却仍未产出 NAL，重新置位 
+                        //   _forceKeyFrame，让下一轮继续强制喂帧，直到 MF 吐出首个 IDR（受 nextAt fps 节流约束不超速）。
+                        if (forceKeyFrame) { lock (Gate) { _forceKeyFrame = true; } }
+                    }
                     // ★ A2：本拍已编码，推进下一允许抓屏时刻（forceKeyFrame 绕过 WaitUntilNextSlot，
                     //   这里统一推进，防止 IDR 后立即再编码超速）。
                     nextAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency / (double)fps);
@@ -585,6 +600,16 @@ namespace SoulLink.Relay
             // 录制未开启且最后一个观众离开时停止共享管线，释放编码器与 MF 缓冲池。
             // 锁外赋值避免在持锁状态调用线程管理。
             lock (Gate) RecomputeLifecycle();
+        }
+
+        /// <summary>
+        /// ★ P1 加固：供首帧等待方（AgentWebServer.WriteStreamAsync）主动再触发一次按需 IDR。
+        /// 置位 _forceKeyFrame 并唤醒 worker，让 worker 即使画面静止也强制编码下一帧（双保险）。
+        /// </summary>
+        public static void RequestKeyFrame()
+        {
+            lock (Gate) { _forceKeyFrame = true; }
+            LifecycleChanged.Set();
         }
 
         private static bool ConsumeKeyFrameRequest()

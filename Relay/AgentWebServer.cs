@@ -411,10 +411,22 @@ namespace SoulLink.Relay
                 {
                     var wait = System.Diagnostics.Stopwatch.StartNew();
                     // 软件 MFT 可能先缓冲若干输入帧才产生 IDR；等待期不占用编码线程。
+                    long lastNudge = -1000;   // ★ P1 加固：距上次主动请求 IDR 的毫秒，防高频重复
                     while (initial == null && wait.ElapsedMilliseconds < 25000)
                     {
                         initial = SessionRecorder.ReadViewerFrame(viewerId);
-                        if (initial == null) await Task.Delay(20).ConfigureAwait(false);
+                        if (initial == null)
+                        {
+                            // ★ P1 加固：静止起播时 worker 可能因静止去重不再喂帧，MF 凑不齐输入帧
+                            //   永远不出 IDR。这里每 500ms 主动再触发一次按需 IDR（双保险），让 worker
+                            //   即使画面静止也强制编码下一帧，不依赖画面变化。
+                            if (wait.ElapsedMilliseconds - lastNudge >= 500)
+                            {
+                                SessionRecorder.RequestKeyFrame();
+                                lastNudge = wait.ElapsedMilliseconds;
+                            }
+                            await Task.Delay(20).ConfigureAwait(false);
+                        }
                     }
                 }
                 if (initial == null)
