@@ -295,6 +295,7 @@ body.viewonly #liveCount{display:none}
    这样无论窗口是宽扁还是竖长，画面都是最大的那一个，
    多余空间均匀分布在四周（居中），而不是全堆在底部。 */
 body.viewonly #scr{height:auto;background:transparent;width:100%;
+                   min-height:160px;   /* ★ 首帧到达前也保持可视高度，避免 #scr 塌陷成空白 */
                    display:flex;align-items:center;justify-content:center}
 /* 画面按可用区域缩放：宽高都不越界，比例不变，四周均匀留白 */
 body.viewonly #scr canvas{width:auto;height:auto;max-width:100%;
@@ -310,7 +311,8 @@ body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
   /* 容器宽度决定画面宽度；高度交给图片自己撑（见 img 规则）。
      背景用透明而不是纯黑 —— 纯黑在画面比容器小时会露出黑边。 */
   #scr{position:relative;background:transparent;border-radius:11px;overflow:hidden;
-       border:1px solid var(--border);touch-action:none;cursor:default}
+       border:1px solid var(--border);touch-action:none;cursor:default;
+       min-height:220px;   /* ★ canvas 未出首帧时保持容器高度，连接中提示可见，不塌陷空白 */}
   /* ★ 宽度撑满、高度按比例自适应，并封顶在可视区内。
      历史教训：写成 height:100% 会让图在容器里居中缩小 → 画面变小 + 黑边。 */
   /* ★ 2026-11-23：JPEG 轮询通路按用户指令整个移除（「很卡很卡」），
@@ -348,6 +350,29 @@ body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
 
 /* ★ 用 flex + 统一间距，保证垂直居中对齐（之前按钮高低不齐就是缺这个） */
 .hdrctrl{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
+  /* ══════════ 顶栏「设置」弹出菜单（2026-11-23）══════════
+     默认只显示「设置」按钮；点开浮出面板，面板内放抓屏/鼠标/直播画质/录制参数。
+     点面板外/ESC 自动收起（JS 已有）。 */
+  .settingswrap{position:relative;flex:0 0 auto}
+  .settingsbtn{height:22px;padding:0 12px;font-size:10.5px;border-radius:8px;
+               border:1px solid var(--border);background:var(--card);color:var(--txt2);
+               cursor:pointer;white-space:nowrap}
+  .settingsbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .settingsbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  /* ★ 弹出面板定位在「设置」按钮正下方（right:0 贴按钮右缘），
+      不飘到页面角落；z-index 高于 header，有背景/边框/阴影。 */
+  .settingsmenu{position:absolute;top:30px;right:0;z-index:120;min-width:320px;
+                max-width:min(90vw,420px);max-height:70vh;overflow:auto;
+                background:var(--card);border:1px solid var(--border-hi);
+                border-radius:12px;box-shadow:var(--shadow);padding:10px 12px;
+                display:none}
+  .settingsmenu.open{display:block}
+  .settingsmenu .mgroup{padding:8px 0;border-top:1px solid var(--border)}
+  .settingsmenu .mgroup:first-child{border-top:none;padding-top:0}
+  .settingsmenu .mtitle{font-size:10px;color:var(--txt4);margin-bottom:6px;
+                         font-weight:600;letter-spacing:.3px}
+  .settingsmenu .hfield,.settingsmenu .qgroup{margin-bottom:6px;display:flex}
+
   /* ══════════ 顶栏收敛（2026-11-23：抓屏/鼠标/直播画质折进紧凑单行）══════════
      ★ 原来 hgroup 各自 padding 3px 8px + gap 6px，三组叠加顶栏过高。
        这里收紧：hdrctrl 允许换行但不撑高、hgroup 降 padding、gtag 更小、
