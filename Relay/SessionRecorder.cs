@@ -393,6 +393,10 @@ namespace SoulLink.Relay
                         // 仅 worker 替换编码器；保留观众 HTTP 连接、字典和各自 Pending 队列。
                         encoder.Dispose(); encoder = null;
                         frameIndex = 0; previousBgra = null;
+                        // ★ 热切后强制按需 IDR：与 432 行静止判定解耦。即使画面完全静止，
+                        //   也必须让重建后的编码器首帧必出 SPS/PPS+IDR，否则前端 10s 看门狗
+                        //   在「热切后静止」场景等不到新关键帧而断流（W8 根因）。
+                        lock (Gate) { _forceKeyFrame = true; }
                         // 保留 Pending：旧帧之后由新 IDR 续接，viewer 不重建、不断开。
                     }
                     int fps, keepSec;
