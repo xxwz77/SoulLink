@@ -52,6 +52,17 @@
 
 - [GPU-ZERO-COPY-20261123.md](GPU-ZERO-COPY-20261123.md) —— **GPU 截图→GPU 编码零拷贝路径调研**（当前是「CPU 读回 + CPU BGRA→NV12 + 系统内存 MF」，确认无疑；GPU 零拷贝唯一路线是 NVENC SDK D3D11 直通，本机 NVIDIA MF MFT 非 D3D11 使 MF 直通死路；附 Sunshine/OBS file:line 证据 + 三阶段改造路线收益/成本/风险）
 
+## 视频流差距审计（2026-11-23 下午 · 对照成熟项目五线并行审计）
+
+> 背景：用户反馈「效果差到无法使用」。五名成员（GLM-5.3 max / DS-V4-Pro xhigh）对照 Moonlight/Sunshine/Parsec/selkies/向日葵/云原神，对 453ms 延迟、低码率、触控不流畅、黑色闪烁、重连循环五线并行只读审计，全部行号级证据。团队记忆：decision/target-corrections（回环口径+安卓为重头戏）、decision/web-client-bar（回环须≥向日葵外网水准）、decision/p0-stability（稳定高于延迟）。
+
+- [AGENT-PIPELINE-LATENCY-GAP-20261123.md](AGENT-PIPELINE-LATENCY-GAP-20261123.md) —— **Agent 管线 453ms 构成拆解**（三重架构税：H1 静止误判跳帧 ~150-300ms 最大嫌疑 + H2 定时轮询 16-33ms/帧 + H3 单线程串行 CPU 四趟拷贝 10-15ms/帧；码率低=5 处 clamp 钉 50Mbps + 帧供给不足实际 ≈2.5Mbps，编码器未触顶；关键发现 DxgiDdaCapture.cs:167 丢弃 FRAME_INFO（LastPresentTime）零成本权威变化信号可替代全帧 SequenceEqual；行动项 A1~A8 按 ROI 排序）
+- [WEB-VIEWER-LATENCY-GAP-20261123.md](WEB-VIEWER-LATENCY-GAP-20261123.md) —— **网页播放链路审计**（P0.5 重连循环=确定性 bug 链：stallTimer ReferenceError(W1 修 10min) + 无限 GOP+decoder.reset 服务端不知情致 IDR 永不至→10s 看门狗断流成唯一重同步通道；热更断流根因=静止判定在编码器重建之前执行(W8)；453ms 回环归因=服务端节拍税 2/3 + 浏览器管线税 1/3；向日葵对照：PLI/帧边界/自适应三件事 HTTP/WS 同样能做，换 WebRTC 非第一步）
+- [INPUT-CHANNEL-GAP-20261123.md](INPUT-CHANNEL-GAP-20261123.md) —— **输入链路审计**（「up 丢失」三根因：①down/up 独立 fetch 无序并发 ②sendInput 静默吞异常无重试 ③HTTP 断开不触发 releaseall；拖动卡=单 in-flight 等回包 WAN 下退化为 1/RTT Hz；双指触控单例覆盖 bug；行动项：FIFO 串行+pagehide 释放+代理看门狗+move noWait+Pointer Lock 相对位移）
+- [WGC-BLACK-FLICKER-20261123.md](WGC-BLACK-FLICKER-20261123.md) —— **WGC 黑色闪烁根因**（7 嫌疑 5 立 2 排除：R1 主根因 stash 语义错误——AddRef 纹理指针≠帧对象持有，帧 Dispose=buffer 检回 DWM 复写，延迟读回读到黑帧/半黑帧；R2 无 Recreate/代数/IsIconic 致 resize 冻结；R3 >50% 黑帧过滤是闪烁放大器且误杀合法黑场景；修复 A~G 按 A(stash帧对象)→B(Recreate 状态机)→E(过滤降级，必须 A/B 后)排序；顺带更正 WGC-V2-RESEARCH L88 「stash 已对齐」误判）
+- [MATURE-ARCH-FACTS-20261123.md](MATURE-ARCH-FACTS-20261123.md) —— **成熟项目延迟/码率/输入硬事实核查**（Moonlight FAQ 分段口径+「不可跨客户端比较」、Parsec 工程阈值编码/解码各<15ms@60fps；Moonlight 码率滑块上限 150Mbps、「800Mbps」查无出处；Sunshine video.cpp:893 zerolatency+CBR+无限GOP+按需IDR、input.cpp:2344 reset_input_state 断线释放；WebCodecs 低延迟参数全是 hint；对标口径：局域网端到端 <60ms）
+- [MATURE-WEB-STACK-20261123.md](MATURE-WEB-STACK-20261123.md) —— **向日葵/ToDesk/UU/云游戏网页端技术栈核查 + 开源参照**（国内三大家闭源查无公开文档；selkies-gstreamer=游戏级浏览器串流完整开源答案：WebSocket+WebCodecs 同构我们现有路线、CBR8Mbps+无限GOP+按需keyframe+拥塞降档+优先级队列 pacer；结论 **不必跳 WebRTC**：现有 WebCodecs+按需IDR+8ms 合并已是 selkies 同构，真差距=输入/视频共 HttpListener 单循环+无拥塞降档+断连 releaseall 缺失；输入正解=Pointer Lock 相对位移接现有 lookAcc 8ms 合并 <0.5 人日；云原神一手证据 PWA+PointerLock+跨源 iframe；§9.1 dump 分析留待位）
+
 ## 视频流 / 远程画面（2026-11-22 主线）
 
 - [P1-VERIFY-20261123.md](P1-VERIFY-20261123.md) ← **P1 架构改动功能验收（五条全过）**：A 单观众 /stream（h264/Main@5.0/2560x1368/**2.4MB**，此前仅 42KB）；B **双观众同时订阅**（各 **334 NAL / 3,164,743 B，比值 1.00**，ffprobe 各自独立识别为 h264）；C 录像 **NAL 直封 MP4 无 rame-*.jpg**（eplay.mp4 1444KB / 64 帧）；D 静态截图 275KB 彩色正常；E **WGC 帧池修复回归**（同场景 Y 均值 **0.0 → 247.1**、非黑 **0% → 99.9%**，证实根因判断成立）。附 P1 前后对比：句柄 **45398 → 807**、内存 1710→890MB、CPU 41~45%→33.4%
