@@ -463,6 +463,16 @@ namespace SoulLink.Relay
                     }
                     previousBgra = bgra;
 
+                    // ★ A2：帧到达即编码 + 帧率上限——编码前用时间戳节流。
+                    //   帧已到达且判定变化，只有到拍（距上次编码 ≥ 1/fps）才编码；未到拍则
+                    //   等到拍；等待期间若被生命周期事件唤醒（stop/热切/参数更新），回循环顶
+                    //   重新抓最新帧（latest-wins，不编过期中间帧）。forceKeyFrame（按需 IDR）
+                    //   必须立即编码，故绕过节流。
+                    if (!forceKeyFrame && !WaitUntilEncodingAllowed(ref nextAt, fps))
+                    {
+                        continue;
+                    }
+
                     if (encoder == null || encodedWidth != ew || encodedHeight != eh)
                     {
                         previousBgra = null;
@@ -514,7 +524,6 @@ namespace SoulLink.Relay
                         }
                     }
                     if (nal == null || nal.Length == 0) _noNalFrames++;
-                    SleepUntil(ref nextAt, fps);
                     if (_loopSequence % 150 == 0)
                         RelayAgent.LogQuiet("[video] 活性 loop=" + _loopSequence + " total=" + _totalFrames
                             + " lastCapture=" + _lastCaptureAt.ToString("HH:mm:ss.fff") + " lastEncode=" + _lastEncodeAt.ToString("HH:mm:ss.fff")
@@ -580,7 +589,9 @@ namespace SoulLink.Relay
 
         private static bool ConsumeKeyFrameRequest()
         {
-            LifecycleChanged.Set();
+            // ★ A2：不再无条件 LifecycleChanged.Set()——原实现每轮提前置位 AutoResetEvent，
+            //   使 Loop 末尾 SleepUntil 的 WaitOne 立即返回，定时节拍形同虚设、编码速率不受
+            //   fps 上限约束。唤醒已由 TrySubscribe/RecomputeLifecycle→Set 覆盖。
             lock (Gate)
             {
                 bool value = _forceKeyFrame;
@@ -595,6 +606,29 @@ namespace SoulLink.Relay
             int wait = (int)Math.Ceiling((nextAt - Stopwatch.GetTimestamp()) * 1000d / Stopwatch.Frequency);
             if (wait > 0) LifecycleChanged.WaitOne(wait);
             else if (wait < -1000 / fps) nextAt = Stopwatch.GetTimestamp();
+        }
+
+        /// <summary>
+        /// ★ A2：编码前 fps 节流（帧到达即编码 + 帧率上限）。
+        /// 帧到达后只有到拍（距上次编码 ≥ 1/fps）才允许编码；未到拍则等到拍。
+        /// 等待期间若被 LifecycleChanged 唤醒（stop/热切/参数更新/IDR 请求），
+        /// 返回 false 让调用方回循环顶重新抓最新帧（latest-wins）。
+        /// </summary>
+        private static bool WaitUntilEncodingAllowed(ref long nextAt, int fps)
+        {
+            long period = (long)(Stopwatch.Frequency / (double)fps);
+            long now = Stopwatch.GetTimestamp();
+            if (now >= nextAt)
+            {
+                // 已到拍（含首帧/长时间静止后落后）：立即允许，并把下一拍定在 now+period。
+                nextAt = now + period;
+                return true;
+            }
+            int wait = (int)Math.Ceiling((nextAt - now) * 1000d / Stopwatch.Frequency);
+            if (wait <= 0) { nextAt = now + period; return true; }
+            if (LifecycleChanged.WaitOne(wait)) return false;   // 被唤醒 → 回循环顶重抓
+            nextAt += period;   // 到拍，推进下一拍
+            return true;
         }
 
         /// <summary>取一个已编码帧；没有新帧时返回 null，不做抓屏或编码。</summary>
