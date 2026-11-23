@@ -1045,6 +1045,8 @@ function directBase(sess) {
     let configured = false;
     let firstKey = false;
     let gotFrame = false;        // 本轮是否已出过画面（区分「连不上」和「断了」）
+    let stallTimer = null;       // 画面看门狗 setInterval 句柄（函数级声明，finally 才能安全 clear）
+    let lastFrameAt = 0;         // 最近一次解码出帧时间戳（函数级声明，output/finally 共用）
 
     // 解码帧直接画到 DOM 里的 <canvas id="vframe">，不再经过 <img>。
     // 旧版每帧 canvas.toDataURL('image/jpeg') 等于把省下的带宽又花回去
@@ -1103,8 +1105,8 @@ function directBase(sess) {
       //   编码器停转时 read() 会永久 pending；更糟的是即便连接还活着，也可能只吐
       //   SPS/PPS/SEI 等非画面字节 —— 这些字节一直刷新 lastDataAt，看门狗永远不触发。
       //   改为 lastFrameAt：只有 decoder output 真的画出一帧才更新，画面卡住必重连。
-      let lastFrameAt = Date.now();
-      const stallTimer = setInterval(() => {
+      lastFrameAt = Date.now();
+      stallTimer = setInterval(() => {
         if (myGen !== h264Gen) return;
         if (gotFrame && Date.now() - lastFrameAt >= STALL_MS) {
           console.warn('[H264] 画面 ' + STALL_MS + 'ms 无新帧，自动重连');
@@ -1132,11 +1134,11 @@ function directBase(sess) {
       //   · decodeQueueSize > SKIP_QUEUE 阈值 → 停止喂 delta 帧（在 AU 层丢，
       //     不浪费带宽解码再扔），只放行 key 帧；
       //   · 丢帧期间若来了 key AU → 立刻恢复喂（解码链从关键帧重建）；
-      //   · 连续跳帧计数达 SKIP_RESET_LIMIT → decoder.reset() + 等下个 IDR
-      //     重新起播（彻底清空内部流水线，兜底手段）。
+      //   · 连续跳帧计数达 SKIP_RESET_LIMIT → 直接断流重连重同步
+      //     （无限 GOP 下本地 reset 等不到 IDR，重连=新订阅=按需 IDR，兜底手段）。
       //   丢的是「追赶过去的旧画面」，用户看到的永远是较新的帧。
-      const SKIP_QUEUE = 5;          // 队列超过它就进入跳帧模式
-      const SKIP_RESET_LIMIT = 60;   // 连续跳过 60 个 AU（≈4s@15fps）→ reset 兜底
+      const SKIP_QUEUE = 2;          // 队列超过它就进入跳帧模式（30fps 下 ~66ms 即反应）
+      const SKIP_RESET_LIMIT = 10;   // 连续跳过 10 个 AU（≈330ms@30fps）→ 断流重连重同步
       let skipping = false;          // 是否处于跳帧模式
       let skippedAUs = 0;            // 本轮连续跳过的 AU 数
       let skippedTotal = 0;          // 累计跳过（日志用）
@@ -1151,12 +1153,13 @@ function directBase(sess) {
           skippedAUs++; skippedTotal++;
           skipping = true;
           if (skippedAUs >= SKIP_RESET_LIMIT) {
-            // 兜底：队列长期消化不动 → reset + 等下一个 IDR 重新起播
-            console.warn('[H264] 解码积压 ' + skippedAUs + ' 帧，reset 重同步');
-            try { decoder.reset(); } catch (e) {}
-            configured = false;      // reset 后必须重新 configure
-            firstKey = false;        // 等下一个 IDR
-            skippedAUs = 0;
+            // 兜底：队列长期消化不动 → 重连式重同步（2026-11-23 修复 W2）
+            //   无限 GOP 下 decoder.reset() 后服务端不会主动发 SPS/IDR，本地 reset
+            //   干等新 IDR 是死路（每轮白付 10s 黑屏）。改为直接断流重连：
+            //   重连 = 新订阅，服务端按需发 IDR，立刻重建解码链。
+            console.warn('[H264] 解码积压 ' + skippedAUs + ' 帧，直接断流重连重同步');
+            fail('[H264] 解码积压过重，重连重同步', null);
+            return;
           }
           return;
         }
@@ -1266,7 +1269,7 @@ function directBase(sess) {
     } catch (e) {
       fail('[H264] 流断开:', e);
     } finally {
-      clearInterval(stallTimer);
+      if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
       if (myGen === h264Gen) {
         h264Active = false;
         h264Reader = null;
