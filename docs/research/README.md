@@ -56,6 +56,8 @@
 
 ## 视频流差距审计（2026-11-23 下午 · 对照成熟项目五线并行审计）
 
+- [AUDIT-20261124-06-PROTOCOL-ANDROID.md](AUDIT-20261124-06-PROTOCOL-ANDROID.md) —— **协议层与 Android 端链路审计**（SoulLink=三条互不相通通道拼装：管道 JSON 行控制+HTTP chunked 裸 H.264+主程序信令；视频无帧边界元数据/无流内时间戳/AU 时间戳是客户端自造 33_333µs 步进；输入=每事件独立 HTTP POST 无序号（全行业无此设计），代理 click 自带 Sleep(18/90) 固定地板；/api/input 的 sid 字段被 InputDto 静默丢弃；Android 解码三缺陷=无 KEY_MAX_INPUT_SIZE 大 IDR 整帧丢弃+双 10ms 轮询空转+无帧 pacing；建议 P0=最小帧信封+输入批 POST+解码三微修，P1=客户端 PLI，换 UDP/WebRTC 现阶段不做）
+
 > 背景：用户反馈「效果差到无法使用」。五名成员（GLM-5.3 max / DS-V4-Pro xhigh）对照 Moonlight/Sunshine/Parsec/selkies/向日葵/云原神，对 453ms 延迟、低码率、触控不流畅、黑色闪烁、重连循环五线并行只读审计，全部行号级证据。团队记忆：decision/target-corrections（回环口径+安卓为重头戏）、decision/web-client-bar（回环须≥向日葵外网水准）、decision/p0-stability（稳定高于延迟）。
 
 - [AGENT-PIPELINE-LATENCY-GAP-20261123.md](AGENT-PIPELINE-LATENCY-GAP-20261123.md) —— **Agent 管线 453ms 构成拆解**（三重架构税：H1 静止误判跳帧 ~150-300ms 最大嫌疑 + H2 定时轮询 16-33ms/帧 + H3 单线程串行 CPU 四趟拷贝 10-15ms/帧；码率低=5 处 clamp 钉 50Mbps + 帧供给不足实际 ≈2.5Mbps，编码器未触顶；关键发现 DxgiDdaCapture.cs:167 丢弃 FRAME_INFO（LastPresentTime）零成本权威变化信号可替代全帧 SequenceEqual；行动项 A1~A8 按 ROI 排序）
@@ -65,6 +67,9 @@
 - [MATURE-ARCH-FACTS-20261123.md](MATURE-ARCH-FACTS-20261123.md) —— **成熟项目延迟/码率/输入硬事实核查**（Moonlight FAQ 分段口径+「不可跨客户端比较」、Parsec 工程阈值编码/解码各<15ms@60fps；Moonlight 码率滑块上限 150Mbps、「800Mbps」查无出处；Sunshine video.cpp:893 zerolatency+CBR+无限GOP+按需IDR、input.cpp:2344 reset_input_state 断线释放；WebCodecs 低延迟参数全是 hint；对标口径：局域网端到端 <60ms）
 - [WEB-RUNTIME-PROBE-20261123.md](WEB-RUNTIME-PROBE-20261123.md) —— **云原神运行时实测（CDP 抓证）**（实测推翻静态推断：实际跑 WebRTC——RTCPeerConnection connected/WT 0 实例；1080p60 H264 12.5Mbps/RTT 7ms/UDP 直连；渲染 video.srcObject=MediaStream 非canvas；jitterBuffer≈73.8ms/帧+14.2s 内 15 次 freeze=商业产品也会卡；输入=同 PC DataChannel+独立 wss 信令自研二进制帧；NACK/PLI/FIR 全启用+pli 实发=W7 前端要关键帧的业界实锤；附可复用 scripts/cdp-probe.ps1 八探针组）
 - [MATURE-WEB-STACK-20261123.md](MATURE-WEB-STACK-20261123.md) —— **向日葵/ToDesk/UU/云游戏网页端技术栈核查 + 开源参照**（国内三大家闭源查无公开文档；selkies-gstreamer=游戏级浏览器串流完整开源答案：WebSocket+WebCodecs 同构我们现有路线、CBR8Mbps+无限GOP+按需keyframe+拥塞降档+优先级队列 pacer；结论 **不必跳 WebRTC**：现有 WebCodecs+按需IDR+8ms 合并已是 selkies 同构，真差距=输入/视频共 HttpListener 单循环+无拥塞降档+断连 releaseall 缺失；输入正解=Pointer Lock 相对位移接现有 lookAcc 8ms 合并 <0.5 人日；云原神一手证据 PWA+PointerLock+跨源 iframe；§9.1 dump 分析留待位）
+- [AUDIT-20261124-01-SUNSHINE-CHAIN.md](AUDIT-20261124-01-SUNSHINE-CHAIN.md) —— **Sunshine→Moonlight 全链路 20 跳逐跳拆解 + Parsec 对照**（每跳「做什么/API/量级/如何被优化掉」+ SoulLink 现状 file:line；444ms 按层归因=服务端节拍税+CPU读回为主、传输/浏览器为次；P0 预判：零拷贝卡点在 RDP 内无 ID3D11VideoDevice → 正解是 Sunshine 同构「路线A 同 device+PS 着色器」而非修 VideoProcessor；光标正解=画进视频帧+光标动即推帧（frameInfo.PointerShapeInfo 已到手未用）；可抄 8 条/抄不了 6 条（UDP+FEC、RFI、浏览器 vsync pacing 明确不做））
+- [AUDIT-20261124-02-INPUT-CHAIN-MATURE.md](AUDIT-20261124-02-INPUT-CHAIN-MATURE.md) —— **成熟产品鼠标输入全链路对照**（Moonlight/noVNC/Guacamole/RustDesk 逐跳报文+标志位+坐标编码+宿主注入；绝对 vs 相对模型；帧内光标 vs 独立 cursor 通道；坐实 AgentWebServer 缺 releaseall、按钮 FIFO 与 move/moverel 分离无全链保序、mouse_event 无成功反馈、蓝球非宿主光标；P0~P2 修正建议）
+- [AUDIT-20261124-05-WEB-CLIENT-GAP.md](AUDIT-20261124-05-WEB-CLIENT-GAP.md) ← **Web 观看端浏览器侧管线审计 + 系统性缺陷排查（2026-11-24）**（纠正前置事实：无 WebSocket/MediaSource，实际是 fetch+WebCodecs+2D canvas 直绘；判定浏览器侧非 444ms 主因=结构证据「无 444ms 级缓冲，最大 ~82ms」，主因在服务端 GPU 零拷贝未生效 DDA 走 CPU 读回；12 条缺陷含 drawImage GPU 回读/ts+=66666 假 15fps/fetch 无 AbortController 僵尸连接；5 类隐患含后台节流/常驻定时器/伪重连风暴/错误静默吞掉/无帧龄埋点；定位「蓝色圆球」=#plCursor 供 cursor-ux 接手）
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
@@ -95,6 +100,7 @@
 - [DATA-CENTER-SINGLE-SOURCE-20261123.md](DATA-CENTER-SINGLE-SOURCE-20261123.md) ← **数据中心唯一入口决策 + 数据库化评估**（唯一入口立即生效 / SQLite 暂缓）
 - [DATA-CENTER-AUDIT-20261123.md](DATA-CENTER-AUDIT-20261123.md) —— **数据中心旁路全仓审计**（日志直读 / 进程枚举 / 递归目录 / FileSystemWatcher 全调用点；旁路与独立功能分级，设置页与配置编辑器 UI IO 优先整改）
 - [UI-PERF-IO-TRIAGE-20261123.md](UI-PERF-IO-TRIAGE-20261123.md) —— **UI 线程减负**（TickHub 后台订阅 RegisterBackground + 4 订阅者迁后台；RdpConsole 5 个 DispatcherTimer 全收编/事件驱动；ConfigStore.Save 改后台串行队列保序原子写；94 处同步 IO 分类清单）
+- [AUDIT-20261124-07-DEFECT-LEDGER.md](AUDIT-20261124-07-DEFECT-LEDGER.md) —— **全仓库延迟/卡顿缺陷总账（38 条：P0 4 / P1 12 / P2 14 / P3 8，其中 20 条用户未提及）**（静止桌面探测永久降 BitBlt、WGC 零拷贝陈旧纹理、每帧 5~14 MB LOH 分配、静止去重空转、点击 2 RTT+12 ms、WH_MOUSE_LL 每事件热键 Parse、控制通道单 FIFO 队头阻塞、qwinsta UI 阻塞等；附 P0→P1 开工顺序与验证建议）
 - [PERF-3.3.4-20261122.md](PERF-3.3.4-20261122.md) —— **性能基线**（16% 单核的构成分解 + 三个卡顿根因）
 - [LOOK-OPTIMIZE-20261122.md](LOOK-OPTIMIZE-20261122.md) —— **转视角链路优化 + 手机端贯通**（去 Thread.Sleep(6) + moverel 单向 NoReply + 8ms 节流 + 触屏滑动手势状态机）
 - [WEB-DIRECT-3.3.5-20261122.md](WEB-DIRECT-3.3.5-20261122.md) —— **网页直连代理**（端口按账号分配 / 端口独占实测 / 路径穿越防护）
@@ -180,3 +186,4 @@
 - `DEPLOY-3.3.33-VERIFY-20261123.md` 3.3.33 部署 + 一直连接中修复验收（IDR死锁/探测锁定/活性探针/前端看门狗闭环通过）
 
 - [HANDOFF-VIDEO-LATENCY-GPU-20261124.md](HANDOFF-VIDEO-LATENCY-GPU-20261124.md) ← **最新交接（2026-11-24 凌晨）**：GPU直通攻坚——首帧25s死锁根治/吞点击/落点偏移/可见光标/GPU零拷贝(WGC+DDA)全部提交，但延迟仍444ms(GPU零拷贝未生效,DDA仍走CPU读回)；下一步P0=查零拷贝为何没生效(agent日志PSNR/降级线索)，P3=安卓真机联调对标月光5-12ms
+- [AUDIT-20261124-00-EVIDENCE-BASELINE.md](AUDIT-20261124-00-EVIDENCE-BASELINE.md) ← **取证与测量基准（2026-11-24）**：444ms 拆段实测（agent 侧 captureMs≈25+convertMs≈8+encodeMs≈3=36ms，其余在「有效帧率仅~14fps + 浏览器侧 + 前端断流重连」）；GPU 零拷贝**代码存在但从未生效**（日志 0 条 PSNR/降级行，静默 fall-through 证据穷举到行号：DxgiDdaCapture.TryCaptureBgraTexture:265/297、GpuColorConverter:191/192）；「零拷贝导致回到444」被推翻；附最小验证清单 V1~V5
