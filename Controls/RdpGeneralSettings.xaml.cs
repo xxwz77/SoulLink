@@ -216,6 +216,7 @@ namespace SoulLink.Controls
     var settings = App.Config.Settings;
     // 帧率
     SelectComboByTag(RecordFpsCombo, settings.RecordFps);
+    SelectComboByTag(StreamFpsCombo, settings.StreamFps);
     SelectComboByTag(RecordQualityCombo, settings.RecordQuality);
     RecordKeepBox.Text = settings.RecordKeepSeconds.ToString();
     // ★ 2026-11-22：抓屏方式与视频码率（之前只有配置字段、无界面入口）
@@ -378,6 +379,17 @@ namespace SoulLink.Controls
     App.Config.Settings.RecordFps = fps;
     Save();
     UpdateRecordHint();
+   }
+  }
+
+  private void StreamFps_Changed(object sender, SelectionChangedEventArgs e)
+  {
+   if (_loading) return;
+   if (StreamFpsCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
+       && int.TryParse(tag, out int fps))
+   {
+    App.Config.Settings.StreamFps = fps;
+    Save();
    }
   }
 

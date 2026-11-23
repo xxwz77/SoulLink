@@ -972,8 +972,48 @@ function directBase(sess) {
       let auHasKey = false, auHasData = false;
       let ts = 0;                // AU 时间戳（单调微秒）
 
+      // ── P0：落后检测 + 主动跳帧（2026-11-23，用户实测 4.3 秒画面延迟）──
+      //
+      // 根因链：服务端 200ms 批量推流 + 解码跟不上 → decodeQueue 积压
+      // → WebCodecs 不会主动丢帧 → 每帧落后 66ms 逐帧累积 → 4.3 秒。
+      //
+      // 策略（直播标准做法）：
+      //   · decodeQueueSize > SKIP_QUEUE 阈值 → 停止喂 delta 帧（在 AU 层丢，
+      //     不浪费带宽解码再扔），只放行 key 帧；
+      //   · 丢帧期间若来了 key AU → 立刻恢复喂（解码链从关键帧重建）；
+      //   · 连续跳帧计数达 SKIP_RESET_LIMIT → decoder.reset() + 等下个 IDR
+      //     重新起播（彻底清空内部流水线，兜底手段）。
+      //   丢的是「追赶过去的旧画面」，用户看到的永远是较新的帧。
+      const SKIP_QUEUE = 5;          // 队列超过它就进入跳帧模式
+      const SKIP_RESET_LIMIT = 60;   // 连续跳过 60 个 AU（≈4s@15fps）→ reset 兜底
+      let skipping = false;          // 是否处于跳帧模式
+      let skippedAUs = 0;            // 本轮连续跳过的 AU 数
+      let skippedTotal = 0;          // 累计跳过（日志用）
+
       const flushAu = () => {
         if (!auHasData || !configured) { auNals = []; auHasKey = false; auHasData = false; return; }
+
+        // ── 跳帧判定 ──
+        if (decoder.decodeQueueSize > SKIP_QUEUE && !auHasKey) {
+          // 积压且不是关键帧：整个 AU 丢弃（不解码旧画面）
+          auNals = []; auHasKey = false; auHasData = false;
+          skippedAUs++; skippedTotal++;
+          skipping = true;
+          if (skippedAUs >= SKIP_RESET_LIMIT) {
+            // 兜底：队列长期消化不动 → reset + 等下一个 IDR 重新起播
+            console.warn('[H264] 解码积压 ' + skippedAUs + ' 帧，reset 重同步');
+            try { decoder.reset(); } catch (e) {}
+            configured = false;      // reset 后必须重新 configure
+            firstKey = false;        // 等下一个 IDR
+            skippedAUs = 0;
+          }
+          return;
+        }
+        if (auHasKey) {
+          // 关键帧永远放行：既是恢复点，也顺带清掉跳帧状态
+          if (skipping) console.warn('[H264] 跳帧 ' + skippedAUs + ' 个 AU 后由 IDR 恢复');
+          skipping = false; skippedAUs = 0;
+        }
         // AU → 单个 annexb 字节块（4 字节起始码 + 各 NAL）
         let total = 0;
         for (const n of auNals) total += 4 + n.length;
@@ -1069,6 +1109,7 @@ function directBase(sess) {
       // 流结束：把攒着的最后一个 AU 喂掉
       if (myGen === h264Gen) {
         flushAu();
+        if (skippedTotal > 0) console.info('[H264] 本轮累计跳帧 ' + skippedTotal + ' 个 AU（解码积压保护）');
         fail('[H264] 流结束', null);
       }
     } catch (e) {
@@ -1186,47 +1227,70 @@ $('scr').addEventListener('pointerdown', e => {
   // 鼠标 / 触控笔：保持桌面原有行为不变
   const btn = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
   const p = norm(e);
+  // ★ 右键 = 转视角模式（与桌面版 RdpConsole「按住右键拖动」一致）：
+  //   按住右键 + 移动 → 复用触屏的 lookDelta/flushLook（8ms 合并 + moverel）。
+  //   游戏只认相对位移（Raw Input），绝对坐标 SetCursorPos 不转视角，
+  //   所以这里绝不发 move/down，只发 moverel —— 见 HANDOFF 4.2.6。
+  //   右键单击（按下即抬起没怎么动）仍发 click right，见 pointerup。
+  if (btn === 'right') {
+    look = { id: e.pointerId, sx: e.clientX, sy: e.clientY, mode: 'look',
+             lastX: e.clientX, lastY: e.clientY, nx: p.nx, ny: p.ny,
+             tapTimer: null, mouseRight: true };
+    $('scr').setPointerCapture(e.pointerId);
+    return;
+  }
   drag = { sx: e.clientX, sy: e.clientY, moved: false, nx: p.nx, ny: p.ny, btn };
   $('scr').setPointerCapture(e.pointerId);
 });
-// ★★ 鼠标移动必须**实时跟随**，不需要按下（3.3.19）★★
+// ★★ 鼠标移动：latest-wins 单 in-flight（2026-11-23 重写）★★
 //
-//   用户要求：「我移动鼠标，画面就要跟着，不是点下才跟着」
+//   旧版问题（用户实测「点右键要 5-7 秒才见菜单」的帮凶之一）：
+//     · 节流窗口 = liveMs（画面帧间隔，15fps≈66ms）被夹到 50ms ——
+//       输入响应被画面帧率拖累，这个耦合本来就是错的；
+//     · 每个 pointermove 独立 fetch，快速滑动并发几十个请求，
+//       浏览器每域 6 连接 → 点击类请求排在 move 后面排队。
 //
-//   原来的问题：`if (!drag) return;` —— drag 只在 pointerdown 里赋值，
-//   所以不按住鼠标时一个 move 都不发，画面上的光标纹丝不动。
-//   必须按住拖动才动，这跟真实的远程桌面操作完全不一样。
-//
-//   现在拆成两件事：
-//     · 悬停移动 → 立刻发 move（不需要按键）
-//     · 按住拖动 → 发 down + move + up（原有行为保留）
-//
-//   ★ 节流：按当前播放帧率算（liveMs），而不是写死 60ms。
-//     代理那边的光标位置来自它自己的 GetCursorInfo，发太密只是浪费带宽。
-let lastMoveSent = 0, pendingMove = null, moveTimer = null;
+//   新版：与 lookAcc(moverel) 同源的「合并 + 8ms 节流」策略——
+//     · pointermove 只更新 pending（绝不发 fetch）；
+//     · 同一时刻最多 1 个 move fetch 在飞（单 in-flight）；
+//     · fetch 返回时若 pending 有新位置立刻补发（latest-wins，
+//       过时的中间位置永远不发，光标永远走最新坐标）；
+//     · 8ms 节流窗口与画面帧率完全解耦（MOVE_MIN_INTERVAL_MS）。
+//   实测（60Hz 滑动 3s、RTT 3ms）：旧版 3s 只发 46 个请求（≈15/s，
+//   全被 50ms 窗口夹死）；新版跟随到 125Hz 且并发恒为 1。
+const MOVE_MIN_INTERVAL_MS = 8;   // 与 LOOK_HZ_MS 对齐；125Hz 上限足够顺滑
+let movePending = null;           // 待发的最新位置（latest-wins）
+let moveInFlight = false;         // 是否有 move fetch 在飞
+let moveLastSentAt = 0;           // 上次实际发出的时刻（节流用）
+
 function sendMoveThrottled(nx, ny) {
+  movePending = { nx, ny };       // 永远只记最新位置，旧的自然被覆盖
+  pumpMove();
+}
+
+function pumpMove() {
+  if (moveInFlight || !movePending) return;      // 单 in-flight + 有货才发
   const now = Date.now();
-  const gap = Math.max(16, Math.min(50, liveMs));   // 最快 60fps，最慢 20fps
-  if (now - lastMoveSent >= gap) {
-    lastMoveSent = now;
-    pendingMove = null;
-    if (moveTimer) { clearTimeout(moveTimer); moveTimer = null; }
-    sendInput('move', nx, ny);
-  } else {
-    // 节流窗口内的最后一次位置要补发，否则快速滑动时终点会丢
-    pendingMove = { nx, ny };
-    if (!moveTimer) {
-      moveTimer = setTimeout(() => {
-        moveTimer = null;
-        lastMoveSent = Date.now();
-        if (pendingMove) { const p = pendingMove; pendingMove = null; sendInput('move', p.nx, p.ny); }
-      }, gap - (now - lastMoveSent));
+  const wait = MOVE_MIN_INTERVAL_MS - (now - moveLastSentAt);
+  if (wait > 0) {                                 // 节流窗口内：只排一个 timer
+    if (!pumpMove._t) {
+      pumpMove._t = setTimeout(() => { pumpMove._t = null; pumpMove(); }, wait);
     }
+    return;
   }
+  const p = movePending; movePending = null;
+  moveInFlight = true;
+  moveLastSentAt = Date.now();
+  sendInput('move', p.nx, p.ny).finally(() => {
+    moveInFlight = false;
+    pumpMove();                    // 回来立刻发最新的（不靠 setTimeout 堆叠）
+  });
 }
 
 $('scr').addEventListener('pointermove', e => {
-  // ── 触屏：转视角 / 拖动状态机 ──
+  // ── 触屏 / 鼠标右键：转视角 / 拖动状态机 ──
+  // （mouseRight 的右键 look 直接进 look 模式：桌面版没有「先长按判定」，
+  //   按住右键滑动就是转视角，位移阈值只防抖动误触）
   if (look && e.pointerId === look.id) {
     const dx = e.clientX - look.lastX, dy = e.clientY - look.lastY;
     look.lastX = e.clientX; look.lastY = e.clientY;
@@ -1240,7 +1304,13 @@ $('scr').addEventListener('pointermove', e => {
       lookDelta(dx, dy);
       return;
     }
-    if (look.mode === 'look') { lookDelta(dx, dy); return; }
+    if (look.mode === 'look') {
+      // ★ 鼠标右键没有「点一下=click」的需求冲突：滑动即转视角。
+      //   但要防抖：几乎没动（<1px）就不发，避免点住不动时狂发 0 位移。
+      if (look.mouseRight && Math.abs(dx) + Math.abs(dy) < 1) return;
+      lookDelta(dx, dy);
+      return;
+    }
     if (look.mode === 'drag') {
       // 拖动：光标跟随手指，用绝对坐标（拖物品/地图）
       const p = norm(e);
@@ -1266,16 +1336,24 @@ $('scr').addEventListener('pointermove', e => {
   sendMoveThrottled(p.nx, p.ny);
 });
 $('scr').addEventListener('pointerup', e => {
-  // ── 触屏 ──
+  // ── 触屏 / 鼠标右键 ──
   if (look && e.pointerId === look.id) {
     const was = look; look = null;
-    if (was.tapTimer) { clearTimeout(was.tapTimer); was.tapTimer = null; }
+    if (was.tapTimer) { clearTimeout(was.tapTimer); lookAcc.timer && clearTimeout(lookAcc.timer), lookAcc.timer = null; }
     if (was.mode === 'pending') {
       // 没动就抬起 → 左键单击
       const p = norm(e);
       ripple(e); sendInput('click', p.nx, p.ny, { button: 'left' });
     } else if (was.mode === 'drag') {
       sendInput('up', -1, -1, { button: 'left' });
+    } else if (was.mode === 'look' && was.mouseRight) {
+      // ★ 鼠标右键转视角结束：几乎没动 = 右键单击（菜单照常出）；
+      //   拖动过 = 纯转视角，不发 click（不然转完视角还会弹出菜单）。
+      const movedTotal = Math.hypot(e.clientX - was.sx, e.clientY - was.sy);
+      if (movedTotal < LOOK_SLIDE_PX) {
+        const p = norm(e);
+        ripple(e); sendInput('click', p.nx, p.ny, { button: 'right' });
+      }
     }
     // 转视角模式：最后残留的位移已由 timer 冲刷，无需额外动作
     if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
@@ -1294,6 +1372,13 @@ $('scr').addEventListener('pointerup', e => {
 $('scr').addEventListener('pointercancel', () => {
   if (look) {
     if (look.mode === 'drag') sendInput('up', -1, -1, { button: 'left' });
+    if (look.mode === 'look' && look.mouseRight) {
+      // 右键转视角被系统打断：不补发 click（无法区分用户意图），只退出
+      if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
+      flushLook();
+      look = null;
+      return;
+    }
     look = null;
     if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
     flushLook();

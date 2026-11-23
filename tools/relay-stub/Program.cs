@@ -31,7 +31,32 @@ try
         await command.FlushAsync(cts.Token);
         Log("RECORD_REQUESTED");
     }
+    int stopAfter = int.TryParse(Option(args, "--stop-record-after", "0"), out int stopDelay) ? stopDelay : 0;
+    if (stopAfter > 0)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(stopAfter), cts.Token);
+        byte[] stop = Encoding.UTF8.GetBytes("{\"Cmd\":\"record\",\"Button\":\"stop\"}\n");
+        await command.WriteAsync(stop, cts.Token);
+        await command.FlushAsync(cts.Token);
+        Log("RECORD_STOP_REQUESTED");
+        await Task.Delay(1000, cts.Token);
+        byte[] status = Encoding.UTF8.GetBytes("{\"Cmd\":\"recordstatus\"}\n");
+        await command.WriteAsync(status, cts.Token);
+        await command.FlushAsync(cts.Token);
+        Log("STATUS_REQUESTED");
+    }
     int saveAfter = int.TryParse(Option(args, "--save-after", "0"), out int delay) ? delay : 0;
+    if (args.Contains("--status-after-stop"))
+    {
+        await Task.Delay(1000, cts.Token);
+        byte[] status = Encoding.UTF8.GetBytes("{\"Cmd\":\"recordstatus\"}\n");
+        await command.WriteAsync(status, cts.Token);
+        await command.FlushAsync(cts.Token);
+        Log("STATUS_AFTER_STOP_REQUESTED");
+        var readBuffer = new byte[4096];
+        int read = await command.ReadAsync(readBuffer, cts.Token);
+        if (read > 0) Log("STATUS_RESPONSE " + Encoding.UTF8.GetString(readBuffer, 0, read).Trim());
+    }
     if (saveAfter > 0)
     {
         await Task.Delay(TimeSpan.FromSeconds(saveAfter), cts.Token);
@@ -45,6 +70,7 @@ try
     {
         if (!string.IsNullOrWhiteSpace(line))
         {
+            Log("REPLY " + line);
             byte[] reply = Encoding.UTF8.GetBytes("{\"Ok\":true,\"Message\":\"只读采集宿主桩\"}\n");
             await command.WriteAsync(reply, cts.Token);
             await command.FlushAsync(cts.Token);

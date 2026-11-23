@@ -41,6 +41,7 @@ namespace SoulLink.Relay
         private CancellationTokenSource? _graceCts;
         private volatile bool _running;
         public bool IsActive => _running;
+        public long FrameSequence { get { lock (_stashLock) return _frameSeq; } }
 
         private ID3D11Device? _device;
         private ID3D11DeviceContext? _context;

@@ -45,9 +45,20 @@ namespace SoulLink.Relay
         private static int _nextViewerId;
         private static bool _recordRequested;
         private static long _captureMs, _convertMs, _encodeMs;
+        private static int _configuredBitrate, _negotiatedBitrate;
+        private static readonly AutoResetEvent LifecycleChanged = new(false);
+        private static bool _forceKeyFrame;
 
         private static int StreamFps
-            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_STREAM_FPS"), out int value) ? Math.Clamp(value, 1, 60) : 15;
+        {
+            get
+            {
+                string? raw = Environment.GetEnvironmentVariable("SOULLINK_STREAM_FPS");
+                return int.TryParse(raw, out int value) ? Math.Clamp(value, 1, 60) : 30;
+            }
+        }
+        private static int RecordFps
+            => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_REC_FPS"), out int value) ? Math.Clamp(value, 1, 30) : _fps;
         private static int StreamBitrate
             => int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_VIDEO_BITRATE"), out int value) ? Math.Max(500, value) : 8000;
 
@@ -98,18 +109,24 @@ namespace SoulLink.Relay
             {
                 long bytes = 0;
                 foreach (var f in Ring) bytes += f.Nal.Length;
-                return _status + "|fps=" + _fps + "|quality=" + _quality
+                double actualFps = Ring.Count >= 2 ? (Ring.Count - 1) / Math.Max(0.001, (Ring[^1].At - Ring[0].At).TotalSeconds) : 0;
+                return (_worker?.IsAlive == true ? "running" : "stopped") + "|fps=" + _fps + "|quality=" + _quality
                     + "|frames=" + Ring.Count + "|bytes=" + bytes + "|total=" + _totalFrames
                     + "|size=" + _width + "x" + _height + "|session=" + _sessionId
                     + "|capture=" + Capture.Name + "|codec=H264|viewers=" + Viewers.Count
+                    + "|pipelineRunning=" + (_worker?.IsAlive == true ? 1 : 0)
+                    + "|recording=" + (_recordRequested ? 1 : 0)
+                    + "|currentFps=" + _fps
+                    + "|actualFps=" + actualFps.ToString("0.0") + "|liveFps=" + StreamFps + "|recordFps=" + RecordFps
                     + "|captureMs=" + _captureMs + "|convertMs=" + _convertMs + "|encodeMs=" + _encodeMs
+                    + "|bitrateKbps=" + _configuredBitrate + "|mftBitrateKbps=" + _negotiatedBitrate
                     + (_lastError.Length > 0 ? "|error=" + _lastError : "");
             }
         }
 
         public static bool Start(int fps, int quality, int keepSeconds, int sessionId, out string message)
         {
-            lock (Gate) _recordRequested = true;
+            lock (Gate) { _recordRequested = true; RecomputeLifecycle(); }
             return StartCore(fps, quality, keepSeconds, sessionId, out message);
         }
 
@@ -137,8 +154,18 @@ namespace SoulLink.Relay
 
         public static void Stop()
         {
-            lock (Gate) _recordRequested = false;
-            _stopRequested = true;
+            lock (Gate)
+            {
+                _recordRequested = false;
+                RecomputeLifecycle();
+            }
+        }
+
+        private static void RecomputeLifecycle()
+        {
+            // 管线只要还有录像或观众就继续；只有两者都没有才停止。
+            _stopRequested = !_recordRequested && Viewers.Count == 0;
+            LifecycleChanged.Set();
         }
 
         public static void Shutdown(int waitMs = 1500)
@@ -154,30 +181,53 @@ namespace SoulLink.Relay
             MfFrameEncoder? encoder = null;
             int encodedWidth = 0, encodedHeight = 0;
             long frameIndex = 0;
+            byte[]? previousBgra = null;
+            long nextAt = Stopwatch.GetTimestamp();
             try
             {
                 while (!_stopRequested)
                 {
                     int fps, keepSec;
-                    lock (Gate) { fps = _fps; keepSec = _keepSeconds; }
+                    lock (Gate)
+                    {
+                        fps = Viewers.Count > 0 ? StreamFps : RecordFps;
+                        keepSec = _keepSeconds;
+                        _fps = fps;
+                    }
                     var frameStart = Stopwatch.StartNew();
                     var bgra = Capture.CaptureBgra(out int width, out int height);
                     long captureMs = frameStart.ElapsedMilliseconds;
                     if (bgra == null || width <= 0 || height <= 0)
                     {
                         lock (Gate) { _status = "waiting"; _lastError = "抓屏没有返回原始帧"; }
-                        Thread.Sleep(Math.Max(20, 1000 / fps));
+                        SleepUntil(ref nextAt, fps);
                         continue;
                     }
+                    if (ConsumeKeyFrameRequest() && encoder != null)
+                    {
+                        encoder.Dispose();
+                        encoder = null;
+                        frameIndex = 0;
+                    }
                     int ew = width & ~1, eh = height & ~1;
+                    if (previousBgra != null && previousBgra.AsSpan().SequenceEqual(bgra))
+                    {
+                        SleepUntil(ref nextAt, fps);
+                        continue;
+                    }
+                    previousBgra = bgra;
+
                     if (encoder == null || encodedWidth != ew || encodedHeight != eh)
                     {
+                        previousBgra = null;
                         encoder?.Dispose();
                         encoder = new MfFrameEncoder();
                         if (!encoder.TryInitialize(ew, eh, fps, StreamBitrate))
                             throw new InvalidOperationException("H.264 编码器初始化失败：" + encoder.LastError);
                         encodedWidth = ew; encodedHeight = eh;
-                        lock (Gate) { _width = ew; _height = eh; }
+                        RelayAgent.LogQuiet("[video] 编码器=" + encoder.Name + " 配置码率=" + encoder.ConfiguredBitrateKbps
+                            + "kbps MFT读回=" + encoder.NegotiatedBitrateKbps + "kbps fps=" + fps + " 尺寸=" + ew + "x" + eh);
+                        lock (Gate) { _width = ew; _height = eh; _configuredBitrate = encoder.ConfiguredBitrateKbps; _negotiatedBitrate = encoder.NegotiatedBitrateKbps; }
                     }
 
                     var convertStart = Stopwatch.StartNew();
@@ -214,8 +264,7 @@ namespace SoulLink.Relay
                             }
                         }
                     }
-                    int wait = Math.Max(1, 1000 / fps) - (int)frameStart.ElapsedMilliseconds;
-                    if (wait > 0) Thread.Sleep(wait);
+                    SleepUntil(ref nextAt, fps);
                 }
             }
             catch (Exception ex)
@@ -226,7 +275,13 @@ namespace SoulLink.Relay
             finally
             {
                 try { encoder?.Dispose(); } catch { }
-                lock (Gate) { _status = "idle"; _worker = null; }
+                try { if (Capture is IDisposable capture) capture.Dispose(); } catch { }
+                lock (Gate)
+                {
+                    Ring.Clear(); _status = "idle"; _worker = null;
+                    // 停止与最后一位观众退订可能并发：仅在确实无需求时保留停止态。
+                    if (_recordRequested || Viewers.Count > 0) _stopRequested = false;
+                }
             }
         }
 
@@ -239,6 +294,9 @@ namespace SoulLink.Relay
                 if (_lastError.Length > 0 && _status == "error") { error = _lastError; return false; }
                 viewerId = ++_nextViewerId;
                 Viewers[viewerId] = new Viewer();
+                // 新 MFT 的首帧必为 IDR；这是无 ICodecAPI 的跨厂商按需关键帧。
+                _forceKeyFrame = true;
+                RecomputeLifecycle();
                 if (Ring.Count > 0)
                 {
                     int start = Ring.Count - 1;
@@ -258,9 +316,26 @@ namespace SoulLink.Relay
             lock (Gate) { if (Viewers.Remove(viewerId, out var viewer)) lock (viewer.Sync) viewer.Closed = true; }
             // 录制未开启且最后一个观众离开时停止共享管线，释放编码器与 MF 缓冲池。
             // 锁外赋值避免在持锁状态调用线程管理。
-            bool shouldStop;
-            lock (Gate) shouldStop = !_recordRequested && Viewers.Count == 0;
-            if (shouldStop) _stopRequested = true;
+            lock (Gate) RecomputeLifecycle();
+        }
+
+        private static bool ConsumeKeyFrameRequest()
+        {
+            LifecycleChanged.Set();
+            lock (Gate)
+            {
+                bool value = _forceKeyFrame;
+                _forceKeyFrame = false;
+                return value;
+            }
+        }
+
+        private static void SleepUntil(ref long nextAt, int fps)
+        {
+            nextAt += (long)(Stopwatch.Frequency / (double)fps);
+            int wait = (int)Math.Ceiling((nextAt - Stopwatch.GetTimestamp()) * 1000d / Stopwatch.Frequency);
+            if (wait > 0) LifecycleChanged.WaitOne(wait);
+            else if (wait < -1000 / fps) nextAt = Stopwatch.GetTimestamp();
         }
 
         /// <summary>取一个已编码帧；没有新帧时返回 null，不做抓屏或编码。</summary>
@@ -289,6 +364,14 @@ namespace SoulLink.Relay
             frames = 0; message = "";
             try
             {
+                lock (Gate)
+                {
+                    if (!_recordRequested)
+                    {
+                        message = "录像开关已关闭；直播仍可继续，本次不写入 MP4";
+                        return null;
+                    }
+                }
                 if (afterSeconds > 0.5) Thread.Sleep(TimeSpan.FromSeconds(Math.Min(afterSeconds, 60)));
                 List<VideoFrame> copy;
                 int width, height, fps;
@@ -307,7 +390,8 @@ namespace SoulLink.Relay
                 using (var output = File.Create(rawPath)) foreach (var frame in selected) output.Write(frame.Nal);
                 frames = selected.Count;
                 string mp4 = Path.Combine(dir, "replay.mp4");
-                if (Mp4Writer.TryWriteH264(selected.ConvertAll(f => f.Nal), width, height, fps, mp4, out string encodeMessage))
+                var times = selected.ConvertAll(f => f.At.Ticks);
+                if (Mp4Writer.TryWriteH264(selected.ConvertAll(f => f.Nal), width, height, fps, mp4, out string encodeMessage, times))
                 {
                     File.Delete(rawPath);
                     message = "已保存 " + frames + " 帧 → replay.mp4（" + new FileInfo(mp4).Length / 1024 + " KB，无 JPEG 重编码）";
@@ -348,29 +432,29 @@ namespace SoulLink.Relay
         private static byte[] BgraToNv12(byte[] bgra, int w, int h, int stride)
         {
             int ySize = w * h;
-            var nv12 = new byte[w * h * 3 / 2];
+            var nv12 = new byte[ySize + ySize / 2];
+            // 保持单线程：多会话同时运行时，不为每帧创建 Parallel 任务/争用线程池。
+            // 每行复用递增索引，减少像素坐标换算和重复数组访问。
             for (int y = 0; y < h; y++)
             {
-                int row = y * stride, yRow = y * w;
-                for (int x = 0; x < w; x++)
+                int src = y * stride, dst = y * w;
+                for (int x = 0; x < w; x++, src += 4, dst++)
                 {
-                    int i = row + x * 4;
-                    nv12[yRow + x] = (byte)((66 * bgra[i + 2] + 129 * bgra[i + 1] + 25 * bgra[i] + 128) >> 8);
+                    int b = bgra[src], g = bgra[src + 1], r = bgra[src + 2];
+                    nv12[dst] = (byte)((66 * r + 129 * g + 25 * b + 128) >> 8);
                 }
             }
             for (int y = 0; y < h; y += 2)
             {
-                int row0 = y * stride, row1 = row0 + stride, uvRow = ySize + y / 2 * w;
-                for (int x = 0; x < w; x += 2)
+                int top = y * stride, bottom = top + stride, uv = ySize + y / 2 * w;
+                for (int x = 0; x < w; x += 2, top += 8, bottom += 8, uv += 2)
                 {
-                    int r = 0, g = 0, b = 0;
-                    int a = row0 + x * 4, c = row1 + x * 4;
-                    b = bgra[a] + bgra[a + 4] + bgra[c] + bgra[c + 4];
-                    g = bgra[a + 1] + bgra[a + 5] + bgra[c + 1] + bgra[c + 5];
-                    r = bgra[a + 2] + bgra[a + 6] + bgra[c + 2] + bgra[c + 6];
+                    int b = bgra[top] + bgra[top + 4] + bgra[bottom] + bgra[bottom + 4];
+                    int g = bgra[top + 1] + bgra[top + 5] + bgra[bottom + 1] + bgra[bottom + 5];
+                    int r = bgra[top + 2] + bgra[top + 6] + bgra[bottom + 2] + bgra[bottom + 6];
                     r >>= 2; g >>= 2; b >>= 2;
-                    nv12[uvRow + x] = (byte)(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
-                    nv12[uvRow + x + 1] = (byte)(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+                    nv12[uv] = (byte)(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
+                    nv12[uv + 1] = (byte)(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
                 }
             }
             return nv12;

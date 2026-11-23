@@ -102,6 +102,14 @@ tools/*
 !tools/media-probe/Conclusion.cs
 !tools/media-probe/MediaProbe.csproj
 !tools/media-probe/README.md
+
+# ★ 视频延迟攻坚探针（NVENC SDK 直通 + ICodecAPI 手写验证）——源码入库，构建产物忽略。
+!tools/nvenc-sdk-probe
+!tools/nvenc-sdk-probe/Program.cs
+!tools/nvenc-sdk-probe/NvencSdkProbe.csproj
+!tools/icodecapi-probe
+!tools/icodecapi-probe/Program.cs
+!tools/icodecapi-probe/ICodecApiProbe.csproj
 # ── 本地构建 / 发布 / 备份产物（体积大，不入库；2026-11-20 补）────────────
 # 为什么补：git add -A 会把 7.4 GB 的 dist-*/backups/artifacts/releases 全吞进去。
 dist-*/

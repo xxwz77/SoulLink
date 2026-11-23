@@ -544,7 +544,10 @@ namespace SoulLink.Models
         public List<string> RecordAccountIds { get; set; } = new();
 
         /// <summary>录制帧率：10 / 15 / 30，用户可选。</summary>
-        public int RecordFps { get; set; } = 10;
+        public int RecordFps { get; set; } = 5;
+
+        /// <summary>直播帧率（30/45/60），与录像 RecordFps 完全独立。</summary>
+        public int StreamFps { get; set; } = 30;
 
         /// <summary>JPEG 质量。用户要求清晰，默认 75（越高越清晰也越大）。</summary>
         public int RecordQuality { get; set; } = 75;

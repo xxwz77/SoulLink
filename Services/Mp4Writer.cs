@@ -154,7 +154,7 @@ namespace SoulLink.Services
         /// 保存时调用本机 ffmpeg 的 -c copy；实时管线不依赖它，也不打包额外工具。
         /// </summary>
         public static bool TryWriteH264(IReadOnlyList<byte[]> frames, int width, int height, int fps,
-            string outputMp4, out string message)
+            string outputMp4, out string message, IReadOnlyList<long>? captureTicks = null)
         {
             message = "";
             if (frames == null || frames.Count == 0 || width <= 0 || height <= 0)
@@ -170,8 +170,15 @@ namespace SoulLink.Services
                     RedirectStandardError = true,
                     RedirectStandardOutput = false
                 };
+                int actualFps = Math.Max(1, fps);
+                if (captureTicks != null && captureTicks.Count == frames.Count && captureTicks.Count > 1)
+                {
+                    // 真实采集时间差决定时长，避免 5fps 录像按 30fps 快放；不重编码。
+                    double duration = (captureTicks[^1] - captureTicks[0]) / (double)TimeSpan.TicksPerSecond;
+                    if (duration > 0) actualFps = Math.Max(1, (int)Math.Round((frames.Count - 1) / duration));
+                }
                 foreach (string arg in new[] { "-hide_banner", "-loglevel", "error", "-f", "h264",
-                    "-framerate", Math.Max(1, fps).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    "-framerate", actualFps.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     "-i", "pipe:0", "-c", "copy", "-y", outputMp4 }) psi.ArgumentList.Add(arg);
                 process = System.Diagnostics.Process.Start(psi) ?? throw new InvalidOperationException("无法启动 ffmpeg（需要系统 PATH 中可用）");
                 System.Threading.Tasks.Task<string> errors = process.StandardError.ReadToEndAsync();

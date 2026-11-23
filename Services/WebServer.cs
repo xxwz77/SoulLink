@@ -850,7 +850,7 @@ namespace SoulLink.Services
             // ★ 录制参数（用户要求「两边同步」）
             //   网页读到这三个值后显示下拉菜单；改了会回写到主程序配置，
             //   主程序再下发给正在录制的代理 —— 双向同步，不是单向下发。
-            int recordFps = 10, recordQuality = 75, recordKeepSeconds = 30;
+            int recordFps = 5, recordQuality = 75, recordKeepSeconds = 30, streamFps = 30;
             try
             {
                 var rs = App.Config?.Settings;
@@ -859,6 +859,7 @@ namespace SoulLink.Services
                     recordFps = Math.Max(1, rs.RecordFps);
                     recordQuality = Math.Clamp(rs.RecordQuality, 10, 100);
                     recordKeepSeconds = Math.Clamp(rs.RecordKeepSeconds, 5, 600);
+                    streamFps = Math.Clamp(rs.StreamFps, 30, 60);
                 }
             }
             catch { }
@@ -871,7 +872,7 @@ namespace SoulLink.Services
             }
             catch { }
 
-            return new { ok = true, version, themeDark, directToken, recordFps, recordQuality, recordKeepSeconds, sessions = list };
+            return new { ok = true, version, themeDark, directToken, recordFps, recordQuality, recordKeepSeconds, streamFps, sessions = list };
         }
 
         /// <summary>

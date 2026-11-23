@@ -31,6 +31,12 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [NVENC-SDK-PROBE-20261123.md](NVENC-SDK-PROBE-20261123.md) —— **NVENC SDK D3D11 直通探针实测**（独立探针 tools/nvenc-sdk-probe，0 warning 0 error；RTX 4060 驱动 621.01 走 REGISTER(DIRECTX,NV12)→Map→Encode 完整闭环出 3 帧真 H.264，条纹图案 1:1 保真；同步模式即可用无需事件泵；SDK 比 MF 干净无 COM 陷阱；已知瑕疵 GUID 枚举回读为 0 不影响直通）
+
+- [MATURE-LATENCY-PLAYBOOK-20261123.md](MATURE-LATENCY-PLAYBOOK-20261123.md) —— **成熟串流项目延迟处理 Playbook**（Sunshine/Moonlight/OBS/Parsec/云游戏 在 采集节拍/编码参数/客户端解码丢帧/输入解耦/网络传输 五方面逐项拆解 + file:line 证据，映射成 SoulLink 具体改动项：P1=ICodecAPI低延迟+绝对时间节拍，P2=按需IDR，P3=帧边界元数据/网络升级缓做）
+
+- [GPU-ZERO-COPY-20261123.md](GPU-ZERO-COPY-20261123.md) —— **GPU 截图→GPU 编码零拷贝路径调研**（当前是「CPU 读回 + CPU BGRA→NV12 + 系统内存 MF」，确认无疑；GPU 零拷贝唯一路线是 NVENC SDK D3D11 直通，本机 NVIDIA MF MFT 非 D3D11 使 MF 直通死路；附 Sunshine/OBS file:line 证据 + 三阶段改造路线收益/成本/风险）
+
 ## 视频流 / 远程画面（2026-11-22 主线）
 
 - [P1-VERIFY-20261123.md](P1-VERIFY-20261123.md) ← **P1 架构改动功能验收（五条全过）**：A 单观众 /stream（h264/Main@5.0/2560x1368/**2.4MB**，此前仅 42KB）；B **双观众同时订阅**（各 **334 NAL / 3,164,743 B，比值 1.00**，ffprobe 各自独立识别为 h264）；C 录像 **NAL 直封 MP4 无 rame-*.jpg**（eplay.mp4 1444KB / 64 帧）；D 静态截图 275KB 彩色正常；E **WGC 帧池修复回归**（同场景 Y 均值 **0.0 → 247.1**、非黑 **0% → 99.9%**，证实根因判断成立）。附 P1 前后对比：句柄 **45398 → 807**、内存 1710→890MB、CPU 41~45%→33.4%
@@ -40,6 +46,7 @@
 - [STREAM-VERIFY-20261123.md](STREAM-VERIFY-20261123.md) ← **`/stream` 端到端验收报告**：两个 TFM 均 0 error；ffprobe 实测 h264/Main@5.0/2560x1368/25fps 且 ffmpeg 与 WebCodecs 都解码成功；缺 DLL 已给出中文 500 + 日志堆栈（此前的连接重置已修好）；无头 Edge 实测 WebCodecs **解出 13 帧并上屏**、SPS 动态解析出 `avc1.4D4032`；**发现 P0 缺陷：画面全黑，根因为 `RelayAgent.cs:523` 的 `SetProcessDPIAware()` 使 `GetSystemMetrics` 返回缩放尺寸 2560x1368 而真实合成尺寸是 1707x960**（含对照实验证据链与 4 条修复建议）；附最短手动验收 3 步
 - [MEMORY-LEAK-VERIFY-20261123.md](MEMORY-LEAK-VERIFY-20261123.md) ← **内存泄漏验证基座 + 修复后回归清单**（`tools/mem-probe` 量具 / 含 `--selftest` 6/6 证判据可区分真假泄漏 / 实测「`using var` 修复后仍泄漏 46.3MB/s R²=0.998」/ 新发现句柄漏 1454 个/秒 / 24 项回归清单含 401、颜色、错误可诊断）
 - [LATENCY-BENCHMARK-20261123.md](LATENCY-BENCHMARK-20261123.md) ← **延迟归因与业界对标**：把「卡」拆成抓屏/编码/传输/解码/上屏逐段（实测采集 12.14fps、推流 13.56fps，串行双节拍 ≈157ms）；7 个业界参照物及可信度分级；指出瓶颈是「15fps 硬编码 + 软编优先 + 无帧间去重」而非传输（实测 0.8ms）；5 条落地建议含收益/成本/风险；专项评估 `optimizeForLatency` / `AVLowLatencyMode` / 「不攒帧直接推」
+- [HANDOFF-20261123-LATENCY.md](HANDOFF-20261123-LATENCY.md) <- **最新交接（上午）**：3.3.20 全部修复已落地，但端到端延迟 4 秒；根因三层（软编优先/NVENC 闲置、每秒 95KB IDR、解码积压不丢帧）；含 NVENC 3 个时序 bug、四个架构要求、ICodecAPI 手写要点、验证方法
 - [HANDOFF-STREAM-STATUS-20261123.md](HANDOFF-STREAM-STATUS-20261123.md) ← **最新交接（修正上一份）**：服务端链路跑通但 `/stream` 在真实 Agent 里不可用；含端口分配实测（`PortFor` 有 +1）、两套鉴权、5 个环境坑、下一步 P0~P3
 - [HANDOFF-VIDEO-20261122.md](HANDOFF-VIDEO-20261122.md) —— 昨晚交接（**`/stream` 可用的结论已被修正**，其余数据仍有效）
 - [STREAM-LATENCY-TEST-20261122.md](STREAM-LATENCY-TEST-20261122.md) —— **延迟实测**（软编 1384ms vs 硬编 636~742ms，各阶段耗时分解）
@@ -54,6 +61,7 @@
 
 ## 性能与架构
 
+- [SETTINGS-PAGE-LAG-20261123.md](SETTINGS-PAGE-LAG-20261123.md) —— **进入「应用设置」页卡顿根因归因（按贡献度排序）**（`Activate()` UI 线程串行跑 1×powershell `Get-MpPreference` + 6×sc.exe + 2×schtasks + 3×递归扫目录 + 旧目录枚举；P0=Defender 排除查询/服务状态查询，P1=目录占用统计/迁移 Inspect，P2=自启状态假 async；含 file:line 证据 + 量级估算 + 后台化修复建议）
 - [UI-PERF-IO-TRIAGE-20261123.md](UI-PERF-IO-TRIAGE-20261123.md) —— **UI 线程减负**（TickHub 后台订阅 RegisterBackground + 4 订阅者迁后台；RdpConsole 5 个 DispatcherTimer 全收编/事件驱动；ConfigStore.Save 改后台串行队列保序原子写；94 处同步 IO 分类清单）
 - [PERF-3.3.4-20261122.md](PERF-3.3.4-20261122.md) —— **性能基线**（16% 单核的构成分解 + 三个卡顿根因）
 - [LOOK-OPTIMIZE-20261122.md](LOOK-OPTIMIZE-20261122.md) —— **转视角链路优化 + 手机端贯通**（去 Thread.Sleep(6) + moverel 单向 NoReply + 8ms 节流 + 触屏滑动手势状态机）
@@ -66,6 +74,8 @@
 - [DUAL-RATE-DESIGN-20261122.md](DUAL-RATE-DESIGN-20261122.md) —— **录制/直播双速率解耦设计**（2fps 录像 + 60fps 直播，共享单次抓屏，file:line 改动清单 + 分步施工）
 - [STREAM-PLAN-V2-20261122.md](STREAM-PLAN-V2-20261122.md) —— **RDP 实测后的远程画面方案**（帧率上界 / 交互解耦 / 外网码率 / RDP 服务端能力边界）
 - [NVENC-DESIGN-20261122.md](NVENC-DESIGN-20261122.md) —— **NVENC 硬编替换 JPEG**（RDP 内可用性实测：NVENC 可用但抓屏 31ms 才是瓶颈；多厂商 IVideoEncoder 抽象层 + 选型 MF MFT 不选 SDK + 4060 Laptop 12 路并发查证 + 回退链 + AMD/Intel 备用记录）
+- [NVENC-IMPLEMENTATION-20261123.md](NVENC-IMPLEMENTATION-20261123.md) —— **NVENC 硬编正确实现**（异步 MFT 完整时序 / ProcessOutput 返回码 / 事件驱动 vs 轮询 / MF 软编压 IDR 可行性 / Vortice 绑定缺口 ICodecAPI / 最小改动清单）
+- [ICODECAPI-PROBE-20261123.md](ICODECAPI-PROBE-20261123.md) —— **手写 ICodecAPI 独立探针实测**（SetValue/GetValue 槽位与 VT_BOOL/VT_UI4；微软软编写入 S_OK 但读回 E_NOTIMPL，不能宣称生效）
 - [MOBILE-REMOTE-PLAN-20261122.md](MOBILE-REMOTE-PLAN-20261122.md) —— **手机端远程控制方案**（PWA→壳套 APP 路线 / 手势映射 / 外网穿透与安全边界 / 里程碑）
 - [MOBILE-CONTROLS-DESIGN-20261122.md](MOBILE-CONTROLS-DESIGN-20261122.md) —— **手机端控制层设计**（虚拟摇杆数学与事件序列 / 可编辑键位布局 JSON / 中文输入上屏时序 / 断线释放协议）
 - [ANDROID-APP-DESIGN-20261122.md](ANDROID-APP-DESIGN-20261122.md) —— **安卓 APP 协议设计与工程脚手架**（Kotlin + 传统 View/SurfaceView + Compose 混合 / ExoPlayer vs MediaCodec 取舍 / 协议时序 / 目录树 / 类骨架 / 分阶段）

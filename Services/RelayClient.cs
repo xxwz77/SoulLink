@@ -696,7 +696,8 @@ namespace SoulLink.Services
                 if (s0 != null)
                 {
                     env["SOULLINK_CAPTURE_MODE"] = s0.CaptureMode.ToString();
-                    env["SOULLINK_STREAM_FPS"] = Math.Clamp(s0.RecordFps, 1, 60).ToString();
+                    env["SOULLINK_STREAM_FPS"] = Math.Clamp(s0.StreamFps, 1, 60).ToString();
+                    env["SOULLINK_REC_FPS"] = Math.Clamp(s0.RecordFps, 1, 30).ToString();
                     env["SOULLINK_VIDEO_BITRATE"] = Math.Max(500, s0.VideoBitrateKbps).ToString();
                 }
 
