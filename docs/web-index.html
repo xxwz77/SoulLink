@@ -458,97 +458,79 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
     <span id="kbBadge">⌨ 键盘已开</span>
     <span id="fpsinfo" class="hdrinfo"></span>
     <span class="pill" id="liveCount">— 在线</span>
-    <div class="hdrctrl" id="viewctrls" style="display:none">
-      <!-- ══════════ 两组设置，含义完全不同，必须分开 ══════════
-
-           ① 录制（代理侧）：决定代理多久截一次屏、压多清、内存留多久。
-              改了会影响**所有**看这个账号的人，并且写回应用配置。
-           ② 播放（本浏览器）：只决定**这个浏览器**多久来取一次图。
-              不影响录制，不影响别人，只影响你自己的流量和 CPU。
-
-           ★ 用户指出：「这是浏览器的帧率吧，那录制帧率呢？要弄完整，让用户分得清」
-             所以两组各自成块、带标题、带颜色区分，不再混在一起。 -->
-
-      <div class="hgroup" data-kind="live" title="直播帧率：有人观看时的采集编码频率，与录像帧率独立">
-        <span class="gtag">直播</span>
-        <label class="hfield">
-          <span>帧率</span>
-          <select id="selLiveFps" title="有人观看时的直播帧率">
-            <option value="30">30 fps</option>
-            <option value="45">45 fps</option>
-            <option value="60">60 fps</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="hgroup" data-kind="record" title="录像参数：无人观看时的采集频率与缓冲，不影响直播档位">
-        <span class="gtag">录制</span>
-        <label class="hfield">
-          <span>帧率</span>
-          <select id="selFps" title="代理每秒截取多少帧，影响流畅度与 CPU">
-            <option value="5">5 fps</option>
-            <option value="10">10 fps</option>
-            <option value="15">15 fps</option>
-            <option value="30">30 fps</option>
-          </select>
-        </label>
-        <label class="hfield">
-          <span>画质</span>
-          <select id="selQuality" title="JPEG 质量，越高越清晰、单帧越大">
-            <option value="60">标准 60</option>
-            <option value="75">清晰 75</option>
-            <option value="90">高清 90</option>
-          </select>
-        </label>
-        <label class="hfield">
-          <span>保留</span>
-          <select id="selKeep" title="内存环形缓冲保留多少秒">
-            <option value="10">10 秒</option>
-            <option value="30">30 秒</option>
-            <option value="60">60 秒</option>
-            <option value="120">120 秒</option>
-          </select>
-        </label>
-      </div>
-
-      <!-- ★ 2026-11-23：「本机播放-取图」下拉框随 JPEG 轮询通路一起移除
-           （用户指令：只要视频流）。画面帧率现在由服务端 /stream 直推，
-           本浏览器无「取图频率」概念。保留的「录制帧率」仍写回应用配置。 -->
-
-      <div class="hgroup" data-kind="view" title="鼠标模式：绝对=点哪指哪+长按拖动；相对=月光式（滑动转视角/点按点击/双指滚轮·右键）">
-        <span class="gtag">鼠标</span>
-        <div class="seg" id="mouseModeSeg">
-          <button id="mmAbs" class="on" type="button">绝对</button>
-          <button id="mmRel" type="button">相对</button>
-        </div>
-      </div>
-      <div class="hgroup" data-kind="live" title="抓屏后端：配置的目标后端 vs 代理当前实际生效后端（自动=DDA→WGC→BitBlt 降级链）">
-        <span class="gtag">抓屏</span>
-        <select id="capMode" class="hfield select-mini">
-          <option value="0">自动(DDA→WGC→BitBlt)</option>
-          <option value="1">DXGI DDA</option>
-          <option value="2">WGC</option>
-          <option value="3">BitBlt</option>
-        </select>
-        <span class="capbackend" id="capBackend">—</span>
-      </div>
-      <div class="hgroup" data-kind="live" title="直播画质：码率/帧率/NVENC 预设/VBV 缓冲，改动回写应用配置并即时下发代理">
-        <span class="gtag">直播画质</span>
-        <label class="qgroup"><span>码率</span><input id="qBitrate" type="range" min="1000" max="25000" step="1000" value="8000"><span class="qval" id="qBitrateV">8M</span></label>
-        <label class="qgroup"><span>帧率</span><input id="qStreamFps" type="range" min="30" max="60" step="15" value="30"><span class="qval" id="qStreamFpsV">30fps</span></label>
-        <label class="qgroup"><span>预设</span><select id="qPreset" class="hfield select-mini">
-          <option value="1">P1 最快</option>
-          <option value="3">P3 均衡</option>
-          <option value="5">P5 高质</option>
-          <option value="7">P7 最慢</option>
-        </select></label>
-        <label class="qgroup"><span>VBV</span><input id="qVbv" type="range" min="0" max="200" step="10" value="0"><span class="qval" id="qVbvV">0%</span></label>
-        <div class="qguide">挂机用默认 · vbv 50-100% 画质更清晰 · preset 复杂画面调高</div>
-      </div>
+        <div class="hdrctrl" id="viewctrls" style="display:none">
       <button id="pauseBtn" class="hbtn">暂停</button>
       <button id="closeViewer" class="hbtn">收起</button>
+      <div class="settingswrap">
+        <button id="settingsBtn" class="settingsbtn" type="button">设置</button>
+        <div class="settingsmenu" id="settingsMenu">
+          <div class="mgroup">
+            <div class="mtitle">抓屏方式（配置 vs 实际）</div>
+            <select id="capMode" class="hfield select-mini">
+              <option value="0">自动(DDA→WGC→BitBlt)</option>
+              <option value="1">DXGI DDA</option>
+              <option value="2">WGC</option>
+              <option value="3">BitBlt</option>
+            </select>
+            <span class="capbackend" id="capBackend">—</span>
+          </div>
+          <div class="mgroup">
+            <div class="mtitle">鼠标模式</div>
+            <div class="seg" id="mouseModeSeg">
+              <button id="mmAbs" class="on" type="button">绝对</button>
+              <button id="mmRel" type="button">相对</button>
+            </div>
+          </div>
+          <div class="mgroup">
+            <div class="mtitle">直播画质</div>
+            <label class="qgroup"><span>码率</span><input id="qBitrate" type="range" min="1000" max="25000" step="1000" value="8000"><span class="qval" id="qBitrateV">8M</span></label>
+            <label class="qgroup"><span>帧率</span><input id="qStreamFps" type="range" min="30" max="60" step="15" value="30"><span class="qval" id="qStreamFpsV">30fps</span></label>
+            <label class="qgroup"><span>预设</span><select id="qPreset" class="hfield select-mini">
+              <option value="1">P1 最快</option>
+              <option value="3">P3 均衡</option>
+              <option value="5">P5 高质</option>
+              <option value="7">P7 最慢</option>
+            </select></label>
+            <label class="qgroup"><span>VBV</span><input id="qVbv" type="range" min="0" max="200" step="10" value="0"><span class="qval" id="qVbvV">0%</span></label>
+            <div class="qguide">挂机用默认 · vbv 50-100% 画质更清晰 · preset 复杂画面调高</div>
+          </div>
+          <div class="mgroup">
+            <div class="mtitle">录制参数（影响所有观看者）</div>
+            <label class="hfield"><span>帧率</span>
+              <select id="selFps">
+                <option value="5">5 fps</option>
+                <option value="10">10 fps</option>
+                <option value="15">15 fps</option>
+                <option value="30">30 fps</option>
+              </select>
+            </label>
+            <label class="hfield"><span>画质</span>
+              <select id="selQuality">
+                <option value="60">标准 60</option>
+                <option value="75">清晰 75</option>
+                <option value="90">高清 90</option>
+              </select>
+            </label>
+            <label class="hfield"><span>保留</span>
+              <select id="selKeep">
+                <option value="10">10 秒</option>
+                <option value="30">30 秒</option>
+                <option value="60">60 秒</option>
+                <option value="120">120 秒</option>
+              </select>
+            </label>
+            <label class="hfield"><span>直播帧率</span>
+              <select id="selLiveFps">
+                <option value="30">30 fps</option>
+                <option value="45">45 fps</option>
+                <option value="60">60 fps</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
     </div>
-    <button class="themebtn" id="themeBtn" title="切换明暗主题">
+        <button class="themebtn" id="themeBtn" title="切换明暗主题">
       <span id="themeIcon">🌙</span>
     </button>
   </div>
@@ -1070,6 +1052,7 @@ function directBase(sess) {
             ctx.drawImage(frame, 0, 0);
             canvas.classList.add('show');
             setPh(null, false);
+            lastFrameAt = Date.now();     // 真的画出一帧 → 重置画面看门狗
             if (!gotFrame) {
               gotFrame = true;
               failStreak = 0;             // 出画面了，失败计数清零
@@ -1089,13 +1072,18 @@ function directBase(sess) {
       //   修「DXGI 播一会儿自己停」：服务端 /stream 断开不一定走 done/异常，
       //   可能只是编码器停转/后端切换卡住后不再吐数据，read() 永远 pending。
       //   只在**出过画面之后**才启用看门狗 —— 首帧慢（软编 warmup/等 IDR）不算断流。
-      const STALL_MS = 10000;       // 出过画面后 10s 无任何数据 = 断流，触发带退避重连
-      let lastDataAt = Date.now();
+      const STALL_MS = 10000;       // 出过画面后 10s 无「新解码帧」= 画面卡住，触发带退避重连
+      // ★ 看门狗以「解码帧」为准，而非「网络字节」（2026-11-23 修复）：
+      //   旧实现 lastDataAt 在每次 reader.read() 返回字节时刷新，但 /stream 连接保持、
+      //   编码器停转时 read() 会永久 pending；更糟的是即便连接还活着，也可能只吐
+      //   SPS/PPS/SEI 等非画面字节 —— 这些字节一直刷新 lastDataAt，看门狗永远不触发。
+      //   改为 lastFrameAt：只有 decoder output 真的画出一帧才更新，画面卡住必重连。
+      let lastFrameAt = Date.now();
       const stallTimer = setInterval(() => {
         if (myGen !== h264Gen) return;
-        if (gotFrame && Date.now() - lastDataAt >= STALL_MS) {
-          console.warn('[H264] 拉流无数据超时 ' + STALL_MS + 'ms，自动重连');
-          fail('[H264] 拉流无数据超时', null);
+        if (gotFrame && Date.now() - lastFrameAt >= STALL_MS) {
+          console.warn('[H264] 画面 ' + STALL_MS + 'ms 无新帧，自动重连');
+          fail('[H264] 画面无新帧超时', null);
         }
       }, 1000);
 
@@ -1179,7 +1167,6 @@ function directBase(sess) {
         const { done, value } = await reader.read();
         if (myGen !== h264Gen) break;      // 换代：立刻退出，不碰已换人的 reader
         if (done) break;
-        lastDataAt = Date.now();           // 有数据到达 → 重置无数据看门狗
 
         const merged = new Uint8Array(pending.length + value.length);
         merged.set(pending, 0);
@@ -1822,6 +1809,29 @@ if (capSel) capSel.onchange = async () => {
     }
   } else syncCapture();
 };
+
+// 设置弹出菜单（2026-11-23）：点「设置」展开，点面板外/ESC 收起
+const settingsBtn = $('settingsBtn'), settingsMenu = $('settingsMenu');
+if (settingsBtn && settingsMenu) {
+  settingsBtn.onclick = e => {
+    e.stopPropagation();
+    const open = settingsMenu.classList.toggle('open');
+    settingsBtn.classList.toggle('on', open);
+  };
+  document.addEventListener('pointerdown', e => {
+    if (!settingsMenu.classList.contains('open')) return;
+    if (!settingsMenu.contains(e.target) && e.target !== settingsBtn) {
+      settingsMenu.classList.remove('open');
+      settingsBtn.classList.remove('on');
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && settingsMenu.classList.contains('open')) {
+      settingsMenu.classList.remove('open');
+      settingsBtn.classList.remove('on');
+    }
+  });
+}
 
 // 「本机播放」下拉框已随 JPEG 轮询通路移除（2026-11-23）：
 //   画面帧率由服务端 /stream 直推，本机没有取图频率概念。
