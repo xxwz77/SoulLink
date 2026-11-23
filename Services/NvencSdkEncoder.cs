@@ -509,10 +509,16 @@ namespace SoulLink.Services
                 int hr = createInstance(ref fl);
                 if (hr != 0) { LastError = "NvEncodeAPICreateInstance hr=0x" + hr.ToString("X8"); Cleanup(); return false; }
 
-                // D3D11 硬件设备（WARP 不产生显存纹理，零拷贝要求硬件设备）
-                var levels = new[] { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0, FeatureLevel.Level_10_1, FeatureLevel.Level_10_0 };
-                var dhr = Vortice.Direct3D11.D3D11.D3D11CreateDevice(IntPtr.Zero, DriverType.Hardware, DeviceCreationFlags.BgraSupport, levels, out var device, out _, out var context);
-                if (!dhr.Success || device == null) { LastError = "D3D11 硬件设备失败 0x" + dhr.Code.ToString("X8"); Cleanup(); return false; }
+                // ★ P0-G/P0-H：NVENC 只在机器确实有 NVIDIA GPU 时尝试——Intel/AMD/核显环境直接走 MF
+                //   （vendor 中立 MFT 枚举），省掉无谓的 DLL 加载/会话创建失败与日志噪音。
+                if (!SoulLink.Relay.GpuAdapter.HasNvidiaAdapter())
+                { LastError = "未枚举到 NVIDIA GPU（Intel/AMD/核显环境由 MF 编码）"; Cleanup(); return false; }
+
+                // D3D11 硬件设备显式建在 NVIDIA 独显上（BIOS 启用核显后默认适配器变 Intel，
+                //   NVENC 直通返回 NV_ENC_ERR_DEVICE_NOT_SUPPORTED）。WARP 不产生显存纹理，零拷贝要求硬件设备。
+                using var nvAdapter = SoulLink.Relay.GpuAdapter.PickNvidiaAdapter();
+                if (!SoulLink.Relay.GpuAdapter.TryCreateDevice(nvAdapter, out var device, out var context, out string devErr))
+                { LastError = devErr; Cleanup(); return false; }
                 _device = device; _context = context;
 
                 // 编码会话（DIRECTX 设备直通）

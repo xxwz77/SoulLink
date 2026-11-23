@@ -71,6 +71,14 @@ namespace SoulLink.Relay
         /// <summary>★ P1-A2：抓屏区域左上角的虚拟桌面物理 Y。</summary>
         public int CaptureOriginY { get { TryGetCaptureOrigin(out _, out int y); return y; } }
 
+        /// <summary>★ P0-H：WGC 设备所在 GPU 的 VendorId（0=未建立）。供编码器路由与零拷贝门控。</summary>
+        public uint CaptureAdapterVendorId { get { lock (_captureGate) return _captureAdapterVendorId; } }
+
+        /// <summary>★ P0-H：WGC 设备所在 GPU 名称（日志用）。</summary>
+        public string CaptureAdapterName { get { lock (_captureGate) return _captureAdapterName; } }
+        private uint _captureAdapterVendorId;
+        private string _captureAdapterName = "";
+
         private ID3D11Device? _device;
         private ID3D11DeviceContext? _context;
         private Windows.Graphics.DirectX.Direct3D11.IDirect3DDevice? _winrtDevice;
@@ -166,6 +174,16 @@ namespace SoulLink.Relay
         {
             if (!CreateDevice())
                 throw new InvalidOperationException("D3D11 设备失败");
+
+            // ★ P0-H：记录 WGC 设备所在 GPU（供编码器路由与零拷贝门控）
+            try
+            {
+                using var a1 = _device!.QueryInterface<IDXGIDevice>().GetAdapter().QueryInterface<IDXGIAdapter1>();
+                var d1 = a1.Description1;
+                _captureAdapterVendorId = d1.VendorId;
+                _captureAdapterName = d1.Description.Trim();
+            }
+            catch { }
 
             // 原生 ID3D11Device → WinRT IDirect3DDevice
             using var dxgiDevice = _device!.QueryInterface<IDXGIDevice>();
@@ -349,9 +367,11 @@ namespace SoulLink.Relay
             => ConsumeBgra(true, out width, out height);
 
         /// <summary>
-        /// 零拷贝（阶段B）：返回私有 _gpuTexture（B8G8R8A8，已在显存）+ 其跨设备共享句柄，不读回 CPU。
-        /// 供 GpuColorConverter 在编码器设备上 OpenSharedResource + VideoProcessorBlt 转 NV12。
-        /// 无有效帧时返回 false（sharedHandle=0，width/height=0）。
+        /// 零拷贝（阶段B）：每帧先消费 stash 帧（检出 → CopyResource 到私有 _gpuTexture → 检入），
+        /// 再返回私有纹理（B8G8R8A8，已在显存）的跨设备共享句柄，不读回 CPU。
+        /// ★ P0-F(D03)：私有 _gpuTexture 只在消费 stash 时更新——若零拷贝不消费 stash，
+        ///   编码器会永远编码同一张旧帧（画面冻结/重复）。本方法因此必须每帧 ConsumeStash。
+        /// 无有效帧时返回 false（sharedHandle=0，width/height=0），调用方回退 CPU。
         /// </summary>
         public bool TryCaptureBgraTexture(out IntPtr sharedHandle, out int width, out int height)
         {
@@ -359,8 +379,12 @@ namespace SoulLink.Relay
             if (!_running) return false;
             lock (_captureGate)
             {
+                // ★ P0-F(D03)：先消费 stash（CopyResource 到私有纹理），零拷贝拿到的才是新帧
+                ConsumeStash();
                 var gpuTex = _gpuTexture;
                 if (gpuTex == null || _gpuFrameTs == 0) return false;
+                // 跨设备共享前 Flush：保证本设备 CopyResource 结果对编码设备可见
+                try { _context?.Flush(); } catch { }
                 try
                 {
                     using var dxgiRes = gpuTex.QueryInterface<IDXGIResource>();
@@ -401,20 +425,7 @@ namespace SoulLink.Relay
             lock (_captureGate)
             {
                 // 阶段0：取走 stash 帧（到达线程写的最新帧），检出期内拷贝到私有纹理后检入
-                Windows.Graphics.Capture.Direct3D11CaptureFrame? frame;
-                long generation;
-                lock (_stashLock)
-                {
-                    frame = _stashedFrame;
-                    _stashedFrame = null;
-                    generation = _stashedGeneration;
-                }
-                if (frame != null)
-                {
-                    try { ProcessStashedFrame(frame, generation); }
-                    catch { }
-                    finally { frame.Dispose(); }   // 检入归还池（渲染已完成，buffer 交还 DWM）
-                }
+                ConsumeStash();
 
                 var device = _device;
                 var context = _context;
@@ -442,6 +453,27 @@ namespace SoulLink.Relay
                 }
                 return bgra;
             }
+        }
+
+        /// <summary>
+        /// ★ P0-F(D03)：阶段0——取走 stash 帧（到达线程写的最新帧），检出期内 CopyResource 到
+        /// 私有 _gpuTexture 后检入。CPU 读回路径与零拷贝路径共用本方法，保证 _gpuTexture
+        /// 无论哪条路径消费都保持最新。
+        /// </summary>
+        private void ConsumeStash()
+        {
+            Windows.Graphics.Capture.Direct3D11CaptureFrame? frame;
+            long generation;
+            lock (_stashLock)
+            {
+                frame = _stashedFrame;
+                _stashedFrame = null;
+                generation = _stashedGeneration;
+            }
+            if (frame == null) return;
+            try { ProcessStashedFrame(frame, generation); }
+            catch { }
+            finally { frame.Dispose(); }   // 检入归还池（渲染已完成，buffer 交还 DWM）
         }
 
         /// <summary>

@@ -57,6 +57,8 @@ namespace SoulLink.Relay
         private IDXGIOutputDuplication? _duplication;
         private int _width, _height;
         private int _originX, _originY;   // ★ P1-A2：抓屏区域左上角在虚拟桌面的物理坐标（网页坐标反算用）
+        private uint _captureAdapterVendorId;   // ★ P0-H：抓屏所在 GPU 的 VendorId（供编码器路由与零拷贝门控）
+        private string _captureAdapterName = "";
         private bool _active;
         private bool _disposed;
         private readonly object _gate = new();
@@ -87,6 +89,12 @@ namespace SoulLink.Relay
 
         /// <summary>★ P1-A2：抓屏区域左上角的虚拟桌面物理 Y。</summary>
         public int CaptureOriginY { get { lock (_gate) return _originY; } }
+
+        /// <summary>★ P0-H：抓屏所在 GPU 的 VendorId（0x10DE=NVIDIA；0=未建立）。供编码器路由与零拷贝门控。</summary>
+        public uint CaptureAdapterVendorId { get { lock (_gate) return _captureAdapterVendorId; } }
+
+        /// <summary>★ P0-H：抓屏所在 GPU 名称（日志用）。</summary>
+        public string CaptureAdapterName { get { lock (_gate) return _captureAdapterName; } }
 
         /// <summary>桌面真实出帧累计序号（对齐 WgcCapture.FrameSequence 语义）。</summary>
         public long FrameSequence { get { lock (_gate) return _frameSequence; } }
@@ -128,25 +136,54 @@ namespace SoulLink.Relay
             // 前提1：syncThreadDesktop（Sunshine misc.cpp L247-264）
             SyncThreadDesktop();
 
-            // 前提2：硬件 D3D11 设备（DriverType.Hardware，单 N 卡无需 Optimus hook）
-            var levels = new[]
+            // ★ P0-G/P0-H：前提2 —— 通用自适应抓屏适配器选择：优先「有输出的 NVIDIA」（与 NVENC
+            //   同 GPU → 零拷贝可用）；否则第一个有输出的硬件适配器（Intel/AMD/虚拟显示）。
+            //   跨 GPU 时零拷贝由上层禁用（物理限制），抓屏本身不受影响。
+            var candidates = GpuAdapter.PickCaptureCandidates();
+            try
             {
-                FeatureLevel.Level_11_1, FeatureLevel.Level_11_0, FeatureLevel.Level_10_1, FeatureLevel.Level_10_0
-            };
-            var hr = Vortice.Direct3D11.D3D11.D3D11CreateDevice(
-                IntPtr.Zero, DriverType.Hardware, DeviceCreationFlags.BgraSupport, levels,
-                out var device, out _, out var context);
-            if (!hr.Success || device == null)
-                throw new InvalidOperationException("D3D11 硬件设备失败 0x" + hr.Code.ToString("X8")
-                    + "（显存不足时可能发生，降级到 WGC/BitBlt）");
-            _device = device;
-            _context = context;
+                string failReason = "0 个可枚举输出";
+                foreach (var candidate in candidates)
+                {
+                    if (!GpuAdapter.TryCreateDevice(candidate, out var dev, out var ctx, out _) || dev == null || ctx == null)
+                        continue;
+                    _device = dev; _context = ctx;
+                    using (var a = dev.QueryInterface<IDXGIDevice>().GetAdapter())
+                    {
+                        if (TryEstablishDuplication(a, out failReason))
+                        {
+                            // ★ P0-H：记录抓屏 GPU（VendorId/名称）供编码器路由与零拷贝门控
+                            try
+                            {
+                                using var a1 = a.QueryInterface<IDXGIAdapter1>();
+                                var d1 = a1.Description1;
+                                _captureAdapterVendorId = d1.VendorId;
+                                _captureAdapterName = d1.Description.Trim();
+                            }
+                            catch { }
+                            RelayAgent.LogQuiet("[capture] DXGI-DDA 抓屏源=" + _captureAdapterName
+                                + "(" + GpuAdapter.VendorHex(_captureAdapterVendorId) + ")"
+                                + (_captureAdapterVendorId == GpuAdapter.NvidiaVendorId ? " 与 NVENC 同 GPU" : ""));
+                            return;
+                        }
+                    }
+                    // 该候选建立 duplication 失败 → 释放设备，试下一个候选
+                    _context?.Dispose(); _device?.Dispose();
+                    _context = null; _device = null;
+                }
+                throw new InvalidOperationException("DDA 建立失败：" + failReason + "（无可用抓屏适配器，降级 WGC/BitBlt）");
+            }
+            finally
+            {
+                foreach (var c in candidates) c.Dispose();
+            }
+        }
 
-            // 前提3：DuplicateOutput（枚举输出，Sunshine display_base.cpp L427）
-            using var dxgiDev = device.QueryInterface<IDXGIDevice>();
-            using var adapter = dxgiDev.GetAdapter();
-
-            string failReason = "0 个可枚举输出";
+        /// <summary>在指定适配器上枚举输出并建立 DuplicateOutput（前提3，Sunshine display_base.cpp L427）。</summary>
+        private bool TryEstablishDuplication(IDXGIAdapter adapter, out string failReason)
+        {
+            failReason = "0 个可枚举输出";
+            if (_device == null) return false;
             for (int oi = 0; ; oi++)
             {
                 Result ohr = adapter.EnumOutputs((uint)oi, out IDXGIOutput output);
@@ -158,7 +195,7 @@ namespace SoulLink.Relay
                         using var output1 = output.QueryInterface<IDXGIOutput1>();
                         try
                         {
-                            var dup = output1.DuplicateOutput(device);
+                            var dup = output1.DuplicateOutput(_device);
                             _duplication = dup;
                             var dd = dup.Description;
                             // 用模式列表取物理尺寸（DPI 缩放安全）
@@ -180,7 +217,7 @@ namespace SoulLink.Relay
                             _consecutiveFailures = 0;
                             _startBackoffMs = 0;
                             RelayAgent.LogQuiet("[capture] DXGI-DDA 建立成功：" + _width + "x" + _height);
-                            return;
+                            return true;
                         }
                         catch (SharpGenException ex)
                         {
@@ -193,7 +230,7 @@ namespace SoulLink.Relay
                     }
                 }
             }
-            throw new InvalidOperationException("DDA 建立失败：" + failReason);
+            return false;
         }
 
         /// <summary>Sunshine 的 syncThreadDesktop：把线程绑到输入桌面。</summary>
@@ -342,6 +379,8 @@ namespace SoulLink.Relay
 
                         // DDA 临时纹理 → 私有 Shared 纹理（显存内拷贝，ReleaseFrame 前完成）
                         _context.CopyResource(_sharedBgraTexture, tex);
+                        // ★ P0-F：跨设备共享前 Flush，保证拷贝结果对编码设备可见
+                        _context.Flush();
 
                         // 拿共享句柄
                         using var dxgiRes = _sharedBgraTexture.QueryInterface<IDXGIResource>();
