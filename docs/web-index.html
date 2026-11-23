@@ -295,8 +295,16 @@ body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
   /* 容器宽度决定画面宽度；高度交给图片自己撑（见 img 规则）。
      背景用透明而不是纯黑 —— 纯黑在画面比容器小时会露出黑边。 */
   #scr{position:relative;background:transparent;border-radius:11px;overflow:hidden;
-       border:1px solid var(--border);touch-action:none;cursor:default;
-       min-height:220px;   /* ★ canvas 未出首帧时保持容器高度，连接中提示可见，不塌陷空白 */}
+       border:1px solid var(--border);touch-action:none;
+       min-height:220px;   /* ★ canvas 未出首帧时保持容器高度，连接中提示可见，不塌陷空白 */
+       /* ★ 2026-11-24：cursor:none —— 画面区不显示本机系统光标（原 cursor:default）。
+          远端光标已画进视频帧（WGC IsCursorCaptureEnabled=true，方案见
+          AUDIT-20261124-03-CURSOR-UX.md §4.1），再显示本机光标会双影
+          （本机零延迟 vs 帧内 444ms，视觉极糟）。rcCursor 是远端位置的
+          低延迟回显（输入 RTT 级），不是本机影子，与 cursor:none 不冲突。 */
+       cursor:none}
+  #scr *{cursor:none}          /* 画布/涟漪/提示层一律无本机光标 */
+  #scr button{cursor:pointer}  /* 可点按钮（如重新连接）恢复指针 */
   /* ★ 宽度撑满、高度按比例自适应，并封顶在可视区内。
      历史教训：写成 height:100% 会让图在容器里居中缩小 → 画面变小 + 黑边。 */
   /* ★ 2026-11-23：JPEG 轮询通路按用户指令整个移除（「很卡很卡」），
@@ -316,12 +324,24 @@ body.viewonly #viewerBox{background:transparent;box-shadow:none;border:none}
   #rip{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;
        border-radius:50%;border:2px solid var(--accent);opacity:0;pointer-events:none}
   #rip.go{animation:rp .5s ease-out}
-  /* 可见光标指示（2026-11-24）：绝对模式跟随鼠标 move 的小圆点，锁定态隐藏。
-     叠在 canvas 上、pointer-events:none 不挡点击；margin 负偏移使圆心对准落点。 */
-  #plCursor{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;
-            border:1.5px solid var(--accent);border-radius:50%;
-            background:rgba(255,255,255,.16);box-shadow:0 0 4px rgba(0,0,0,.45);
-            pointer-events:none;display:none;z-index:12}
+  /* ══════════ 远端光标回显（2026-11-24，替代已删除的 #plCursor 蓝球）══════════
+     蓝球（本机鼠标影子）已删：它不反映远端光标，信息量为零（见
+     AUDIT-20261124-03-CURSOR-UX.md）。成熟产品的正解是「远端光标状态回传 +
+     客户端合成绘制」：服务端把实际光标位置（GetCursorPos 归一化）随输入响应
+     回传 cursor:{nx,ny,visible}，网页画一个自绘十字光标（对齐远端 hotspot，
+     不是圆球），延迟 ≈ 输入 RTT 而非画面 444ms。
+     - 几何与 norm() 同源（canvas 实际矩形 + object-fit 黑边），见 frameRect()；
+     - pointer-events:none 不挡点击；z-index 与旧蓝球一致；
+     - 白色描边 + 半透明黑底，在亮/暗画面上都可见。 */
+  #rcCursor{position:absolute;left:0;top:0;width:0;height:0;
+            pointer-events:none;display:none;z-index:12;will-change:transform}
+  #rcCursor .rc-dot{position:absolute;left:-7px;top:-7px;width:14px;height:14px}
+  #rcCursor .rc-dot::before,#rcCursor .rc-dot::after{content:'';position:absolute;
+            background:#fff;box-shadow:0 0 3px rgba(0,0,0,.85);border-radius:1px}
+  #rcCursor .rc-dot::before{left:6px;top:0;width:2px;height:14px}   /* 竖线 */
+  #rcCursor .rc-dot::after{left:0;top:6px;width:14px;height:2px}    /* 横线 */
+  #rcCursor .rc-dot .rc-ring{position:absolute;inset:-4px;border:1.5px solid #fff;
+            border-radius:50%;opacity:.55;box-shadow:0 0 3px rgba(0,0,0,.7)}
   @keyframes rp{0%{opacity:.95;transform:scale(.3)}100%{opacity:0;transform:scale(1.6)}}
 
   .row{display:flex;align-items:center;justify-content:space-between;
@@ -609,7 +629,10 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
       <canvas id="vframe"></canvas>
       <div id="ph"><span id="phtxt">连接中…</span><button id="reconn" class="hbtn" style="display:none">重新连接</button></div>
       <div id="rip"></div>
-      <div id="plCursor"></div>
+      <!-- ★ 2026-11-24：#plCursor 蓝球已删（本机鼠标影子，信息量为零）。
+           换成 #rcCursor：远端光标位置的回显（位置由服务端 cursor 回传驱动，
+           见 JS 的 updateRemoteCursor；不跟本机鼠标，无任何本地预测）。 -->
+      <div id="rcCursor"><div class="rc-dot"><div class="rc-ring"></div></div></div>
     </div>
     <!-- ★ 3.3.8：这里的操作行已全部移到顶栏（见 <header>）。
          画面区只留视频本身，不再被按钮占掉可视高度。
@@ -884,6 +907,7 @@ const webCodecsSupported = (typeof VideoDecoder !== 'undefined')
 //   stopLive() 之后流还在拉、切账号时两条流并发、decode 回调还在画旧画面。
 let h264Gen = 0;              // 代际：停流/重连/切账号时 +1，作废旧流的一切回调
 let h264Reader = null;        // /stream 的 ReadableStreamDefaultReader
+let h264Abort = null;         // /stream 的 AbortController（取消 fetch 僵尸连接）
 let h264Active = false;       // /stream 连接是否在跑
 
 // 收掉当前流（作废回调 + 断开连接），不动画面
@@ -891,6 +915,8 @@ function abortStream() {
   h264Gen++;                  // 读流循环、decode 回调全部作废
   h264Active = false;
   const r = h264Reader; h264Reader = null;
+  const ac = h264Abort; h264Abort = null;
+  if (ac) { try { ac.abort(); } catch (e) {} }
   if (r) { try { r.cancel().catch(() => {}); } catch (e) {} }
 }
 
@@ -1054,6 +1080,91 @@ function directBase(sess) {
     return { units, pending: buf.subarray(lastStart.at) };
   }
 
+  // ═════════ WebGL2 呈现层：消除 2D drawImage 的 GPU 回读（2026-11-24）═════════════
+  // 2D canvas 的 drawImage(VideoFrame) 会把硬解出的 GPU 纹理读回 CPU 再传回 GPU
+  //（Chrome 已知行为），1080p 下每帧多一次全尺寸拷贝并可能阻塞 output 回调。
+  // 改用 WebGL2 的 texImage2D 直接把 VideoFrame 当纹理源上传（I420/NV12/RGBA 均由
+  // 浏览器零回读转换），再画全屏三角形。渲染器只建一次（模块级），跨流/重连复用，
+  // 不重复建 GL 资源。WebGL2 不可用（罕见）时回退 2D drawImage（原路径）。
+  let _glRenderer = undefined;   // undefined=未初始化 / null=不可用 / 对象=可用
+  function getGlRenderer(canvas) {
+    if (_glRenderer !== undefined) return _glRenderer;
+    _glRenderer = null;
+    let gl = null;
+    try {
+      gl = canvas.getContext('webgl2', {
+        alpha: false, antialias: false, depth: false, stencil: false,
+        premultipliedAlpha: false, desynchronized: true, powerPreference: 'high-performance'
+      });
+    } catch (e) { gl = null; }
+    if (!gl) return _glRenderer;   // 无 WebGL2 → 回退 2D
+
+    try {
+      const VS = `#version 300 es
+layout(location=0) in vec2 aPos;
+out vec2 vUV;
+void main(){ vUV = aPos*0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
+      const FS = `#version 300 es
+precision mediump float;
+in vec2 vUV;
+uniform sampler2D uTex;
+out vec4 outColor;
+void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
+
+      const vs = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vs, VS); gl.compileShader(vs);
+      if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) throw new Error('vs: ' + gl.getShaderInfoLog(vs));
+      const fs = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fs, FS); gl.compileShader(fs);
+      if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) throw new Error('fs: ' + gl.getShaderInfoLog(fs));
+
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(prog));
+
+      // 全屏三角形（三个顶点覆盖整个裁剪空间）
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+      gl.useProgram(prog);
+      gl.uniform1i(gl.getUniformLocation(prog, 'uTex'), 0);
+
+      gl.bindVertexArray(null);
+      gl.deleteShader(vs); gl.deleteShader(fs);
+
+      _glRenderer = {
+        draw(frame, w, h) {
+          if (gl.isContextLost()) return;   // GPU 上下文丢失（罕见）：跳过本帧，等上层重连
+          gl.bindVertexArray(vao);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          // ★ VideoFrame 直接作纹理源：浏览器内部转 RGBA，不走 CPU 读回
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+          gl.viewport(0, 0, w, h);
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+          gl.bindVertexArray(null);
+        }
+      };
+    } catch (e) {
+      console.warn('[H264] WebGL2 呈现初始化失败，回退 2D drawImage:', e);
+      _glRenderer = null;
+    }
+    return _glRenderer;
+  }
+
   // H.264 主循环：拉 /stream → 切 NAL → 找 SPS 配置 decoder → 解码画 canvas
   async function startStream() {
     const myGen = ++h264Gen;
@@ -1074,7 +1185,9 @@ function directBase(sess) {
     // 旧版每帧 canvas.toDataURL('image/jpeg') 等于把省下的带宽又花回去
     //（JPEG 重编码 + base64 膨胀 1.33 倍），已删除。
     const canvas = $('vframe');
-    const ctx = canvas.getContext('2d', { alpha: false });
+    // 呈现层：优先 WebGL2（零回读），不可用才回退 2D drawImage
+    const glR = getGlRenderer(canvas);
+    const ctx = glR ? null : canvas.getContext('2d', { alpha: false });
 
     // 失败 = 停流 + 提示 + 自动退避重连（没有 JPEG 降级，用户指令移除）
     const fail = (msg, e) => {
@@ -1098,7 +1211,8 @@ function directBase(sess) {
               canvas.width = frame.displayWidth;
               canvas.height = frame.displayHeight;
             }
-            ctx.drawImage(frame, 0, 0);
+            if (glR) glR.draw(frame, canvas.width, canvas.height);
+            else if (ctx) ctx.drawImage(frame, 0, 0);
             canvas.classList.add('show');
             setPh(null, false);
             lastFrameAt = Date.now();     // 真的画出一帧 → 重置画面看门狗
@@ -1111,8 +1225,26 @@ function directBase(sess) {
         error: (e) => fail('[H264] 解码错误，断开重连:', e)
       });
 
-      const resp = await fetch(url, { cache: 'no-store' });
-      if (myGen !== h264Gen) { try { resp.body && resp.body.cancel(); } catch (e) {} return; }
+      // ── AbortController：取消僵尸 fetch（2026-11-24 修复）──
+      //   旧版 await fetch 无 signal，若服务端 SYN 后不吐首字节（半开/编码器卡死），
+      //   fetch 永久 pending，abortStream 里 reader.cancel() 只能取消「已拿到 body 的
+      //   reader」，卡在 fetch 阶段无法取消 → 僵尸连接 + h264Active 卡 true。
+      const ac = new AbortController();
+      h264Abort = ac;
+      const FIRST_BYTE_MS = 8000;   // 首字节超时：8s 内响应头未回 → 主动 abort
+      let firstByteTimer = setTimeout(() => {
+        if (myGen === h264Gen) {
+          console.warn('[H264] /stream 首字节 ' + FIRST_BYTE_MS + 'ms 无响应，主动取消');
+          try { ac.abort(); } catch (e) {}
+        }
+      }, FIRST_BYTE_MS);
+      let resp;
+      try {
+        resp = await fetch(url, { cache: 'no-store', signal: ac.signal });
+      } finally {
+        clearTimeout(firstByteTimer);
+      }
+      if (myGen !== h264Gen) { try { resp && resp.body && resp.body.cancel(); } catch (e) {} return; }
       if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
       const reader = resp.body.getReader();
       h264Reader = reader;
@@ -1159,11 +1291,17 @@ function directBase(sess) {
       //   · 连续跳帧计数达 SKIP_RESET_LIMIT → 直接断流重连重同步
       //     （无限 GOP 下本地 reset 等不到 IDR，重连=新订阅=按需 IDR，兜底手段）。
       //   丢的是「追赶过去的旧画面」，用户看到的永远是较新的帧。
-      const SKIP_QUEUE = 2;          // 队列超过它就进入跳帧模式（30fps 下 ~66ms 即反应）
-      const SKIP_RESET_LIMIT = 10;   // 连续跳过 10 个 AU（≈330ms@30fps）→ 断流重连重同步
+      // ── 阈值跟随 streamFps（2026-11-24 修复：原 SKIP_QUEUE=2 / RESET=10 过激）──
+      // · SKIP_QUEUE：解码队列积压超过约 100~133ms 的帧数才丢 delta —— 单帧解码抖动
+      //   （1 帧）不误杀，持续积压仍被有界兜住，不会重现 4.3s 累积；
+      // · SKIP_RESET_LIMIT：连续跳帧达约 1 秒（帧数）仍无法消化 → 断流重连重同步
+      //   （原 10 帧 ≈ 330ms@30fps 过激，易被瞬时抖动误触发整段重连）。
+      const SKIP_QUEUE = Math.max(4, Math.round((streamFps > 0 ? streamFps : 30) / 10));  // 30→4(~133ms) 60→6 120→12
+      const SKIP_RESET_LIMIT = Math.max(30, (streamFps > 0 ? streamFps : 30));            // 30→30(~1s) 60→60 120→120
       let skipping = false;          // 是否处于跳帧模式
       let skippedAUs = 0;            // 本轮连续跳过的 AU 数
       let skippedTotal = 0;          // 累计跳过（日志用）
+      let decodeErrors = 0;          // 本轮 decode() 同步失败计数（日志用）
 
       const flushAu = () => {
         if (!auHasData || !configured) { auNals = []; auHasKey = false; auHasData = false; return; }
@@ -1205,9 +1343,24 @@ function directBase(sess) {
             type: auHasKey ? 'key' : 'delta',
             timestamp: ts,
             data
-          }));
-        } catch (e) { /* 解码器饱和时丢弃本 AU，等下一帧 */ }
-        ts += 66666;             // 固定 15fps 节拍（与服务端一致）；单调即可
+          })).catch(e => {
+            // 异步 rejection（decoder 已 close/error 态时 decode() 的 Promise 会 reject，
+            // 同步 try 捕不到，不接会成未处理 Promise）→ 计数 + 限频日志，不吞。
+            // 真正的解码错误仍由 decoder.error 回调统一走 fail() 重连。
+            decodeErrors++;
+            if (decodeErrors <= 3 || decodeErrors % 100 === 0) {
+              console.warn('[H264] decode() 异步失败，丢弃本 AU:', e);
+            }
+          });
+        } catch (e) {
+          // 同步抛错（InvalidStateError/DataError）：解码器饱和或状态异常时丢弃本 AU，
+          // 等下一帧；异步错误仍由 decoder.error 回调统一走 fail() 重连。
+          decodeErrors++;
+          if (decodeErrors <= 3 || decodeErrors % 100 === 0) {
+            console.warn('[H264] decode() 同步失败，丢弃本 AU:', e);
+          }
+        }
+        ts += Math.round(1000000 / (streamFps > 0 ? streamFps : 30));  // 跟随服务端 streamFps（默认 30fps）；单调微秒
         auNals = [];
         auHasKey = false;
         auHasData = false;
@@ -1250,12 +1403,19 @@ function directBase(sess) {
               optimizeForLatency: true     // 直播：不攒帧，低延迟优先
             };
             try {
-              decoder.configure(cfg);
+              // 优先硬解：弱设备/远程桌面内也走 GPU，避免软解增加 CPU 与解码延迟
+              decoder.configure(Object.assign({}, cfg, { hardwareAcceleration: 'prefer-hardware' }));
               configured = true;
             } catch (e) {
-              // 配置不支持（老设备的硬解不支持该 profile）→ 报错并重试
-              fail('[H264] decoder.configure 失败:', e);
-              return;
+              // 老内核可能不认识 hardwareAcceleration hint → 不带该 hint 重试
+              try {
+                decoder.configure(cfg);
+                configured = true;
+              } catch (e2) {
+                // 配置不支持（老设备的硬解不支持该 profile）→ 报错并重试
+                fail('[H264] decoder.configure 失败:', e2);
+                return;
+              }
             }
           }
 
@@ -1295,6 +1455,7 @@ function directBase(sess) {
       if (myGen === h264Gen) {
         h264Active = false;
         h264Reader = null;
+        h264Abort = null;
       }
       try { if (decoder && decoder.state !== 'closed') decoder.close(); } catch (e) {}
     }
@@ -1319,11 +1480,27 @@ async function postInputRaw(body) {
   return r.json();
 }
 
+// ── 远端光标位置回传的消费端（2026-11-24，AUDIT-03 §4.3 P1）─────────
+//   服务端在执行 move/click 后把实际光标位置随响应回传（cursor:{nx,ny,visible}）。
+//   这里统一消费：有就画 rcCursor（低延迟回显），没有就静默跳过——
+//   服务端配套未上线时零副作用（字段不存在 → 不显示，也不报错）。
+function consumeCursorEcho(resp) {
+  try {
+    const c = resp && resp.cursor;
+    if (!c || typeof c.nx !== 'number' || typeof c.ny !== 'number') return;
+    const vis = (typeof c.visible === 'boolean') ? c.visible : true;
+    updateRemoteCursor(c.nx, c.ny, vis);
+  } catch (e) { /* 回显失败不影响输入链路 */ }
+}
+
 // 通用发送（仍可 await 结果；wheel/key/moverel 等非保序、非高频动作沿用）
 async function sendInput(action, nx, ny, extra) {
   if (!cur) return null;
-  try { return await postInputRaw(Object.assign({ action, x: nx, y: ny }, extra || {})); }
-  catch { return null; }
+  try {
+    const resp = await postInputRaw(Object.assign({ action, x: nx, y: ny }, extra || {}));
+    consumeCursorEcho(resp);
+    return resp;
+  } catch { return null; }
 }
 
 // ── 按键状态动作的 FIFO 串行队列（保序）──────────────────────
@@ -1360,6 +1537,7 @@ function pumpInput() {
     if (resp == null || resp.ok === false) {
       console.warn('[input] ' + item.body.action + ' 发送失败', resp);
     }
+    else { consumeCursorEcho(resp); }   // down/up/click 响应也可能带光标位置
     item.resolve(resp);
     inputSending = false;
     pumpInput();               // 串行发下一条
@@ -1370,7 +1548,10 @@ function pumpInput() {
 function sendInputNoWait(action, nx, ny, extra) {
   if (!cur) return;
   const body = Object.assign({ action, x: nx, y: ny }, extra || {});
-  postInputRaw(body).catch(() => {});
+  // ★ 回包虽不等（noWait 语义不变），但拿到了就读光标位置：
+  //   move 是光标位置最密集的来源，8ms 节流 + latest-wins 已天然限频，
+  //   这里只在回包到达时顺手消费，不追加任何请求/定时器。
+  postInputRaw(body).then(r => { if (r && r.ok !== false) consumeCursorEcho(r); }).catch(() => {});
 }
 
 // ── 按住心跳（Web 前端断连看门狗的「我还活着」信号）────────────
@@ -1427,11 +1608,20 @@ function norm(e) {
   return { nx: Math.max(0, Math.min(1, cx / dwContent)), ny: Math.max(0, Math.min(1, cy / dhContent)) };
 }
 
-// ══════════ 可见光标指示（2026-11-24）═════════════
-//   绝对模式（非锁定态）跟随鼠标 move 显示小圆点；锁定态/触屏隐藏。
-//   复用 norm 的同一套 canvas 实际矩形 + object-fit 黑边，保证指示位置 = 实际落点。
-const plCursorEl = $('plCursor');
-function plCursorGeometry() {
+// ══════════ 远端光标回显（2026-11-24，替代已删的 #plCursor 蓝球）═════════════
+//   蓝球是「本机鼠标的零延迟影子」，不回答用户唯一关心的问题（远端光标在哪），
+//   已整体删除（AUDIT-20261124-03-CURSOR-UX.md §4.2 C4-C7）。
+//   替代者 #rcCursor 是**服务端上报的远端光标位置**的回显：
+//     · 数据源：输入响应里的 cursor:{nx,ny,visible} 字段（服务端在执行
+//       move/click 后回传 GetCursorPos 实际位置，见 AUDIT §4.3 P1）——
+//       消费端在这里，发送端是服务端成员的配套改动（未上线前 rcCursor
+//       静默不显示，无副作用）；
+//     · 延迟 ≈ 输入 RTT（回环 3ms 级）+ 8ms 节流，而不是画面 444ms；
+//     · 几何与 norm() 同源（frameRect()），保证回显位置 = 实际落点坐标系；
+//     · 节流跟随 moverel/move 的既有 8ms latest-wins 节奏，无新定时器
+//       （性能约束：不新建周期任务）。
+function frameRect() {
+  // 从 norm() 提取的公共几何：canvas 实际显示矩形 + object-fit:contain 黑边。
   const cv = $('vframe');
   const iw = (cv && cv.width > 0) ? cv.width : 16;
   const ih = (cv && cv.height > 0) ? cv.height : 9;
@@ -1441,19 +1631,23 @@ function plCursorGeometry() {
   const ox = (rect.width - dwContent) / 2, oy = (rect.height - dhContent) / 2;
   return { rect, ox, oy, dwContent, dhContent };
 }
-function updateVisibleCursor(nx, ny) {
-  if (!plCursorEl) return;
-  const g = plCursorGeometry();
-  // ★ 相对 #scr：cursor 是 #scr 的绝对定位子元素，需把 rect(视口坐标) 转 #scr 局部坐标
+const rcCursorEl = $('rcCursor');
+let rcCursorVisible = false;      // 远端光标当前是否可见（visible:false 时隐藏）
+function updateRemoteCursor(nx, ny, visible) {
+  if (!rcCursorEl) return;
+  if (visible === false) { rcCursorEl.style.display = 'none'; rcCursorVisible = false; return; }
+  const g = frameRect();
+  // ★ 相对 #scr：rcCursor 是 #scr 的绝对定位子元素，把 rect(视口坐标) 转局部坐标
   const scrRect = $('scr').getBoundingClientRect();
   const x = (g.rect.left - scrRect.left) + g.ox + nx * g.dwContent;
   const y = (g.rect.top - scrRect.top) + g.oy + ny * g.dhContent;
-  plCursorEl.style.left = x + 'px';
-  plCursorEl.style.top = y + 'px';
-  plCursorEl.style.display = 'block';
+  rcCursorEl.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+  rcCursorEl.style.display = 'block';
+  rcCursorVisible = true;
 }
-function hideVisibleCursor() {
-  if (plCursorEl) plCursorEl.style.display = 'none';
+function hideRemoteCursor() {
+  if (rcCursorEl) rcCursorEl.style.display = 'none';
+  rcCursorVisible = false;
 }
 
 function ripple(e) {
@@ -1572,7 +1766,6 @@ document.addEventListener('pointerlockchange', () => {
     plExitByShortcut = false;
     plExitByLifecycle = false;
     plLockPending = null;    // 首击挂起 → 吃掉（对齐月光：进锁定那次不点远端）
-    hideVisibleCursor();     // 锁定态隐藏落点指示（转视角无落点概念）
     return;
   }
   if (!nowLocked && pointerLocked) {
@@ -1593,7 +1786,6 @@ document.addEventListener('pointerlockchange', () => {
     }
     // Esc 后冷却：规范要求 default unlock gesture 后立即重锁会被拒
     plLockCooldownUntil = Date.now() + 500;
-    hideVisibleCursor();     // 解锁后隐藏（等下次 pointermove 再按落点显示）
     return;
   }
 });
@@ -1774,11 +1966,10 @@ $('scr').addEventListener('pointermove', e => {
   // ★ 锁定态：转视角已由 document mousemove（movementX/Y）处理；clientX/Y 冻结为常量，
   //   跳过绝对 move，避免重复发固定坐标。点击（down/up/click）仍走下面状态机。
   if (pointerLocked && e.pointerType === 'mouse') return;
-  // ★ 可见光标：非锁定态 + 非触屏 → 跟随 move 显示落点指示
-  if (!pointerLocked && e.pointerType !== 'touch') {
-    const pc = norm(e);
-    updateVisibleCursor(pc.nx, pc.ny);
-  }
+  // ★ 2026-11-24：蓝球（本机鼠标影子）已删——它不反映远端光标，信息量为零。
+  //   远端光标可见性由两条正道负责：帧内光标（WGC 合成，服务端配套）+
+  //   rcCursor 低延迟回显（服务端 cursor 回传驱动，见 updateRemoteCursor）。
+  //   这里不再做任何本地影子绘制。
   // ── 相对模式（月光）：单指滑动转视角 / 双指滚轮 ──
   if (e.pointerType === 'touch' && mouseMode === 'relative' && relPoints.has(e.pointerId)) {
     const pt = relPoints.get(e.pointerId);
@@ -2324,6 +2515,7 @@ function hideRemoteUi() {
   const v = $('viewer'); if (v) v.style.display = 'none';
   const p = $('player'); if (p) p.style.display = 'none';
   const vc = $('viewctrls'); if (vc) vc.style.display = 'none';
+  hideRemoteCursor();   // 离开画面页：远端光标回显跟着收掉
 }
 function hideFuncPages() {
   const lp = $('ledgerPage'); if (lp) lp.style.display = 'none';
@@ -2369,6 +2561,7 @@ function applyRemoteUser(u) {
   const fi = $('fpsinfo'); if (fi) fi.textContent = (u.screen || '');
   const cv = $('vframe'); if (cv) cv.classList.remove('show');
   const ph = $('ph'); if (ph) ph.style.display = 'none';
+  hideRemoteCursor();   // 切账号：旧账号的光标回显清掉，等新回包再画
   buildUserSwitch('remoteSwitch', u.id, applyRemoteUser);
   resetSavedList();
   syncCapture();

@@ -29,7 +29,9 @@ namespace SoulLink.Relay
     ///     此时返回 null（调用方跳过，或按上一帧处理）；
     ///   · 独占全屏切换：AcquireNextFrame 返回 ACCESS_LOST 时重建 duplication；
     ///   · DPI：用模式列表（Description.ModeDescription）取物理尺寸，不用 GetSystemMetrics；
-    ///   · 显存失败：DuplicateOutput 失败/设备创建失败 → 抛异常，由 SessionRecorder 降级链接住。
+    ///   · 显存失败：DuplicateOutput 失败/设备创建失败 → 抛异常，由 SessionRecorder 降级链接住；
+    ///   · ★ P0-A(D04)：建立失败指数退避重试（500→1000→2000→5000ms），连续失败计数
+    ///     由 SessionRecorder 判死并重新进入降级链（不再每帧重建设备）。
     /// </summary>
     internal sealed class DxgiDdaCapture : IScreenCapture
     {
@@ -47,6 +49,7 @@ namespace SoulLink.Relay
         private ID3D11DeviceContext? _context;
         private IDXGIOutputDuplication? _duplication;
         private int _width, _height;
+        private int _originX, _originY;   // ★ P1-A2：抓屏区域左上角在虚拟桌面的物理坐标（网页坐标反算用）
         private bool _active;
         private bool _disposed;
         private readonly object _gate = new();
@@ -60,8 +63,23 @@ namespace SoulLink.Relay
         private ID3D11Texture2D? _sharedBgraTexture;
         private int _sharedWidth, _sharedHeight;
 
+        // ★ P0-A(D04)：建立失败计数 + 指数退避（500→1000→2000→5000ms），
+        //   不再「每帧重建设备」；连续失败由 SessionRecorder 判死降级。
+        private long _consecutiveFailures;
+        private long _lastStartAttemptAt;   // Environment.TickCount64：上次尝试 Start 的时刻
+        private long _startBackoffMs;
+
+        /// <summary>连续 Start 失败次数（D04 判死信号；成功建立清零）。</summary>
+        public long ConsecutiveFailures { get { lock (_gate) return _consecutiveFailures; } }
+
         /// <summary>是否已成功建立 duplication（供 SessionRecorder 探测降级用）。</summary>
         public bool IsActive => _active;
+
+        /// <summary>★ P1-A2：抓屏区域左上角的虚拟桌面物理 X（网页 0~1 坐标反算基准）。</summary>
+        public int CaptureOriginX { get { lock (_gate) return _originX; } }
+
+        /// <summary>★ P1-A2：抓屏区域左上角的虚拟桌面物理 Y。</summary>
+        public int CaptureOriginY { get { lock (_gate) return _originY; } }
 
         /// <summary>桌面真实出帧累计序号（对齐 WgcCapture.FrameSequence 语义）。</summary>
         public long FrameSequence { get { lock (_gate) return _frameSequence; } }
@@ -72,7 +90,28 @@ namespace SoulLink.Relay
         private void EnsureRunning()
         {
             if (_active) return;
-            try { Start(); } catch (Exception ex) { LastError = ex.GetType().Name + "：" + ex.Message; }
+            long now = Environment.TickCount64;
+            lock (_gate)
+            {
+                if (_active) return;
+                // ★ P0-A(D04)：指数退避——失败后至少等 _startBackoffMs 再重试，
+                //   避免每帧重建设备；判死与降级交给 SessionRecorder 读 ConsecutiveFailures。
+                if (now - _lastStartAttemptAt < _startBackoffMs) return;
+                _lastStartAttemptAt = now;
+            }
+            try
+            {
+                Start();   // 成功时内部清零失败计数与退避
+            }
+            catch (Exception ex)
+            {
+                lock (_gate)
+                {
+                    _consecutiveFailures++;
+                    _startBackoffMs = _startBackoffMs == 0 ? 500 : Math.Min(5000, _startBackoffMs * 2);
+                    LastError = ex.GetType().Name + "：" + ex.Message;
+                }
+            }
         }
 
         private void Start()
@@ -118,15 +157,21 @@ namespace SoulLink.Relay
                             // 用模式列表取物理尺寸（DPI 缩放安全）
                             _width = (int)dd.ModeDescription.Width;
                             _height = (int)dd.ModeDescription.Height;
+                            // ★ P1-A2：保留该输出在虚拟桌面的物理原点（网页坐标反算用）
+                            var od = output.Description;
+                            _originX = od.DesktopCoordinates.Left;
+                            _originY = od.DesktopCoordinates.Top;
                             if (_width <= 0 || _height <= 0)
                             {
                                 // 回退到 DesktopCoordinates
-                                var od = output.Description;
                                 _width = od.DesktopCoordinates.Right - od.DesktopCoordinates.Left;
                                 _height = od.DesktopCoordinates.Bottom - od.DesktopCoordinates.Top;
                             }
                             _active = true;
                             LastError = "";
+                            // ★ P0-A(D04)：成功建立即清零失败计数与退避
+                            _consecutiveFailures = 0;
+                            _startBackoffMs = 0;
                             RelayAgent.LogQuiet("[capture] DXGI-DDA 建立成功：" + _width + "x" + _height);
                             return;
                         }
@@ -326,6 +371,7 @@ namespace SoulLink.Relay
             catch (Exception ex)
             {
                 LastError = "重建失败：" + ex.Message;
+                _consecutiveFailures++;   // ★ P0-A(D04)：重建失败计入连续失败，供 SessionRecorder 判死降级
                 RelayAgent.LogQuiet("[capture] DXGI-DDA 重建失败：" + ex.Message);
                 _active = false;
                 _duplication?.Dispose();

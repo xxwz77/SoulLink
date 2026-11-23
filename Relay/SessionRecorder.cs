@@ -50,6 +50,20 @@ namespace SoulLink.Relay
         private static bool _forceKeyFrame;
         private static Stopwatch? _probeClock;
         private static bool _captureProbeComplete;
+        // ★ P0-A（2026-11-24，D01/D04）：探测完成只表示「当前后端已选定」，不再永久锁死。
+        private static bool _probeSeeded;                  // 本轮探测是否已垫过 BitBlt 首帧
+        private static string _captureFallbackReason = ""; // 最近一次降级原因（进 StatusText，D24 可观测）
+        private static DateTime _captureFallbackAtUtc;     // 最近一次降级时刻
+        private static long _nextGpuRetryAt;               // 下次重试 GPU 后端的时刻（Stopwatch ticks；仅 worker 读写）
+        private static volatile bool _captureRetryRequested;   // 外部请求立即重试 GPU 后端（RequestCaptureRetry）
+        private static int _backendDeadStreak;             // 后端连续不健康拍数（D04 判死）
+        private static long _captureSwapGeneration;        // 后端实例替换代数（Loop 检测后重置静止基准）
+        private const int GpuRetrySeconds = 10;            // BitBlt 兜底期间重试 GPU 后端的周期
+        private const long DdaFirstFrameWindowMs = 1500;   // DDA 已建立但静止桌面无首帧的等待窗口
+        private const long DdaEstablishWindowMs = 2000;    // DDA 建立失败时的探测窗口
+        private const long WgcFirstFrameWindowMs = 2500;   // WGC 已 running 但静止桌面无首帧的等待窗口
+        private const int DdaDeadFailureCount = 3;         // D04：DDA 连续 Start 失败 ≥3 判死
+        private const int BackendDeadStreakLimit = 5;      // D04：后端连续不健康拍数上限
         private static DateTime _lastCaptureAt, _lastEncodeAt, _lastNalAt;
         private static long _loopSequence, _skippedStaticFrames, _noNalFrames;
         private static int _captureMode = int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE"), out int initialMode) ? Math.Clamp(initialMode, 0, 3) : 0;
@@ -83,6 +97,46 @@ namespace SoulLink.Relay
 
         /// <summary>接收运行时编码参数；不改变录像/直播生命周期，不重建 agent 或 viewer。</summary>
         public static string CaptureBackend { get { lock (Gate) return Capture.Name; } }
+
+        /// <summary>★ P0-A(D24)：最近一次抓屏降级原因（"" = 当前在首选后端）。供 /api/info 扩展使用。</summary>
+        public static string CaptureFallbackReason { get { lock (Gate) return _captureFallbackReason; } }
+
+        /// <summary>★ P0-A(D24)：最近一次抓屏降级时刻（UTC；从未降级时为 default）。</summary>
+        public static DateTime CaptureFallbackAtUtc { get { lock (Gate) return _captureFallbackAtUtc; } }
+
+        /// <summary>
+        /// ★ P0-A(D01)：外部触发（输入活动/用户操作后）立即重试 GPU 后端——置立即重试标志并唤醒
+        /// worker，worker 下一拍即尝试（仅 auto 模式、当前非 DDA 后端时生效）。输入链路尚未接线时
+        /// 由 10 s 周期重试兜底；接线后调用本方法可实现「一有输入就爬回 DDA/WGC」。
+        /// </summary>
+        public static void RequestCaptureRetry()
+        {
+            _captureRetryRequested = true;
+            LifecycleChanged.Set();
+        }
+
+        /// <summary>
+        /// ★ P1-A2（输入坐标换算）：暴露真实抓屏几何——尺寸 = 编码帧尺寸（网页 norm 的基准，
+        /// 与 canvas 一致）；原点 = 抓屏区域左上角在虚拟桌面的物理像素坐标（多屏安全）。
+        /// 尚未出过帧（编码器未建）时返回 false。
+        /// </summary>
+        public static bool TryGetCaptureGeometry(out int width, out int height, out int originX, out int originY)
+        {
+            lock (Gate)
+            {
+                width = _width; height = _height;
+                switch (Capture)
+                {
+                    case DxgiDdaCapture dda: originX = dda.CaptureOriginX; originY = dda.CaptureOriginY; break;
+#if WGC
+                    case WgcCapture wgc: originX = wgc.CaptureOriginX; originY = wgc.CaptureOriginY; break;
+#endif
+                    case BitBltCapture b: originX = b.CaptureOriginX; originY = b.CaptureOriginY; break;
+                    default: originX = 0; originY = 0; break;
+                }
+                return width > 0 && height > 0;
+            }
+        }
 
         /// <summary>消息线程只记录热切版本；worker 在帧边界释放/创建 Capture，viewer 不变。</summary>
         public static void UpdateCaptureMode(int mode)
@@ -139,15 +193,56 @@ namespace SoulLink.Relay
         }
 
         /// <summary>自动抓屏探测只在视频 worker 运行，成功帧保留给正常编码，失败静默降级。
-        /// 降级链：DXGI DDA → WGC → BitBlt。</summary>
+        /// 降级链：DXGI DDA → WGC → BitBlt。
+        /// ★ P0-A（2026-11-24，D01/D04）：探测完成只表示「当前后端已选定」，不再永久锁死：
+        ///   1) 「无新帧」≠「后端不可用」——DDA/WGC 已建立（IsActive）时给足首帧窗口
+        ///      （静止桌面 WAIT_TIMEOUT / 无 FrameArrived 是正常语义），窗口耗尽才降级；
+        ///      窗口内先用一次性 BitBlt 帧垫首帧，观众不黑屏干等；
+        ///   2) BitBlt 仅是临时兜底：每 10 s 重试一次 GPU 后端，桌面一动立即爬回 DDA/WGC；
+        ///      WGC 上也会周期重试 DDA（故障恢复后爬回首选后端）；
+        ///   3) 运行期 GPU 后端死掉（D04：连续 Start 失败 / 持续不健康）→ 重新进入降级链；
+        ///   4) 每次降级记录 fallbackReason/fallbackAt，进 StatusText（可观测）。</summary>
         private static byte[]? CaptureBgraWithProbe(out int width, out int height)
         {
-            if (_captureProbeComplete) return Capture.CaptureBgra(out width, out height);
-            // ★ DDA 探测：DxgiDdaCapture 构造时即尝试 DuplicateOutput，失败抛异常
-            //   → 降级 WGC；WGC 300ms 无首帧 → 降级 BitBlt。
-            if (Capture is DxgiDdaCapture dda && _captureMode == 0)
+            width = 0; height = 0;
+            if (_captureMode != 0) return Capture.CaptureBgra(out width, out height);   // 显式模式：不探测、不自动降级
+
+            if (_captureProbeComplete)
             {
-                _probeClock ??= Stopwatch.StartNew();
+                CheckCaptureHealth();   // ★ P0-A(D04)：运行期健康检查，必要时重进降级链
+                if (!_captureProbeComplete)
+                    return CaptureBgraWithProbe(out width, out height);
+                // ★ P0-A(D01)：BitBlt/WGC 上周期性重试更优 GPU 后端；成功即热切并返回其首帧，
+                //   失败则继续用当前后端出本拍，GpuRetrySeconds 后再试。RequestCaptureRetry 可立即触发。
+#if WGC
+                bool onFallbackBackend = Capture is BitBltCapture || Capture is WgcCapture;
+#else
+                bool onFallbackBackend = Capture is BitBltCapture;
+#endif
+                bool retryRequested = _captureRetryRequested;
+                _captureRetryRequested = false;
+                if (onFallbackBackend && (retryRequested || Stopwatch.GetTimestamp() >= _nextGpuRetryAt))
+                {
+                    byte[]? adopted = TryAdoptDdaBackend(out width, out height);
+                    if (adopted != null) return adopted;
+#if WGC
+                    if (Capture is BitBltCapture)
+                    {
+                        adopted = TryAdoptWgcBackend(out width, out height);
+                        if (adopted != null) return adopted;
+                    }
+#endif
+                    _nextGpuRetryAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * (double)GpuRetrySeconds);
+                }
+                return Capture.CaptureBgra(out width, out height);
+            }
+
+            // ── 起播探测：DDA → WGC → BitBlt ──
+            // ★ DDA 探测：DxgiDdaCapture 构造时即尝试 DuplicateOutput，失败抛异常
+            //   → 降级 WGC；WGC 无首帧 → 降级 BitBlt。
+            if (Capture is DxgiDdaCapture dda)
+            {
+                if (_probeClock == null) { _probeClock = Stopwatch.StartNew(); _probeSeeded = false; }
                 byte[]? frame = null;
                 string reason = "";
                 try { frame = dda.CaptureBgra(out width, out height); }
@@ -157,31 +252,50 @@ namespace SoulLink.Relay
                     RelayAgent.LogQuiet("[capture] 采用 DXGI-DDA（出帧 " + width + "x" + height + "）");
                     _captureProbeComplete = true;
                     _probeClock = null;
+                    lock (Gate) { _captureFallbackReason = ""; _captureFallbackAtUtc = default; }
                     return frame;
                 }
                 if (reason.Length == 0) reason = dda.LastError.Length > 0 ? dda.LastError : "DDA 未出帧";
-                // ★ P1：DDA 已建立（IsActive）却返回 null = 静止桌面未出新帧（AcquireNextFrame 超时复用 _lastBgra==null），
-                //   再等 300ms 也不会出帧，立即降级 WGC，省掉静止起播的探测窗口。
-                //   仅当 DDA 尚未建立（建立失败/仍在重试）才保留 300ms 窗口，不误伤正常出帧路径。
-                if (dda.IsActive || _probeClock.ElapsedMilliseconds >= 300)
+                // ★ P0-A：DDA 尚未出首帧（静止桌面 WAIT_TIMEOUT / 建立中）≠ 后端不可用：给足窗口继续等，
+                //   窗口内先用一次性 BitBlt 垫首帧（观众不黑屏干等），桌面一动立即由 DDA 出帧。
+                //   仅当「连续 Start 失败达阈值」或「窗口耗尽」才降级 WGC，且之后仍周期性重试回 DDA。
+                bool ddaWindowExpired = dda.IsActive
+                    ? _probeClock.ElapsedMilliseconds >= DdaFirstFrameWindowMs
+                    : _probeClock.ElapsedMilliseconds >= DdaEstablishWindowMs;
+                if (!ddaWindowExpired && dda.ConsecutiveFailures < DdaDeadFailureCount)
                 {
-                    RelayAgent.LogQuiet("[capture] DXGI-DDA 降级：" + reason);
-                    dda.Dispose();
-#if WGC
-                    Capture = new WgcCapture();
-#else
-                    Capture = new BitBltCapture();
-#endif
-                    _probeClock = null;
-                    return CaptureBgraWithProbe(out width, out height);
+                    if (!_probeSeeded)
+                    {
+                        _probeSeeded = true;
+                        var seeder = new BitBltCapture();
+                        byte[]? seed = seeder.CaptureBgra(out width, out height);
+                        seeder.Dispose();
+                        if (seed != null)
+                        {
+                            RelayAgent.LogQuiet("[capture] DXGI-DDA 首帧前 BitBlt 垫帧，继续等 DDA 首帧");
+                            return seed;
+                        }
+                    }
+                    Thread.Sleep(10);
+                    return null;
                 }
-                Thread.Sleep(10);
-                return null;
+                RelayAgent.LogQuiet("[capture] DXGI-DDA 降级：" + reason);
+                dda.Dispose();
+                _probeClock = null;
+                _captureSwapGeneration++;
+                lock (Gate) { _captureFallbackReason = SanitizePipe(reason); _captureFallbackAtUtc = DateTime.UtcNow; }
+#if WGC
+                Capture = new WgcCapture();
+                return CaptureBgraWithProbe(out width, out height);
+#else
+                FallbackToBitBlt(reason);
+                return Capture.CaptureBgra(out width, out height);
+#endif
             }
 #if WGC
-            if (Capture is WgcCapture wgc && _captureMode != 2)
+            if (Capture is WgcCapture wgc)
             {
-                _probeClock ??= Stopwatch.StartNew();
+                if (_probeClock == null) { _probeClock = Stopwatch.StartNew(); _probeSeeded = false; }
                 byte[]? frame = null;
                 string reason = "";
                 try { frame = wgc.CaptureBgra(out width, out height); }
@@ -191,25 +305,163 @@ namespace SoulLink.Relay
                     RelayAgent.LogQuiet("[capture] 自动探测采用 WGC（实际出帧 sequence=" + wgc.FrameSequence + "）");
                     _captureProbeComplete = true;
                     _probeClock = null;
+                    _nextGpuRetryAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * (double)GpuRetrySeconds);
                     return frame;
                 }
                 if (reason.Length == 0) reason = !wgc.IsActive ? "WGC 未进入 running 状态"
                     : wgc.FrameSequence == 0 ? "WGC 无真实首帧" : "WGC 帧读回失败";
-                // ★ P1：WGC 已 running 但 FrameSequence==0 = 静止桌面无 FrameArrived，再等 300ms 也不会出帧，
-                //   立即降级 BitBlt；仅当 WGC 未 running（建立失败）才保留 300ms 窗口，不误伤正常出帧路径。
-                if (wgc.IsActive || _probeClock.ElapsedMilliseconds >= 300)
+                // ★ P0-A：WGC 已 running 但 FrameSequence==0 = 静止桌面无 FrameArrived，给足首帧窗口
+                //   （窗口内 BitBlt 垫首帧）；未 running 给建立窗口。窗口耗尽才降级 BitBlt（临时兜底，
+                //   之后每 10 s 自动重试回 DDA/WGC，绝不再永久锁死）。
+                bool wgcWindowExpired = wgc.IsActive
+                    ? _probeClock.ElapsedMilliseconds >= WgcFirstFrameWindowMs
+                    : _probeClock.ElapsedMilliseconds >= DdaEstablishWindowMs;
+                if (!wgcWindowExpired)
                 {
-                    RelayAgent.LogQuiet("[capture] 自动探测降级 BitBlt：" + reason);
-                    wgc.Dispose(); Capture = new BitBltCapture(); _probeClock = null; _captureProbeComplete = true;
-                    byte[]? fallback = Capture.CaptureBgra(out width, out height);
-                    if (fallback != null) RelayAgent.LogQuiet("[capture] BitBlt 降级后已抓到首帧");
-                    return fallback;
+                    if (!_probeSeeded)
+                    {
+                        _probeSeeded = true;
+                        var seeder = new BitBltCapture();
+                        byte[]? seed = seeder.CaptureBgra(out width, out height);
+                        seeder.Dispose();
+                        if (seed != null) return seed;
+                    }
+                    Thread.Sleep(10);
+                    return null;
                 }
-                Thread.Sleep(10);
-                return null;
+                FallbackToBitBlt(reason);
+                byte[]? fallback = Capture.CaptureBgra(out width, out height);
+                if (fallback != null) RelayAgent.LogQuiet("[capture] BitBlt 降级后已抓到首帧");
+                return fallback;
             }
 #endif
+            if (Capture is BitBltCapture) FallbackToBitBlt("探测链末端 BitBlt");
             return Capture.CaptureBgra(out width, out height);
+        }
+
+        /// <summary>★ P0-A(D01)：BitBlt/WGC 兜底期间尝试重新接管 DDA。成功（拿到首帧）即热切 Capture 并返回该帧；
+        /// 失败销毁候选并返回 null（保持现后端）。静止桌面拿不到新帧 → 接管失败，等下一周期。</summary>
+        private static byte[]? TryAdoptDdaBackend(out int width, out int height)
+        {
+            width = 0; height = 0;
+            var candidate = new DxgiDdaCapture();
+            try
+            {
+                byte[]? frame = candidate.CaptureBgra(out width, out height);
+                if (frame != null && frame.Length > 0 && candidate.IsActive)
+                {
+                    Capture.Dispose();
+                    Capture = candidate;
+                    _captureSwapGeneration++;
+                    lock (Gate) { _captureFallbackReason = ""; _captureFallbackAtUtc = default; }
+                    RelayAgent.LogQuiet("[capture] 周期重试成功，回到 DXGI-DDA（" + width + "x" + height + "）");
+                    return frame;
+                }
+            }
+            catch (Exception ex)
+            {
+                RelayAgent.LogQuiet("[capture] 周期重试 DDA 失败：" + ex.GetType().Name + "：" + ex.Message);
+            }
+            candidate.Dispose();
+            return null;
+        }
+
+#if WGC
+        /// <summary>★ P0-A(D01)：BitBlt 兜底期间尝试重新接管 WGC（DDA 失败后的第二选择）。</summary>
+        private static byte[]? TryAdoptWgcBackend(out int width, out int height)
+        {
+            width = 0; height = 0;
+            var candidate = new WgcCapture();
+            try
+            {
+                byte[]? frame = candidate.CaptureBgra(out width, out height);
+                if (frame != null && frame.Length > 0 && candidate.IsActive && candidate.FrameSequence > 0)
+                {
+                    Capture.Dispose();
+                    Capture = candidate;
+                    _captureSwapGeneration++;
+                    RelayAgent.LogQuiet("[capture] 周期重试成功，回到 WGC（" + width + "x" + height + "）");
+                    return frame;
+                }
+            }
+            catch (Exception ex)
+            {
+                RelayAgent.LogQuiet("[capture] 周期重试 WGC 失败：" + ex.GetType().Name + "：" + ex.Message);
+            }
+            candidate.Dispose();
+            return null;
+        }
+#endif
+
+        /// <summary>★ P0-A(D01)：降级到 BitBlt 临时兜底。探测完成标志只表示「已选定当前后端」，
+        /// 不再永久锁死：_nextGpuRetryAt 保证之后周期性重试 GPU 后端。</summary>
+        private static void FallbackToBitBlt(string reason)
+        {
+            string clean = SanitizePipe(reason);
+            if (clean.Length == 0) clean = "未知原因";
+            RelayAgent.LogQuiet("[capture] 降级 BitBlt 临时兜底：" + clean + "（每 " + GpuRetrySeconds + "s 自动重试 GPU 后端）");
+            Capture.Dispose();
+            Capture = new BitBltCapture();
+            _captureProbeComplete = true;
+            _probeClock = null;
+            _backendDeadStreak = 0;
+            _captureSwapGeneration++;
+            _nextGpuRetryAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * (double)GpuRetrySeconds);
+            lock (Gate) { _captureFallbackReason = clean; _captureFallbackAtUtc = DateTime.UtcNow; }
+        }
+
+        /// <summary>
+        /// ★ P0-A(D04)：运行期健康检查——GPU 后端死掉后重新进入降级链（不再「每帧重试 Start +
+        /// 恒返回旧帧」直到永远）。仅 auto 模式（显式模式已在入口处跳过）。
+        /// </summary>
+        private static void CheckCaptureHealth()
+        {
+            if (Capture is DxgiDdaCapture dda)
+            {
+                bool healthy = dda.IsActive && dda.LastError.Length == 0;
+                if (healthy) { _backendDeadStreak = 0; return; }
+                // 判死：连续 Start 失败达阈值（含指数退避），或持续不健康达 N 拍
+                bool dead = dda.ConsecutiveFailures >= DdaDeadFailureCount
+                    || ++_backendDeadStreak >= BackendDeadStreakLimit;
+                if (!dead) return;
+                string reason = dda.LastError.Length > 0 ? dda.LastError : "DDA 停止出帧";
+                RelayAgent.LogQuiet("[capture] DDA 运行期失败，重新进入降级链：" + reason);
+                dda.Dispose();
+                _probeClock = null;
+                _backendDeadStreak = 0;
+                lock (Gate) { _captureFallbackReason = SanitizePipe(reason); _captureFallbackAtUtc = DateTime.UtcNow; }
+#if WGC
+                _captureProbeComplete = false;
+                _captureSwapGeneration++;
+                Capture = new WgcCapture();
+#else
+                Capture = new BitBltCapture();
+                _captureProbeComplete = true;
+                _captureSwapGeneration++;
+                _nextGpuRetryAt = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * (double)GpuRetrySeconds);
+#endif
+                return;
+            }
+#if WGC
+            if (Capture is WgcCapture wgc)
+            {
+                if (wgc.IsActive) { _backendDeadStreak = 0; return; }
+                // WGC 无失败计数器（Start 失败静默重试），以连续拍数判死
+                if (++_backendDeadStreak < BackendDeadStreakLimit) return;
+                RelayAgent.LogQuiet("[capture] WGC 运行期失败（连续 " + BackendDeadStreakLimit + " 拍未 running），重新进入降级链");
+                _probeClock = null;
+                _backendDeadStreak = 0;
+                FallbackToBitBlt("WGC 运行期失败（连续 " + BackendDeadStreakLimit + " 拍未 running）");
+            }
+#endif
+        }
+
+        /// <summary>距下一次 GPU 后端重试的毫秒数（仅当前处于兜底/降级后端时有意义，DDA 上恒 0）。</summary>
+        private static long GpuRetryCountdown()
+        {
+            if (Capture is DxgiDdaCapture) return 0;
+            long remain = _nextGpuRetryAt - Stopwatch.GetTimestamp();
+            return remain > 0 ? remain * 1000 / Stopwatch.Frequency : 0;
         }
 
         /// <summary>
@@ -303,6 +555,9 @@ namespace SoulLink.Relay
                     + "|loop=" + _loopSequence + "|lastCaptureAt=" + _lastCaptureAt.ToString("HH:mm:ss.fff")
                     + "|lastEncodeAt=" + _lastEncodeAt.ToString("HH:mm:ss.fff") + "|lastNalAt=" + _lastNalAt.ToString("HH:mm:ss.fff")
                     + "|staticSkipped=" + _skippedStaticFrames + "|noNal=" + _noNalFrames
+                    + "|fallbackReason=" + _captureFallbackReason
+                    + "|fallbackAtUtc=" + (_captureFallbackAtUtc == default ? "" : _captureFallbackAtUtc.ToString("yyyy-MM-dd HH:mm:ss"))
+                    + "|gpuRetryInMs=" + GpuRetryCountdown()
                     + "|bitrateKbps=" + _configuredBitrate + "|mftBitrateKbps=" + _negotiatedBitrate
                     + (_lastError.Length > 0 ? "|error=" + _lastError : "");
             }
@@ -374,6 +629,7 @@ namespace SoulLink.Relay
             int appliedVersion = -1;
             VideoParameters? applied = null;
             int appliedCaptureVersion = _captureModeVersion;
+            long appliedCaptureGeneration = -1;   // ★ P0-A：后端实例替换代数（探测/重试/降级/D04 后重置静止基准）
             try
             {
                 while (!_stopRequested)
@@ -386,12 +642,22 @@ namespace SoulLink.Relay
                         {
                             RelayAgent.LogQuiet("[capture] worker 热切后端 → mode=" + _captureMode);
                             Capture.Dispose(); _probeClock = null; _captureProbeComplete = false;
+                            _captureSwapGeneration++;
+                            lock (Gate) { _captureFallbackReason = ""; _captureFallbackAtUtc = default; }
                             Capture = CreateCapture();
                             encoder?.Dispose(); encoder = null;
                             gpuConverter?.Dispose(); gpuConverter = null;
                             frameIndex = 0; previousBgra = null; previousFrameSeq = -1;
                             appliedCaptureVersion = version;
                         }
+                    }
+                    // ★ P0-A：后端实例被替换（探测/重试/降级/D04/热切）→ 重置静止判定基准，
+                    //   避免旧帧字节比对 / 旧 FrameSequence 把换后端后的第一帧误判为静止。
+                    long captureGeneration = _captureSwapGeneration;
+                    if (captureGeneration != appliedCaptureGeneration)
+                    {
+                        previousBgra = null; previousFrameSeq = -1; previousZeroSeq = -1;
+                        appliedCaptureGeneration = captureGeneration;
                     }
                     VideoParameters parameters;
                     int parameterVersion;
@@ -520,6 +786,9 @@ namespace SoulLink.Relay
                     if (bgra == null || width <= 0 || height <= 0)
                     {
                         lock (Gate) { _status = "waiting"; if (_probeClock == null) _lastError = "抓屏没有返回原始帧"; }
+                        // ★ P0-A：探测窗口/静止桌面期间抓屏为 null 时，按需 IDR 不能被吞掉——
+                        //   重新置位 _forceKeyFrame，下一拍继续尝试强制出帧（新观众首帧不挂死）。
+                        if (forceKeyFrame) lock (Gate) { _forceKeyFrame = true; }
                         IdleWait();
                         continue;
                     }
@@ -767,7 +1036,9 @@ namespace SoulLink.Relay
         public static string? LastError { get { lock (Gate) return _lastError; } }
         public static string StreamReadiness
         {
-            get { lock (Gate) return "状态=" + _status + " 帧=" + Ring.Count + " 采集=" + Capture.Name + " 错误=" + _lastError; }
+            get { lock (Gate) return "状态=" + _status + " 帧=" + Ring.Count + " 采集=" + Capture.Name
+                    + (_captureFallbackReason.Length > 0 ? " 降级原因=" + _captureFallbackReason : "")
+                    + " 错误=" + _lastError; }
         }
 
         /// <summary>一次性 JPEG 截图，仅供静态 shot/frame 协议使用；绝不进入实时 Ring。</summary>
@@ -890,6 +1161,7 @@ namespace SoulLink.Relay
         }
 
         private static string JsonEscape(string s) => (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+        private static string SanitizePipe(string s) => (s ?? "").Replace('|', '/').Replace('\r', ' ').Replace('\n', ' ');
         private static string Sanitize(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return "";

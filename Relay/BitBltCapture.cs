@@ -18,6 +18,22 @@ namespace SoulLink.Relay
     {
         public string Name => "BitBlt";
         public long FrameSequence => 0;
+
+        /// <summary>★ P1-A2：BitBlt 抓主屏，原点 = 主显示器 rcMonitor 在虚拟桌面的物理坐标。</summary>
+        public int CaptureOriginX { get { TryGetPrimaryMonitorOrigin(out int x, out _); return x; } }
+
+        /// <summary>★ P1-A2：同上 Y。</summary>
+        public int CaptureOriginY { get { TryGetPrimaryMonitorOrigin(out _, out int y); return y; } }
+
+        private static bool TryGetPrimaryMonitorOrigin(out int x, out int y)
+        {
+            x = y = 0;
+            var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+            if (!GetMonitorInfo(MonitorFromPoint(new POINT(), MONITOR_DEFAULTTOPRIMARY), ref info)) return false;
+            x = info.rcMonitor.Left; y = info.rcMonitor.Top;
+            return true;
+        }
+
         public void Dispose() { }
 
         // ── Win32 ────────────────────────────────────────────────────────────
@@ -27,6 +43,16 @@ namespace SoulLink.Relay
 
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT { public int X; public int Y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT { public int Left, Top, Right, Bottom; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public int dwFlags; }
+
+        [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+        [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+        private const uint MONITOR_DEFAULTTOPRIMARY = 0x00000001;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct CURSORINFO

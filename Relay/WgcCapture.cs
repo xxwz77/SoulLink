@@ -45,6 +45,32 @@ namespace SoulLink.Relay
         public long FrameSequence { get { lock (_stashLock) return _frameSeq; } }
         private long _lastBlackFrameLog;
 
+        /// <summary>
+        /// ★ P1-A2：抓屏区域左上角在虚拟桌面的物理像素坐标（网页 0~1 坐标反算基准）。
+        /// 窗口捕获取窗口 rect（实时，窗口拖动后立即正确）；monitor 捕获取主显示器 rcMonitor。
+        /// </summary>
+        private bool TryGetCaptureOrigin(out int x, out int y)
+        {
+            x = y = 0;
+            if (_hWnd != IntPtr.Zero)
+            {
+                if (!GetWindowRect(_hWnd, out RECT r)) return false;
+                x = r.Left; y = r.Top;
+                return true;
+            }
+            // monitor 降级：DisplayId(0) 即主显示器，取其 rcMonitor 虚拟坐标
+            var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+            if (!GetMonitorInfo(MonitorFromPoint(new POINT { X = 0, Y = 0 }, MONITOR_DEFAULTTOPRIMARY), ref info)) return false;
+            x = info.rcMonitor.Left; y = info.rcMonitor.Top;
+            return true;
+        }
+
+        /// <summary>★ P1-A2：抓屏区域左上角的虚拟桌面物理 X。</summary>
+        public int CaptureOriginX { get { TryGetCaptureOrigin(out int x, out _); return x; } }
+
+        /// <summary>★ P1-A2：抓屏区域左上角的虚拟桌面物理 Y。</summary>
+        public int CaptureOriginY { get { TryGetCaptureOrigin(out _, out int y); return y; } }
+
         private ID3D11Device? _device;
         private ID3D11DeviceContext? _context;
         private Windows.Graphics.DirectX.Direct3D11.IDirect3DDevice? _winrtDevice;
@@ -171,7 +197,11 @@ namespace SoulLink.Relay
 
             // 版本检测后应用属性
             TrySetIsBorderRequired(_session, false);
-            TrySetCursorCaptureEnabled(_session, false);
+            // ★ P0（2026-11-24，AUDIT-20261124-03 §4.1 C1）：光标由系统合成进视频帧
+            //   （Sunshine display_wgc.cpp 同款默认行为）；网页端已删虚拟蓝球，依赖帧内光标。
+            //   远端应用全屏隐藏光标（游戏视频）时帧内光标自动消失，是正确行为而非回退。
+            if (TrySetCursorCaptureEnabled(_session, true))
+                RelayAgent.LogQuiet("[capture] WGC 光标合成（IsCursorCaptureEnabled=true）已生效");
             TrySetMinUpdateInterval(_session, TimeSpan.Zero);
 
             _pool.FrameArrived += OnFrameArrived;
@@ -575,7 +605,7 @@ namespace SoulLink.Relay
                     new Windows.Graphics.SizeInt32 { Width = w, Height = h });
                 var sess = pool.CreateCaptureSession(item);
                 TrySetIsBorderRequired(sess, false);
-                TrySetCursorCaptureEnabled(sess, false);
+                TrySetCursorCaptureEnabled(sess, true);   // ★ P0：探针路径与主通路一致，光标入帧
                 sess.StartCapture();
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -684,9 +714,10 @@ namespace SoulLink.Relay
             try { s.IsBorderRequired = v; } catch { }
         }
 
-        private static void TrySetCursorCaptureEnabled(Windows.Graphics.Capture.GraphicsCaptureSession s, bool v)
+        private static bool TrySetCursorCaptureEnabled(Windows.Graphics.Capture.GraphicsCaptureSession s, bool v)
         {
-            try { s.IsCursorCaptureEnabled = v; } catch { }
+            try { s.IsCursorCaptureEnabled = v; return true; }
+            catch { return false; }
         }
 
         private static void TrySetMinUpdateInterval(Windows.Graphics.Capture.GraphicsCaptureSession s, TimeSpan ts)
@@ -705,6 +736,15 @@ namespace SoulLink.Relay
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern int GetSystemMetrics(int nIndex);
+        [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+        [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+        [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+        private const uint MONITOR_DEFAULTTOPRIMARY = 0x00000001;
+
+        [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+        [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public int dwFlags; }
 
         [ComImport, Guid("a9b3d012-3df2-4ee3-b8d1-8695f457d3c1"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IDirect3DDxgiInterfaceAccess { [PreserveSig] int GetInterface([In] ref Guid iid, [Out] out IntPtr pObject); }

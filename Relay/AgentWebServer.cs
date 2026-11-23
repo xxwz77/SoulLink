@@ -251,6 +251,9 @@ namespace SoulLink.Relay
 
             if (path == "/api/info")
             {
+                // ★ P1-A2：回显真实抓屏几何（尺寸 + 虚拟桌面原点），供网页端与 norm() 基准自检
+                //   （对比 canvas 尺寸 vs 抓屏尺寸，不一致即提示「坐标基准不一致」）。
+                bool geo = SessionRecorder.TryGetCaptureGeometry(out int geoW, out int geoH, out int geoX, out int geoY);
                 await WriteJson(ctx, new
                 {
                     ok = true,
@@ -259,7 +262,11 @@ namespace SoulLink.Relay
                     pid = Environment.ProcessId,
                     port = _port,
                     // ★ 当前实际生效的抓屏后端（DXGI-DDA / WGC / BitBlt），网页端用于「配置的 vs 实际」对照显示。
-                    captureBackend = SessionRecorder.CaptureBackend
+                    captureBackend = SessionRecorder.CaptureBackend,
+                    captureWidth = geo ? geoW : 0,
+                    captureHeight = geo ? geoH : 0,
+                    captureOriginX = geo ? geoX : 0,
+                    captureOriginY = geo ? geoY : 0
                 }).ConfigureAwait(false);
                 return;
             }
@@ -492,10 +499,22 @@ namespace SoulLink.Relay
                     new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (dto == null) { await WriteJson(ctx, new { ok = false, error = "请求格式错误" }).ConfigureAwait(false); return; }
 
-                int w = Math.Max(1, GetSystemMetrics(0));
-                int h = Math.Max(1, GetSystemMetrics(1));
-                int px = dto.x >= 0 ? (int)Math.Round(dto.x * w) : -1;
-                int py = dto.y >= 0 ? (int)Math.Round(dto.y * h) : -1;
+                // ★ 2026-11-24 P1-A2（落点误差根因）：坐标基准从「主屏尺寸」改为「实际抓屏几何」。
+                //   网页 norm() 按抓屏帧（canvas 物理分辨率）归一化到 [0,1]，agent 必须用同一基准反算。
+                //   旧实现用 GetSystemMetrics(0/1)（主屏宽高）+ clamp 到主屏，当抓屏后端尺寸/原点 ≠ 主屏时
+                //   （DDA 抓第一个枚举输出、WGC 抓前台窗口、多屏主屏原点非 0,0）落点必偏、副屏永远点不到。
+                int w, h, ox, oy;
+                if (!SessionRecorder.TryGetCaptureGeometry(out w, out h, out ox, out oy))
+                {
+                    // 兜底：尚未出帧 / 几何未知 → 回退主屏尺寸、原点 (0,0)（等价旧行为，仅保证不 NRE）
+                    w = Math.Max(1, GetSystemMetrics(0));
+                    h = Math.Max(1, GetSystemMetrics(1));
+                    ox = 0; oy = 0;
+                }
+                bool hasX = dto.x >= 0;
+                bool hasY = dto.y >= 0;
+                int px = hasX ? ox + (int)Math.Round(dto.x * w) : ox;
+                int py = hasY ? oy + (int)Math.Round(dto.y * h) : oy;
 
                 // 坐标 → 绝对位置；按键/滚轮不需要坐标
                 string cmd;
@@ -523,9 +542,10 @@ namespace SoulLink.Relay
                 var req = new RelayAgent.Request
                 {
                     Cmd = cmd,
-                    X = Math.Clamp(px, 0, w - 1),
-                    Y = Math.Clamp(py, 0, h - 1),
-                    Move = (cmd == "click" && px >= 0) ? 1 : 0,
+                    // ★ clamp 到「抓屏矩形」（虚拟桌面坐标），而非主屏；副屏（原点可为负）也能点到。
+                    X = Math.Clamp(px, ox, ox + w - 1),
+                    Y = Math.Clamp(py, oy, oy + h - 1),
+                    Move = (cmd == "click" && hasX) ? 1 : 0,
                     Button = (cmd == "key" || cmd == "keydown" || cmd == "keyup" || cmd == "text")
                         ? keyName
                         : (dto.button ?? "left"),
