@@ -31,6 +31,8 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [NVENC-SDK-QUALITY-PRESETS-20261123.md](NVENC-SDK-QUALITY-PRESETS-20261123.md) —— **画质自由档位**（NVENC preset P1~P7 下拉默认P3 + 码率/帧率滑动条(帧率上限120/码率1~50Mbps) + 关键帧缓冲上调0~200%对齐Sunshine vbv_percentage_increase；配置落AppSettings持久化+RelayClient下发环境变量；实测vbv 0%→100% IDR 33KB→58KB/QP33→31）
+
 - [NVENC-SDK-RCPARAMS-20261123.md](NVENC-SDK-RCPARAMS-20261123.md) —— **NvencSdkEncoder v2 精确码控**（CBR+无限GOP+关B帧+zeroReorderDelay，GetEncodePresetConfigEx 取预设再覆盖 rcParams，codec union 不能碰否则 INVALID_PARAM；按需 IDR 走 FORCEIDR|OUTPUT_SPSPPS；A2 RDP 实测 IDR 251KB→33KB 降 7.4×；惰性/后台/降级不变）
 
 - [NVENC-SDK-INTEGRATION-20261123.md](NVENC-SDK-INTEGRATION-20261123.md) —— **NvencSdkEncoder 接入主程序**（新增 Services/NvencSdkEncoder.cs 658 行 + IFrameH264Encoder 接口 + SessionRecorder 降级链 NVENC-SDK→MF硬编→软编；惰性加载 nvEncodeAPI64.dll 不进启动路径、动态加载不增体积、同步模式无事件泵；两 TFM 0 error；A2 RDP 会话 SessionId=4 直通复测出帧；v1 边界=encodeConfig=NULL 预设默认码率，精确 CBR/GOP 是下一步）

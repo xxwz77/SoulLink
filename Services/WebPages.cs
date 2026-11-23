@@ -495,6 +495,13 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
            （用户指令：只要视频流）。画面帧率现在由服务端 /stream 直推，
            本浏览器无「取图频率」概念。保留的「录制帧率」仍写回应用配置。 -->
 
+      <div class="hgroup" data-kind="view" title="鼠标模式：绝对=点哪指哪+长按拖动；相对=月光式（滑动转视角/点按点击/双指滚轮·右键）">
+        <span class="gtag">鼠标</span>
+        <div class="seg" id="mouseModeSeg">
+          <button id="mmAbs" class="on" type="button">绝对</button>
+          <button id="mmRel" type="button">相对</button>
+        </div>
+      </div>
       <button id="pauseBtn" class="hbtn">暂停</button>
       <button id="closeViewer" class="hbtn">收起</button>
     </div>
@@ -1238,6 +1245,41 @@ function ripple(e) {
 
 let drag = null;
 
+// ══════════ 鼠标模式：绝对 / 相对（月光式，2026-11-23）══════════
+//   绝对（默认）= 现状：点哪指哪 + 长按拖动（触屏状态机原样）。
+//   相对 = 月光语义：单指滑动 → moverel 转视角；单指点一下 → 绝对定位 + 左键点击；
+//           双指 → 滚轮（上下滑）/ 右键（点一下）。
+//   选择持久化到 localStorage，退出画面/刷新后保留。
+const MOUSE_MODE_KEY = 'sl_mouse_mode';
+let mouseMode = 'absolute';    // 'absolute' | 'relative'
+try {
+  const m = localStorage.getItem(MOUSE_MODE_KEY);
+  if (m === 'relative' || m === 'absolute') mouseMode = m;
+} catch (e) {}
+
+function applyMouseMode() {
+  const abs = $('mmAbs'), rel = $('mmRel');
+  if (abs) abs.classList.toggle('on', mouseMode === 'absolute');
+  if (rel) rel.classList.toggle('on', mouseMode === 'relative');
+}
+const __mmAbs = $('mmAbs'), __mmRel = $('mmRel');
+if (__mmAbs) __mmAbs.onclick = () => { mouseMode = 'absolute'; try { localStorage.setItem(MOUSE_MODE_KEY, 'absolute'); } catch (e) {} applyMouseMode(); };
+if (__mmRel) __mmRel.onclick = () => { mouseMode = 'relative'; try { localStorage.setItem(MOUSE_MODE_KEY, 'relative'); } catch (e) {} applyMouseMode(); };
+applyMouseMode();
+
+// 相对模式手势状态（月光：单指滑动转视角 / 点按点击 / 双指滚轮或右键）
+const REL_TAP_PX = 10;
+let relPoints = new Map();   // pointerId -> { sx, sy, lx, ly, total }
+let relWasTwo = false;       // 本次手势是否出现过双指
+let relMaxMove = 0;          // 本次手势最大累计位移（判定「点一下」）
+let relPinchY = null;        // 双指中点 Y（滚轮用）
+function relReset() {
+  relPoints.clear();
+  relWasTwo = false;
+  relMaxMove = 0;
+  relPinchY = null;
+}
+
 // ══════════ 触屏手势状态机（手机转视角/拖动/点击，2026-11-22）══════════
 // 判定依据（成熟手游标准方案，用户确认）：
 //   点一下屏幕（按下即抬起，几乎没动）      → 左键单击
@@ -1280,6 +1322,14 @@ function lookDelta(dx, dy) {
 
 $('scr').addEventListener('pointerdown', e => {
   if (e.pointerType === 'touch') {
+    // ★ 相对模式：走月光手势（滑动转视角 / 点按点击 / 双指滚轮·右键）
+    if (mouseMode === 'relative') {
+      if (relPoints.size === 0) { relWasTwo = false; relMaxMove = 0; relPinchY = null; }
+      relPoints.set(e.pointerId, { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, total: 0 });
+      if (relPoints.size >= 2) { relWasTwo = true; relPinchY = null; }
+      $('scr').setPointerCapture(e.pointerId);
+      return;
+    }
     // ★ 命中虚拟按钮的区域由按钮层自己吃掉（阻止事件穿透），走不到这里。
     //   走到这里 = 落在空白处：记录起点，进入 pending 状态。
     const p = norm(e);
@@ -1360,6 +1410,26 @@ function pumpMove() {
 }
 
 $('scr').addEventListener('pointermove', e => {
+  // ── 相对模式（月光）：单指滑动转视角 / 双指滚轮 ──
+  if (e.pointerType === 'touch' && mouseMode === 'relative' && relPoints.has(e.pointerId)) {
+    const pt = relPoints.get(e.pointerId);
+    const dx = e.clientX - pt.lx, dy = e.clientY - pt.ly;
+    pt.lx = e.clientX; pt.ly = e.clientY;
+    pt.total += Math.hypot(dx, dy);
+    relMaxMove = Math.max(relMaxMove, pt.total);
+    if (relPoints.size >= 2) {
+      const pts = [...relPoints.values()];
+      const my = (pts[0].ly + pts[1].ly) / 2;
+      if (relPinchY !== null) {
+        const steps = Math.round((my - relPinchY) / 8);
+        if (steps !== 0) sendInput('wheel', -1, -1, { delta: steps * 120 });
+      }
+      relPinchY = my;
+      return;
+    }
+    lookDelta(dx, dy);   // 单指滑动 → moverel 转视角（复用 8ms 合并）
+    return;
+  }
   // ── 触屏 / 鼠标右键：转视角 / 拖动状态机 ──
   // （mouseRight 的右键 look 直接进 look 模式：桌面版没有「先长按判定」，
   //   按住右键滑动就是转视角，位移阈值只防抖动误触）
@@ -1408,6 +1478,23 @@ $('scr').addEventListener('pointermove', e => {
   sendMoveThrottled(p.nx, p.ny);
 });
 $('scr').addEventListener('pointerup', e => {
+  // ── 相对模式（月光）：点一下=绝对定位+左键；双指点一下=右键 ──
+  if (e.pointerType === 'touch' && mouseMode === 'relative' && relPoints.has(e.pointerId)) {
+    relPoints.delete(e.pointerId);
+    if (relPoints.size < 2) relPinchY = null;
+    if (relPoints.size === 0) {
+      const p = norm(e);
+      if (relWasTwo) {
+        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInput('click', p.nx, p.ny, { button: 'right' }); }
+      } else {
+        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInput('click', p.nx, p.ny, { button: 'left' }); }
+      }
+      if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
+      flushLook();
+      relReset();
+    }
+    return;
+  }
   // ── 触屏 / 鼠标右键 ──
   if (look && e.pointerId === look.id) {
     const was = look; look = null;
@@ -1442,6 +1529,12 @@ $('scr').addEventListener('pointerup', e => {
   else { ripple(e); sendInput('click', p.nx, p.ny, { button: btn }); }
 });
 $('scr').addEventListener('pointercancel', () => {
+  if (mouseMode === 'relative' && relPoints.size > 0) {
+    if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
+    flushLook();
+    relReset();
+    return;
+  }
   if (look) {
     if (look.mode === 'drag') sendInput('up', -1, -1, { button: 'left' });
     if (look.mode === 'look' && look.mouseRight) {

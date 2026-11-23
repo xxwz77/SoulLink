@@ -214,14 +214,20 @@ namespace SoulLink.Controls
    try
    {
     var settings = App.Config.Settings;
-    // 帧率
+    // 帧率（录像帧率仍是固定档，直播帧率改滑动条）
     SelectComboByTag(RecordFpsCombo, settings.RecordFps);
-    SelectComboByTag(StreamFpsCombo, settings.StreamFps);
+    StreamFpsSlider.Value = Math.Clamp(settings.StreamFps, 15, 120);
+    StreamFpsText.Text = settings.StreamFps + " 帧/秒";
     SelectComboByTag(RecordQualityCombo, settings.RecordQuality);
     RecordKeepBox.Text = settings.RecordKeepSeconds.ToString();
-    // ★ 2026-11-22：抓屏方式与视频码率（之前只有配置字段、无界面入口）
+    // ★ 2026-11-22：抓屏方式（之前只有配置字段、无界面入口）
     SelectComboByTag(CaptureModeCombo, settings.CaptureMode);
-    SelectComboByTag(BitrateCombo, settings.VideoBitrateKbps);
+    // ★ 2026-11-23：码率改滑动条（1~50 Mbps），NVENC 预设 + 关键帧缓冲上调
+    BitrateSlider.Value = Math.Clamp(settings.VideoBitrateKbps, 1000, 50000) / 1000.0;
+    BitrateText.Text = (settings.VideoBitrateKbps / 1000.0).ToString("0") + " Mbps";
+    SelectComboByTag(NvencPresetCombo, settings.NvencPreset);
+    VbvIncreaseSlider.Value = Math.Clamp(settings.VbvBufferIncreasePercent, 0, 200);
+    VbvIncreaseText.Text = settings.VbvBufferIncreasePercent + "%";
     UpdateVideoHintText();
 
     // 账号多选
@@ -324,19 +330,40 @@ namespace SoulLink.Controls
   }
 
   /// <summary>视频码率切换（对应 AppSettings.VideoBitrateKbps）。</summary>
-  private void Bitrate_Changed(object sender, SelectionChangedEventArgs e)
+  private void BitrateSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
   {
-   try
+   if (BitrateText != null)
+    BitrateText.Text = ((int)Math.Round(e.NewValue)) + " Mbps";
+   if (_loading) return;
+   int kbps = (int)Math.Round(e.NewValue) * 1000;
+   if (kbps == App.Config.Settings.VideoBitrateKbps) return;
+   App.Config.Settings.VideoBitrateKbps = kbps;
+   Save();
+   UpdateVideoHintText();
+  }
+
+  private void NvencPreset_Changed(object sender, SelectionChangedEventArgs e)
+  {
+   if (_loading) return;
+   if (NvencPresetCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
+       && int.TryParse(tag, out int preset))
    {
-    if (BitrateCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
-        && int.TryParse(tag, out int kbps))
-    {
-     App.Config.Settings.VideoBitrateKbps = kbps;
-     ConfigStore.Save(App.Config);
-     UpdateVideoHintText();
-    }
+    App.Config.Settings.NvencPreset = preset;
+    Save();
+    UpdateVideoHintText();
    }
-   catch { }
+  }
+
+  private void VbvIncreaseSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+  {
+   if (VbvIncreaseText != null)
+    VbvIncreaseText.Text = ((int)Math.Round(e.NewValue)) + "%";
+   if (_loading) return;
+   int pct = (int)Math.Round(e.NewValue);
+   if (pct == App.Config.Settings.VbvBufferIncreasePercent) return;
+   App.Config.Settings.VbvBufferIncreasePercent = pct;
+   Save();
+   UpdateVideoHintText();
   }
 
   /// <summary>
@@ -360,12 +387,22 @@ namespace SoulLink.Controls
     };
 
     double hourGb = s.VideoBitrateKbps / 8.0 * 3600 / 1024.0;
-    string brText = (s.VideoBitrateKbps / 1000.0).ToString("0.#") + " Mbps（约 "
+    string brText = (s.VideoBitrateKbps / 1000.0).ToString("0") + " Mbps（约 "
         + hourGb.ToString("0.0") + " GB/小时）";
 
+    string presetName = s.NvencPreset switch
+    {
+        1 => "P1（最快）", 2 => "P2", 4 => "P4", 5 => "P5", 6 => "P6", 7 => "P7（最慢）", _ => "P3（均衡）"
+    };
+    string vbvText = s.VbvBufferIncreasePercent > 0
+        ? "关键帧缓冲 +" + s.VbvBufferIncreasePercent + "%（关键帧画质更好，首屏稍慢）"
+        : "关键帧缓冲 0%（关键帧压缩最强，首屏最快）";
+
     VideoHintText.Text = "抓屏：" + capText + "\n码率：" + brText
-        + "（只在 H.264 直播/录像启用时生效；JPEG 模式忽略码率）"
-        + "\n\n★ 抓屏方式的改动，需要重新投送代理才生效。";
+        + " · 直播帧率 " + s.StreamFps + "fps"
+        + "\nNVENC 预设：" + presetName + " · " + vbvText
+        + "\n（码率/预设/缓冲只在 H.264 硬编启用时生效；JPEG 模式忽略）"
+        + "\n\n★ 抓屏方式与码率/预设的改动，需要重新投送代理才生效。";
    }
    catch { }
   }
@@ -382,15 +419,15 @@ namespace SoulLink.Controls
    }
   }
 
-  private void StreamFps_Changed(object sender, SelectionChangedEventArgs e)
+  private void StreamFpsSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
   {
+   if (StreamFpsText != null)
+    StreamFpsText.Text = ((int)Math.Round(e.NewValue)) + " 帧/秒";
    if (_loading) return;
-   if (StreamFpsCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
-       && int.TryParse(tag, out int fps))
-   {
-    App.Config.Settings.StreamFps = fps;
-    Save();
-   }
+   int fps = (int)Math.Round(e.NewValue);
+   if (fps == App.Config.Settings.StreamFps) return;
+   App.Config.Settings.StreamFps = fps;
+   Save();
   }
 
   private void RecordQuality_Changed(object sender, SelectionChangedEventArgs e)

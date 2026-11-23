@@ -574,6 +574,24 @@ namespace SoulLink.Models
         /// </summary>
         public int VideoBitrateKbps { get; set; } = 8000;
 
+        /// <summary>
+        /// NVENC 编码器预设档位 1~7。
+        /// ★ P1 最快、画质最低；P7 最慢、画质最高。默认 3 均衡。
+        /// ★ 只对 NvencSdkEncoder（NVENC SDK D3D11 直通）生效；
+        ///   软编/MF 路径忽略此项。
+        /// ★ 经 RelayClient.CaptureEnv 下发为 SOULLINK_NVENC_PRESET 环境变量。
+        /// </summary>
+        public int NvencPreset { get; set; } = 3;
+
+        /// <summary>
+        /// 关键帧缓冲上调百分比（0~200，默认 0）。
+        /// ★ 对应 Sunshine 的 vbv_percentage_increase：在「1 帧 bit 量」的 VBV 基础上
+        ///   额外上调 N%，让 IDR 关键帧有更大的编码缓冲 → IDR 画质更好、体积更大。
+        ///   0 = 不额外缓冲（IDR 压缩最强、体积最小，但画质偏低）。
+        /// ★ 只对 NvencSdkEncoder 生效。经 SOULLINK_VBV_INCREASE_PERCENT 环境变量下发。
+        /// </summary>
+        public int VbvBufferIncreasePercent { get; set; } = 0;
+
         // ══════════ 网页访问（3.2.8）══════════
         //
         //  用户需求：「在设置里填写个端口号，ip+端口号可以打开网页」

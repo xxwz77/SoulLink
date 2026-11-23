@@ -22,6 +22,12 @@ namespace NvencSdkProbe
 
         static readonly Guid H264_GUID = new Guid("6BC82762-4E63-4CA4-AA85-1E50F321F6BF");
         static readonly Guid P1_GUID   = new Guid("FC0A8D3E-45F8-4CF8-80C7-298871590EBF");
+        static readonly Guid P2_GUID   = new Guid("F581CFB8-88D6-4381-93F0-DF13F9C27DAB");
+        static readonly Guid P3_GUID   = new Guid("36850110-3A07-441F-94D5-3670631F91F6");
+        static readonly Guid P4_GUID   = new Guid("90A7B826-DF06-4862-B9D2-CD6D73A08681");
+        static readonly Guid P5_GUID   = new Guid("21C6E6B4-297A-4CBA-998F-B6CBDE72ADE3");
+        static readonly Guid P6_GUID   = new Guid("8E75C279-6299-4AB6-8302-0B215A335CF5");
+        static readonly Guid P7_GUID   = new Guid("84848C12-6F71-4C13-931B-53E283F57974");
         static readonly Guid PROFILE_AUTOSELECT_GUID = new Guid("BFD6F8E7-233C-4341-8B3E-4818523803F4");
         static readonly Guid H264_PROFILE_HIGH_GUID = new Guid("E7CBC309-4F7A-4B89-AF2A-D537C92BE310");
 
@@ -405,6 +411,8 @@ namespace NvencSdkProbe
         static bool _useRcParams;
         static int _bitrateKbps = 8000;
         static int _gopLength;
+        static int _preset = 3;
+        static int _vbvPct = 0;
         static DestroyEncoderFn _destroyEncoder;
         static UnregisterResourceFn _unregisterResource;
         static DestroyBitstreamBufferFn _destroyBitstream;
@@ -422,6 +430,8 @@ namespace NvencSdkProbe
                 else if (args[i] == "-R") _useRcParams = true;   // 启用精确 rcParams
                 else if (args[i] == "-B" && i + 1 < args.Length) int.TryParse(args[++i], out _bitrateKbps);
                 else if (args[i] == "-G" && i + 1 < args.Length) int.TryParse(args[++i], out _gopLength);
+                else if (args[i] == "-P" && i + 1 < args.Length) int.TryParse(args[++i], out _preset);
+                else if (args[i] == "-V" && i + 1 < args.Length) int.TryParse(args[++i], out _vbvPct);
             }
 
             Log("════ NVENC SDK D3D11 直通探针 ════");
@@ -552,11 +562,12 @@ namespace NvencSdkProbe
                 pc.presetCfg.rcParams.temporalLayerQP = new byte[8];
                 pc.presetCfg.rcParams.viewBitrateRatios = new byte[8];
                 IntPtr pcPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NV_ENC_PRESET_CONFIG>());
-                int phr;
+                var presetGuid = _preset switch { 1 => P1_GUID, 2 => P2_GUID, 4 => P4_GUID, 5 => P5_GUID, 6 => P6_GUID, 7 => P7_GUID, _ => P3_GUID };
+int phr;
                 try
                 {
                     Marshal.StructureToPtr(pc, pcPtr, false);
-                    phr = getPreset(_enc, H264_GUID, P1_GUID, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY, pcPtr);
+                    phr = getPreset(_enc, H264_GUID, presetGuid, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY, pcPtr);
                     if (phr == 0) pc = (NV_ENC_PRESET_CONFIG)Marshal.PtrToStructure(pcPtr, typeof(NV_ENC_PRESET_CONFIG));
                 }
                 finally { Marshal.FreeHGlobal(pcPtr); }
@@ -570,6 +581,7 @@ namespace NvencSdkProbe
                 cfg.rcParams.bitField1 |= RC_ZERO_REORDER_DELAY_BIT;   // zeroReorderDelay=1
                 cfg.rcParams.lowDelayKeyFrameScale = 1;
                 cfg.rcParams.vbvBufferSize = cfg.rcParams.averageBitRate / 30;
+                if (_vbvPct > 0) cfg.rcParams.vbvBufferSize += (uint)((ulong)cfg.rcParams.vbvBufferSize * (uint)_vbvPct / 100u);
                 Log("[DEBUG] step2 +zeroReorderDelay+vbv：vbv=" + cfg.rcParams.vbvBufferSize + " bitField1=0x" + cfg.rcParams.bitField1.ToString("X8"));
 
                 // codec union 由 preset 决定（GetEncodePresetConfigEx 返回的 union 未填充，改任何字段都非法）

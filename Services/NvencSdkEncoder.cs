@@ -61,6 +61,12 @@ namespace SoulLink.Services
 
         static readonly Guid H264_GUID = new Guid("6BC82762-4E63-4CA4-AA85-1E50F321F6BF");
         static readonly Guid P1_GUID = new Guid("FC0A8D3E-45F8-4CF8-80C7-298871590EBF");
+        static readonly Guid P2_GUID = new Guid("F581CFB8-88D6-4381-93F0-DF13F9C27DAB");
+        static readonly Guid P3_GUID = new Guid("36850110-3A07-441F-94D5-3670631F91F6");
+        static readonly Guid P4_GUID = new Guid("90A7B826-DF06-4862-B9D2-CD6D73A08681");
+        static readonly Guid P5_GUID = new Guid("21C6E6B4-297A-4CBA-998F-B6CBDE72ADE3");
+        static readonly Guid P6_GUID = new Guid("8E75C279-6299-4AB6-8302-0B215A335CF5");
+        static readonly Guid P7_GUID = new Guid("84848C12-6F71-4C13-931B-53E283F57974");
         static readonly Guid PROFILE_AUTOSELECT_GUID = new Guid("BFD6F8E7-233C-4341-8B3E-4818523803F4");
 
         const int NV_ENC_DEVICE_TYPE_DIRECTX = 0;
@@ -440,6 +446,8 @@ namespace SoulLink.Services
         private bool _firstFrame = true;
         private bool _forceIdr;          // 下一帧强制 IDR（按需关键帧）
         private int _gopLength = 0;      // 0 = 无限 GOP + 按需 IDR；>0 = 固定 GOP
+        private int _preset = 3;          // NVENC 预设 1~7（默认 P3 均衡）
+        private int _vbvIncreasePercent = 0;  // 关键帧缓冲上调%（对应 Sunshine vbv_percentage_increase）
         private bool _disposed;
 
         private MapInputResourceFn? _mapRes;
@@ -462,11 +470,23 @@ namespace SoulLink.Services
         /// 只在 SessionRecorder 后台视频线程首次真正需要硬编时调用，不进启动路径、不阻塞 UI。
         /// 任何一步失败都清理现场并返回 false（调用方静默降级）。
         /// </summary>
+        /// <summary>按预设号取 GUID（P1~P7）。越界回落到 P3。</summary>
+        private static Guid PresetGuid(int preset) => preset switch
+        {
+            1 => P1_GUID, 2 => P2_GUID, 4 => P4_GUID, 5 => P5_GUID, 6 => P6_GUID, 7 => P7_GUID, _ => P3_GUID
+        };
+
         public bool TryInitialize(int width, int height, int fps, int bitrateKbps)
         {
             if (_disposed) return false;
             if (_enc != IntPtr.Zero) return true;   // 已初始化
             LastError = "";
+
+            // ★ 惰性读配置环境变量（在后台视频线程，不进启动路径）：
+            //   SOULLINK_NVENC_PRESET（1~7）、SOULLINK_VBV_INCREASE_PERCENT（0~200）。
+            //   这些由 RelayClient.CaptureEnv 在投送代理时下发。
+            if (int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_NVENC_PRESET"), out int preset)) _preset = Math.Clamp(preset, 1, 7);
+            if (int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_VBV_INCREASE_PERCENT"), out int vbvPct)) _vbvIncreasePercent = Math.Clamp(vbvPct, 0, 200);
             if (width <= 0 || height <= 0) { LastError = "帧尺寸无效"; return false; }
             if ((width & 1) != 0) width--;
             if ((height & 1) != 0) height--;
@@ -507,6 +527,7 @@ namespace SoulLink.Services
                 // ★ codec union 由 preset 决定，不能单独改（GetEncodePresetConfigEx 返回的 union 未填充，
                 //   改任何字段都 INVALID_PARAM，实测确认）。按需 IDR 靠 EncodeNv12 里的 FORCEIDR|OUTPUT_SPSPPS。
                 var getPreset = Marshal.GetDelegateForFunctionPointer<GetPresetConfigExFn>(fl.nvEncGetEncodePresetConfigEx);
+                var presetGuid = PresetGuid(_preset);
                 var pc = new NV_ENC_PRESET_CONFIG();
                 pc.version = StructVersionEx(5);
                 pc.presetCfg.version = StructVersionEx(9);   // NV_ENC_CONFIG_VER
@@ -519,7 +540,7 @@ namespace SoulLink.Services
                 try
                 {
                     Marshal.StructureToPtr(pc, pcPtr, false);
-                    hr = getPreset(_enc, H264_GUID, P1_GUID, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY, pcPtr);
+                    hr = getPreset(_enc, H264_GUID, presetGuid, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY, pcPtr);
                     if (hr == 0) pc = (NV_ENC_PRESET_CONFIG)Marshal.PtrToStructure(pcPtr, typeof(NV_ENC_PRESET_CONFIG));
                 }
                 finally { Marshal.FreeHGlobal(pcPtr); }
@@ -536,6 +557,8 @@ namespace SoulLink.Services
                 cfg.rcParams.lowDelayKeyFrameScale = 1;
                 cfg.rcParams.multiPass = 0;                   // 单 pass
                 cfg.rcParams.vbvBufferSize = cfg.rcParams.averageBitRate / (uint)Math.Max(1, fps);  // 1 帧 bit 量（Sunshine: bitrate*1000/fps）
+                if (_vbvIncreasePercent > 0)
+                    cfg.rcParams.vbvBufferSize += (uint)((ulong)cfg.rcParams.vbvBufferSize * (uint)_vbvIncreasePercent / 100u);  // 关键帧缓冲上调%
 
                 var init = new NV_ENC_INITIALIZE_PARAMS();
                 init.maxMEHintCountsPerBlock = new NVENC_EXTERNAL_ME_HINT_COUNTS_PER_BLOCKTYPE[2];
@@ -543,7 +566,7 @@ namespace SoulLink.Services
                 init.reserved2 = new IntPtr[64];
                 init.version = StructVersionEx(7);
                 init.encodeGUID = H264_GUID;
-                init.presetGUID = P1_GUID;
+                init.presetGUID = presetGuid;
                 init.encodeWidth = (uint)width; init.encodeHeight = (uint)height;
                 init.darWidth = (uint)width; init.darHeight = (uint)height;
                 init.frameRateNum = (uint)Math.Max(1, fps); init.frameRateDen = 1;
