@@ -281,6 +281,8 @@ README：https://raw.githubusercontent.com/novnc/noVNC/master/README.md
 
 > 方法：绕过需要用户操作的抓包，直接拉取云原神 web 加载器公开 JS（ys.mihoyo.com/cloud/ → webstatic.mihoyo.com/common/clgm-web-app/ys/js/）逐段逆向。核心文件 **cg-sdk.891daeae.js（1.23MB，云游戏 SDK 本体）**，已存 `%TEMP%cg-sdk.js`。
 
+> ⚠️ **运行时实测修正（2026-11-23 19:35，见 §9.2）**：本节为静态逆向推断，「当前大概率跑 WebTransport 通道」的判断**被运行时实测推翻**——实际会话跑的是 **WebRTC**（RTCPeerConnection connected / WebTransport 0 实例）。SDK 多引擎降级链的静态结论（WT/WS/WebRTC 三通道、KCP、4ms 节流、requestKeyFrame 接口）仍然成立，但**运行时选择以 §9.2 实测为准**。教训已记：静态推断必须标注「待运行时验证」，本文档保留原推断文本作为方法对照。
+
 ### 9.1.1 决定性发现：多引擎传输层 + 运行时降级链
 
 cg-sdk 内置**四条通道**，全部实现于同一 SDK（出现次数：RTCPeerConnection 206 / WebSocket 73 / VideoDecoder 113 / WebTransport 24）：
@@ -332,6 +334,39 @@ cg-sdk 内置**四条通道**，全部实现于同一 SDK（出现次数：RTCPe
 | 渲染 canvas+rVFC 分析器 | cg-sdk "[Renderer] coded resolution"/ctx.drawImage + VideoAnalyzer.requestVideoFrameCallback |
 
 > 后续若用户再提供向日葵 dump，另起 §9.2。
+
+---
+
+## 9.2 云原神运行时 CDP 实测（viewer-auditor，2026-11-23 19:2x~19:4x，一手证据）
+
+> 详证见 `WEB-RUNTIME-PROBE-20261123.md`。本节为 §9.1 逆向结论的**运行时修正**——两处推翻、三处证实。
+
+### 9.2.1 推翻 §9.1 的两点
+
+| §9.1 逆向推断 | 运行时实测 | 证据 |
+|---|---|---|
+| ★「用户 webrtc-internals 空 + Edge 支持 WT → 当前大概率跑 WebTransport 通道」 | **错：实际跑 WebRTC**（RTCPeerConnection Array(1) connected；WebTransport Array(0)） | CDP queryObjects 实例计数 |
+| 「渲染 = canvas drawImage + rVFC 分析器」 | **实际 = video.srcObject=MediaStream 原生呈现**（无 canvas；receiver tracks 与 srcObject track id 一致） | Runtime.evaluate DOM 扫描 |
+
+> 修正后的判定：webrtc-internals 空页是**导出时机/方法问题**（本次游戏运行中 PC 明确存在）。cg-sdk 的 WT/WS 降级链存在但**当前网络条件下未触发**——降级链是备胎，主通道是 WebRTC。
+
+### 9.2.2 证实 §9.1 的三点 + 新量化
+
+| §9.1 结论 | 运行时证实 | 量化数据 |
+|---|---|---|
+| 单通道复用（输入+视频同连接） | ✓ **输入走同一 PC 的 DataChannel**（label=webrtc_data_channel，SCTP，ordered）+ 独立 wss 信令 | `wss://cg-mhyjx1-wss-mobile-cg_cn_mix1.mhystatic.com/.../rtc-sdk`；wss 上行帧 84~96B、头 24B 自研二进制（u32 len/u32 total/魔数 EgN0/u16 cmd/u16 seq） |
+| HEVC 主选 | **当前会话实跑 H264**（SDP PT 98，profile 42001f/42e01f，packetization-mode 0/1 多档） | getStats codec video/H264；HEVC 档未启用（兼容模式） |
+| 丢帧恢复（requestKeyFrame） | ✓ **NACK/PLI/FIR 全启用**（SDP rtcp-fb 全量）+ 实测 pli=2/nack=59（丢 30 包，0.015%丢包率下主动恢复） | **= W7 缺口的业界实锤** |
+
+**媒体面全量指标（getStats 差分）**：1920×1080@60fps、活跃 12.52Mbps / 静息 14.72Mbps（待机动画仍在播）、RTT 7ms（=角标口径证实）、jitter 6~7ms、jitterBuffer(video)≈73.8ms/帧、freeze 15 次/14.2s。UDP host 直连（39.175.169.80 浙江移动）。
+
+### 9.2.3 对 §10 结论的影响
+
+1. **§10-1「不必跳 WebRTC」需要限定**：云原神（商业标杆）实跑 WebRTC 媒体面，且**靠 RTP 层的 NACK/PLI/jitterBuffer 换稳定性**（代价 ≈74ms/帧 jitter buffer）。SoulLink 回环场景 WebCodecs 直推仍是对的（少这层税）；**公网场景 WebRTC 媒体面是标杆现实选择**——「不必跳」成立的前提是回环/局域网（与 §10-1 原文「架构内可修」的建议不冲突，但需注明适用域）。
+2. **§10-2 Pointer Lock 建议**不受影响（输入通道形态与本建议无关）。
+3. **新增互证**：W7（前端 requestKeyFrame 通道）从「selkies 同构佐证」升级为「云原神运行时实锤（PLI 2 次生效）」。
+
+
 
 ---
 
