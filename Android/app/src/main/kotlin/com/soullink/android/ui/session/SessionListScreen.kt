@@ -35,6 +35,7 @@ import com.soullink.android.net.dto.SessionListDto
 fun SessionListScreen(
     api: SoulLinkApi,
     onSessionClick: (SessionDto) -> Unit,
+    onDirectToken: (String) -> Unit,
     onDisconnect: () -> Unit,
 ) {
     var state by remember { mutableStateOf<SessionListDto?>(null) }
@@ -50,7 +51,9 @@ fun SessionListScreen(
 
     LaunchedEffect(retryTick) {
         try {
-            state = api.sessions()
+            val dto = api.sessions()
+            state = dto
+            if (dto.directToken.isNotBlank()) onDirectToken(dto.directToken)
         } catch (e: Exception) {
             error = e.message ?: "加载失败"
         } finally { loading = false }

@@ -20,6 +20,7 @@ fun AppNav() {
     var port by remember { mutableStateOf("") }
     var api by remember { mutableStateOf<SoulLinkApi?>(null) }
     var selectedSession by remember { mutableStateOf<SessionDto?>(null) }
+    var directToken by remember { mutableStateOf("") }
 
     when {
         api == null -> LoginScreen(onConnected = { h, p, a ->
@@ -29,11 +30,13 @@ fun AppNav() {
             host = host,
             session = selectedSession!!,
             api = api!!,
+            directToken = directToken,
             onBack = { selectedSession = null },
         )
         else -> SessionListScreen(
             api = api!!,
             onSessionClick = { selectedSession = it },
+            onDirectToken = { directToken = it },
             onDisconnect = { api = null; selectedSession = null },
         )
     }
