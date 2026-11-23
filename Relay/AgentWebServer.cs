@@ -257,7 +257,9 @@ namespace SoulLink.Relay
                     account = _accountId,
                     session = _sessionId,
                     pid = Environment.ProcessId,
-                    port = _port
+                    port = _port,
+                    // ★ 当前实际生效的抓屏后端（DXGI-DDA / WGC / BitBlt），网页端用于「配置的 vs 实际」对照显示。
+                    captureBackend = SessionRecorder.CaptureBackend
                 }).ConfigureAwait(false);
                 return;
             }

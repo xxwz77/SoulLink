@@ -556,11 +556,8 @@ namespace SoulLink.Models
         public int RecordKeepSeconds { get; set; } = 30;
 
         /// <summary>
-        /// 抓屏后端模式（预留，第一步只有 BitBlt）。
-        ///
-        /// ★ 0 = BitBlt（默认，现行为）；1 = WGC（Windows.Graphics.Capture，第二步实现）。
-        /// 当前版本只有 BitBlt 实现，此字段仅预留接口与配置，不改变任何行为。
-        /// 第二步接入 WGC 时按此值选择 IScreenCapture 实现（见 Relay/IScreenCapture.cs）。
+        /// 抓屏后端：0=自动(DXGI DDA→WGC→BitBlt)，1=DXGI DDA，2=WGC，3=BitBlt。
+        /// 非法值按自动档处理；运行中通过 captureParams 热切，不重投代理、不断 viewer。
         /// </summary>
         public int CaptureMode { get; set; } = 0;
 

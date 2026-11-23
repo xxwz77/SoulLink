@@ -49,6 +49,9 @@ namespace SoulLink.Relay
         private static readonly AutoResetEvent LifecycleChanged = new(false);
         private static bool _forceKeyFrame;
         private static Stopwatch? _probeClock;
+        private static int _captureMode = int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE"), out int initialMode) ? Math.Clamp(initialMode, 0, 3) : 0;
+        private static int _captureModeVersion;
+        private static volatile bool _captureSwitchRequested;
         private static int _videoParameterVersion;
         private static VideoParameters _videoParameters = VideoParameters.ReadEnvironment();
 
@@ -76,6 +79,22 @@ namespace SoulLink.Relay
         private static int StreamBitrate { get { lock (Gate) return _videoParameters.Bitrate; } }
 
         /// <summary>接收运行时编码参数；不改变录像/直播生命周期，不重建 agent 或 viewer。</summary>
+        public static string CaptureBackend { get { lock (Gate) return Capture.Name; } }
+
+        /// <summary>消息线程只记录热切版本；worker 在帧边界释放/创建 Capture，viewer 不变。</summary>
+        public static void UpdateCaptureMode(int mode)
+        {
+            mode = Math.Clamp(mode, 0, 3);
+            lock (Gate)
+            {
+                if (_captureMode == mode) return;
+                int old = _captureMode;
+                _captureMode = mode; _captureModeVersion++; _captureSwitchRequested = true;
+                RelayAgent.LogQuiet("[capture] 请求热切后端 mode=" + old + " → " + mode + "；等待视频线程切换");
+                RecomputeLifecycle();
+            }
+        }
+
         public static void UpdateVideoParameters(int bitrateKbps, int preset, int vbvPercent, int streamFps, int recordFps)
         {
             var value = new VideoParameters(
@@ -93,13 +112,19 @@ namespace SoulLink.Relay
 
         private static IScreenCapture CreateCapture()
         {
-            int mode = int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE"), out int value) ? value : 0;
+            return CreateCapture(_captureMode);
+        }
+
+        private static IScreenCapture CreateCapture(int mode)
+        {
             switch (mode)
             {
                 case 3:
                     RelayAgent.LogQuiet("[capture] 显式 BitBlt 后端");
                     return new BitBltCapture();
-                case 1:   // 显式 WGC（跳过 DDA 探测）
+                case 1:
+                    return new DxgiDdaCapture();
+                case 2:   // 显式 WGC（跳过 DDA 探测）
 #if WGC
                     return new WgcCapture();
 #else
@@ -116,7 +141,7 @@ namespace SoulLink.Relay
         {
             // ★ DDA 探测：DxgiDdaCapture 构造时即尝试 DuplicateOutput，失败抛异常
             //   → 降级 WGC；WGC 300ms 无首帧 → 降级 BitBlt。
-            if (Capture is DxgiDdaCapture dda)
+            if (Capture is DxgiDdaCapture dda && _captureMode == 0)
             {
                 _probeClock ??= Stopwatch.StartNew();
                 byte[]? frame = null;
@@ -146,7 +171,7 @@ namespace SoulLink.Relay
                 return null;
             }
 #if WGC
-            if (Capture is WgcCapture wgc && Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE") != "1")
+            if (Capture is WgcCapture wgc && _captureMode != 2)
             {
                 _probeClock ??= Stopwatch.StartNew();
                 byte[]? frame = null;
@@ -330,10 +355,25 @@ namespace SoulLink.Relay
             long nextAt = Stopwatch.GetTimestamp();
             int appliedVersion = -1;
             VideoParameters? applied = null;
+            int appliedCaptureVersion = _captureModeVersion;
             try
             {
                 while (!_stopRequested)
                 {
+                    if (_captureSwitchRequested)
+                    {
+                        int version = _captureModeVersion;
+                        _captureSwitchRequested = false;
+                        if (version != appliedCaptureVersion)
+                        {
+                            RelayAgent.LogQuiet("[capture] worker 热切后端 → mode=" + _captureMode);
+                            Capture.Dispose(); _probeClock = null;
+                            Capture = CreateCapture();
+                            encoder?.Dispose(); encoder = null;
+                            frameIndex = 0; previousBgra = null;
+                            appliedCaptureVersion = version;
+                        }
+                    }
                     VideoParameters parameters;
                     int parameterVersion;
                     lock (Gate) { parameters = _videoParameters; parameterVersion = _videoParameterVersion; }

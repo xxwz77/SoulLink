@@ -310,9 +310,8 @@ namespace SoulLink.Controls
   /// <summary>
   /// 抓屏方式切换（对应 AppSettings.CaptureMode）。
   /// ★ 值语义与 Relay/SessionRecorder.cs 的 CreateCapture() 一致：
-  ///   0=自动(优先 WGC 失败降级) 1=WGC-窗口 2=WGC-显示器 3=BitLlt
-  /// ★ 改动会经 RelayClient.CaptureEnv 下发给代理的 SOULLINK_CAPTURE_MODE 环境变量，
-  ///   代理**重新投送后**才生效（不是即时热切）。
+  ///   0=自动(DDA→WGC→BitBlt) 1=DXGI-DDA 2=WGC 3=BitBlt。
+  /// ★ 通过 captureParams 热切；worker 重建抓屏和编码器，viewer 不断线。
   /// </summary>
   private void CaptureMode_Changed(object sender, SelectionChangedEventArgs e)
   {
@@ -321,7 +320,8 @@ namespace SoulLink.Controls
     if (CaptureModeCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag
         && int.TryParse(tag, out int mode))
     {
-     App.Config.Settings.CaptureMode = mode;
+     App.Config.Settings.CaptureMode = Math.Clamp(mode, 0, 3);
+     RelayClient.PushCaptureModeToConnectedAgents(mode);
      ConfigStore.Save(App.Config);
      UpdateVideoHintText();
     }
@@ -383,8 +383,8 @@ namespace SoulLink.Controls
 
     string capText = s.CaptureMode switch
     {
-        1 => "GPU 抓窗口（单帧 2~8ms，能抓到被遮挡的窗口）",
-        2 => "GPU 抓显示器（画面不动时帧率低）",
+        1 => "DXGI Desktop Duplication（显式 DDA）",
+        2 => "Windows Graphics Capture（WGC）",
         3 => "兼容模式（单帧 17~34ms，一定能用但慢）",
         _ => "自动（优先 GPU，失败降级到兼容模式）"
     };
@@ -405,7 +405,7 @@ namespace SoulLink.Controls
         + " · 直播帧率 " + s.StreamFps + "fps"
         + "\nNVENC 预设：" + presetName + " · " + vbvText
         + "\n（码率/预设/缓冲只在 H.264 硬编启用时生效；JPEG 模式忽略）"
-        + "\n\n★ 码率/预设/缓冲/帧率会实时下发，正在观看的直播连接不断开；抓屏方式仍需重新投送代理。";
+        + "\n\n★ 码率/预设/缓冲/帧率会实时下发，正在观看的直播连接不断开；抓屏方式也会热切，不重投代理。";
    }
    catch { }
   }

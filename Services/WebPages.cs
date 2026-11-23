@@ -218,6 +218,10 @@ namespace SoulLink.Services
   .qgroup .qval{font-size:10.5px;color:var(--txt2);min-width:40px;text-align:right;
                  font-variant-numeric:tabular-nums}
   .qguide{font-size:10px;color:var(--txt4);line-height:1.6;margin-top:6px}
+  .capgroup{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .capgroup>span{font-size:10px;color:var(--txt3);white-space:nowrap}
+  .capbackend{font-size:10.5px;color:var(--mint);font-weight:600;white-space:nowrap;
+              font-variant-numeric:tabular-nums}
   .select-mini{height:26px;line-height:1;padding:0 16px 0 6px;font-size:11px;
                 color:var(--txt);background:var(--card);border:1px solid var(--border);
                 border-radius:8px;cursor:pointer}
@@ -513,6 +517,16 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
           <button id="mmRel" type="button">相对</button>
         </div>
       </div>
+      <div class="hgroup" data-kind="live" title="抓屏后端：配置的目标后端 vs 代理当前实际生效后端（自动=DDA→WGC→BitBlt 降级链）">
+        <span class="gtag">抓屏</span>
+        <select id="capMode" class="hfield select-mini">
+          <option value="0">自动(DDA→WGC→BitBlt)</option>
+          <option value="1">DXGI DDA</option>
+          <option value="2">WGC</option>
+          <option value="3">BitBlt</option>
+        </select>
+        <span class="capbackend" id="capBackend">—</span>
+      </div>
       <div class="hgroup" data-kind="live" title="直播画质：码率/帧率/NVENC 预设/VBV 缓冲，改动回写应用配置并即时下发代理">
         <span class="gtag">直播画质</span>
         <label class="qgroup"><span>码率</span><input id="qBitrate" type="range" min="1000" max="25000" step="1000" value="8000"><span class="qval" id="qBitrateV">8M</span></label>
@@ -670,6 +684,7 @@ let users = [], cur = null;
 let paused = false;
 let recFps = 5, recQuality = 75, recKeep = 30, streamFps = 30, actualLiveFps = 0;
 let videoBitrate = 8000, nvencPreset = 3, vbvBufferIncreasePercent = 0;   // 直播画质（2026-11-23）
+let captureMode = 0;                       // 抓屏后端（0=自动/1=DDA/2=WGC/3=BitBlt）
 let viewFps = 0;              // 0 = 跟随录制（2026-11-23 起只用于鼠标移动节流，
                               // 不再控制拉帧 —— 画面是 /stream 视频流直推）
 let liveMs = 500;
@@ -1632,6 +1647,7 @@ function applySettings(d) {
   if (typeof d.videoBitrate === 'number' && d.videoBitrate > 0) videoBitrate = d.videoBitrate;
   if (typeof d.nvencPreset === 'number' && d.nvencPreset > 0) nvencPreset = d.nvencPreset;
   if (typeof d.vbvBufferIncreasePercent === 'number') vbvBufferIncreasePercent = d.vbvBufferIncreasePercent;
+  if (typeof d.captureMode === 'number') captureMode = d.captureMode;
 
   // viewFps 从 localStorage 恢复（2026-11-23 起仅用于鼠标移动节流，
   // 「取图」下拉框已随 JPEG 轮询通路移除）
@@ -1653,6 +1669,28 @@ function syncDropdowns() {
   setSelect('selQuality', recQuality, v => qualityLabel(v));
   setSelect('selKeep', recKeep, v => v + ' 秒');
   syncQuality();
+  syncCapture();
+}
+
+// 抓屏方式下拉回显 + 当前实际后端（从 /api/info 刷新）
+function syncCapture() {
+  const sel = $('capMode');
+  if (sel) sel.value = String(captureMode);
+}
+async function refreshCaptureBackend() {
+  if (!cur) return;
+  const base = directBase(cur);
+  if (!base) { const b = $('capBackend'); if (b) b.textContent = '—'; return; }
+  try {
+    const headers = {};
+    if (directToken()) headers['X-SoulLink-Token'] = directToken();
+    const r = await fetch(base + '/api/info', { headers });
+    const d = await r.json();
+    const b = $('capBackend');
+    if (b) b.textContent = (d && d.captureBackend) ? d.captureBackend : '—';
+  } catch (e) {
+    const b = $('capBackend'); if (b) b.textContent = '—';
+  }
 }
 
 // 直播画质滑杆/下拉回显
@@ -1710,6 +1748,7 @@ async function pushSettings(patch) {
       if (typeof d.videoBitrate === 'number' && d.videoBitrate > 0) videoBitrate = d.videoBitrate;
       if (typeof d.nvencPreset === 'number' && d.nvencPreset > 0) nvencPreset = d.nvencPreset;
       if (typeof d.vbvBufferIncreasePercent === 'number') vbvBufferIncreasePercent = d.vbvBufferIncreasePercent;
+      if (typeof d.captureMode === 'number') captureMode = d.captureMode;
       computeLiveMs(); syncDropdowns(); startLive();
       return true;
     }
@@ -1740,6 +1779,15 @@ bindRange('qStreamFps', 'qStreamFpsV', v => v + 'fps',                  v => pus
 bindRange('qVbv',       'qVbvV',       v => v + '%',                    v => pushSettings({ vbvBufferIncreasePercent: v }));
 const qPre = $('qPreset');
 if (qPre) qPre.onchange = () => pushSettings({ nvencPreset: parseInt(qPre.value) || 3 });
+
+// 抓屏方式（2026-11-23）：切换 → pushSettings 改 CaptureMode → 下发 agent 热切 → 刷新实际后端
+const capSel = $('capMode');
+if (capSel) capSel.onchange = async () => {
+  const mode = parseInt(capSel.value) || 0;
+  const ok = await pushSettings({ captureMode: mode });
+  if (ok) { setTimeout(refreshCaptureBackend, 1200); }   // 热切是帧边界排队，稍等再读实际后端
+  else syncCapture();
+};
 
 // 「本机播放」下拉框已随 JPEG 轮询通路移除（2026-11-23）：
 //   画面帧率由服务端 /stream 直推，本机没有取图频率概念。
@@ -1942,6 +1990,8 @@ function applyRemoteUser(u) {
   const ph = $('ph'); if (ph) ph.style.display = 'none';
   buildUserSwitch('remoteSwitch', u.id, applyRemoteUser);
   resetSavedList();
+  syncCapture();
+  refreshCaptureBackend();
   startLive();      // startLive 内部先 stopLive()，切账号时旧流会被收掉
 }
 

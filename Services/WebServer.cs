@@ -888,7 +888,7 @@ namespace SoulLink.Services
             //   网页读到这三个值后显示下拉菜单；改了会回写到主程序配置，
             //   主程序再下发给正在录制的代理 —— 双向同步，不是单向下发。
             int recordFps = 5, recordQuality = 75, recordKeepSeconds = 30, streamFps = 30;
-            int videoBitrate = 8000, nvencPreset = 3, vbvBufferIncreasePercent = 0;
+            int videoBitrate = 8000, nvencPreset = 3, vbvBufferIncreasePercent = 0, captureMode = 0;
             try
             {
                 var rs = App.Config?.Settings;
@@ -901,6 +901,7 @@ namespace SoulLink.Services
                     videoBitrate = Math.Clamp(rs.VideoBitrateKbps, 1000, 50000);
                     nvencPreset = Math.Clamp(rs.NvencPreset, 1, 7);
                     vbvBufferIncreasePercent = Math.Clamp(rs.VbvBufferIncreasePercent, 0, 200);
+                    captureMode = Math.Clamp(rs.CaptureMode, 0, 3);
                 }
             }
             catch { }
@@ -913,7 +914,7 @@ namespace SoulLink.Services
             }
             catch { }
 
-            return new { ok = true, version, themeDark, directToken, recordFps, recordQuality, recordKeepSeconds, streamFps, videoBitrate, nvencPreset, vbvBufferIncreasePercent, sessions = list };
+            return new { ok = true, version, themeDark, directToken, recordFps, recordQuality, recordKeepSeconds, streamFps, videoBitrate, nvencPreset, vbvBufferIncreasePercent, captureMode, sessions = list };
         }
 
         /// <summary>
@@ -952,6 +953,9 @@ namespace SoulLink.Services
                 if (dto.nvencPreset > 0)   s.NvencPreset = Math.Clamp(dto.nvencPreset, 1, 7);
                 if (dto.vbvBufferIncreasePercent.HasValue)
                     s.VbvBufferIncreasePercent = Math.Clamp(dto.vbvBufferIncreasePercent.Value, 0, 200);
+                // ★ 抓屏后端（2026-11-23 网页端）：0=自动(DDA→WGC→BitBlt)/1=DDA/2=WGC/3=BitBlt
+                if (dto.captureMode.HasValue)
+                    s.CaptureMode = Math.Clamp(dto.captureMode.Value, 0, 3);
 
                 try { ConfigStore.Save(App.Config!); } catch { }
 
@@ -986,6 +990,8 @@ namespace SoulLink.Services
                 catch { }
 
                 RelayClient.PushVideoParametersToConnectedAgents();
+                // ★ 抓屏后端热切：网页改了下发所有已连接代理（DDA→WGC→BitBlt 降级链在代理内实现）
+                RelayClient.PushCaptureModeToConnectedAgents(s.CaptureMode);
 
                 await WriteJson(ctx, new {
                     ok = true,
@@ -996,6 +1002,7 @@ namespace SoulLink.Services
                     videoBitrate = s.VideoBitrateKbps,
                     nvencPreset = s.NvencPreset,
                     vbvBufferIncreasePercent = s.VbvBufferIncreasePercent,
+                    captureMode = s.CaptureMode,
                     agentsUpdated = applied
                 }).ConfigureAwait(false);
             }
@@ -1016,6 +1023,8 @@ namespace SoulLink.Services
             public int nvencPreset { get; set; }
             // 0 是合法值（不额外缓冲），用可空区分「未传」与「传 0」。
             public int? vbvBufferIncreasePercent { get; set; }
+            // 0 是合法值（自动），用可空区分「未传」与「传 0」。
+            public int? captureMode { get; set; }
         }
 
         /// <summary>

@@ -162,12 +162,12 @@
        <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="抓屏方式" Style="{StaticResource Label}" VerticalAlignment="Center"
-                 ToolTip="自动：优先 GPU 抓屏（WGC），失败自动降级到兼容模式。WGC 实测比 BitLlt 快 4~10 倍，但需要显卡支持。" />
+                 ToolTip="自动：按 DXGI-DDA→WGC→BitBlt 顺序实际探测并降级；也可显式指定后端。切换不中断正在观看的直播连接。" />
       <ComboBox Grid.Column="1" x:Name="CaptureModeCombo" Width="140" Height="30"
                 SelectionChanged="CaptureMode_Changed">
        <ComboBoxItem Content="自动（推荐）" Tag="0" />
-       <ComboBoxItem Content="GPU 抓屏（快）" Tag="1" />
-       <ComboBoxItem Content="GPU 抓显示器" Tag="2" />
+       <ComboBoxItem Content="DXGI-DDA" Tag="1" />
+       <ComboBoxItem Content="WGC" Tag="2" />
        <ComboBoxItem Content="兼容模式（慢）" Tag="3" />
       </ComboBox>
      </Grid>

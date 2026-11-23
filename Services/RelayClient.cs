@@ -659,6 +659,27 @@ namespace SoulLink.Services
             });
         }
 
+        public Task<RelayResponse?> UpdateCaptureModeAsync(int mode)
+            => SendAsync(new { Cmd = "captureParams", CaptureMode = Math.Clamp(mode, 0, 3) });
+
+        public static int PushCaptureModeToConnectedAgents(int mode)
+        {
+            int count = 0;
+            try
+            {
+                foreach (var account in AccountScope.Accounts(App.Config))
+                {
+                    int sid = AccountStateCenter.Get(account.Id)?.SessionId ?? 0;
+                    var relay = sid > 0 ? FindBySession(sid) : null;
+                    if (relay == null || !relay.IsConnected) continue;
+                    _ = relay.UpdateCaptureModeAsync(mode);
+                    count++;
+                }
+            }
+            catch { }
+            return count;
+        }
+
         /// <summary>设置变更后同步给已连接代理；不扫描进程，不触发 RefreshAll。</summary>
         public static int PushVideoParametersToConnectedAgents()
         {
@@ -728,7 +749,7 @@ namespace SoulLink.Services
                 //   0=自动(优先 WGC 失败降级) 1=WGC-Window 2=WGC-Monitor 3=BitLlt
                 if (s0 != null)
                 {
-                    env["SOULLINK_CAPTURE_MODE"] = s0.CaptureMode.ToString();
+                    env["SOULLINK_CAPTURE_MODE"] = Math.Clamp(s0.CaptureMode, 0, 3).ToString();
                     env["SOULLINK_STREAM_FPS"] = Math.Clamp(s0.StreamFps, 1, 120).ToString();
                     env["SOULLINK_REC_FPS"] = Math.Clamp(s0.RecordFps, 1, 30).ToString();
                     env["SOULLINK_VIDEO_BITRATE"] = Math.Clamp(s0.VideoBitrateKbps, 1000, 50000).ToString();

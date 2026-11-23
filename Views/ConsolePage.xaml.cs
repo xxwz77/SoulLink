@@ -1218,8 +1218,9 @@ namespace SoulLink.Views
                         if (hit == null) continue;
 
                         var s0 = SessionService.Find(sessionsForCheck, hit.Account.UserName);
-                        if (s0 == null || s0.Id <= 0) continue;      // 没会话，交给下面的逻辑处理
-                        if (!live.Contains(s0.Id)) dead.Add(handledId);
+                        // 无会话或 Disc 也算通道不可用：不能保留已处理标记，否则恢复后永久跳过重投。
+                        if (s0 == null || s0.Id <= 0 || string.Equals(s0.State, "Disc", StringComparison.OrdinalIgnoreCase)
+                            || !live.Contains(s0.Id)) dead.Add(handledId);
                     }
 
                     if (dead.Count > 0)
@@ -1270,6 +1271,7 @@ namespace SoulLink.Views
                     if (!alive)
                     {
                         _deployHandled.Remove(id);   // 允许重新投送
+                        _sessionSeen.Remove(id);
                         watching.Add((hit, hit.Account.Caption));
                         continue;
                     }
