@@ -49,6 +49,9 @@ namespace SoulLink.Relay
         private static readonly AutoResetEvent LifecycleChanged = new(false);
         private static bool _forceKeyFrame;
         private static Stopwatch? _probeClock;
+        private static bool _captureProbeComplete;
+        private static DateTime _lastCaptureAt, _lastEncodeAt, _lastNalAt;
+        private static long _loopSequence, _skippedStaticFrames, _noNalFrames;
         private static int _captureMode = int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_CAPTURE_MODE"), out int initialMode) ? Math.Clamp(initialMode, 0, 3) : 0;
         private static int _captureModeVersion;
         private static volatile bool _captureSwitchRequested;
@@ -139,6 +142,7 @@ namespace SoulLink.Relay
         /// 降级链：DXGI DDA → WGC → BitBlt。</summary>
         private static byte[]? CaptureBgraWithProbe(out int width, out int height)
         {
+            if (_captureProbeComplete) return Capture.CaptureBgra(out width, out height);
             // ★ DDA 探测：DxgiDdaCapture 构造时即尝试 DuplicateOutput，失败抛异常
             //   → 降级 WGC；WGC 300ms 无首帧 → 降级 BitBlt。
             if (Capture is DxgiDdaCapture dda && _captureMode == 0)
@@ -151,6 +155,7 @@ namespace SoulLink.Relay
                 if (frame != null && frame.Length > 0 && dda.IsActive)
                 {
                     RelayAgent.LogQuiet("[capture] 采用 DXGI-DDA（出帧 " + width + "x" + height + "）");
+                    _captureProbeComplete = true;
                     _probeClock = null;
                     return frame;
                 }
@@ -181,6 +186,7 @@ namespace SoulLink.Relay
                 if (frame != null && frame.Length > 0 && wgc.IsActive && wgc.FrameSequence > 0)
                 {
                     RelayAgent.LogQuiet("[capture] 自动探测采用 WGC（实际出帧 sequence=" + wgc.FrameSequence + "）");
+                    _captureProbeComplete = true;
                     _probeClock = null;
                     return frame;
                 }
@@ -189,7 +195,7 @@ namespace SoulLink.Relay
                 if (_probeClock.ElapsedMilliseconds >= 300)
                 {
                     RelayAgent.LogQuiet("[capture] 自动探测降级 BitBlt：" + reason);
-                    wgc.Dispose(); Capture = new BitBltCapture(); _probeClock = null;
+                    wgc.Dispose(); Capture = new BitBltCapture(); _probeClock = null; _captureProbeComplete = true;
                     byte[]? fallback = Capture.CaptureBgra(out width, out height);
                     if (fallback != null) RelayAgent.LogQuiet("[capture] BitBlt 降级后已抓到首帧");
                     return fallback;
@@ -289,6 +295,9 @@ namespace SoulLink.Relay
                     + "|currentFps=" + _fps
                     + "|actualFps=" + actualFps.ToString("0.0") + "|liveFps=" + StreamFps + "|recordFps=" + RecordFps
                     + "|captureMs=" + _captureMs + "|convertMs=" + _convertMs + "|encodeMs=" + _encodeMs
+                    + "|loop=" + _loopSequence + "|lastCaptureAt=" + _lastCaptureAt.ToString("HH:mm:ss.fff")
+                    + "|lastEncodeAt=" + _lastEncodeAt.ToString("HH:mm:ss.fff") + "|lastNalAt=" + _lastNalAt.ToString("HH:mm:ss.fff")
+                    + "|staticSkipped=" + _skippedStaticFrames + "|noNal=" + _noNalFrames
                     + "|bitrateKbps=" + _configuredBitrate + "|mftBitrateKbps=" + _negotiatedBitrate
                     + (_lastError.Length > 0 ? "|error=" + _lastError : "");
             }
@@ -367,7 +376,7 @@ namespace SoulLink.Relay
                         if (version != appliedCaptureVersion)
                         {
                             RelayAgent.LogQuiet("[capture] worker 热切后端 → mode=" + _captureMode);
-                            Capture.Dispose(); _probeClock = null;
+                            Capture.Dispose(); _probeClock = null; _captureProbeComplete = false;
                             Capture = CreateCapture();
                             encoder?.Dispose(); encoder = null;
                             frameIndex = 0; previousBgra = null;
@@ -395,6 +404,7 @@ namespace SoulLink.Relay
                     }
                     var frameStart = Stopwatch.StartNew();
                     var bgra = CaptureBgraWithProbe(out int width, out int height);
+                    _loopSequence++; _lastCaptureAt = DateTime.UtcNow;
                     long captureMs = frameStart.ElapsedMilliseconds;
                     if (bgra == null || width <= 0 || height <= 0)
                     {
@@ -402,7 +412,8 @@ namespace SoulLink.Relay
                         SleepUntil(ref nextAt, fps);
                         continue;
                     }
-                    if (ConsumeKeyFrameRequest() && encoder != null)
+                    bool forceKeyFrame = ConsumeKeyFrameRequest();
+                    if (forceKeyFrame && encoder != null)
                     {
                         if (encoder is NvencSdkEncoder)
                         {
@@ -418,10 +429,16 @@ namespace SoulLink.Relay
                         }
                     }
                     int ew = width & ~1, eh = height & ~1;
-                    if (previousBgra != null && previousBgra.AsSpan().SequenceEqual(bgra))
+                    if (!forceKeyFrame && previousBgra != null && previousBgra.AsSpan().SequenceEqual(bgra))
                     {
+                        _skippedStaticFrames++;
                         SleepUntil(ref nextAt, fps);
                         continue;
+                    }
+                    if (forceKeyFrame)
+                    {
+                        previousBgra = bgra;
+                        RelayAgent.LogQuiet("[video] 新观众按需 IDR：即使画面静止也强制编码，不再被去重跳过");
                     }
                     previousBgra = bgra;
 
@@ -443,9 +460,10 @@ namespace SoulLink.Relay
                     var encodeStart = Stopwatch.StartNew();
                     byte[]? nal = encoder.EncodeNv12(nv12, frameIndex * 1_000_000L / fps);
                     long encodeMs = encodeStart.ElapsedMilliseconds;
+                    _lastEncodeAt = DateTime.UtcNow;
                     if (nal != null && nal.Length > 0)
                     {
-                        frameIndex++;
+                        frameIndex++; _noNalFrames = 0; _lastNalAt = DateTime.UtcNow;
                         var frame = new VideoFrame { Nal = nal, At = DateTime.Now, KeyFrame = IsKeyFrame(nal) };
                         lock (Gate)
                         {
@@ -455,7 +473,10 @@ namespace SoulLink.Relay
                             _status = "recording"; _lastError = "";
                             if (_totalFrames % 30 == 0)
                                 RelayAgent.LogQuiet("[video] 共享管线 total=" + _totalFrames + " viewers=" + Viewers.Count
-                                    + " captureMs=" + captureMs + " convertMs=" + convertMs + " encodeMs=" + encodeMs);
+                                    + " captureMs=" + captureMs + " convertMs=" + convertMs + " encodeMs=" + encodeMs
+                                    + " loop=" + _loopSequence + " lastCapture=" + _lastCaptureAt.ToString("HH:mm:ss.fff")
+                                    + " lastEncode=" + _lastEncodeAt.ToString("HH:mm:ss.fff") + " lastNal=" + _lastNalAt.ToString("HH:mm:ss.fff")
+                                    + " staticSkipped=" + _skippedStaticFrames);
                             DateTime cutoff = frame.At.AddSeconds(-keepSec);
                             while (Ring.Count > 0 && (Ring[0].At < cutoff || Ring.Count > Math.Max(300, fps * keepSec * 2))) Ring.RemoveAt(0);
                             foreach (var viewer in Viewers.Values)
@@ -471,7 +492,12 @@ namespace SoulLink.Relay
                             }
                         }
                     }
+                    if (nal == null || nal.Length == 0) _noNalFrames++;
                     SleepUntil(ref nextAt, fps);
+                    if (_loopSequence % 150 == 0)
+                        RelayAgent.LogQuiet("[video] 活性 loop=" + _loopSequence + " total=" + _totalFrames
+                            + " lastCapture=" + _lastCaptureAt.ToString("HH:mm:ss.fff") + " lastEncode=" + _lastEncodeAt.ToString("HH:mm:ss.fff")
+                            + " lastNal=" + _lastNalAt.ToString("HH:mm:ss.fff") + " staticSkipped=" + _skippedStaticFrames + " noNal=" + _noNalFrames);
                 }
             }
             catch (Exception ex)
@@ -498,7 +524,12 @@ namespace SoulLink.Relay
             viewerId = 0; initial = null; error = "";
             lock (Gate)
             {
-                if (_lastError.Length > 0 && _status == "error") { error = _lastError; return false; }
+                if (_status == "error")
+                {
+                    // 编码/抓屏失败可重试：清错误并允许 StartCore 新建 worker，不永久拒绝后续观众。
+                    RelayAgent.LogQuiet("[video] 订阅遇 error，清理状态并尝试重启视频管线：" + _lastError);
+                    _lastError = ""; _status = "idle";
+                }
                 viewerId = ++_nextViewerId;
                 Viewers[viewerId] = new Viewer();
                 // 新 MFT 的首帧必为 IDR；这是无 ICodecAPI 的跨厂商按需关键帧。
