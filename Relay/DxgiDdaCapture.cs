@@ -44,6 +44,13 @@ namespace SoulLink.Relay
         const uint GENERIC_ALL = 0x10000000;
         const int DXGI_ERROR_WAIT_TIMEOUT = unchecked((int)0x887A0027);
         const int DXGI_ERROR_ACCESS_LOST = unchecked((int)0x887A0026);
+        /// <summary>
+        /// ★ P0-E（2026-11-24）：AcquireNextFrame 阻塞等帧超时（Sunshine display_base.cpp 组首
+        ///   200ms 大超时同款语义）。帧一到立即返回（≈0.1ms GPU 拷贝），彻底消除「16ms 短轮询
+        ///   每拍只有 ~50% 概率捕到帧 → 帧率减半、captureMs 恒 ≥13ms」的问题；
+        ///   静止桌面等满超时返回 WAIT_TIMEOUT（复用 _lastBgra），由上层 2fps 保活/静止跳过接管。
+        /// </summary>
+        private const int AcquireTimeoutMs = 100;
 
         private ID3D11Device? _device;
         private ID3D11DeviceContext? _context;
@@ -218,7 +225,7 @@ namespace SoulLink.Relay
             {
                 try
                 {
-                    Result hr = _duplication.AcquireNextFrame(16, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
+                    Result hr = _duplication.AcquireNextFrame(AcquireTimeoutMs, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
                     if (hr.Success && resource != null)
                     {
                         try
@@ -306,7 +313,7 @@ namespace SoulLink.Relay
             {
                 try
                 {
-                    Result hr = _duplication.AcquireNextFrame(16, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
+                    Result hr = _duplication.AcquireNextFrame(AcquireTimeoutMs, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
                     if (!hr.Success || resource == null) return false;   // 静止（WAIT_TIMEOUT）或失败 → 回退 CPU
 
                     try
