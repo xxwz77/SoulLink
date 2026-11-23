@@ -277,9 +277,61 @@ README：https://raw.githubusercontent.com/novnc/noVNC/master/README.md
 
 ---
 
-## 9.1 一手 dump 分析（待补）
+## 9.1 云原神 cg-sdk 逆向分析（Lead 一手分析，2026-11-23 19:10）
 
-> 用户已配合抓证。已确定 4 项（§5.3）：PWA、Pointer Lock 相对位移、跨源 iframe 渲染、编程式全屏。传输层证据（video srcObject 判定 / webrtc-internals dump / Network WS+RTC 过滤）由 Lead 转发后在此补：① 逐条判定云原神（及后续向日葵）媒体通道=WebRTC/MSE/私有；② codec/码率/分辨率实测值；③ 7ms 角标的真实语义（网络 RTT vs 端到端）。未到之前不影响本文件其余结论。
+> 方法：绕过需要用户操作的抓包，直接拉取云原神 web 加载器公开 JS（ys.mihoyo.com/cloud/ → webstatic.mihoyo.com/common/clgm-web-app/ys/js/）逐段逆向。核心文件 **cg-sdk.891daeae.js（1.23MB，云游戏 SDK 本体）**，已存 `%TEMP%cg-sdk.js`。
+
+### 9.1.1 决定性发现：多引擎传输层 + 运行时降级链
+
+cg-sdk 内置**四条通道**，全部实现于同一 SDK（出现次数：RTCPeerConnection 206 / WebSocket 73 / VideoDecoder 113 / WebTransport 24）：
+
+| 通道 | 证据（cg-sdk 逆向） | 状态 |
+|---|---|---|
+| **WebTransport（首选）** | `GameChannel.connect(): webTransportChannel.connect() 失败 → logger.info("[gcchan] web transport failed, fallback to ws") → webSocketChannel.connect()`；WebTransport 以 `congestionControl:"low-latency"` 创建 | ★ 用户 webrtc-internals 为空 + Edge 137 已支持 WT：**当前大概率跑 WebTransport 通道** |
+| WebSocket（备胎） | 同上降级链 `wtu(不可靠)/wtr(可靠)/ws` 三态 channelType() | 兜底 |
+| WebRTC | getCompatibility() 探测 hasWebRtc/hasWebSocket/hasMediaStreamTrack/hasH264Decoder，CompatibilityChecker.check 通过才启用 | 兼容模式路径 |
+| KCP | **自研 KcpBuffer/IKCP 协议栈完整实现**（IKCP_OVERHEAD/KcpConnectAck/KcpPing 2s 心跳/pong 5s 超时断连） | 跑在 WT/WS 之上的可靠传输层（ARQ 滑窗），云原神输入/信令的底层 |
+
+**用户 webrtc-internals 空页 = 一手运行时证据**：云原神 web 当前会话没用 WebRTC 媒体面——**商业级云游戏网页端走的正是「WebTransport/WebSocket + WebCodecs」而非 WebRTC**，与 selkies（WebSocket 路线）同型，与 SoulLink 现有技术栈同构。
+
+### 9.1.2 视频管线（与我们逐项对照）
+
+| 环节 | 云原神 cg-sdk 做法 | SoulLink 现状 |
+|---|---|---|
+| 解码 | VideoDecoder `optimizeForLatency:!0, hardwareAcceleration:"prefer-hardware"`；默认 **HEVC 主选（hev1.1.6.L93.B0）**，DefaultConnectionConfigurations 有 enableHevc/enableWrappedHevc/compatibleMode 三档降级 | 同为 WebCodecs+optimizeForLatency ✅（H264 主选，无 HEVC 档） |
+| 渲染 | **canvas drawImage**（"[Renderer] coded resolution" + ctx.drawImage）+ **rVFC 渲染节律分析器**（VideoAnalyzer 用 requestVideoFrameCallback 收 expectedDisplayTime/renderTimestampBuffer） | canvas drawImage ✅；无 rVFC 节律埋点（viewer 报告 W 项已列） |
+| 帧注入 | EncodedVideoChunk(timestamp 重基+元数据)；**key 帧时前插 SPS/PPS/VPS 参数集再入队**（"key"===e.type 分支拼 z/q/fe 三个 ArrayBuffer） | 按需 IDR 带 SPS/PPS ✅（NVENC OUTPUT_SPSPPS） |
+| 丢帧恢复 | 解码溢出/错误 → `stop()→start()→flushAndRequestKeyFrame()` **主动向服务端要关键帧**（signalMessageSender.requestKeyFrame()，"Please implement requestKeyFrame()" 抽象接口） | ✗ **无前端→服务端关键帧请求通道**（viewer 报告 W7 正是此项；我们靠 10s 看门狗断流重连，云原神靠 1 个控制消息） |
+| 码率自适应 | GraphicsMode 三档（KHIGHQUALITY/KTRAFFICSAVING/KEXTREMESAVING）+ KCP/WTT 拥塞感知 | ✗ 无（mature 报告"传输层拥塞降档"缺口） |
+
+### 9.1.3 输入管线
+
+- 输入走 **proto.common.DataChannelMessage**（protobuf 二进制，DataType 枚举：KEYBOARD_DOWN/UP、MOUSE_MOVE、LBUTTON/RBUTTON/MBUTTON down/up、ZDELTA…）经 KCP 可靠通道；
+- **mouseMove 节流 4ms**（throttle(...,4)，比我们 8ms 更激进）+ _accumulatedPosition 累积合并；
+- 触控为 RtcTouchEventList 批量事件列表（一次消息携带多事件，非逐条 HTTP）；
+- **所有输入单通道复用**（GameChannel 一条 WT/WS 连接承载视频+输入+信令，方向/优先级靠 KCP 分包），对照我们「每事件一次 HTTP POST」。
+
+### 9.1.4 结论（升级 §5.3 云原神条目）
+
+1. 云原神 web 传输形态 = **WebTransport（KCP 封装）为主、WS 兜底、WebRTC 仅兼容模式** —— 商业云游戏在浏览器端的现实选择与 SoulLink 现有 WS/WebCodecs 路线**同型**，坚定了 §10 结论 1「不必跳 WebRTC」。
+2. 它比我们多出的四件事全是**控制面**：前端主动 requestKeyFrame、渲染节律埋点（rVFC）、GraphicsMode 三档自适应、输入 4ms 节流+protobuf 批量单通道 —— 与五线审计的 W7/W8、拥塞降档、输入 FIFO/Pointer Lock 行动项**完全互证**。
+3. 7ms 角标维持「网络 RTT 口径」判定（§5.3），cg-sdk 逆向未见端到端延迟显示逻辑。
+
+### 9.1.5 证据索引（本节新增）
+
+| 结论 | 证据 |
+|---|---|
+| WT 失败降级 WS | cg-sdk `GameChannel.connect()` 源码（"[gcchan] web transport failed, fallback to ws"） |
+| WebTransport low-latency | cg-sdk `new WebTransport(o,{congestionControl:"low-latency"})` |
+| KCP 自研栈 | cg-sdk IKCP_* 常量 + proto.msg.KcpConnectAck/Sync/Ping/Pong + 2s ping/5s pong 超时 |
+| HEVC 主选+三档降级 | cg-sdk `config:{codec:"hev1.1.6.L93.B0"...}` + DefaultConnectionConfigurations(){enableHevc/compatibleMode/enableWrappedHevc} |
+| 前端主动要关键帧 | cg-sdk `requestKeyFrame()` 抽象接口 + 溢出/错误恢复调用链 |
+| 输入 4ms 节流 | cg-sdk mouseMove throttle 尾参 `,4)` + MOUSE_MOVE DataType |
+| 输入 protobuf 批量 | proto.common.DataChannelMessage / RtcTouchEventList |
+| webrtc-internals 空 | 用户 Edge 一手截图（游戏运行中无 PeerConnection） |
+| 渲染 canvas+rVFC 分析器 | cg-sdk "[Renderer] coded resolution"/ctx.drawImage + VideoAnalyzer.requestVideoFrameCallback |
+
+> 后续若用户再提供向日葵 dump，另起 §9.2。
 
 ---
 
