@@ -31,6 +31,8 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [WGC-V2-RESEARCH-20261123.md](WGC-V2-RESEARCH-20261123.md) —— **WGC V2 帧完整性与撕裂规避调研（对齐 BGI）**（拆解 BGI GraphicsCaptureV2.cs 到达即取+单槽stash+帧池容量2+帧池代数+无新帧跳过读回+GPU打包BGR24；对照微软官方 WGC 与我们的 WgcCapture 538行；结论：核心模型已对齐，建议补帧池代数+无新帧跳过读回两条，作为 DDA 失败时 WGC 兜底增强；MIT 许可只读不抄）
+
 - [DXGI-DDA-CAPTURE-20261123.md](DXGI-DDA-CAPTURE-20261123.md) —— **DXGI Desktop Duplication 抓屏后端接入降级链**（新增 Relay/DxgiDdaCapture.cs 339行实现 IScreenCapture，syncThreadDesktop+Hardware D3D11+DuplicateOutput+AcquireNextFrame；降级链 DDA→WGC→BitBlt，DDA优先因独占全屏+无撕裂+0.13ms；处理脏矩形静止复用/ACCESS_LOST重建/DPI物理尺寸/显存降级四边界；两TFM 0 error）
 
 - [DXGI-DDA-RDP-20261123.md](DXGI-DDA-RDP-20261123.md) —— **DXGI Desktop Duplication RDP 可行性实测（推翻旧死路结论）**（A2 RDP SessionId=4 内 DuplicateOutput 成功 + AcquireNextFrame 出帧 18ms；根因是旧实测显存耗尽 E_OUTOFMEMORY 非 RDP 架构限制；syncThreadDesktop 必需、D3D11 Hardware 即可、单N卡无需 Optimus hook；DDA 可作独占全屏+无撕裂抓屏后端，接入方案 WGC→DXGI DDA→BitBlt）
@@ -156,3 +158,4 @@
 - `HOT-RELOAD-E2E-VERIFY-20261123.md` 视频参数热更新 + 生命周期端到端验收（码率/帧率热更新生效，preset/vbv 缺陷）
 - `DEPLOY-3.3.25-VERIFY-20261123.md` 3.3.25 本地部署 + 真机端到端验收（Broker 重启 + A2 换新代码 + NVENC SDK 出帧 + preset/vbv 热更新修复）
 - `DEPLOY-3.3.27-VERIFY-20261123.md` 3.3.27 本地部署 + WGC 不撕裂验收（探测式抓屏 WGC 优先 + BitBlt 兜底）
+- `DEPLOY-3.3.29-VERIFY-20261123.md` 3.3.29 部署 + 主程序重启 + DDA 生效验收（监控修复生效，DDA 首次出帧无撕裂但二次启动失败缺陷）

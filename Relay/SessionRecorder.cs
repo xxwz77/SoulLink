@@ -482,7 +482,7 @@ namespace SoulLink.Relay
             finally
             {
                 try { encoder?.Dispose(); } catch { }
-                try { if (Capture is IDisposable capture) capture.Dispose(); } catch { }
+                // 静态 Capture 跨订阅复用；仅热切/Shutdown 释放，避免二次订阅拿到已 disposed 后端。
                 lock (Gate)
                 {
                     Ring.Clear(); _status = "idle"; _worker = null;
