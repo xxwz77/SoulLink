@@ -1382,21 +1382,33 @@ namespace SoulLink.Views
         // ══════════ 系统优化（可关服务 + Defender 排除）══════════
 
         /// <summary>刷新系统优化面板：6 项服务状态 + Defender 排除列表。</summary>
-        private void RefreshSystemOptimize()
+        /// ★ 2026-11-23 卡顿修复：QueryServices(6×sc.exe) 与 GetDefenderExclusions
+        ///   (powershell Get-MpPreference) 都是子进程同步等待，原来在 Activate() 进页时
+        ///   直接阻塞 UI 线程（归因见 docs/research/SETTINGS-PAGE-LAG-20261123.md）。
+        ///   现改为后台 Task.Run 取数 + ConfigureAwait(true) 回 UI 线程回填，进页不再卡。
+        private async void RefreshSystemOptimize()
         {
             try
             {
+                // 慢查询全部后台执行，不阻塞 UI 线程（Activate / 点击刷新 / 服务开关）
+                var (services, defender) = await Task.Run(() =>
+                {
+                    var svc = Services.SystemOptimizer.QueryServices();
+                    var def = Services.SystemOptimizer.GetDefenderExclusions();
+                    return (svc, def);
+                }).ConfigureAwait(true);
+
                 if (ServiceList != null)
                 {
                     ServiceList.Children.Clear();
-                    foreach (var s in Services.SystemOptimizer.QueryServices())
+                    foreach (var s in services)
                         ServiceList.Children.Add(BuildServiceRow(s));
                 }
 
                 if (DefenderExclusionList != null && DefenderStatus != null)
                 {
                     DefenderExclusionList.Children.Clear();
-                    var (ok, msg, paths) = Services.SystemOptimizer.GetDefenderExclusions();
+                    var (ok, msg, paths) = defender;
                     if (!ok)
                     {
                         DefenderStatus.Text = msg;

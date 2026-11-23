@@ -75,6 +75,50 @@ namespace SoulLink.Relay
             return new BitBltCapture();
         }
 
+        /// <summary>
+        /// 视频编码器降级链：NVENC SDK 直通 → MF 硬编（内部再落软编）。
+        /// ★ 惰性：NVENC 的 DLL 加载 / D3D11 设备 / OpenEncodeSessionEx 都发生在
+        ///   TryInitializeCandidate 里（后台视频线程），不进启动路径、不阻塞 UI。
+        /// ★ 静默降级：每个候选都实际 TryInitialize，失败即 Dispose 换下一级；
+        ///   只有全部失败才抛（调用方进入 error 态），NVENC 绝不是单点故障。
+        /// 开关 SOULLINK_ENCODER_MODE：
+        ///   0/缺省 = auto（NVENC SDK → MF）
+        ///   1 = 强制 NVENC SDK（失败即抛，用于诊断）
+        ///   2 = 强制 MF（跳过 NVENC SDK）
+        /// </summary>
+        private static IFrameH264Encoder TryInitializeCandidate(IFrameH264Encoder candidate, int ew, int eh, int fps, out string failReason)
+        {
+            failReason = "";
+            try
+            {
+                if (candidate.TryInitialize(ew, eh, fps, StreamBitrate)) return candidate;
+                failReason = candidate.LastError;
+            }
+            catch (Exception ex) { failReason = ex.GetType().Name + "：" + ex.Message; }
+            try { candidate.Dispose(); } catch { }
+            return null!;
+        }
+
+        private static IFrameH264Encoder CreateEncoder(int ew, int eh, int fps)
+        {
+            string raw = Environment.GetEnvironmentVariable("SOULLINK_ENCODER_MODE") ?? "";
+            int mode = int.TryParse(raw, out int m) ? m : 0;
+
+            if (mode != 2)
+            {
+                RelayAgent.LogQuiet("[video] 尝试 NVENC SDK 直通编码器");
+                var nvenc = TryInitializeCandidate(new NvencSdkEncoder(), ew, eh, fps, out string nvFail);
+                if (nvenc != null) return nvenc;
+                RelayAgent.LogQuiet("[video] NVENC SDK 不可用，降级 MF：" + nvFail);
+                if (mode == 1)
+                    throw new InvalidOperationException("SOULLINK_ENCODER_MODE=1 强制 NVENC，但 NVENC 不可用：" + nvFail);
+            }
+
+            var mf = TryInitializeCandidate(new MfFrameEncoder(), ew, eh, fps, out string mfFail);
+            if (mf != null) return mf;
+            throw new InvalidOperationException("H.264 编码器初始化失败：" + mfFail);
+        }
+
         public static string CaptureRoot
         {
             get
@@ -178,7 +222,7 @@ namespace SoulLink.Relay
 
         private static void Loop()
         {
-            MfFrameEncoder? encoder = null;
+            IFrameH264Encoder? encoder = null;
             int encodedWidth = 0, encodedHeight = 0;
             long frameIndex = 0;
             byte[]? previousBgra = null;
@@ -221,9 +265,7 @@ namespace SoulLink.Relay
                     {
                         previousBgra = null;
                         encoder?.Dispose();
-                        encoder = new MfFrameEncoder();
-                        if (!encoder.TryInitialize(ew, eh, fps, StreamBitrate))
-                            throw new InvalidOperationException("H.264 编码器初始化失败：" + encoder.LastError);
+                        encoder = CreateEncoder(ew, eh, fps);
                         encodedWidth = ew; encodedHeight = eh;
                         RelayAgent.LogQuiet("[video] 编码器=" + encoder.Name + " 配置码率=" + encoder.ConfiguredBitrateKbps
                             + "kbps MFT读回=" + encoder.NegotiatedBitrateKbps + "kbps fps=" + fps + " 尺寸=" + ew + "x" + eh);

@@ -31,6 +31,8 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [NVENC-SDK-INTEGRATION-20261123.md](NVENC-SDK-INTEGRATION-20261123.md) —— **NvencSdkEncoder 接入主程序**（新增 Services/NvencSdkEncoder.cs 658 行 + IFrameH264Encoder 接口 + SessionRecorder 降级链 NVENC-SDK→MF硬编→软编；惰性加载 nvEncodeAPI64.dll 不进启动路径、动态加载不增体积、同步模式无事件泵；两 TFM 0 error；A2 RDP 会话 SessionId=4 直通复测出帧；v1 边界=encodeConfig=NULL 预设默认码率，精确 CBR/GOP 是下一步）
+
 - [NVENC-SDK-PROBE-20261123.md](NVENC-SDK-PROBE-20261123.md) —— **NVENC SDK D3D11 直通探针实测**（独立探针 tools/nvenc-sdk-probe，0 warning 0 error；RTX 4060 驱动 621.01 走 REGISTER(DIRECTX,NV12)→Map→Encode 完整闭环出 3 帧真 H.264，条纹图案 1:1 保真；同步模式即可用无需事件泵；SDK 比 MF 干净无 COM 陷阱；已知瑕疵 GUID 枚举回读为 0 不影响直通）
 
 - [MATURE-LATENCY-PLAYBOOK-20261123.md](MATURE-LATENCY-PLAYBOOK-20261123.md) —— **成熟串流项目延迟处理 Playbook**（Sunshine/Moonlight/OBS/Parsec/云游戏 在 采集节拍/编码参数/客户端解码丢帧/输入解耦/网络传输 五方面逐项拆解 + file:line 证据，映射成 SoulLink 具体改动项：P1=ICodecAPI低延迟+绝对时间节拍，P2=按需IDR，P3=帧边界元数据/网络升级缓做）

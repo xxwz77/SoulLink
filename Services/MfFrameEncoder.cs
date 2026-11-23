@@ -23,7 +23,7 @@ namespace SoulLink.Services
     /// ★ 输入：NV12（由调用方从 BGRA 转）。输出：每次 Encode 产出若干 NAL 字节
     ///   （含 SPS/PPS 在首帧）。NAL 是长度前缀（MF 默认），调用方按需转 Annex-B。
     /// </summary>
-    public sealed class MfFrameEncoder : IDisposable
+    public sealed class MfFrameEncoder : IDisposable, IFrameH264Encoder
     {
         private static readonly Guid MF_MT_MAJOR_TYPE = new("48eba18e-f8c9-4687-bf11-0a74c9f96a8f");
         private static readonly Guid MF_MT_SUBTYPE = new("f7e34c9a-42e8-4714-b74b-cb29d72c35e5");
