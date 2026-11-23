@@ -104,6 +104,13 @@ namespace SoulLink.Services
         /// <summary>最近一次初始化/编码失败原因；供 HTTP 500 和 Agent 日志诊断。</summary>
         public string LastError { get; private set; } = "";
 
+        /// <summary>ICodecAPI SetValue 失败静默降级日志（进 temp 文件，不刷 UI）。</summary>
+        private static void LogCodecApi(string msg)
+        {
+            try { AsyncLog.Append(Path.Combine(Path.GetTempPath(), "soullink-mf-encoder.log"), DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg + Environment.NewLine); }
+            catch { }
+        }
+
         private static void EnsureStarted()
         {
             lock (MfGate)
@@ -158,6 +165,25 @@ namespace SoulLink.Services
                 if (_transform == null)
                     foreach (var act in swColl) { _transform = act.ActivateObject<IMFTransform>(); _hardware = false; break; }
                 if (_transform == null) { LastError = "系统没有可用的 H.264 MFT"; return false; }
+
+                // ★ 非N卡低延迟：SetOutputType 之前用 ICodecAPI 设低延迟/关B帧/CBR（ffmpeg mfenc.c L869-870 的坑）。
+                //   失败静默降级（微软软 MFT 的 SetValue 返回 S_OK，但读回 E_NOTIMPL，靠码流实测验证生效）。
+                try
+                {
+                    using var codecApi = _transform.QueryInterface<CodecApi>();
+                    if (codecApi != null && codecApi.NativePointer != IntPtr.Zero)
+                    {
+                        // AVLowLatencyMode = TRUE（VT_UI4，对齐 ffmpeg mfenc.c L911，非 VT_BOOL）
+                        CodecApi.TrySet(codecApi, CodecApi.AVLowLatencyMode, 1, "AVLowLatencyMode", LogCodecApi);
+                        // AVEncMPVDefaultBPictureCount = 0（关 B 帧，mfenc.c L902）
+                        CodecApi.TrySet(codecApi, CodecApi.AVEncMPVDefaultBPictureCount, 0, "DefaultBPictureCount", LogCodecApi);
+                        // AVEncCommonRateControlMode = CBR（0，mf_utils.h L129）
+                        CodecApi.TrySet(codecApi, CodecApi.AVEncCommonRateControlMode, 0, "RateControlMode=CBR", LogCodecApi);
+                        // AVEncCommonMeanBitRate = 配置码率（mfenc.c L873）
+                        CodecApi.TrySet(codecApi, CodecApi.AVEncCommonMeanBitRate, (uint)(Math.Max(500, bitrateKbps) * 1000), "MeanBitRate", LogCodecApi);
+                    }
+                }
+                catch { /* ICodecAPI 不可用则静默跳过 */ }
 
                 using var outMediaType = MediaFactory.MFCreateMediaType();
                 outMediaType.Set(MF_MT_MAJOR_TYPE, MFMediaType_Video);

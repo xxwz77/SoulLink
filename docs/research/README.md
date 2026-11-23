@@ -31,6 +31,8 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [MF-LOWLATENCY-20261123.md](MF-LOWLATENCY-20261123.md) —— **非N卡低延迟 ICodecAPI 码流实测**（手写 ICodecAPI 接入 MfFrameEncoder，SetOutputType 前设 AVLowLatencyMode/关B帧/CBR；码流级实锤微软软 MFT「SetValue S_OK 但完全忽略」，三模式 MD5 相同 B 帧仍 20；软编唯一有效手段是 MaxKeyframeSpacing=60；QSV/AMF 同构留待硬件；附 ffmpeg mfenc.c/qsvenc.c/amfenc 权威 file:line）
+
 - [NVENC-SDK-QUALITY-PRESETS-20261123.md](NVENC-SDK-QUALITY-PRESETS-20261123.md) —— **画质自由档位**（NVENC preset P1~P7 下拉默认P3 + 码率/帧率滑动条(帧率上限120/码率1~50Mbps) + 关键帧缓冲上调0~200%对齐Sunshine vbv_percentage_increase；配置落AppSettings持久化+RelayClient下发环境变量；实测vbv 0%→100% IDR 33KB→58KB/QP33→31）
 
 - [NVENC-SDK-RCPARAMS-20261123.md](NVENC-SDK-RCPARAMS-20261123.md) —— **NvencSdkEncoder v2 精确码控**（CBR+无限GOP+关B帧+zeroReorderDelay，GetEncodePresetConfigEx 取预设再覆盖 rcParams，codec union 不能碰否则 INVALID_PARAM；按需 IDR 走 FORCEIDR|OUTPUT_SPSPPS；A2 RDP 实测 IDR 251KB→33KB 降 7.4×；惰性/后台/降级不变）
@@ -148,3 +150,4 @@
 这些是开发过程中的研究记录、故障复盘与交接文档，**不是当前代码的说明**。
 当前有效的规则见项目根的 `AGENTS.md` 与 `docs/RELEASE-RULES.md`。
 - `HOT-RELOAD-E2E-VERIFY-20261123.md` 视频参数热更新 + 生命周期端到端验收（码率/帧率热更新生效，preset/vbv 缺陷）
+- `DEPLOY-3.3.25-VERIFY-20261123.md` 3.3.25 本地部署 + 真机端到端验收（Broker 重启 + A2 换新代码 + NVENC SDK 出帧 + preset/vbv 热更新修复）
