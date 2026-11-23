@@ -53,9 +53,15 @@ namespace SoulLink.Relay
         /// <summary>最近一次成功抓到的 BGRA 帧（静止画面 AcquireNextFrame 超时时复用）。</summary>
         private byte[]? _lastBgra;
         private int _lastWidth, _lastHeight;
+        /// <summary>桌面真实出帧累计序号：AcquireNextFrame 返回新帧（FRAME_INFO.AccumulatedFrames≥1）时递增，
+        /// 超时复用旧帧不递增。供 SessionRecorder 替代全帧 SequenceEqual 判静止。</summary>
+        private long _frameSequence;
 
         /// <summary>是否已成功建立 duplication（供 SessionRecorder 探测降级用）。</summary>
         public bool IsActive => _active;
+
+        /// <summary>桌面真实出帧累计序号（对齐 WgcCapture.FrameSequence 语义）。</summary>
+        public long FrameSequence { get { lock (_gate) return _frameSequence; } }
 
         /// <summary>最近一次降级/失败原因（供日志）。</summary>
         public string LastError { get; private set; } = "";
@@ -164,7 +170,7 @@ namespace SoulLink.Relay
             {
                 try
                 {
-                    Result hr = _duplication.AcquireNextFrame(16, out _, out IDXGIResource resource);
+                    Result hr = _duplication.AcquireNextFrame(16, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
                     if (hr.Success && resource != null)
                     {
                         try
@@ -178,6 +184,13 @@ namespace SoulLink.Relay
                             {
                                 _lastBgra = bgra;
                                 _lastWidth = w; _lastHeight = h;
+                                // ★ A1：以 AcquireNextFrame 返回的 DXGI_OUTDUPL_FRAME_INFO 为「桌面真的更新过」的
+                                //   权威判据——hr.Success 即 DDA 已出真实新帧，frameInfo.AccumulatedFrames 是
+                                //   自上次处理以来累积的新帧数（≥1）、frameInfo.LastPresentTime 为新的
+                                //   QueryPerformanceCounter 时间戳。这里显式累加 AccumulatedFrames，
+                                //   供 SessionRecorder 用「序号是否增长」替代全帧 SequenceEqual（该比对在
+                                //   RDP 慢合成下基准帧陈旧，操作画面被误判静止，staticSkipped 暴涨）。
+                                _frameSequence += Math.Max(1L, (long)frameInfo.AccumulatedFrames);
                                 width = w; height = h;
                                 return bgra;
                             }

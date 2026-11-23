@@ -361,6 +361,7 @@ namespace SoulLink.Relay
             int encodedWidth = 0, encodedHeight = 0;
             long frameIndex = 0;
             byte[]? previousBgra = null;
+            long previousFrameSeq = -1;   // DDA 后端上一次的 FrameSequence（-1=尚未取得）
             long nextAt = Stopwatch.GetTimestamp();
             int appliedVersion = -1;
             VideoParameters? applied = null;
@@ -379,7 +380,7 @@ namespace SoulLink.Relay
                             Capture.Dispose(); _probeClock = null; _captureProbeComplete = false;
                             Capture = CreateCapture();
                             encoder?.Dispose(); encoder = null;
-                            frameIndex = 0; previousBgra = null;
+                            frameIndex = 0; previousBgra = null; previousFrameSeq = -1;
                             appliedCaptureVersion = version;
                         }
                     }
@@ -432,8 +433,24 @@ namespace SoulLink.Relay
                             frameIndex = 0;
                         }
                     }
+                    // ★ A1：DDA 后端以 AcquireNextFrame 返回的 FRAME_INFO（AccumulatedFrames 增长）为
+                    //   「桌面真的更新过」的权威判据，替代全帧 SequenceEqual。RDP 慢合成下 AcquireNextFrame
+                    //   超时复用旧 _lastBgra，字节比对的基准帧陈旧，操作画面被误判静止 → staticSkipped 暴涨。
+                    //   DDA 出帧序号增长 = 桌面确实更新 → 绝不跳过（操作画面绝不误判静止）。
+                    bool desktopChanged;
+                    if (Capture is DxgiDdaCapture ddaBackend)
+                    {
+                        long seq = ddaBackend.FrameSequence;
+                        desktopChanged = previousFrameSeq < 0 || seq != previousFrameSeq;
+                        previousFrameSeq = seq;
+                    }
+                    else
+                    {
+                        // 其它后端（BitBlt / WGC）无 DDA 的 FRAME_INFO，沿用全帧字节比较。
+                        desktopChanged = previousBgra == null || !previousBgra.AsSpan().SequenceEqual(bgra);
+                    }
                     int ew = width & ~1, eh = height & ~1;
-                    if (!forceKeyFrame && previousBgra != null && previousBgra.AsSpan().SequenceEqual(bgra))
+                    if (!forceKeyFrame && !desktopChanged)
                     {
                         _skippedStaticFrames++;
                         SleepUntil(ref nextAt, fps);
