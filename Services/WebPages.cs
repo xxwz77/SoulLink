@@ -523,6 +523,19 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
             </div>
           </div>
           <div class="mgroup">
+            <div class="mtitle">鼠标锁定（桌面转视角）</div>
+            <label class="hfield"><span>逃生门</span>
+              <select id="plEscape" class="hfield select-mini">
+                <option value="ctrl_alt_shift">Ctrl+Alt+Shift</option>
+                <option value="ctrl_alt">Ctrl+Alt</option>
+                <option value="alt">单纯 Alt</option>
+                <option value="alt_hold">长按 Alt</option>
+              </select>
+            </label>
+            <label class="qgroup"><span>灵敏度</span><input id="plSens" type="range" min="0.1" max="3" step="0.1" value="1.0"><span class="qval" id="plSensV">1.0</span></label>
+            <div class="qguide">ESC 一键开菜单 · 逃生门纯解锁 · 移动端自动禁用</div>
+          </div>
+          <div class="mgroup">
             <div class="mtitle">直播画质</div>
             <label class="qgroup"><span>码率</span><input id="qBitrate" type="range" min="1000" max="25000" step="1000" value="8000"><span class="qval" id="qBitrateV">8M</span></label>
             <label class="qgroup"><span>帧率</span><input id="qStreamFps" type="range" min="30" max="60" step="15" value="30"><span class="qval" id="qStreamFpsV">30fps</span></label>
@@ -843,6 +856,7 @@ function renderUsers() {
 }
 
 function closeViewer() {
+  plLifecycleExit();
   stopLive();
   $('player').style.display = 'none';
   const v = $('vid'); v.pause(); v.removeAttribute('src'); v.load();
@@ -1061,6 +1075,8 @@ function directBase(sess) {
     let configured = false;
     let firstKey = false;
     let gotFrame = false;        // 本轮是否已出过画面（区分「连不上」和「断了」）
+    let stallTimer = null;       // 画面看门狗 setInterval 句柄（函数级声明，finally 才能安全 clear）
+    let lastFrameAt = 0;         // 最近一次解码出帧时间戳（函数级声明，output/finally 共用）
 
     // 解码帧直接画到 DOM 里的 <canvas id="vframe">，不再经过 <img>。
     // 旧版每帧 canvas.toDataURL('image/jpeg') 等于把省下的带宽又花回去
@@ -1119,8 +1135,8 @@ function directBase(sess) {
       //   编码器停转时 read() 会永久 pending；更糟的是即便连接还活着，也可能只吐
       //   SPS/PPS/SEI 等非画面字节 —— 这些字节一直刷新 lastDataAt，看门狗永远不触发。
       //   改为 lastFrameAt：只有 decoder output 真的画出一帧才更新，画面卡住必重连。
-      let lastFrameAt = Date.now();
-      const stallTimer = setInterval(() => {
+      lastFrameAt = Date.now();
+      stallTimer = setInterval(() => {
         if (myGen !== h264Gen) return;
         if (gotFrame && Date.now() - lastFrameAt >= STALL_MS) {
           console.warn('[H264] 画面 ' + STALL_MS + 'ms 无新帧，自动重连');
@@ -1148,11 +1164,11 @@ function directBase(sess) {
       //   · decodeQueueSize > SKIP_QUEUE 阈值 → 停止喂 delta 帧（在 AU 层丢，
       //     不浪费带宽解码再扔），只放行 key 帧；
       //   · 丢帧期间若来了 key AU → 立刻恢复喂（解码链从关键帧重建）；
-      //   · 连续跳帧计数达 SKIP_RESET_LIMIT → decoder.reset() + 等下个 IDR
-      //     重新起播（彻底清空内部流水线，兜底手段）。
+      //   · 连续跳帧计数达 SKIP_RESET_LIMIT → 直接断流重连重同步
+      //     （无限 GOP 下本地 reset 等不到 IDR，重连=新订阅=按需 IDR，兜底手段）。
       //   丢的是「追赶过去的旧画面」，用户看到的永远是较新的帧。
-      const SKIP_QUEUE = 5;          // 队列超过它就进入跳帧模式
-      const SKIP_RESET_LIMIT = 60;   // 连续跳过 60 个 AU（≈4s@15fps）→ reset 兜底
+      const SKIP_QUEUE = 2;          // 队列超过它就进入跳帧模式（30fps 下 ~66ms 即反应）
+      const SKIP_RESET_LIMIT = 10;   // 连续跳过 10 个 AU（≈330ms@30fps）→ 断流重连重同步
       let skipping = false;          // 是否处于跳帧模式
       let skippedAUs = 0;            // 本轮连续跳过的 AU 数
       let skippedTotal = 0;          // 累计跳过（日志用）
@@ -1167,12 +1183,13 @@ function directBase(sess) {
           skippedAUs++; skippedTotal++;
           skipping = true;
           if (skippedAUs >= SKIP_RESET_LIMIT) {
-            // 兜底：队列长期消化不动 → reset + 等下一个 IDR 重新起播
-            console.warn('[H264] 解码积压 ' + skippedAUs + ' 帧，reset 重同步');
-            try { decoder.reset(); } catch (e) {}
-            configured = false;      // reset 后必须重新 configure
-            firstKey = false;        // 等下一个 IDR
-            skippedAUs = 0;
+            // 兜底：队列长期消化不动 → 重连式重同步（2026-11-23 修复 W2）
+            //   无限 GOP 下 decoder.reset() 后服务端不会主动发 SPS/IDR，本地 reset
+            //   干等新 IDR 是死路（每轮白付 10s 黑屏）。改为直接断流重连：
+            //   重连 = 新订阅，服务端按需发 IDR，立刻重建解码链。
+            console.warn('[H264] 解码积压 ' + skippedAUs + ' 帧，直接断流重连重同步');
+            fail('[H264] 解码积压过重，重连重同步', null);
+            return;
           }
           return;
         }
@@ -1282,7 +1299,7 @@ function directBase(sess) {
     } catch (e) {
       fail('[H264] 流断开:', e);
     } finally {
-      clearInterval(stallTimer);
+      if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
       if (myGen === h264Gen) {
         h264Active = false;
         h264Reader = null;
@@ -1292,21 +1309,110 @@ function directBase(sess) {
   }
 
 // ── 输入 ────────────────────────────────────────────────────
+// ★ 2026-11-23 输入链路修复（INPUT-CHANNEL-GAP-20261123.md）：
+//   · down/up/click 走**同一 FIFO 串行队列**（sendInputOrdered）→ 保序，
+//     替代旧「每个 pointer 事件一次独立 fetch 并发无序」导致的 up 丢失/粘键；
+//   · up/releaseall 传输失败重试 1 次（幂等，重发无害）；down/click 不重试（避免双按/双击）；
+//   · move 走 noWait 不等回包（RTT 不再拖慢拖动，latest-wins 由 movePending 保留）；
+//   · 页面 pagehide/beforeunload/visibilitychange(hidden) → releaseAllInputs 防粘键。
+async function postInputRaw(body) {
+  const base = directBase(cur);
+  const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
+  const headers = { 'Content-Type': 'application/json' };
+  if (base && directToken()) headers['X-SoulLink-Token'] = directToken();
+  const r = await fetch(url, {
+    method: 'POST', headers: headers,
+    body: JSON.stringify(Object.assign({}, body, base ? { sid: cur.sessionId } : {}))
+  });
+  return r.json();
+}
+
+// 通用发送（仍可 await 结果；wheel/key/moverel 等非保序、非高频动作沿用）
 async function sendInput(action, nx, ny, extra) {
   if (!cur) return null;
+  try { return await postInputRaw(Object.assign({ action, x: nx, y: ny }, extra || {})); }
+  catch { return null; }
+}
+
+// ── 按键状态动作的 FIFO 串行队列（保序）──────────────────────
+// down/up/click 是「状态转移」，必须严格按产生顺序送达代理：
+//   拖动 = down → (n×move) → up，若 down/up 并发乱序，远端会停在按下态。
+// 这里所有 down/up/click 进同一个队列，单 in-flight 逐条 await 发送，天然保序。
+let inputQueue = [];           // FIFO：{ body, resolve }
+let inputSending = false;      // 队列是否正在发送头部
+const INPUT_RETRYABLE = new Set(['up', 'releaseall']);   // 幂等：重发无害
+
+function sendInputOrdered(action, nx, ny, extra) {
+  if (!cur) return Promise.resolve(null);
   const body = Object.assign({ action, x: nx, y: ny }, extra || {});
+  return new Promise(resolve => {
+    inputQueue.push({ body, resolve });
+    pumpInput();
+  });
+}
+
+function pumpInput() {
+  if (inputSending || inputQueue.length === 0) return;
+  const item = inputQueue.shift();
+  inputSending = true;
+  (async () => {
+    let resp = null;
+    try { resp = await postInputRaw(item.body); }
+    catch (e) { resp = null; }
+    // up/releaseall 幂等：传输失败（fetch 抛异常）重试 1 次；
+    // down/click 不重试——down 重试可能双 LEFTDOWN 反而粘键，click 重试会双击。
+    if (resp == null && INPUT_RETRYABLE.has(item.body.action)) {
+      try { resp = await postInputRaw(item.body); }
+      catch (e) { resp = null; }
+    }
+    if (resp == null || resp.ok === false) {
+      console.warn('[input] ' + item.body.action + ' 发送失败', resp);
+    }
+    item.resolve(resp);
+    inputSending = false;
+    pumpInput();               // 串行发下一条
+  })();
+}
+
+// 单向发送：fire-and-forget，不等回包（move/moverel 高频位移专用）
+function sendInputNoWait(action, nx, ny, extra) {
+  if (!cur) return;
+  const body = Object.assign({ action, x: nx, y: ny }, extra || {});
+  postInputRaw(body).catch(() => {});
+}
+
+// ── 按住心跳（Web 前端断连看门狗的「我还活着」信号）────────────
+// 代理端只能通过「是否有输入活动」判断前端是否断连；但「按住不动」是正常操作，
+// 会产生 0 输入活动。所以按住期间每 2s 发一次 noop 心跳，代理据此区分：
+//   活着但静止按住（有心跳） ≠ 前端已断开（心跳停了 → 看门狗释放）。
+// 阈值：代理 WebIdleReleaseMs=5000 > 2×2000，静止按住不会误释放。
+function hasHeldInput() {
+  if (drag && drag.moved) return true;
+  if (look && look.mode === 'drag') return true;
+  return false;
+}
+let heldHeartbeat = null;
+function ensureHeldHeartbeat() {
+  if (heldHeartbeat) return;
+  heldHeartbeat = setInterval(() => {
+    if (hasHeldInput()) sendInputNoWait('noop', -1, -1, {});
+  }, 2000);
+}
+ensureHeldHeartbeat();
+
+// ★ 释放所有按住的键：切后台/刷新/关页时兜底（防「松手远端没松开」）。
+//   直接 fire-and-forget + keepalive（卸载阶段仍能送达）；幂等，重发无害。
+function releaseAllInputs() {
+  if (!cur) return;
+  inputQueue.length = 0;       // 丢弃未发送的 down/up/click，避免它们在 releaseall 之后到达又粘键
+  const base = directBase(cur);
+  const body = Object.assign({ action: 'releaseall', x: -1, y: -1 }, base ? { sid: cur.sessionId } : {});
+  const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
+  const headers = { 'Content-Type': 'application/json' };
+  if (base && directToken()) headers['X-SoulLink-Token'] = directToken();
   try {
-    // ★ 3.3.5：按键/点击也直连代理（用户要求「模拟按键也有独立出来」）
-    const base = directBase(cur);
-    const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
-    const headers = { 'Content-Type': 'application/json' };
-    if (base && directToken()) headers['X-SoulLink-Token'] = directToken();
-    const r = await fetch(url, {
-      method: 'POST', headers: headers,
-      body: JSON.stringify(Object.assign({}, body, base ? { sid: cur.sessionId } : {}))
-    });
-    return await r.json();
-  } catch { return null; }
+    fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body), keepalive: true }).catch(() => {});
+  } catch (e) {}
 }
 
 function norm(e) {
@@ -1356,6 +1462,131 @@ if (__mmAbs) __mmAbs.onclick = () => { mouseMode = 'absolute'; try { localStorag
 if (__mmRel) __mmRel.onclick = () => { mouseMode = 'relative'; try { localStorage.setItem(MOUSE_MODE_KEY, 'relative'); } catch (e) {} applyMouseMode(); };
 applyMouseMode();
 
+// ══════════ Pointer Lock（桌面鼠标转视角，2026-11-23）═════════════
+// ★ 对齐 POINTER-LOCK-DESIGN-20261123.md + decision/pointer-lock-esc-shortcut。
+//   进入：桌面左键点画面 → requestPointerLock()，成功 pointerLocked=true，光标隐藏（浏览器自动）。
+//   转视角：锁定态 mousemove 的 movementX/Y × sensitivity → 复用 lookDelta/lookAcc/flushLook 8ms 合并。
+//   点击：复用现有 pointerdown/up drag 状态机（锁定态 pointermove 被跳过，单击=click）。
+//   逃生门：ESC = 浏览器强制解锁 + 补发一次 Esc 开菜单（方案 C）；自定义快捷键 = 纯解锁不弹菜单。
+const PL_SENS_KEY = 'sl_pl_sens';
+const PL_ESC_KEY = 'sl_pl_escape';
+const PL_SUPPORTED = ('pointerLockElement' in document) && ('requestPointerLock' in document.body);
+let pointerLocked = false;
+let plExitByShortcut = false;    // 快捷键逃生门主动退出（不补发 ESC）
+let plExitByLifecycle = false;   // 生命周期/断线/关画面主动退出（不补发 ESC）
+let plLockCooldownUntil = 0;     // Esc 后重锁冷却（规范：立即重锁会被拒）
+let plSensitivity = 1.0;         // movementX/Y 灵敏度（浏览器单位不统一）
+let plEscape = 'ctrl_alt_shift'; // 逃生门快捷键
+let plAltHoldTimer = null;       // 长按 Alt 计时器
+
+try {
+  const s = parseFloat(localStorage.getItem(PL_SENS_KEY));
+  if (isFinite(s) && s >= 0.1 && s <= 3) plSensitivity = s;
+  const esc = localStorage.getItem(PL_ESC_KEY);
+  if (esc === 'ctrl_alt_shift' || esc === 'alt' || esc === 'alt_hold' || esc === 'ctrl_alt') plEscape = esc;
+} catch (e) {}
+
+function applyPlEscape() {
+  const el = $('plEscape');
+  if (el) el.value = plEscape;
+  const r = $('plSens');
+  if (r) r.value = String(plSensitivity);
+  const sv = $('plSensV');
+  if (sv) sv.textContent = plSensitivity.toFixed(1);
+}
+
+// 逃生门快捷键命中判定（全部为修饰键组合，不会误注入远端——现有 keydown 会过滤纯修饰键）
+function matchPlEscape(e) {
+  if (plEscape === 'ctrl_alt_shift') return e.ctrlKey && e.altKey && e.shiftKey;
+  if (plEscape === 'ctrl_alt') return e.ctrlKey && e.altKey;
+  if (plEscape === 'alt') return e.altKey && (e.key === 'Alt');
+  return false;
+}
+
+document.addEventListener('keydown', e => {
+  if (!pointerLocked) return;
+  // 长按 Alt：按下即计时，800ms 后仍按住 → 触发（alt_hold 不走 matchPlEscape）
+  if (plEscape === 'alt_hold' && e.key === 'Alt' && !e.repeat) {
+    if (plAltHoldTimer) clearTimeout(plAltHoldTimer);
+    plAltHoldTimer = setTimeout(() => {
+      plAltHoldTimer = null;
+      if (pointerLocked) doPlShortcutExit();
+    }, 800);
+    return;
+  }
+  if (plEscape !== 'alt_hold' && matchPlEscape(e)) {
+    doPlShortcutExit();
+  }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.key === 'Alt' && plAltHoldTimer) { clearTimeout(plAltHoldTimer); plAltHoldTimer = null; }
+});
+
+function doPlShortcutExit() {
+  if (!pointerLocked) return;
+  plExitByShortcut = true;
+  try { document.exitPointerLock(); } catch (err) {}
+}
+
+// 生命周期/断线/关画面主动退出锁定（不补发 ESC，不弹菜单）
+function plLifecycleExit() {
+  if (pointerLocked) {
+    plExitByLifecycle = true;
+    try { document.exitPointerLock(); } catch (err) {}
+  }
+  if (plAltHoldTimer) { clearTimeout(plAltHoldTimer); plAltHoldTimer = null; }
+}
+
+document.addEventListener('pointerlockchange', () => {
+  const nowLocked = document.pointerLockElement === $('scr');
+  if (nowLocked && !pointerLocked) {
+    // 锁定成功
+    pointerLocked = true;
+    plExitByShortcut = false;
+    plExitByLifecycle = false;
+    return;
+  }
+  if (!nowLocked && pointerLocked) {
+    // 解锁
+    pointerLocked = false;
+    if (plAltHoldTimer) { clearTimeout(plAltHoldTimer); plAltHoldTimer = null; }
+    // 冲刷残留相对位移
+    if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
+    flushLook();
+    const byShortcut = plExitByShortcut;
+    const byLifecycle = plExitByLifecycle;
+    plExitByShortcut = false;
+    plExitByLifecycle = false;
+    // ★ 方案 C：ESC 一键开菜单。排除法判定触发源：
+    //   非快捷键退出、非生命周期退出、且页面仍聚焦 → 只剩浏览器 ESC 强制解锁 → 补发 Esc 开菜单。
+    if (!byShortcut && !byLifecycle && document.hasFocus()) {
+      sendInput('key', -1, -1, { key: 'Esc' });
+    }
+    // Esc 后冷却：规范要求 default unlock gesture 后立即重锁会被拒
+    plLockCooldownUntil = Date.now() + 500;
+    return;
+  }
+});
+
+document.addEventListener('pointerlockerror', () => {
+  // 请求锁定失败（非手势/不支持/冷却期内）：保持未锁定
+  if (!document.pointerLockElement) pointerLocked = false;
+});
+
+// 锁定态 mousemove：movementX/Y × sensitivity → 复用 lookDelta 8ms 合并
+document.addEventListener('mousemove', e => {
+  if (!pointerLocked) return;
+  if (e.movementX || e.movementY) {
+    lookDelta(e.movementX * plSensitivity, e.movementY * plSensitivity);
+  }
+});
+
+// 设置控件绑定
+const __plEscape = $('plEscape'), __plSens = $('plSens');
+if (__plEscape) __plEscape.onchange = () => { plEscape = __plEscape.value; try { localStorage.setItem(PL_ESC_KEY, plEscape); } catch (e) {} };
+if (__plSens) __plSens.oninput = () => { plSensitivity = parseFloat(__plSens.value) || 1.0; const sv = $('plSensV'); if (sv) sv.textContent = plSensitivity.toFixed(1); try { localStorage.setItem(PL_SENS_KEY, String(plSensitivity)); } catch (e) {} };
+applyPlEscape();
 // 相对模式手势状态（月光：单指滑动转视角 / 点按点击 / 双指滚轮或右键）
 const REL_TAP_PX = 10;
 let relPoints = new Map();   // pointerId -> { sx, sy, lx, ly, total }
@@ -1428,7 +1659,7 @@ $('scr').addEventListener('pointerdown', e => {
       // 长按阈值内没怎么动 → 进入拖动模式：先按住左键
       if (look && look.mode === 'pending') {
         look.mode = 'drag';
-        sendInput('down', look.nx, look.ny, { button: 'left' });
+        sendInputOrdered('down', look.nx, look.ny, { button: 'left' });
       }
     }, LOOK_TAP_MS);
     $('scr').setPointerCapture(e.pointerId);
@@ -1437,6 +1668,13 @@ $('scr').addEventListener('pointerdown', e => {
 
   // 鼠标 / 触控笔：保持桌面原有行为不变
   const btn = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
+  // ★ Pointer Lock（2026-11-23）：桌面左键且未锁定 → 请求锁定，吃掉本次点击。
+  //   对齐月光 input.cpp MOUSE_DOWN 先 LockMouse 再 return，避免「点进锁定=远端也点一下」。
+  if (e.pointerType === 'mouse' && btn === 'left' && PL_SUPPORTED
+      && !pointerLocked && Date.now() >= plLockCooldownUntil) {
+    try { $('scr').requestPointerLock(); } catch (err) {}
+    return;
+  }
   const p = norm(e);
   // ★ 右键 = 转视角模式（与桌面版 RdpConsole「按住右键拖动」一致）：
   //   按住右键 + 移动 → 复用触屏的 lookDelta/flushLook（8ms 合并 + moverel）。
@@ -1463,15 +1701,13 @@ $('scr').addEventListener('pointerdown', e => {
 //
 //   新版：与 lookAcc(moverel) 同源的「合并 + 8ms 节流」策略——
 //     · pointermove 只更新 pending（绝不发 fetch）；
-//     · 同一时刻最多 1 个 move fetch 在飞（单 in-flight）；
-//     · fetch 返回时若 pending 有新位置立刻补发（latest-wins，
-//       过时的中间位置永远不发，光标永远走最新坐标）；
+//     · move 走 noWait 不等回包（RTT 不再拖慢拖动）；
+//     · latest-wins：movePending 永远只记最新位置，中间位置不发；
 //     · 8ms 节流窗口与画面帧率完全解耦（MOVE_MIN_INTERVAL_MS）。
 //   实测（60Hz 滑动 3s、RTT 3ms）：旧版 3s 只发 46 个请求（≈15/s，
 //   全被 50ms 窗口夹死）；新版跟随到 125Hz 且并发恒为 1。
 const MOVE_MIN_INTERVAL_MS = 8;   // 与 LOOK_HZ_MS 对齐；125Hz 上限足够顺滑
 let movePending = null;           // 待发的最新位置（latest-wins）
-let moveInFlight = false;         // 是否有 move fetch 在飞
 let moveLastSentAt = 0;           // 上次实际发出的时刻（节流用）
 
 function sendMoveThrottled(nx, ny) {
@@ -1480,7 +1716,7 @@ function sendMoveThrottled(nx, ny) {
 }
 
 function pumpMove() {
-  if (moveInFlight || !movePending) return;      // 单 in-flight + 有货才发
+  if (!movePending) return;                      // 有货才发；move 已改 noWait，不再有 in-flight 等待
   const now = Date.now();
   const wait = MOVE_MIN_INTERVAL_MS - (now - moveLastSentAt);
   if (wait > 0) {                                 // 节流窗口内：只排一个 timer
@@ -1490,15 +1726,16 @@ function pumpMove() {
     return;
   }
   const p = movePending; movePending = null;
-  moveInFlight = true;
   moveLastSentAt = Date.now();
-  sendInput('move', p.nx, p.ny).finally(() => {
-    moveInFlight = false;
-    pumpMove();                    // 回来立刻发最新的（不靠 setTimeout 堆叠）
-  });
+  // ★ noWait：不等回包，仅靠 8ms 节流 + timer 控制频率；latest-wins 由 movePending 保留。
+  //   单 in-flight 语义改为「节流窗口内最多排一条」——避免 RTT 拖慢拖动（WAN 下旧实现退化 1/RTT）。
+  sendInputNoWait('move', p.nx, p.ny);
 }
 
 $('scr').addEventListener('pointermove', e => {
+  // ★ 锁定态：转视角已由 document mousemove（movementX/Y）处理；clientX/Y 冻结为常量，
+  //   跳过绝对 move，避免重复发固定坐标。点击（down/up/click）仍走下面状态机。
+  if (pointerLocked && e.pointerType === 'mouse') return;
   // ── 相对模式（月光）：单指滑动转视角 / 双指滚轮 ──
   if (e.pointerType === 'touch' && mouseMode === 'relative' && relPoints.has(e.pointerId)) {
     const pt = relPoints.get(e.pointerId);
@@ -1562,7 +1799,7 @@ $('scr').addEventListener('pointermove', e => {
       return;
     }
     drag.moved = true;
-    sendInput('down', drag.nx, drag.ny, { button: drag.btn });
+    sendInputOrdered('down', drag.nx, drag.ny, { button: drag.btn });
   }
   sendMoveThrottled(p.nx, p.ny);
 });
@@ -1574,9 +1811,9 @@ $('scr').addEventListener('pointerup', e => {
     if (relPoints.size === 0) {
       const p = norm(e);
       if (relWasTwo) {
-        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInput('click', p.nx, p.ny, { button: 'right' }); }
+        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'right' }); }
       } else {
-        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInput('click', p.nx, p.ny, { button: 'left' }); }
+        if (relMaxMove < REL_TAP_PX) { ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'left' }); }
       }
       if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
       flushLook();
@@ -1591,16 +1828,16 @@ $('scr').addEventListener('pointerup', e => {
     if (was.mode === 'pending') {
       // 没动就抬起 → 左键单击
       const p = norm(e);
-      ripple(e); sendInput('click', p.nx, p.ny, { button: 'left' });
+      ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'left' });
     } else if (was.mode === 'drag') {
-      sendInput('up', -1, -1, { button: 'left' });
+      sendInputOrdered('up', -1, -1, { button: 'left' });
     } else if (was.mode === 'look' && was.mouseRight) {
       // ★ 鼠标右键转视角结束：几乎没动 = 右键单击（菜单照常出）；
       //   拖动过 = 纯转视角，不发 click（不然转完视角还会弹出菜单）。
       const movedTotal = Math.hypot(e.clientX - was.sx, e.clientY - was.sy);
       if (movedTotal < LOOK_SLIDE_PX) {
         const p = norm(e);
-        ripple(e); sendInput('click', p.nx, p.ny, { button: 'right' });
+        ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'right' });
       }
     }
     // 转视角模式：最后残留的位移已由 timer 冲刷，无需额外动作
@@ -1614,8 +1851,8 @@ $('scr').addEventListener('pointerup', e => {
   const moved = drag.moved, btn = drag.btn || 'left';
   drag = null;
   const p = norm(e);
-  if (moved) sendInput('up', p.nx, p.ny, { button: btn });
-  else { ripple(e); sendInput('click', p.nx, p.ny, { button: btn }); }
+  if (moved) sendInputOrdered('up', p.nx, p.ny, { button: btn });
+  else { ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: btn }); }
 });
 $('scr').addEventListener('pointercancel', () => {
   if (mouseMode === 'relative' && relPoints.size > 0) {
@@ -1625,7 +1862,7 @@ $('scr').addEventListener('pointercancel', () => {
     return;
   }
   if (look) {
-    if (look.mode === 'drag') sendInput('up', -1, -1, { button: 'left' });
+    if (look.mode === 'drag') sendInputOrdered('up', -1, -1, { button: 'left' });
     if (look.mode === 'look' && look.mouseRight) {
       // 右键转视角被系统打断：不补发 click（无法区分用户意图），只退出
       if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
@@ -1638,7 +1875,7 @@ $('scr').addEventListener('pointercancel', () => {
     flushLook();
     return;
   }
-  if (drag && drag.moved) sendInput('up', -1, -1, { button: drag.btn || 'left' });
+  if (drag && drag.moved) sendInputOrdered('up', -1, -1, { button: drag.btn || 'left' });
   drag = null;
 });
 $('scr').addEventListener('wheel', e => {
@@ -1662,6 +1899,9 @@ function keyName(e) {
 document.addEventListener('keydown', e => {
   if (!kbMode || e.target.tagName === 'INPUT') return;
   if (['Control','Alt','Shift','Meta'].includes(e.key)) return;
+  // 锁定态 ESC 由 pointerlockchange 统一补发（浏览器解锁 + 补发一次 Esc 开菜单）；
+  // 这里拦掉，避免「ESC keydown 派发时」键盘注入又发一次导致双重开菜单。
+  if (pointerLocked && e.key === 'Escape') return;
   const parts = [];
   if (e.ctrlKey) parts.push('Ctrl');
   if (e.altKey) parts.push('Alt');
@@ -1897,6 +2137,8 @@ document.addEventListener('pointerdown', e => {
 //   ★ pause 状态下不自动恢复（用户点了暂停就尊重暂停）。
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    plLifecycleExit();        // ★ 页面隐藏 → 退出 Pointer Lock（浏览器也会自动解锁，这里主动清状态）
+    releaseAllInputs();       // ★ 切后台先释放所有按住的键，防「松手远端没松开」
     if (liveRunning && h264Active) {
       abortStream();          // 只断流，画面冻在最后一帧
       setPh('页面已隐藏，流已暂停 · 回到页面自动重连', false);
@@ -1908,6 +2150,11 @@ document.addEventListener('visibilitychange', () => {
     }
   }
 });
+
+// ★ 卸载/切后台释放按键：pagehide/beforeunload 触发时 fire-and-forget 发 releaseall。
+//   只释放真正按过的键（代理侧 PressedButtons/PressedKeys 只抬按过的键，不会误触）。
+window.addEventListener('pagehide', () => releaseAllInputs());
+window.addEventListener('beforeunload', () => releaseAllInputs());
 
 $('pauseBtn').onclick = () => {
   paused = !paused;
@@ -2217,6 +2464,19 @@ function route() {
 const lb = $('ledgerBack'); if (lb) lb.onclick = () => { location.hash = '#/'; };
 const eb = $('earningsBack'); if (eb) eb.onclick = () => { location.hash = '#/'; };
 window.addEventListener('hashchange', route);
+/* ══════════ Pointer Lock 真机验收清单（2026-11-23，部署后实测）══════════
+   对应 POINTER-LOCK-DESIGN-20261123.md §7.2 V1-V10：
+   V1 进入锁定：桌面左键点画面 → 光标隐藏、pointerLockElement===#scr、移动转视角
+   V2 相对位移正确：缓慢匀速移动鼠标 → 远端视角方向/幅度一致，无反向/漂移
+   V3 点击不粘连：锁定态点击 → 远端正确点击，无「进锁定那次被误点」
+   V4 ESC 一键开菜单：锁定态按 ESC → 光标恢复 + 远端弹出游戏菜单（补发一次 Esc）
+   V5 快捷键逃生门：命中 Ctrl+Alt+Shift(默认) → 光标恢复，远端不弹菜单（纯解锁）
+   V6 ESC 后重锁冷却：ESC 退出后立即点画面 → 500ms 内不重锁，无 error 抖动
+   V7 触屏回退：触屏打开 → 无锁定，单指滑动仍转视角（moverel），不触发锁定
+   V8 不支持浏览器降级：无 Pointer Lock → 走绝对模式 + 右键 look，无报错
+   V9 锁死兜底：锁定态断网/JS 抛异常 → 按 ESC 仍退出（浏览器层），光标恢复
+   V10 灵敏度：同机锁定态转 90° 视角 → 记录鼠标位移标定 sensitivity，二次进入一致
+══════════════════════════════════════════════════════════════════ */
 
 route();
 </script>

@@ -521,8 +521,8 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
           </div>
           <div class="mgroup">
             <div class="mtitle">直播画质</div>
-            <label class="qgroup"><span>码率</span><input id="qBitrate" type="range" min="1000" max="25000" step="1000" value="8000"><span class="qval" id="qBitrateV">8M</span></label>
-            <label class="qgroup"><span>帧率</span><input id="qStreamFps" type="range" min="30" max="60" step="15" value="30"><span class="qval" id="qStreamFpsV">30fps</span></label>
+            <label class="qgroup"><span>码率</span><input id="qBitrate" type="range" min="1000" max="500000" step="1000" value="8000"><span class="qval" id="qBitrateV">8M</span></label>
+            <label class="qgroup"><span>帧率</span><input id="qStreamFps" type="range" min="30" max="120" step="15" value="30"><span class="qval" id="qStreamFpsV">30fps</span></label>
             <label class="qgroup"><span>预设</span><select id="qPreset" class="hfield select-mini">
               <option value="1">P1 最快</option>
               <option value="3">P3 均衡</option>
@@ -562,6 +562,7 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
                 <option value="30">30 fps</option>
                 <option value="45">45 fps</option>
                 <option value="60">60 fps</option>
+                <option value="120">120 fps</option>
               </select>
             </label>
           </div>

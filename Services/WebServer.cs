@@ -897,7 +897,7 @@ namespace SoulLink.Services
                     recordFps = Math.Max(1, rs.RecordFps);
                     recordQuality = Math.Clamp(rs.RecordQuality, 10, 100);
                     recordKeepSeconds = Math.Clamp(rs.RecordKeepSeconds, 5, 600);
-                    streamFps = Math.Clamp(rs.StreamFps, 30, 60);
+                    streamFps = Math.Clamp(rs.StreamFps, 1, 120);
                     videoBitrate = Math.Clamp(rs.VideoBitrateKbps, 1000, 500000);
                     nvencPreset = Math.Clamp(rs.NvencPreset, 1, 7);
                     vbvBufferIncreasePercent = Math.Clamp(rs.VbvBufferIncreasePercent, 0, 200);
@@ -948,7 +948,7 @@ namespace SoulLink.Services
                 if (dto.keepSeconds > 0)  s.RecordKeepSeconds = Math.Clamp(dto.keepSeconds, 5, 600);
 
                 // ★ 直播画质（2026-11-23 网页端手机原型）：码率/帧率/preset/vbv
-                if (dto.streamFps > 0)     s.StreamFps = Math.Clamp(dto.streamFps, 30, 60);
+                if (dto.streamFps > 0)     s.StreamFps = Math.Clamp(dto.streamFps, 1, 120);
                 if (dto.videoBitrate > 0)  s.VideoBitrateKbps = Math.Clamp(dto.videoBitrate, 1000, 500000);
                 if (dto.nvencPreset > 0)   s.NvencPreset = Math.Clamp(dto.nvencPreset, 1, 7);
                 if (dto.vbvBufferIncreasePercent.HasValue)
