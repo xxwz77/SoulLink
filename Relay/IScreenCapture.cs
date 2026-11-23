@@ -18,6 +18,9 @@ namespace SoulLink.Relay
         /// <summary>后端名（"BitBlt" / "WGC"），供 recordstatus 与日志回显，便于排障。</summary>
         string Name { get; }
 
+        /// <summary>桌面真实出帧累计序号（静止时不递增）。BitBlt 无此语义，恒返回 0。</summary>
+        long FrameSequence { get; }
+
         /// <summary>
         /// 抓当前会话的一帧并编码为 JPEG。
         ///
@@ -29,5 +32,13 @@ namespace SoulLink.Relay
 
         /// <summary>抓一帧原始 BGRA（top-down，紧凑 stride=width*4）。实时链路禁止 JPEG 中转。</summary>
         byte[]? CaptureBgra(out int width, out int height);
+
+        /// <summary>
+        /// 零拷贝（GPU 阶段B）：返回一帧 BGRA 的**跨设备共享句柄**（纹理已留在显存，不读回 CPU）。
+        /// 仅 GPU 抓屏后端（WGC/DDA）支持；BitBlt 是 CPU 抓屏，恒返回 false。
+        /// 返回 false 表示「本帧无纹理可直通」（静止无帧 / 共享句柄拿不到 / 后端不支持），
+        /// 调用方必须回退 CPU 路径（CaptureBgra + BgraToNv12），绝不空转。
+        /// </summary>
+        bool TryCaptureBgraTexture(out IntPtr sharedHandle, out int width, out int height);
     }
 }

@@ -17,6 +17,7 @@ namespace SoulLink.Relay
     internal sealed class BitBltCapture : IScreenCapture
     {
         public string Name => "BitBlt";
+        public long FrameSequence => 0;
         public void Dispose() { }
 
         // ── Win32 ────────────────────────────────────────────────────────────
@@ -151,6 +152,13 @@ namespace SoulLink.Relay
                 if (hMem != IntPtr.Zero) DeleteDC(hMem);
                 if (hScreen != IntPtr.Zero) ReleaseDC(IntPtr.Zero, hScreen);
             }
+        }
+
+        /// <summary>BitBlt 是 CPU 抓屏（无 GPU 纹理），零拷贝恒不可用。</summary>
+        public bool TryCaptureBgraTexture(out IntPtr sharedHandle, out int width, out int height)
+        {
+            sharedHandle = IntPtr.Zero; width = 0; height = 0;
+            return false;
         }
 
         public byte[]? CaptureJpeg(int quality, out int width, out int height)

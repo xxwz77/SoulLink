@@ -56,6 +56,9 @@ namespace SoulLink.Relay
         /// <summary>桌面真实出帧累计序号：AcquireNextFrame 返回新帧（FRAME_INFO.AccumulatedFrames≥1）时递增，
         /// 超时复用旧帧不递增。供 SessionRecorder 替代全帧 SequenceEqual 判静止。</summary>
         private long _frameSequence;
+        /// <summary>零拷贝：私有 BGRA 纹理（Shared flag，尺寸=桌面），每帧 CopyResource 从 DDA 临时纹理拷来，供跨设备共享。</summary>
+        private ID3D11Texture2D? _sharedBgraTexture;
+        private int _sharedWidth, _sharedHeight;
 
         /// <summary>是否已成功建立 duplication（供 SessionRecorder 探测降级用）。</summary>
         public bool IsActive => _active;
@@ -242,6 +245,74 @@ namespace SoulLink.Relay
             }
         }
 
+        /// <summary>
+        /// 零拷贝（阶段B）：AcquireNextFrame 拿到 GPU 纹理 → CopyResource 到私有 Shared 纹理 → 返回共享句柄，
+        /// 不读回 CPU。DDA 的 AcquireNextFrame 纹理是临时的（ReleaseFrame 后失效），所以必须
+        /// 在 ReleaseFrame 前拷贝到私有 Shared 纹理。静止画面（WAIT_TIMEOUT）返回 false，调用方回退 CPU。
+        /// </summary>
+        public bool TryCaptureBgraTexture(out IntPtr sharedHandle, out int width, out int height)
+        {
+            sharedHandle = IntPtr.Zero; width = 0; height = 0;
+            if (_disposed) return false;
+            EnsureRunning();
+            if (!_active || _duplication == null || _device == null || _context == null) return false;
+
+            lock (_gate)
+            {
+                try
+                {
+                    Result hr = _duplication.AcquireNextFrame(16, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
+                    if (!hr.Success || resource == null) return false;   // 静止（WAIT_TIMEOUT）或失败 → 回退 CPU
+
+                    try
+                    {
+                        using var tex = resource.QueryInterface<ID3D11Texture2D>();
+                        var desc = tex.Description;
+                        int w = (int)desc.Width, h = (int)desc.Height;
+                        if (w <= 0 || h <= 0) return false;
+
+                        // 惰性创建/重建私有 Shared 纹理
+                        if (_sharedBgraTexture == null || _sharedWidth != w || _sharedHeight != h)
+                        {
+                            _sharedBgraTexture?.Dispose();
+                            _sharedBgraTexture = _device.CreateTexture2D(new Texture2DDescription
+                            {
+                                Width = (uint)w, Height = (uint)h, MipLevels = 1, ArraySize = 1,
+                                Format = Format.B8G8R8A8_UNorm,
+                                SampleDescription = new SampleDescription(1, 0),
+                                Usage = ResourceUsage.Default,
+                                BindFlags = BindFlags.None,
+                                CPUAccessFlags = CpuAccessFlags.None,
+                                MiscFlags = ResourceOptionFlags.Shared
+                            });
+                            _sharedWidth = w; _sharedHeight = h;
+                        }
+
+                        // DDA 临时纹理 → 私有 Shared 纹理（显存内拷贝，ReleaseFrame 前完成）
+                        _context.CopyResource(_sharedBgraTexture, tex);
+
+                        // 拿共享句柄
+                        using var dxgiRes = _sharedBgraTexture.QueryInterface<IDXGIResource>();
+                        sharedHandle = dxgiRes.SharedHandle;
+                        if (sharedHandle == IntPtr.Zero) return false;   // Shared 句柄拿不到 → 回退 CPU
+
+                        // ★ 与 CaptureBgra 一致：桌面真实出帧序号递增，供静止判定用。
+                        //   （零拷贝分支消费了本帧，序号必须同步增长，否则 fall through 到 CPU 路径时静止判定错乱。）
+                        _frameSequence += Math.Max(1L, (long)frameInfo.AccumulatedFrames);
+
+                        width = w; height = h;
+                        return true;
+                    }
+                    finally
+                    {
+                        resource.Dispose();
+                        _duplication.ReleaseFrame();
+                    }
+                }
+                catch { return false; }   // 任何异常 → 回退 CPU，不抛
+            }
+        }
+
         /// <summary>重建 duplication（独占全屏切换后）。失败则标记 inactive，由调用方降级。</summary>
         private void Rebuild()
         {
@@ -342,9 +413,10 @@ namespace SoulLink.Relay
             if (_disposed) return;
             _disposed = true;
             try { _duplication?.Dispose(); } catch { }
+            try { _sharedBgraTexture?.Dispose(); } catch { }
             try { _context?.Dispose(); } catch { }
             try { _device?.Dispose(); } catch { }
-            _duplication = null; _context = null; _device = null;
+            _duplication = null; _sharedBgraTexture = null; _context = null; _device = null;
             _active = false;
         }
     }
