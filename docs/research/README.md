@@ -31,6 +31,8 @@
 
 ## 视频流 / 远程画面（2026-11-22 主线）
 
+- [NVENC-SDK-RCPARAMS-20261123.md](NVENC-SDK-RCPARAMS-20261123.md) —— **NvencSdkEncoder v2 精确码控**（CBR+无限GOP+关B帧+zeroReorderDelay，GetEncodePresetConfigEx 取预设再覆盖 rcParams，codec union 不能碰否则 INVALID_PARAM；按需 IDR 走 FORCEIDR|OUTPUT_SPSPPS；A2 RDP 实测 IDR 251KB→33KB 降 7.4×；惰性/后台/降级不变）
+
 - [NVENC-SDK-INTEGRATION-20261123.md](NVENC-SDK-INTEGRATION-20261123.md) —— **NvencSdkEncoder 接入主程序**（新增 Services/NvencSdkEncoder.cs 658 行 + IFrameH264Encoder 接口 + SessionRecorder 降级链 NVENC-SDK→MF硬编→软编；惰性加载 nvEncodeAPI64.dll 不进启动路径、动态加载不增体积、同步模式无事件泵；两 TFM 0 error；A2 RDP 会话 SessionId=4 直通复测出帧；v1 边界=encodeConfig=NULL 预设默认码率，精确 CBR/GOP 是下一步）
 
 - [NVENC-SDK-PROBE-20261123.md](NVENC-SDK-PROBE-20261123.md) —— **NVENC SDK D3D11 直通探针实测**（独立探针 tools/nvenc-sdk-probe，0 warning 0 error；RTX 4060 驱动 621.01 走 REGISTER(DIRECTX,NV12)→Map→Encode 完整闭环出 3 帧真 H.264，条纹图案 1:1 保真；同步模式即可用无需事件泵；SDK 比 MF 干净无 COM 陷阱；已知瑕疵 GUID 枚举回读为 0 不影响直通）
@@ -64,6 +66,8 @@
 ## 性能与架构
 
 - [SETTINGS-PAGE-LAG-20261123.md](SETTINGS-PAGE-LAG-20261123.md) —— **进入「应用设置」页卡顿根因归因（按贡献度排序）**（`Activate()` UI 线程串行跑 1×powershell `Get-MpPreference` + 6×sc.exe + 2×schtasks + 3×递归扫目录 + 旧目录枚举；P0=Defender 排除查询/服务状态查询，P1=目录占用统计/迁移 Inspect，P2=自启状态假 async；含 file:line 证据 + 量级估算 + 后台化修复建议）
+- [DATA-CENTER-SINGLE-SOURCE-20261123.md](DATA-CENTER-SINGLE-SOURCE-20261123.md) ← **数据中心唯一入口决策 + 数据库化评估**（唯一入口立即生效 / SQLite 暂缓）
+- [DATA-CENTER-AUDIT-20261123.md](DATA-CENTER-AUDIT-20261123.md) —— **数据中心旁路全仓审计**（日志直读 / 进程枚举 / 递归目录 / FileSystemWatcher 全调用点；旁路与独立功能分级，设置页与配置编辑器 UI IO 优先整改）
 - [UI-PERF-IO-TRIAGE-20261123.md](UI-PERF-IO-TRIAGE-20261123.md) —— **UI 线程减负**（TickHub 后台订阅 RegisterBackground + 4 订阅者迁后台；RdpConsole 5 个 DispatcherTimer 全收编/事件驱动；ConfigStore.Save 改后台串行队列保序原子写；94 处同步 IO 分类清单）
 - [PERF-3.3.4-20261122.md](PERF-3.3.4-20261122.md) —— **性能基线**（16% 单核的构成分解 + 三个卡顿根因）
 - [LOOK-OPTIMIZE-20261122.md](LOOK-OPTIMIZE-20261122.md) —— **转视角链路优化 + 手机端贯通**（去 Thread.Sleep(6) + moverel 单向 NoReply + 8ms 节流 + 触屏滑动手势状态机）

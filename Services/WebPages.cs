@@ -191,6 +191,53 @@ namespace SoulLink.Services
   .ibtn:active{transform:scale(.97)}
   .ibtn.on{background:var(--accent);color:var(--bg0);border-color:var(--accent)}
 
+  /* ══════════ 折叠卡片总览（2026-11-23 网页改版）══════════
+     每账号一张卡片，默认收起，点头部展开功能按钮。 */
+  .ucard{background:linear-gradient(150deg,var(--card),var(--card2));
+         border:1px solid var(--border);border-radius:14px;margin-bottom:10px;
+         box-shadow:var(--shadow-sm);overflow:hidden}
+  .ucard-head{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;
+              user-select:none;transition:background .15s}
+  .ucard-head:hover{background:var(--card-hover)}
+  .ucard-head .chev{margin-left:auto;font-size:10px;color:var(--txt3);
+                    transition:transform .18s;display:inline-block;flex:0 0 auto}
+  .ucard.open .ucard-head .chev{transform:rotate(90deg)}
+  .ucard-body{display:none;padding:0 14px 13px;border-top:1px solid var(--border)}
+  .ucard.open .ucard-body{display:block}
+  .ucard-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px}
+  .uact-btn{padding:9px 14px;border-radius:9px;border:1px solid var(--accent-border);
+            background:var(--accent-bg);color:var(--accent);font-size:12px;
+            font-weight:550;cursor:pointer;transition:.15s}
+  .uact-btn:hover{border-color:var(--accent);filter:brightness(1.08)}
+  .uact-btn:active{transform:scale(.97)}
+
+  /* ══════════ 功能页（hash 路由：配置组分析 / 摩拉收益）══════════ */
+  body.page-func main>.stat,
+  body.page-func main>.sect-t,
+  body.page-func main>#users,
+  body.page-func main>#empty,
+  body.page-func main>#viewer,
+  body.page-func main>#saved{display:none !important}
+  .page-back{display:inline-flex;align-items:center;gap:5px;padding:7px 12px;
+             border-radius:8px;border:1px solid var(--border);background:var(--card2);
+             color:var(--txt2);font-size:12px;cursor:pointer;margin-bottom:12px}
+  .page-back:hover{border-color:var(--border-hi);color:var(--txt)}
+  .userswitch{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 14px}
+  .userswitch .uchip{padding:6px 12px;border-radius:20px;border:1px solid var(--border);
+                      background:var(--card2);color:var(--txt3);font-size:11.5px;
+                      cursor:pointer;transition:.15s;font-weight:550}
+  .userswitch .uchip:hover{border-color:var(--border-hi);color:var(--txt2)}
+  .userswitch .uchip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .ldtable{width:100%;border-collapse:collapse;font-size:11.5px}
+  .ldtable th{text-align:left;color:var(--txt4);font-weight:600;padding:7px 8px;
+              border-bottom:1px solid var(--border);white-space:nowrap}
+  .ldtable td{padding:7px 8px;border-bottom:1px solid var(--border);color:var(--txt2)}
+  .ldtable tr:last-child td{border-bottom:none}
+  .badge-fail{color:var(--rose)} .badge-ok{color:var(--mint)}
+  .num{font-variant-numeric:tabular-nums}
+  .mtxt{font-size:13px;color:var(--txt2)}
+  .pageempty{padding:18px 14px;color:var(--txt4);font-size:12px}
+
   .detail{margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
   .dline{display:flex;gap:10px;font-size:11.5px;line-height:1.85}
   .dk{color:var(--txt4);flex:0 0 56px;font-size:11px}
@@ -402,7 +449,19 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
            ★ 用户指出：「这是浏览器的帧率吧，那录制帧率呢？要弄完整，让用户分得清」
              所以两组各自成块、带标题、带颜色区分，不再混在一起。 -->
 
-      <div class="hgroup" data-kind="record" title="录制参数：改这里会同步到应用设置，影响所有观看者">
+      <div class="hgroup" data-kind="live" title="直播帧率：有人观看时的采集编码频率，与录像帧率独立">
+        <span class="gtag">直播</span>
+        <label class="hfield">
+          <span>帧率</span>
+          <select id="selLiveFps" title="有人观看时的直播帧率">
+            <option value="30">30 fps</option>
+            <option value="45">45 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="hgroup" data-kind="record" title="录像参数：无人观看时的采集频率与缓冲，不影响直播档位">
         <span class="gtag">录制</span>
         <label class="hfield">
           <span>帧率</span>
@@ -465,6 +524,7 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
   <div id="viewer">
    <div id="viewerBox">
     <div id="viewerTitle">实时画面</div>
+    <div id="remoteSwitch" class="userswitch" style="display:none"></div>
     <div id="scr">
       <!-- ★ 2026-11-23：画面只有 WebCodecs 解码直绘的 canvas（用户指令：
            「我压根不需要 jpeg 序列，只要视频流」—— /live 轮询通路已移除）。
@@ -490,6 +550,22 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
       </div>
     </div>
    </div>
+  </div>
+
+  <!-- ══ 配置组分析页（#/ledger/:id，2026-11-23 网页改版）══ -->
+  <div id="ledgerPage" style="display:none">
+    <button class="page-back" id="ledgerBack" type="button">‹ 返回总览</button>
+    <div class="sect-t">配置组分析</div>
+    <div class="userswitch" id="ledgerSwitch" style="display:none"></div>
+    <div id="ledgerBody"></div>
+  </div>
+
+  <!-- ══ 摩拉收益页（#/earnings/:id，2026-11-23 网页改版）══ -->
+  <div id="earningsPage" style="display:none">
+    <button class="page-back" id="earningsBack" type="button">‹ 返回总览</button>
+    <div class="sect-t">摩拉收益</div>
+    <div class="userswitch" id="earningsSwitch" style="display:none"></div>
+    <div id="earningsBody"></div>
   </div>
 </main>
 
@@ -561,7 +637,7 @@ let users = [], cur = null;
 //   ★ 上限关系：实际取图频率 = min(viewFps, recFps)，
 //     取再快也只能拿到同一帧（代理还没录新的）。
 let paused = false;
-let recFps = 10, recQuality = 75, recKeep = 30;
+let recFps = 5, recQuality = 75, recKeep = 30, streamFps = 30, actualLiveFps = 0;
 let viewFps = 0;              // 0 = 跟随录制（2026-11-23 起只用于鼠标移动节流，
                               // 不再控制拉帧 —— 画面是 /stream 视频流直推）
 let liveMs = 500;
@@ -616,22 +692,23 @@ function renderUsers() {
   }
   $('empty').style.display = 'none';
 
+  // ★ 2026-11-23 网页改版：每账号一张可折叠卡片（默认收起），
+  //   点卡片头部展开该账号的功能按钮（查看画面 / 配置组分析 / 摩拉收益）。
   for (const u of users) {
-    const row = document.createElement('div');
-    row.className = 'urow';
+    const card = document.createElement('div');
+    card.className = 'ucard';
+
     const tags = [];
     if (u.bgiRunning) tags.push('<span class="tag bgi">BGI ' +
       (u.bgiLogIdleMinutes >= 0 ? '空闲 ' + u.bgiLogIdleMinutes + ' 分' : '运行中') + '</span>');
     if (u.recording) tags.push('<span class="tag rec">录制中</span>');
     if (!u.online) tags.push('<span class="tag off">离线</span>');
 
-    // 副标题：会话 + BGI
     let sub = '';
     if (!u.online) sub = '会话未连接';
     else sub = esc(u.screen) + ' · 通道就绪 · ' + (u.bgiRunning ? 'BGI#' + u.bgiPid : 'BGI 未运行');
 
-    // ★ 运行详情（配置组 / 任务 / 路线 / 轮次·角色）
-    //   与桌面版"运行状态"同源：都来自 BgiLogCenter 快照 + BgiStatus 解析
+    // 运行详情（展开体里显示，与旧版同源同字段）
     let detail = '';
     if (u.bgiRunning) {
       const parts = [];
@@ -645,51 +722,49 @@ function renderUsers() {
       if (u.pickTotal > 0) parts.push(['拾取', u.pickTotal + ' 个']);
       if (u.errorCount > 0) parts.push(['报错', u.errorCount + ' 次']);
 
-      if (parts.length === 0) {
-        detail = '<div class="detail"><div class="dline"><span class="dk">状态</span>'
-          + '<span class="dv">等待日志中的状态信息…</span></div></div>';
-      } else {
-        detail = '<div class="detail">'
+      detail = parts.length === 0
+        ? '<div class="detail"><div class="dline"><span class="dk">状态</span>'
+          + '<span class="dv">等待日志中的状态信息…</span></div></div>'
+        : '<div class="detail">'
           + parts.map(p => '<div class="dline"><span class="dk">' + esc(p[0])
               + '</span><span class="dv">' + esc(String(p[1])) + '</span></div>').join('')
           + '</div>';
-      }
     }
 
-    row.innerHTML =
-      '<div class="udot' + (u.online ? ' on' : '') + '"></div>'
+    card.innerHTML =
+      '<div class="ucard-head">'
+      + '<span class="udot' + (u.online ? ' on' : '') + '"></span>'
       + '<div class="uinfo">'
       + '<div class="un">' + esc(u.label) + tags.join('') + '</div>'
       + '<div class="us">' + sub + '</div>'
-      + detail
       + '</div>'
-      + '<div class="uact"><button class="ibtn">查看画面</button></div>';
-    row.querySelector('.ibtn').onclick = e => {
-      e.stopPropagation();
-      // ★ 用户要求：「查看画面应该要打开一个新页面」
-      //   原来是在当前页把实时画面面板展开，会把下面的账号列表挤走。
-      window.open('?view=' + encodeURIComponent(u.id), '_blank');
-    };
-    box.appendChild(row);
-  }
-}
+      + '<span class="chev">▸</span>'
+      + '</div>'
+      + '<div class="ucard-body">'
+      + detail
+      + '<div class="ucard-actions">'
+      + '<button class="uact-btn" data-act="remote">查看画面</button>'
+      + '<button class="uact-btn" data-act="ledger">配置组分析</button>'
+      + '<button class="uact-btn" data-act="earnings">摩拉收益</button>'
+      + '</div>'
+      + '</div>';
 
-// ── 实时画面 ────────────────────────────────────────────────
-function openViewer(u) {
-  cur = u;
-  $('viewerTitle').textContent = '实时画面 · ' + u.label;
-  $('viewer').style.display = 'block';
-  $('player').style.display = 'none';
-  $('phtxt').textContent = u.online ? '连接中…' : '该账号不在线';
-  $('ph').style.display = u.online ? 'flex' : 'none';
-  $('reconn').style.display = 'none';
-  $('vframe').classList.remove('show');
-  $('fpsinfo').textContent = (u.screen || '');
-  startLive();
-  // ★ 不在这里读录像列表：那是扫磁盘目录（/api/list），
-  //   而用户此刻要看的是实时画面。等真正展开「录像回放」再取（见 ensureSaved）。
-  resetSavedList();
-  setTimeout(() => $('viewer').scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+    // 点头部折叠/展开
+    card.querySelector('.ucard-head').onclick = () => card.classList.toggle('open');
+
+    // 功能按钮：hash 路由同页跳转（不再 window.open 新标签）
+    card.querySelectorAll('.uact-btn').forEach(btn => {
+      btn.onclick = e => {
+        e.stopPropagation();
+        const act = btn.getAttribute('data-act');
+        location.hash = act === 'remote'
+          ? ('#/remote/' + encodeURIComponent(u.id))
+          : ('#/' + act + '/' + encodeURIComponent(u.id));
+      };
+    });
+
+    box.appendChild(card);
+  }
 }
 
 function closeViewer() {
@@ -699,12 +774,9 @@ function closeViewer() {
   cur = null;
   $('viewer').style.display = 'none';
 
-  // ★ 独立窗口模式（?view=）下「收起」= 关掉这个标签页。
-  //   新页面里没有列表可回，退回 / 才是用户预期。
-  if (document.body.classList.contains("viewonly")) {
-    try { window.close(); } catch (e) { }
-    setTimeout(() => { location.href = "/"; }, 120);
-  }
+  // ★ 2026-11-23 hash 路由：收起 = 回总览（同页跳转），
+  //   不再 window.close / 跳 "/"（那是旧 ?view= 独立窗口的语义）。
+  location.hash = '#/';
 }
 
 // ══════════ 视频流播放（2026-11-23 按用户指令重写）══════════════
@@ -1438,6 +1510,7 @@ function applySettings(d) {
   if (typeof d.recordFps === 'number' && d.recordFps > 0) recFps = d.recordFps;
   if (typeof d.recordQuality === 'number' && d.recordQuality > 0) recQuality = d.recordQuality;
   if (typeof d.recordKeepSeconds === 'number' && d.recordKeepSeconds > 0) recKeep = d.recordKeepSeconds;
+  if (typeof d.streamFps === 'number' && d.streamFps > 0) streamFps = d.streamFps;
 
   // viewFps 从 localStorage 恢复（2026-11-23 起仅用于鼠标移动节流，
   // 「取图」下拉框已随 JPEG 轮询通路移除）
@@ -1455,6 +1528,7 @@ function syncDropdowns() {
   // 先清掉上次补的动态选项，避免反复变化时累积
   document.querySelectorAll('option[data-dyn]').forEach(o => o.remove());
   setSelect('selFps', recFps, v => v + ' fps');
+  setSelect('selLiveFps', streamFps, v => v + ' fps');
   setSelect('selQuality', recQuality, v => qualityLabel(v));
   setSelect('selKeep', recKeep, v => v + ' 秒');
 }
@@ -1494,6 +1568,7 @@ async function pushSettings(patch) {
     const d = await r.json();
     if (d && d.ok) {
       recFps = d.fps; recQuality = d.quality; recKeep = d.keepSeconds;
+      if (typeof d.liveFps === 'number' && d.liveFps > 0) streamFps = d.liveFps;
       computeLiveMs(); syncDropdowns(); startLive();
       return true;
     }
@@ -1507,6 +1582,7 @@ function bindSelect(id, onPick) {
 }
 // 录制组：改了就回写应用配置 + 通知代理
 bindSelect('selFps',     v => pushSettings({ fps: v }));
+bindSelect('selLiveFps', v => pushSettings({ liveFps: v }));
 bindSelect('selQuality', v => pushSettings({ quality: v }));
 bindSelect('selKeep',    v => pushSettings({ keepSeconds: v }));
 
@@ -1641,63 +1717,218 @@ function esc(s) {
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// ── 独立窗口模式 ─────────────────────────────────────────────
-//   ?view=<账号Id> 时，本页只做一件事：全屏显示该账号的实时画面。
-//   由列表页的「查看画面」用 window.open 打开（用户要求开新页面）。
-async function bootViewerMode() {
-  document.body.classList.add('viewonly');      // 隐藏列表/面板，只留画面
-  document.documentElement.classList.add('viewonly-root');
-  const vc = $('viewctrls'); if (vc) vc.style.display = 'flex';   // 顶栏操作按钮
+// ── hash 路由（2026-11-23 网页改版）────────────────────────────
+//   #/                总览（每账号一张折叠卡片）
+//   #/remote/:id      查看画面（同页跳转，取代旧 ?view= 独立窗口）
+//   #/ledger/:id      配置组分析（顶部用户切换器）
+//   #/earnings/:id    摩拉收益（顶部用户切换器）
+//   三个功能页顶部都有「用户切换器」，页内直接切账号看对应数据，无需退回首页。
+let curId = '';   // 功能页当前选中的账号 id（用户切换器回显用）
 
-  // 先拿口令 + 账号信息（直连代理需要）
-  let d;
-  try {
-    const r = await fetch('/api/sessions');
-    d = await r.json();
-  } catch (e) {
-    document.body.innerHTML = '<div style="padding:24px;color:#c66">加载失败：' + esc(e.message) + '</div>';
-    return;
-  }
+// 拉取会话列表（token / 主题 / 录制参数 / 账号），供功能页复用。
+async function ensureSessions() {
+  const r = await fetch('/api/sessions');
+  const d = await r.json();
   window.__slToken = d.directToken || "";
   if (typeof d.themeDark === 'boolean') { appIsDark = d.themeDark; applyTheme(); }
-
-  // ★★ 必须把后端下发的录制参数回填到下拉菜单。★★
-  //
-  //   漏了这一步就会出现"网页显示 5fps、应用显示 30fps"——
-  //   因为下拉框只显示了 HTML 里写死的第一个 <option>，
-  //   根本不是读到的配置值（实测踩到，排查方向被误导了很久）。
   applySettings(d);
+  users = (d.sessions || []).filter(s => s.bound);
+  return users;
+}
 
-  const id = decodeURIComponent(location.search.replace(/^.*[?&]view=([^&]*).*$/, "$1"));
-  const u = (d.sessions || []).find(s => s.id === id);
-  if (!u) {
-    document.body.innerHTML = '<div style="padding:24px;color:#c66">找不到该账号</div>';
-    return;
+function hideRemoteUi() {
+  const v = $('viewer'); if (v) v.style.display = 'none';
+  const p = $('player'); if (p) p.style.display = 'none';
+  const vc = $('viewctrls'); if (vc) vc.style.display = 'none';
+}
+function hideFuncPages() {
+  const lp = $('ledgerPage'); if (lp) lp.style.display = 'none';
+  const ep = $('earningsPage'); if (ep) ep.style.display = 'none';
+}
+
+// 用户切换器：容器 + 当前账号 + 选中回调。无账号时隐藏。
+function buildUserSwitch(containerId, currentId, onPick) {
+  const box = $(containerId);
+  if (!box) return;
+  box.innerHTML = '';
+  const list = users.filter(u => u && u.id);
+  if (!list.length) { box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  for (const u of list) {
+    const chip = document.createElement('span');
+    chip.className = 'uchip' + (u.id === currentId ? ' on' : '');
+    chip.textContent = u.label || u.user || u.id;
+    chip.onclick = () => onPick(u);
+    box.appendChild(chip);
   }
+}
 
-  document.title = u.label + " · 实时画面";
-  const t = $("viewerTitle"); if (t) t.textContent = "实时画面 · " + u.label;
-  const v = $("viewer"); if (v) v.style.display = "block";
-  const p = $("player"); if (p) p.style.display = "none";
-  // 提示层由 startLive() 统一管理（含 WebCodecs 不支持 / 不在线的文案）
-  const ph = $("ph"); if (ph) ph.style.display = "none";
-  const fi = $("fpsinfo"); if (fi) fi.textContent = (u.screen || "");
-  const cv = $("vframe"); if (cv) cv.classList.remove("show");
+// ── 查看画面（#/remote/:id）──────────────────────────────────
+async function showRemote(id) {
+  await ensureSessions();
+  const u = users.find(x => x.id === id) || users[0];
+  if (!u) { showOverview(); return; }
+  document.body.classList.add('viewonly');
+  document.documentElement.classList.add('viewonly-root');
+  const vc = $('viewctrls'); if (vc) vc.style.display = 'flex';
+  hideFuncPages();
+  const v = $('viewer'); if (v) v.style.display = 'block';
+  const p = $('player'); if (p) p.style.display = 'none';
+  applyRemoteUser(u);
+}
 
+function applyRemoteUser(u) {
   cur = u;
-  startLive();
-  // 同上：录像列表按需加载，不在这里扫磁盘
+  curId = u.id;
+  document.title = (u.label || u.user) + ' · 实时画面';
+  const t = $('viewerTitle'); if (t) t.textContent = '实时画面 · ' + (u.label || u.user);
+  const fi = $('fpsinfo'); if (fi) fi.textContent = (u.screen || '');
+  const cv = $('vframe'); if (cv) cv.classList.remove('show');
+  const ph = $('ph'); if (ph) ph.style.display = 'none';
+  buildUserSwitch('remoteSwitch', u.id, applyRemoteUser);
   resetSavedList();
+  startLive();      // startLive 内部先 stopLive()，切账号时旧流会被收掉
 }
 
-const __isViewer = /[?&]view=/.test(location.search);
-if (__isViewer) {
-  try { bootViewerMode(); } catch (e) { console.error(e); }
-} else {
-  try { loadUsers(); } catch (e) { console.error('加载失败', e);
-    const em = $('empty');
-    if (em) { em.style.display = 'block'; em.textContent = '加载失败：' + e.message; } }
+// ── 配置组分析（#/ledger/:id）────────────────────────────────
+async function showLedger(id) {
+  await ensureSessions();
+  const u = users.find(x => x.id === id) || users[0];
+  if (!u) { showOverview(); return; }
+  document.body.classList.add('page-func');
+  hideRemoteUi();
+  const lp = $('ledgerPage'); if (lp) lp.style.display = 'block';
+  const ep = $('earningsPage'); if (ep) ep.style.display = 'none';
+  applyLedgerUser(u);
 }
+function applyLedgerUser(u) {
+  curId = u.id;
+  document.title = '配置组分析 · ' + (u.label || u.user);
+  buildUserSwitch('ledgerSwitch', u.id, applyLedgerUser);
+  loadLedger(u);
+}
+async function loadLedger(u) {
+  const body = $('ledgerBody');
+  body.innerHTML = '<div class="pageempty">加载中…</div>';
+  try {
+    const r = await fetch('/api/bgi/ledger?user=' + encodeURIComponent(u.user) + '&days=7');
+    const d = await r.json();
+    body.innerHTML = renderLedger(d);
+  } catch (e) {
+    body.innerHTML = '<div class="pageempty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+function renderLedger(d) {
+  if (!d) return '<div class="pageempty">暂无台账数据。</div>';
+  const groups = d.groups || [];
+  const records = d.records || [];
+  const problems = (d.zeroReward || []).concat(d.failed || []);
+  if (!groups.length && !records.length && !problems.length)
+    return '<div class="pageempty">暂无台账数据（近 ' + (d.days || 7) + ' 天没有配置组运行记录）。</div>';
+  let html = '';
+  if (groups.length) {
+    html += '<div class="sect-t">按配置组汇总 · 近 ' + (d.days || 7) + ' 天</div>'
+      + '<table class="ldtable"><thead><tr>'
+      + '<th>配置组</th><th>次数</th><th>失败</th><th>均经验</th><th>均摩拉</th><th>总经验</th><th>总摩拉</th>'
+      + '</tr></thead><tbody>';
+    for (const g of groups) {
+      html += '<tr>'
+        + '<td>' + esc(g.group) + '</td>'
+        + '<td class="num">' + (g.runs || 0) + '</td>'
+        + '<td class="num ' + ((g.failures || 0) > 0 ? 'badge-fail' : 'badge-ok') + '">' + (g.failures || 0) + '</td>'
+        + '<td class="num">' + (g.avgExp || 0) + '</td>'
+        + '<td class="num">' + (g.avgMora || 0) + '</td>'
+        + '<td class="num">' + (g.totalExp || 0) + '</td>'
+        + '<td class="num">' + (g.totalMora || 0) + '</td>'
+        + '</tr>';
+    }
+    html += '</tbody></table>';
+  }
+  if (problems.length) {
+    html += '<div class="sect-t">问题组（0 收益 / 失败）</div>';
+    for (const rec of problems) {
+      html += '<div class="dline"><span class="dk">' + esc(rec.group || '') + '</span>'
+        + '<span class="dv">' + esc(rec.state || '') + ' · ' + esc(rec.day || '') + ' ' + esc(rec.start || '')
+        + (rec.detail ? ' · ' + esc(rec.detail) : '') + '</span></div>';
+    }
+  }
+  return html;
+}
+
+// ── 摩拉收益（#/earnings/:id）────────────────────────────────
+async function showEarnings(id) {
+  await ensureSessions();
+  const u = users.find(x => x.id === id) || users[0];
+  if (!u) { showOverview(); return; }
+  document.body.classList.add('page-func');
+  hideRemoteUi();
+  const lp = $('ledgerPage'); if (lp) lp.style.display = 'none';
+  const ep = $('earningsPage'); if (ep) ep.style.display = 'block';
+  applyEarningsUser(u);
+}
+function applyEarningsUser(u) {
+  curId = u.id;
+  document.title = '摩拉收益 · ' + (u.label || u.user);
+  buildUserSwitch('earningsSwitch', u.id, applyEarningsUser);
+  loadEarnings(u);
+}
+async function loadEarnings(u) {
+  const body = $('earningsBody');
+  body.innerHTML = '<div class="pageempty">加载中…</div>';
+  try {
+    const r = await fetch('/api/bgi/stats?user=' + encodeURIComponent(u.user));
+    const d = await r.json();
+    body.innerHTML = renderEarnings(d);
+  } catch (e) {
+    body.innerHTML = '<div class="pageempty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+function renderEarnings(d) {
+  if (!d) return '<div class="pageempty">暂无收益数据。</div>';
+  const exp = d.exp || d.expGained || d.dogfoodExp || 0;
+  const mora = d.mora || d.moraGained || d.dogfoodMora || 0;
+  let picks = d.pickTotal || 0;
+  if (d.picks && typeof d.picks === 'object') {
+    picks = Object.values(d.picks).reduce((a, b) => a + (typeof b === 'number' ? b : 0), 0);
+  }
+  let html = '<div class="metrics">'
+    + '<div class="metric"><div class="v num">' + exp + '</div><div class="k">今日经验</div></div>'
+    + '<div class="metric"><div class="v num">' + mora + '</div><div class="k">今日摩拉</div></div>'
+    + '<div class="metric"><div class="v num">' + picks + '</div><div class="k">今日拾取</div></div>'
+    + '</div>';
+  if (d.lastRoute) html += '<div class="dline" style="margin-top:12px"><span class="dk">最近路线</span><span class="dv">' + esc(d.lastRoute) + '</span></div>';
+  return html;
+}
+
+// ── 总览（#/）────────────────────────────────────────────────
+function showOverview() {
+  hideRemoteUi();
+  hideFuncPages();
+  document.body.classList.remove('viewonly', 'page-func');
+  document.documentElement.classList.remove('viewonly-root');
+  document.title = 'SoulLink';
+  try { loadUsers(); } catch (e) { console.error('加载失败', e); }
+}
+
+// ── 路由分发 ─────────────────────────────────────────────────
+function route() {
+  stopLive();                              // 任何路由切换先停流
+  document.body.classList.remove('viewonly', 'page-func');
+  document.documentElement.classList.remove('viewonly-root');
+  const parts = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+  const page = parts[0] || '';
+  const id = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '';
+  if (page === 'remote' && id) { showRemote(id); return; }
+  if (page === 'ledger') { showLedger(id); return; }
+  if (page === 'earnings') { showEarnings(id); return; }
+  showOverview();
+}
+
+const lb = $('ledgerBack'); if (lb) lb.onclick = () => { location.hash = '#/'; };
+const eb = $('earningsBack'); if (eb) eb.onclick = () => { location.hash = '#/'; };
+window.addEventListener('hashchange', route);
+
+route();
 </script>
 </body>
 </html>

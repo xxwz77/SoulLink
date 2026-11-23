@@ -22,6 +22,8 @@ namespace NvencSdkProbe
 
         static readonly Guid H264_GUID = new Guid("6BC82762-4E63-4CA4-AA85-1E50F321F6BF");
         static readonly Guid P1_GUID   = new Guid("FC0A8D3E-45F8-4CF8-80C7-298871590EBF");
+        static readonly Guid PROFILE_AUTOSELECT_GUID = new Guid("BFD6F8E7-233C-4341-8B3E-4818523803F4");
+        static readonly Guid H264_PROFILE_HIGH_GUID = new Guid("E7CBC309-4F7A-4B89-AF2A-D537C92BE310");
 
         const int NV_ENC_DEVICE_TYPE_DIRECTX = 0;
         const int NV_ENC_BUFFER_FORMAT_NV12 = 1;
@@ -32,6 +34,12 @@ namespace NvencSdkProbe
         const uint NV_ENC_PIC_FLAG_FORCEIDR = 0x2;
         const uint NV_ENC_PIC_FLAG_OUTPUT_SPSPPS = 0x4;
         const uint NV_ENC_SUCCESS = 0;
+        const int NV_ENC_PARAMS_RC_CBR = 2;
+        const int NV_ENC_PARAMS_FRAME_FIELD_MODE_FRAME = 1;
+        const int NV_ENC_MV_PRECISION_DEFAULT = 0;
+        const int NV_ENC_LEVEL_AUTOSELECT = 0;
+        const uint NVENC_INFINITE_GOPLENGTH = 0xffffffff;
+        const uint RC_ZERO_REORDER_DELAY_BIT = 0x200;   // rcParams.bitField1 的 bit9
 
         // ── 结构体（严格对照 nvEncodeAPI.h，Pack=8）───────────────────
 
@@ -394,6 +402,9 @@ namespace NvencSdkProbe
         static ID3D11Device _device;
         static ID3D11DeviceContext _context;
         static ID3D11Texture2D _nv12Tex;
+        static bool _useRcParams;
+        static int _bitrateKbps = 8000;
+        static int _gopLength;
         static DestroyEncoderFn _destroyEncoder;
         static UnregisterResourceFn _unregisterResource;
         static DestroyBitstreamBufferFn _destroyBitstream;
@@ -408,11 +419,35 @@ namespace NvencSdkProbe
             {
                 if (args[i] == "-N" && i + 1 < args.Length) int.TryParse(args[++i], out frames);
                 else if (args[i] == "-Out" && i + 1 < args.Length) outPath = args[++i];
+                else if (args[i] == "-R") _useRcParams = true;   // 启用精确 rcParams
+                else if (args[i] == "-B" && i + 1 < args.Length) int.TryParse(args[++i], out _bitrateKbps);
+                else if (args[i] == "-G" && i + 1 < args.Length) int.TryParse(args[++i], out _gopLength);
             }
 
             Log("════ NVENC SDK D3D11 直通探针 ════");
             Log("进程 SessionId=" + System.Diagnostics.Process.GetCurrentProcess().SessionId);
             Log("NVENC SDK header 版本 " + NVENCAPI_MAJOR + "." + NVENCAPI_MINOR);
+            try
+            {
+                Log("offsetof 校验：cfg.version=" + Marshal.OffsetOf<NV_ENC_CONFIG>("version")
+                    + " profileGUID=" + Marshal.OffsetOf<NV_ENC_CONFIG>("profileGUID")
+                    + " gopLength=" + Marshal.OffsetOf<NV_ENC_CONFIG>("gopLength")
+                    + " frameIntervalP=" + Marshal.OffsetOf<NV_ENC_CONFIG>("frameIntervalP")
+                    + " rcParams=" + Marshal.OffsetOf<NV_ENC_CONFIG>("rcParams")
+                    + " encodeCodecConfig=" + Marshal.OffsetOf<NV_ENC_CONFIG>("encodeCodecConfig")
+                    + " reserved=" + Marshal.OffsetOf<NV_ENC_CONFIG>("reserved")
+                    + " reserved2=" + Marshal.OffsetOf<NV_ENC_CONFIG>("reserved2"));
+                Log("offsetof rcParams：version=" + Marshal.OffsetOf<NV_ENC_RC_PARAMS>("version")
+                    + " rateControlMode=" + Marshal.OffsetOf<NV_ENC_RC_PARAMS>("rateControlMode")
+                    + " averageBitRate=" + Marshal.OffsetOf<NV_ENC_RC_PARAMS>("averageBitRate")
+                    + " bitField1=" + Marshal.OffsetOf<NV_ENC_RC_PARAMS>("bitField1"));
+                Log("offsetof init：encodeGUID=" + Marshal.OffsetOf<NV_ENC_INITIALIZE_PARAMS>("encodeGUID")
+                    + " encodeWidth=" + Marshal.OffsetOf<NV_ENC_INITIALIZE_PARAMS>("encodeWidth")
+                    + " encodeConfig=" + Marshal.OffsetOf<NV_ENC_INITIALIZE_PARAMS>("encodeConfig")
+                    + " tuningInfo=" + Marshal.OffsetOf<NV_ENC_INITIALIZE_PARAMS>("tuningInfo"));
+            }
+            catch (Exception ex) { Log("offsetof 失败：" + ex.Message); }
+
             Log("sizeof 校验：RC=" + Marshal.SizeOf<NV_ENC_RC_PARAMS>()
                 + " H264=" + Marshal.SizeOf<NV_ENC_CONFIG_H264>()
                 + " CONFIG=" + Marshal.SizeOf<NV_ENC_CONFIG>()
@@ -503,11 +538,52 @@ namespace NvencSdkProbe
             init.frameRateNum = 30; init.frameRateDen = 1;
             init.enableEncodeAsync = 0;
             init.enablePTD = 1;
-            init.encodeConfig = IntPtr.Zero;
             init.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
-            hr = initEnc(_enc, ref init);
+            if (_useRcParams)
+            {
+                // Sunshine 标准做法：先 GetEncodePresetConfigEx 取合法预设，再改码控/编码字段
+                var getPreset = Marshal.GetDelegateForFunctionPointer<GetPresetConfigExFn>(fl.nvEncGetEncodePresetConfigEx);
+                var pc = new NV_ENC_PRESET_CONFIG();
+                pc.version = StructVersionEx(5);
+                pc.presetCfg.version = StructVersionEx(9);   // NV_ENC_CONFIG_VER（Sunshine :659）
+                pc.presetCfg.encodeCodecConfig = new byte[1792];
+                pc.presetCfg.reserved = new uint[278];
+                pc.presetCfg.reserved2 = new IntPtr[64];
+                pc.presetCfg.rcParams.temporalLayerQP = new byte[8];
+                pc.presetCfg.rcParams.viewBitrateRatios = new byte[8];
+                IntPtr pcPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NV_ENC_PRESET_CONFIG>());
+                int phr;
+                try
+                {
+                    Marshal.StructureToPtr(pc, pcPtr, false);
+                    phr = getPreset(_enc, H264_GUID, P1_GUID, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY, pcPtr);
+                    if (phr == 0) pc = (NV_ENC_PRESET_CONFIG)Marshal.PtrToStructure(pcPtr, typeof(NV_ENC_PRESET_CONFIG));
+                }
+                finally { Marshal.FreeHGlobal(pcPtr); }
+                if (phr != 0) { Log("[FAIL] GetEncodePresetConfigEx hr=0x" + phr.ToString("X8")); return 1; }
+                Log("[OK  ] GetEncodePresetConfigEx 成功，取到合法预设（rcMode=" + pc.presetCfg.rcParams.rateControlMode + " gop=" + pc.presetCfg.gopLength + " intervalP=" + pc.presetCfg.frameIntervalP + "）");
+
+                var cfg = pc.presetCfg;
+                cfg.profileGUID = PROFILE_AUTOSELECT_GUID;
+                cfg.rcParams.averageBitRate = (uint)Math.Max(500, _bitrateKbps) * 1000;
+                cfg.rcParams.maxBitRate = cfg.rcParams.averageBitRate;
+                cfg.rcParams.bitField1 |= RC_ZERO_REORDER_DELAY_BIT;   // zeroReorderDelay=1
+                cfg.rcParams.lowDelayKeyFrameScale = 1;
+                cfg.rcParams.vbvBufferSize = cfg.rcParams.averageBitRate / 30;
+                Log("[DEBUG] step2 +zeroReorderDelay+vbv：vbv=" + cfg.rcParams.vbvBufferSize + " bitField1=0x" + cfg.rcParams.bitField1.ToString("X8"));
+
+                // codec union 由 preset 决定（GetEncodePresetConfigEx 返回的 union 未填充，改任何字段都非法）
+                IntPtr cfgPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NV_ENC_CONFIG>());
+                try { Marshal.StructureToPtr(cfg, cfgPtr, false); init.encodeConfig = cfgPtr; hr = initEnc(_enc, ref init); }
+                finally { Marshal.FreeHGlobal(cfgPtr); }
+            }
+            else
+            {
+                init.encodeConfig = IntPtr.Zero;
+                hr = initEnc(_enc, ref init);
+            }
             if (hr != 0) { Log("[FAIL] NvEncInitializeEncoder hr=0x" + hr.ToString("X8")); return 1; }
-            Log("[OK  ] NvEncInitializeEncoder 成功（P1 + ULL，encodeConfig=NULL）");
+            Log(_useRcParams ? "[OK  ] NvEncInitializeEncoder 成功（rcParams: CBR=" + _bitrateKbps + "kbps, frameIntervalP=1关B帧, GOP=" + (_gopLength > 0 ? _gopLength.ToString() : "无限") + ", zeroReorderDelay）" : "[OK  ] NvEncInitializeEncoder 成功（P1 + ULL，encodeConfig=NULL）");
 
             // 输出 bitstream
             var createBs = Marshal.GetDelegateForFunctionPointer<CreateBitstreamBufferFn>(fl.nvEncCreateBitstreamBuffer);
@@ -608,7 +684,7 @@ namespace NvencSdkProbe
                 if (hr != 0) { Log("[WARN] GetEncodePresetConfigEx hr=0x" + hr.ToString("X8") + "（可选）"); Marshal.FreeHGlobal(pcPtr); return; }
                 var cfg = (NV_ENC_PRESET_CONFIG)Marshal.PtrToStructure(pcPtr, typeof(NV_ENC_PRESET_CONFIG));
                 Log("[OK  ] GetEncodePresetConfigEx(P1,ULL) 成功：rcMode=" + cfg.presetCfg.rcParams.rateControlMode
-                    + " gopLength=" + cfg.presetCfg.gopLength
+                    + " _gopLength=" + cfg.presetCfg.gopLength
                     + " frameIntervalP=" + cfg.presetCfg.frameIntervalP
                     + " zeroReorderDelay=" + ((cfg.presetCfg.rcParams.bitField1 >> 9) & 1));
                 Marshal.FreeHGlobal(pcPtr);

@@ -19,6 +19,7 @@ namespace SoulLink.Services
         int NegotiatedBitrateKbps { get; }
         bool TryInitialize(int width, int height, int fps, int bitrateKbps);
         byte[]? EncodeNv12(byte[] nv12, long timestampUs);
+        void RequestKeyFrame();
     }
 
     /// <summary>
@@ -60,6 +61,7 @@ namespace SoulLink.Services
 
         static readonly Guid H264_GUID = new Guid("6BC82762-4E63-4CA4-AA85-1E50F321F6BF");
         static readonly Guid P1_GUID = new Guid("FC0A8D3E-45F8-4CF8-80C7-298871590EBF");
+        static readonly Guid PROFILE_AUTOSELECT_GUID = new Guid("BFD6F8E7-233C-4341-8B3E-4818523803F4");
 
         const int NV_ENC_DEVICE_TYPE_DIRECTX = 0;
         const int NV_ENC_BUFFER_FORMAT_NV12 = 1;
@@ -67,6 +69,12 @@ namespace SoulLink.Services
         const int NV_ENC_INPUT_IMAGE = 0;
         const int NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY = 3;
         const int NV_ENC_PIC_STRUCT_FRAME = 1;
+        const int NV_ENC_PARAMS_RC_CBR = 2;
+        const int NV_ENC_PARAMS_FRAME_FIELD_MODE_FRAME = 1;
+        const int NV_ENC_MV_PRECISION_DEFAULT = 0;
+        const int NV_ENC_LEVEL_AUTOSELECT = 0;
+        const uint NVENC_INFINITE_GOPLENGTH = 0xffffffff;
+        const uint RC_ZERO_REORDER_DELAY_BIT = 0x200;   // rcParams.bitField1 的 bit9
         const uint NV_ENC_PIC_FLAG_FORCEIDR = 0x2;
         const uint NV_ENC_PIC_FLAG_OUTPUT_SPSPPS = 0x4;
         const uint NV_ENC_SUCCESS = 0;
@@ -172,6 +180,16 @@ namespace SoulLink.Services
             public NV_ENC_RC_PARAMS rcParams;
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1792)] public byte[] encodeCodecConfig;  // union，按 CONFIG_H264 计
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 278)] public uint[] reserved;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)] public IntPtr[] reserved2;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8)]
+        struct NV_ENC_PRESET_CONFIG
+        {
+            public uint version;
+            public uint reserved;
+            public NV_ENC_CONFIG presetCfg;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)] public uint[] reserved1;
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)] public IntPtr[] reserved2;
         }
 
@@ -396,6 +414,7 @@ namespace SoulLink.Services
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int CreateInstanceFn(ref NV_ENCODE_API_FUNCTION_LIST list);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int OpenSessionExFn(ref NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS p, out IntPtr enc);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int InitEncoderFn(IntPtr enc, ref NV_ENC_INITIALIZE_PARAMS p);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetPresetConfigExFn(IntPtr enc, Guid encodeGuid, Guid presetGuid, int tuningInfo, IntPtr presetConfig);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int CreateBitstreamBufferFn(IntPtr enc, ref NV_ENC_CREATE_BITSTREAM_BUFFER p);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int RegisterResourceFn(IntPtr enc, ref NV_ENC_REGISTER_RESOURCE p);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int MapInputResourceFn(IntPtr enc, ref NV_ENC_MAP_INPUT_RESOURCE p);
@@ -419,6 +438,8 @@ namespace SoulLink.Services
         private int _width, _height, _fps;
         private long _frameIndex;
         private bool _firstFrame = true;
+        private bool _forceIdr;          // 下一帧强制 IDR（按需关键帧）
+        private int _gopLength = 0;      // 0 = 无限 GOP + 按需 IDR；>0 = 固定 GOP
         private bool _disposed;
 
         private MapInputResourceFn? _mapRes;
@@ -482,7 +503,44 @@ namespace SoulLink.Services
 
                 // 初始化（同步模式 + 编码器决定帧型 + 低延迟预设；encodeConfig=NULL 走 P1 预设）
                 var initEnc = Marshal.GetDelegateForFunctionPointer<InitEncoderFn>(fl.nvEncInitializeEncoder);
+                // 精确码控：先 GetEncodePresetConfigEx 取合法预设，再覆盖 rcParams（Sunshine 标准做法）
+                // ★ codec union 由 preset 决定，不能单独改（GetEncodePresetConfigEx 返回的 union 未填充，
+                //   改任何字段都 INVALID_PARAM，实测确认）。按需 IDR 靠 EncodeNv12 里的 FORCEIDR|OUTPUT_SPSPPS。
+                var getPreset = Marshal.GetDelegateForFunctionPointer<GetPresetConfigExFn>(fl.nvEncGetEncodePresetConfigEx);
+                var pc = new NV_ENC_PRESET_CONFIG();
+                pc.version = StructVersionEx(5);
+                pc.presetCfg.version = StructVersionEx(9);   // NV_ENC_CONFIG_VER
+                pc.presetCfg.encodeCodecConfig = new byte[1792];
+                pc.presetCfg.reserved = new uint[278];
+                pc.presetCfg.reserved2 = new IntPtr[64];
+                pc.presetCfg.rcParams.temporalLayerQP = new byte[8];
+                pc.presetCfg.rcParams.viewBitrateRatios = new byte[8];
+                IntPtr pcPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NV_ENC_PRESET_CONFIG>());
+                try
+                {
+                    Marshal.StructureToPtr(pc, pcPtr, false);
+                    hr = getPreset(_enc, H264_GUID, P1_GUID, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY, pcPtr);
+                    if (hr == 0) pc = (NV_ENC_PRESET_CONFIG)Marshal.PtrToStructure(pcPtr, typeof(NV_ENC_PRESET_CONFIG));
+                }
+                finally { Marshal.FreeHGlobal(pcPtr); }
+                if (hr != 0) { LastError = "GetEncodePresetConfigEx hr=0x" + hr.ToString("X8"); Cleanup(); return false; }
+
+                var cfg = pc.presetCfg;
+                cfg.profileGUID = PROFILE_AUTOSELECT_GUID;
+                cfg.gopLength = _gopLength > 0 ? (uint)_gopLength : NVENC_INFINITE_GOPLENGTH;  // 无限 GOP + 按需 IDR
+                cfg.frameIntervalP = 1;                        // 关 B 帧
+                cfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
+                cfg.rcParams.averageBitRate = (uint)Math.Max(500, bitrateKbps) * 1000;
+                cfg.rcParams.maxBitRate = cfg.rcParams.averageBitRate;
+                cfg.rcParams.bitField1 |= RC_ZERO_REORDER_DELAY_BIT;   // zeroReorderDelay=1（低延迟无重排）
+                cfg.rcParams.lowDelayKeyFrameScale = 1;
+                cfg.rcParams.multiPass = 0;                   // 单 pass
+                cfg.rcParams.vbvBufferSize = cfg.rcParams.averageBitRate / (uint)Math.Max(1, fps);  // 1 帧 bit 量（Sunshine: bitrate*1000/fps）
+
                 var init = new NV_ENC_INITIALIZE_PARAMS();
+                init.maxMEHintCountsPerBlock = new NVENC_EXTERNAL_ME_HINT_COUNTS_PER_BLOCKTYPE[2];
+                init.reserved1 = new uint[284];
+                init.reserved2 = new IntPtr[64];
                 init.version = StructVersionEx(7);
                 init.encodeGUID = H264_GUID;
                 init.presetGUID = P1_GUID;
@@ -490,11 +548,18 @@ namespace SoulLink.Services
                 init.darWidth = (uint)width; init.darHeight = (uint)height;
                 init.frameRateNum = (uint)Math.Max(1, fps); init.frameRateDen = 1;
                 init.enableEncodeAsync = 0;   // 同步
-                init.enablePTD = 1;           // 编码器决定帧型，用 FORCEIDR 强制首帧 IDR
-                init.encodeConfig = IntPtr.Zero;
+                init.enablePTD = 1;           // 编码器决定帧型，用 FORCEIDR 强制关键帧
                 init.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
-                hr = initEnc(_enc, ref init);
-                if (hr != 0) { LastError = "NvEncInitializeEncoder hr=0x" + hr.ToString("X8"); Cleanup(); return false; }
+
+                IntPtr cfgPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NV_ENC_CONFIG>());
+                try
+                {
+                    Marshal.StructureToPtr(cfg, cfgPtr, false);
+                    init.encodeConfig = cfgPtr;
+                    hr = initEnc(_enc, ref init);
+                }
+                finally { Marshal.FreeHGlobal(cfgPtr); }
+                if (hr != 0) { LastError = "NvEncInitializeEncoder(rcParams) hr=0x" + hr.ToString("X8"); Cleanup(); return false; }
 
                 // 输出 bitstream 缓冲
                 var createBs = Marshal.GetDelegateForFunctionPointer<CreateBitstreamBufferFn>(fl.nvEncCreateBitstreamBuffer);
@@ -579,7 +644,9 @@ namespace SoulLink.Services
                     pic.version = StructVersionEx(7);
                     pic.inputWidth = (uint)_width; pic.inputHeight = (uint)_height;
                     pic.inputPitch = (uint)_width;
-                    pic.encodePicFlags = _firstFrame ? (NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS) : 0u;
+                    // 按需 IDR：首帧 / 显式 RequestKeyFrame / 新观众接入时强制 IDR
+                    bool forceIdr = _firstFrame || _forceIdr;
+                    pic.encodePicFlags = forceIdr ? (NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS) : 0u;
                     pic.frameIdx = (uint)_frameIndex;
                     pic.inputTimeStamp = (ulong)timestampUs;
                     pic.inputDuration = 10_000_000L / (ulong)_fps;
@@ -601,6 +668,7 @@ namespace SoulLink.Services
                     byte[] nal = new byte[lb.bitstreamSizeInBytes];
                     if (nal.Length > 0) Marshal.Copy(lb.bitstreamBufferPtr, nal, 0, nal.Length);
                     _unlockBs!(_enc, _bitstream);
+                    _forceIdr = false;
                     _firstFrame = false;
                     _frameIndex++;
                     return nal.Length > 0 ? nal : null;
@@ -613,6 +681,9 @@ namespace SoulLink.Services
                 throw;
             }
         }
+
+        /// <summary>请求下一帧为关键帧（按需 IDR）。新观众接入/丢帧重同步时调用。</summary>
+        public void RequestKeyFrame() => _forceIdr = true;
 
         private bool CreateNv12Texture(int w, int h)
         {

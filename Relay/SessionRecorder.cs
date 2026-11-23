@@ -249,9 +249,18 @@ namespace SoulLink.Relay
                     }
                     if (ConsumeKeyFrameRequest() && encoder != null)
                     {
-                        encoder.Dispose();
-                        encoder = null;
-                        frameIndex = 0;
+                        if (encoder is NvencSdkEncoder)
+                        {
+                            // NVENC 精确按需 IDR：不重建，下一帧 FORCEIDR
+                            encoder.RequestKeyFrame();
+                        }
+                        else
+                        {
+                            // MF 无精确 IDR：Dispose 重建，首帧必 IDR
+                            encoder.Dispose();
+                            encoder = null;
+                            frameIndex = 0;
+                        }
                     }
                     int ew = width & ~1, eh = height & ~1;
                     if (previousBgra != null && previousBgra.AsSpan().SequenceEqual(bgra))

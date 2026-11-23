@@ -358,6 +358,8 @@ namespace SoulLink.Services
                 if (path == "/api/status") { await WriteJson(ctx, ApiStatus()); return; }
                 if (path == "/api/live") { await WriteLiveFrame(ctx); return; }
                 if (path == "/api/sessions") { await WriteJson(ctx, ApiSessions()); return; }
+                if (path == "/api/bgi/ledger") { await WriteJson(ctx, ApiBgiLedger(ctx)); return; }
+                if (path == "/api/bgi/stats") { await WriteJson(ctx, ApiBgiStats(ctx)); return; }
                 if (path == "/api/settings") { await HandleSettings(ctx); return; }
 
                 // 静态文件：/file/<相对路径>
@@ -539,6 +541,41 @@ namespace SoulLink.Services
         }
 
         // ── 数据 ─────────────────────────────────────────────────────────
+
+        /// <summary>配置组台账只读查询；不扫描日志、不返回任何本地文件路径。</summary>
+        private static object ApiBgiLedger(HttpListenerContext ctx)
+        {
+            string user = (ctx.Request.QueryString["user"] ?? "").Trim();
+            if (user.Length == 0) return new { ok = false, error = "缺少 user" };
+            int days = int.TryParse(ctx.Request.QueryString["days"], out int n) ? Math.Clamp(n, 1, 365) : 7;
+            return new
+            {
+                ok = true, user, days,
+                records = RouteLedger.Query(user, days),
+                groups = RouteLedger.GroupSummary(user, days),
+                zeroReward = RouteLedger.QueryZeroReward(user, days),
+                failed = RouteLedger.QueryFailed(user, days)
+            };
+        }
+
+        /// <summary>今日统计只读快照；复制集合，避免可变缓存被序列化时并发修改。</summary>
+        private static object ApiBgiStats(HttpListenerContext ctx)
+        {
+            string user = (ctx.Request.QueryString["user"] ?? "").Trim();
+            if (user.Length == 0) return new { ok = false, error = "缺少 user" };
+            var today = DailyStatsCache.Get(user);
+            int pickTotal = 0;
+            foreach (int count in today.Picks.Values) pickTotal += count;
+            return new
+            {
+                ok = true, user, day = today.Day,
+                exp = today.DogfoodExp, mora = today.DogfoodMora,
+                pickTotal, picks = new Dictionary<string, int>(today.Picks, StringComparer.OrdinalIgnoreCase),
+                dogfoodRoutes = today.DogfoodRoutes, lastDogfoodRoute = today.LastDogfoodRoute,
+                lastRoute = today.LastDogfoodRoute,
+                groups = today.Groups.ToArray()
+            };
+        }
 
         /// <summary>列出所有录制（账号 → 条目）。</summary>
         private static object ApiList()

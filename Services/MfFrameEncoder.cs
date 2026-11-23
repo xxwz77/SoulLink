@@ -95,6 +95,8 @@ namespace SoulLink.Services
         }
 
         public string Name => _hardware ? "MF-Frame-H264-HW" : "MF-Frame-H264-SW";
+        /// <summary>MF 无 ICodecAPI 无法精确强制 IDR；按需关键帧由 SessionRecorder 的 Dispose 重建策略兜底。</summary>
+        public void RequestKeyFrame() { }
         public int ConfiguredBitrateKbps { get; private set; }
         public int NegotiatedBitrateKbps { get; private set; }
         public string HardwareStatus => _hardware ? "input=" + _hardwareInputAccepted + " noOutput=" + _hardwareNoOutput : "software";
