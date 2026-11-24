@@ -361,6 +361,10 @@ namespace SoulLink.Services
                 if (path == "/api/bgi/ledger") { await WriteJson(ctx, ApiBgiLedger(ctx)); return; }
                 if (path == "/api/bgi/stats") { await WriteJson(ctx, ApiBgiStats(ctx)); return; }
                 if (path == "/api/settings") { await HandleSettings(ctx); return; }
+                // ★ 2026-11-24（T28）：页面版本标识 —— 供前端自动刷新用。
+                //   返回的是「当前实际会喂给浏览器的 HTML」的内容哈希，
+                //   所以文件版与内置常量版都能正确反映变化。
+                if (path == "/api/pagever") { await WriteJson(ctx, new { ok = true, pageVer = PageVersion() }); return; }
 
                 // 静态文件：/file/<相对路径>
                 if (path.StartsWith("/file/", StringComparison.OrdinalIgnoreCase))
@@ -403,6 +407,36 @@ namespace SoulLink.Services
             }
             catch { }
             return WebPages.Index;   // 兜底：内置常量
+        }
+
+        // ── 页面版本标识（2026-11-24，T28）──────────────────────────────────
+        //
+        //  【为什么需要它】
+        //    改前端（web-index.html）后，用户必须自己按 Ctrl+F5 才看得到新页面。
+        //    虽然响应头已经是 no-store/no-cache/must-revalidate（WebServer.cs:1103 等），
+        //    但那只对「之后发起的新请求」生效 —— **已经打开的页面不会自己重新拉取**。
+        //    把「记得按 Ctrl+F5」推给用户是缺陷，不是设计。
+        //
+        //  【为什么用「内容哈希」而不是程序版本号】
+        //    · 页面有两个来源：exe 同目录的 web-index.html（优先）与内置常量（兜底）；
+        //    · 只改 web-index.html 时**程序版本号不变** → 用版本号会漏掉这次更新；
+        //    · 内容哈希只要字节变了就变，两个来源都覆盖，且不依赖发版流程。
+        //    · 取 SHA-256 前 12 位十六进制：足够避免碰撞，又短到能塞进日志。
+        //
+        //  【代价】每次请求 /api/pagever 都要读一遍文件 —— 但轮询是 30 秒一次，
+        //    文件几十 KB，可忽略；且 LoadIndexHtml 本来就「每次都读不缓存」。
+        private static string PageVersion()
+        {
+            try
+            {
+                string html = LoadIndexHtml();
+                byte[] hash = System.Security.Cryptography.SHA256.HashData(
+                    Encoding.UTF8.GetBytes(html ?? string.Empty));
+                var sb = new StringBuilder(12);
+                for (int i = 0; i < 6; i++) sb.Append(hash[i].ToString("x2"));
+                return sb.ToString();
+            }
+            catch { return ""; }
         }
 
         // ── 输出 ─────────────────────────────────────────────────────────

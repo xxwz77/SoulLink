@@ -78,6 +78,8 @@ namespace SoulLink.Relay
         private const int BackendDeadStreakLimit = 5;      // D04：后端连续不健康拍数上限
         private static DateTime _lastCaptureAt, _lastEncodeAt, _lastNalAt;
         private static long _loopSequence, _skippedStaticFrames, _noNalFrames;
+        // ★ T33：上次已告警过的 fps（避免每拍刷屏；仅在 fps 变化时重新检查）
+        private static int _lastSaneWarnAt = -1;
         // ★ P0-D（2026-11-24）：有观众时静止桌面保活——按 500ms（2fps，对齐 Moonlight 500ms ping）
         //   重编码重复帧维持 /stream 帧流，防前端看门狗「长时间无新帧 → 断流重连」。
         private static long _keepaliveNextAt;         // 下次保活编码时刻（Stopwatch ticks；仅 worker 读写）
@@ -605,6 +607,28 @@ namespace SoulLink.Relay
             catch { return false; }
         }
 
+        /// <summary>★ T34：当前**配置**的目标帧率（供 /api/info 与页面区分显示）。</summary>
+        internal static int CurrentFps => _fps;
+
+        /// <summary>
+        /// ★ T34：最近 Ring 内按真实帧时间跨度算出的**实测**帧率。
+        ///   与 CurrentFps 的区别：CurrentFps 是「期望值」，这个是「实际产出了多少」。
+        ///   用户看到的浏览器 `fps: 66.0 (render)` 是**渲染**帧率（可高于接收帧率），
+        ///   两者不是一回事 —— 页面必须分开显示才不误导。
+        /// </summary>
+        internal static double MeasuredFps
+        {
+            get
+            {
+                lock (Gate)
+                {
+                    if (Ring.Count < 2) return 0;
+                    double sec = (Ring[^1].At - Ring[0].At).TotalSeconds;
+                    return sec > 0.001 ? (Ring.Count - 1) / sec : 0;
+                }
+            }
+        }
+
         public static string StatusText()
         {
             lock (Gate)
@@ -770,6 +794,9 @@ namespace SoulLink.Relay
                     //     只消费一次性标志；真实帧仍走 fps 节流（不破坏节拍器累计语义）。
                     bool inputTrigger = _inputActivityPending;
                     _inputActivityPending = false;
+                    // ★ T29：只有 urgent（up/click/releaseall）才允许抓屏走短超时，
+                    //   move 触发的普通 inputTrigger 仍走完整 100ms —— 否则拖动会退化成复用旧帧。
+                    bool urgentInput = ConsumeUrgentInput();
                     bool forceKeyFrame = ConsumeKeyFrameRequest();
                     if (!forceKeyFrame && !inputTrigger && !WaitUntilNextSlot(ref nextAt))
                     {
@@ -780,6 +807,32 @@ namespace SoulLink.Relay
                     //   ★ 核心语义（修复空转 bug）：只有「成功产出 NAL」才 continue；
                     //     TryCaptureBgraTexture 返回 false（静止无帧 / 共享句柄拿不到 / BitBlt 不支持）
                     //     或 Convert/Encode 失败 → 一律 fall through 到下方 CPU 路径，绝不空转死循环。
+                    // ★★ 2026-11-24（T29/T31）：把「本拍是 urgent 补帧」与「当前 fps」告诉抓屏层 ★★
+                    //
+                    //   T29：urgent 补帧不要再为静止桌面白等（原 100ms + 100ms = 200ms）。
+                    //   T31：抓屏超时改为**跟随帧间隔**（fps=60 → 16ms，clamp [8,20]），
+                    //        根治「一次静止抓屏阻塞 100ms = 6 个节拍 → urgent 最坏等 115ms」
+                    //        导致的「时好时坏」。
+                    //   ★ 只影响抓屏超时；静态省 CPU / 保活 250ms / 零拷贝门控 均不变。
+                    if (Capture is DxgiDdaCapture ddaForTrigger)
+                    {
+                        ddaForTrigger.SetTargetFps(fps);
+                        ddaForTrigger.InputTriggeredFrame = urgentInput;
+                        // ★★ T33 安全网：每拍（廉价，几次浮点比较）确认超时 > 帧间隔。
+                        //   若不自洽，AcquireNextFrame 会**每帧必超时 → 只能复用旧帧 →
+                        //   画面延迟逐帧累积**（用户实测 3 帧恶化到 9 帧）。
+                        //   这个 bug 曾因整数除法 `1000/_fps` 静默引入（fps=60 得 16ms
+                        //   而真实间隔 16.67ms），只在日志里表现为「captureMs 恒等于 acqMs」，
+                        //   极难一眼看出。这里改成**一旦不自洽就立刻打日志**。
+                        if (!ddaForTrigger.IsAcquireTimeoutSane() && _lastSaneWarnAt != fps)
+                        {
+                            _lastSaneWarnAt = fps;
+                            RelayAgent.LogQuiet("[video] 警告：抓屏超时 <= 帧间隔（fps=" + fps
+                                + ", acqMs=" + ddaForTrigger.LastAcquireTimeoutMs
+                                + "）→ 会每帧必超时、只能复用旧帧，画面延迟会逐帧累积");
+                        }
+                    }
+
                     if (gpuConverter != null && encoder is NvencSdkEncoder nvencZero)
                     {
                         bool zeroHandled = false;   // 本拍是否已由零拷贝成功产出 NAL
@@ -793,7 +846,15 @@ namespace SoulLink.Relay
                                 //   WGC 靠 FrameSequence 判定静止；不读回 CPU 字节比对）
                                 long curSeq = Capture.FrameSequence;
                                 bool zChanged = previousZeroSeq < 0 || curSeq != previousZeroSeq;
-                                if (forceKeyFrame || zChanged)
+                                // ★★ 2026-11-24（T25）：inputTrigger 必须能强制产出一帧 ★★
+                                //   原来只有 forceKeyFrame || zChanged，而 DDA 的 FrameSequence
+                                //   **在只有光标移动时不递增**（光标属合成层，不是桌面内容）。
+                                //   → 拖动时流畅是因为**图标真的在移动**；
+                                //   → 松手那一下图标已就位、桌面静止 → zChanged=false → **一帧都不出**，
+                                //     前端只能等保温节拍（250ms），用户看到的就是「没松开」。
+                                //   inputTrigger 是一次性标志（:771-772 已消费），
+                                //   所以这里放行**不会**让静止画面持续编码。
+                                if (forceKeyFrame || zChanged || inputTrigger)
                                 {
                                     // 按需 IDR：NVENC 精确按需（不重建，下一帧 FORCEIDR）
                                     if (forceKeyFrame) nvencZero.RequestKeyFrame();
@@ -910,6 +971,8 @@ namespace SoulLink.Relay
 
                     var frameStart = Stopwatch.StartNew();
                     var bgra = CaptureBgraWithProbe(out int width, out int height);
+                    // ★ T29：抓完立刻复位，避免影响后续拍（下一拍若不是输入触发就该等满超时）
+                    if (Capture is DxgiDdaCapture ddaReset) ddaReset.InputTriggeredFrame = false;
                     _loopSequence++; _lastCaptureAt = DateTime.UtcNow;
                     long captureMs = frameStart.ElapsedMilliseconds;
                     if (bgra == null || width <= 0 || height <= 0)
@@ -918,6 +981,12 @@ namespace SoulLink.Relay
                         // ★ P0-A：探测窗口/静止桌面期间抓屏为 null 时，按需 IDR 不能被吞掉——
                         //   重新置位 _forceKeyFrame，下一拍继续尝试强制出帧（新观众首帧不挂死）。
                         if (forceKeyFrame) lock (Gate) { _forceKeyFrame = true; }
+                        // ★★ 2026-11-24（T25 第③条）：inputTrigger 同样不能被吞掉 ★★
+                        //   抓屏这一拍没返回图（DDA WAIT_TIMEOUT / 探测窗口期），
+                        //   若就此 continue，这次输入活动就白丢了 —— 用户点一下、松一下，
+                        //   恰好撞上抓屏空转那一拍，画面就永远不刷新。
+                        //   与上面 forceKeyFrame 同法：**重新置位**，下一拍继续强制出帧。
+                        if (inputTrigger) _inputActivityPending = true;
                         IdleWait();
                         continue;
                     }
@@ -962,7 +1031,13 @@ namespace SoulLink.Relay
                     bool keepaliveDue = hasViewers && encoder != null
                         && Stopwatch.GetTimestamp() >= _keepaliveNextAt;
                     bool keepaliveFrame = !forceKeyFrame && !desktopChanged && keepaliveDue;
-                    if (!forceKeyFrame && !desktopChanged && !keepaliveDue)
+                    // ★★ 2026-11-24（T25）：inputTrigger 放行 ★★
+                    //   这是「松手不出帧」的**第二道闸门**，也是最隐蔽的一道：
+                    //   inputTrigger 在 :774 已经让它「进循环」，但这里又按 desktopChanged 判了一次，
+                    //   松手瞬间桌面静止 → 直接 continue → **inputTrigger 被白白消费掉**。
+                    //   → 表现：点了没反应、松手不落位、要等 250ms 保温帧。
+                    //   inputTrigger 是一次性标志，放行一次即止，**不会**破坏静止省 CPU 语义。
+                    if (!forceKeyFrame && !desktopChanged && !keepaliveDue && !inputTrigger)
                     {
                         _skippedStaticFrames++;
                         IdleWait();
@@ -1035,6 +1110,7 @@ namespace SoulLink.Relay
                             if (_totalFrames % 30 == 0)
                                 RelayAgent.LogQuiet("[video] 共享管线 total=" + _totalFrames + " viewers=" + Viewers.Count
                                     + " captureMs=" + captureMs + " convertMs=" + convertMs + " encodeMs=" + encodeMs
+                    + ((Capture is DxgiDdaCapture lc) ? (" acqMs=" + lc.LastAcquireTimeoutMs) : "")
                                     + " loop=" + _loopSequence + " lastCapture=" + _lastCaptureAt.ToString("HH:mm:ss.fff")
                                     + " lastEncode=" + _lastEncodeAt.ToString("HH:mm:ss.fff") + " lastNal=" + _lastNalAt.ToString("HH:mm:ss.fff")
                                     + " staticSkipped=" + _skippedStaticFrames + " keepalive=" + _keepaliveFrames
@@ -1145,11 +1221,51 @@ namespace SoulLink.Relay
             lock (Gate) RecomputeLifecycle();
         }
 
+        // ── 按需 IDR 的进程内节流（2026-11-24，T26 第④处修复）──────────────
+        //
+        //  【为什么必须有】
+        //    RequestKeyFrame() 原本只置位 _forceKeyFrame，**没有任何节流**。
+        //    HTTP 的 POST /api/idr 有 300ms 限流（AgentWebServer.cs:73 IdrMinIntervalMs），
+        //    但**输入路径直接调用会绕过那道 HTTP 限流**。
+        //    拖动结束/连点时 urgent 动作可能 10Hz 以上，若每次都强制 IDR：
+        //      · IDR 体积是 P 帧的数倍 → 带宽暴涨；
+        //      · NVENC 每帧重建 GOP → 编码耗时飙升 → 反而更卡
+        //      · Moonlight 的教训（代码里原话）：「狂请求会拥塞崩溃」。
+        //
+        //  【阈值为什么取 200ms】
+        //    · 必须 > 客户端 requestIdr 限流(500ms)? 不必 —— 那是**客户端**发的，与本进程内路径互不相干；
+        //    · 必须 > 服务端 HTTP 限流(300ms)? 也不必 —— 两条路径独立计数，取小一点更稳；
+        //    · 取 200ms 的理由：urgent 动作（松手/点击）的真实发生频率是人手级别（≤5Hz，即 ≥200ms 间隔），
+        //      200ms 恰好覆盖「人手正常操作」而不丢，同时把机械重复（脚本连点、拖拽尾部的抖动）压掉；
+        //    · 与保活 250ms 同量级，不会引入比现有节拍更密的 IDR。
+        //    → 稳态下最多 5 次 IDR/秒，且只在真有 urgent 输入时；静止时一次都不发。
+        private const long KeyFrameMinIntervalMs = 200;
+        private static long _lastKeyFrameReqMs;
+
         /// <summary>
         /// ★ P1 加固：供首帧等待方（AgentWebServer.WriteStreamAsync）主动再触发一次按需 IDR。
         /// 置位 _forceKeyFrame 并唤醒 worker，让 worker 即使画面静止也强制编码下一帧（双保险）。
+        ///
+        /// ★ 2026-11-24（T26）：加**进程内 200ms 节流**（见上方 KeyFrameMinIntervalMs 的说明）。
+        ///   需要无条件置位的老调用方（HTTP /api/idr 已自带 300ms 限流）请用 RequestKeyFrameUnthrottled。
         /// </summary>
-        public static void RequestKeyFrame()
+        /// <returns>true = 本次确实置位了；false = 被节流跳过。</returns>
+        public static bool RequestKeyFrame()
+        {
+            long now = Environment.TickCount64;
+            long last = Interlocked.Read(ref _lastKeyFrameReqMs);
+            if (now - last < KeyFrameMinIntervalMs) return false;
+            Interlocked.Exchange(ref _lastKeyFrameReqMs, now);
+            lock (Gate) { _forceKeyFrame = true; }
+            LifecycleChanged.Set();
+            return true;
+        }
+
+        /// <summary>
+        /// 无条件请求关键帧（不做进程内节流）。
+        /// 仅供**已经有自己限流**的调用方使用：目前是 HTTP POST /api/idr（300ms 限流）。
+        /// </summary>
+        internal static void RequestKeyFrameUnthrottled()
         {
             lock (Gate) { _forceKeyFrame = true; }
             LifecycleChanged.Set();
@@ -1172,14 +1288,48 @@ namespace SoulLink.Relay
         private static volatile bool _inputActivityPending;   // worker 侧消费的一次性标志
 
         /// <summary>输入通道成功注入后调用：立即安排一次抓帧编码（限流 50ms，绕过 fps 节拍）。</summary>
-        public static void NotifyInputActivity()
+        /// <param name="urgent">
+        /// true = 跳过 50ms 限流，无条件触发一次抓帧。
+        ///
+        /// ★ 2026-11-24（t24 P0-3）：**松手 up / click / releaseall 必须传 true**。
+        ///   拖动时 pointermove 每 8ms 一条、每条都刷新限流时间戳，
+        ///   松手那一帧极可能落进 50ms 窗口被丢掉 —— 远端松开了但**画面不刷新**，
+        ///   用户看到的就是「判定我没松开、要等很久才落位」。
+        ///   这类动作是用户唯一能直接感知的操作终点，多编一帧的代价远小于「看起来卡住」。
+        /// </param>
+        /// <summary>
+        /// ★ 2026-11-24（T29）：本拍是否由 **urgent** 动作（up/click/releaseall）触发。
+        ///
+        ///   【为什么必须与 inputTrigger 分开】**
+        ///     move 也会调 NotifyInputActivity（50ms 限流 ≈ 20Hz），所以拖动期间
+        ///     「每一拍都是 inputTrigger」。如果抓屏层按 inputTrigger 走短超时/跳过零拷贝，
+        ///     **拖动会退化成「复用旧帧」** —— 正好破坏「拖动必须流畅」这条唯一做对的地方。
+        ///
+        ///   【urgent 才是「桌面即将静止」的信号】
+        ///     松手/点击是操作终点，之后桌面大概率静下来 → 值得用短超时立刻收一帧；
+        ///     而 move 期间桌面一直在变，100ms 内必拿到新帧，**根本不需要特殊处理**。
+        /// </summary>
+        private static volatile bool _urgentInputPending;
+
+        /// <summary>worker 侧消费：本拍是否来自 urgent 动作（消费后立即清）。</summary>
+        private static bool ConsumeUrgentInput()
+        {
+            if (!_urgentInputPending) return false;
+            _urgentInputPending = false;
+            return true;
+        }
+
+        public static void NotifyInputActivity(bool urgent = false)
         {
             if (!_inputTriggerArmed) return;
             long now = Environment.TickCount64;
             // 无锁快路径读 + Interlocked 竞态无害（多线程同时通过限流只多触发一拍，worker 有 fps 节流兜底）
-            if (now - Interlocked.Read(ref _lastInputTriggerMs) < 50) return;
+            // urgent：跳过限流（仍刷新时间戳，避免紧接着的 move 再触发一次）
+            if (!urgent && now - Interlocked.Read(ref _lastInputTriggerMs) < 50) return;
             Interlocked.Exchange(ref _lastInputTriggerMs, now);
             Interlocked.Increment(ref _inputTriggerCount);
+            // ★ urgent 单独记一个标志：只有它才允许抓屏层走「短超时/跳过零拷贝」
+            if (urgent) _urgentInputPending = true;
             _inputActivityPending = true;
             LifecycleChanged.Set();   // 唤醒 worker（可能在 WaitUntilNextSlot/IdleWait 里）
         }

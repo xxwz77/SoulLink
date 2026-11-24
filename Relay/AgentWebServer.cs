@@ -280,7 +280,18 @@ namespace SoulLink.Relay
                     captureWidth = geo ? geoW : 0,
                     captureHeight = geo ? geoH : 0,
                     captureOriginX = geo ? geoX : 0,
-                    captureOriginY = geo ? geoY : 0
+                    captureOriginY = geo ? geoY : 0,
+            // ★★ 2026-11-24（T34）：暴露**实测**推送帧率，与配置帧率区分 ★★
+            //   用户看到浏览器里 `fps: 66.0 (render)` 会以为「推送 66fps」，
+            //   但那是**浏览器渲染帧率**（requestAnimationFrame/合成器），
+            //   与「服务端实际推了多少帧」是两件事：
+            //     · 渲染 fps 可以高于接收 fps（浏览器重复绘制同一帧）；
+            //     · 接收 fps 才反映服务端真实产出能力。
+            //   这里给出服务端侧的两个真实数字，供页面区分显示：
+            //     configuredFps = 用户配置的目标帧率（StreamFps/RecordFps 里当前生效的那个）
+            //     actualFps     = 最近 Ring 内真实帧的时间跨度算出的**实测**帧率
+            configuredFps = SessionRecorder.CurrentFps,
+            actualFps = SessionRecorder.MeasuredFps
                 }).ConfigureAwait(false);
                 return;
             }
@@ -455,7 +466,9 @@ namespace SoulLink.Relay
                             //   即使画面静止也强制编码下一帧，不依赖画面变化。
                             if (wait.ElapsedMilliseconds - lastNudge >= 500)
                             {
-                                SessionRecorder.RequestKeyFrame();
+                                // ★ 2026-11-24（T26）：本循环已有 500ms 闸门，用不节流版本，
+                                //   否则会被 RequestKeyFrame 的 200ms 节流挡掉而「看起来发了其实没发」。
+                                SessionRecorder.RequestKeyFrameUnthrottled();
                                 lastNudge = wait.ElapsedMilliseconds;
                             }
                             await Task.Delay(20).ConfigureAwait(false);
@@ -543,7 +556,10 @@ namespace SoulLink.Relay
                     return;
                 }
                 Interlocked.Exchange(ref _lastIdrAtMs, now);
-                SessionRecorder.RequestKeyFrame();
+                // ★ 2026-11-24（T26）：本端点已自带 300ms 限流（IdrMinIntervalMs），
+                //   走**不节流**版本，避免与 RequestKeyFrame 内部的 200ms 节流叠加后
+                //   出现「HTTP 返回 ok=true，实际却没置位」的谎言。
+                SessionRecorder.RequestKeyFrameUnthrottled();
                 await WriteJson(ctx, new { ok = true }).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -658,7 +674,41 @@ namespace SoulLink.Relay
             var resp = RelayAgent.ExecuteWeb(req);
             // ★ P0 输入触发（2026-11-24）：注入成功 → 立即安排抓帧（方案 B）。
             //   光标/界面变化是用户预期马上看到的；节流与开关在 NotifyInputActivity 内部。
-            if (resp.Ok) SessionRecorder.NotifyInputActivity();
+            //
+            //   ★★ 2026-11-24（t24 P0-3）：up / click 必须**无视 50ms 限流** ★★
+            //     原实现所有动作一视同仁，而 NotifyInputActivity 内部有
+            //     「50ms 内重复调用直接丢弃」（SessionRecorder.cs:1179）。
+            //     拖动时 pointermove 每 8ms 一条、每条都刷新 _lastInputTriggerMs，
+            //     于是**松手那一帧的触发极可能落进 50ms 窗口被丢弃** ——
+            //     远端其实已经松开了，但**画面没有刷新**，
+            //     用户看到的正是「判定我没松开、要等很久才落位」。
+            //
+            //     up / releaseall / click 是用户唯一能直接感知的操作终点，
+            //     它们必须无条件刷新一次画面（代价只是多编一帧）。
+            bool urgent = cmd == "up" || cmd == "releaseall" || cmd == "click";
+            if (resp.Ok)
+            {
+                SessionRecorder.NotifyInputActivity(urgent);
+                // ★★ 2026-11-24（T26 第④处）：urgent 动作必须**同时升级为关键帧** ★★
+                //
+                //   【为什么只抓帧不够】
+                //     NotifyInputActivity 只是置 _inputActivityPending → worker 抓一帧，
+                //     但编出来的是**普通 P 帧（delta）**。
+                //     而客户端在 firstKey === false 状态（web-index.html:1536）时
+                //     **只接受 key/SPS/PPS，丢弃所有 delta**。
+                //   ⇒ 服务端「抓了帧、也发了」，客户端「收到、但整帧丢弃」，
+                //     用户看到的仍然是「松手没反应」。
+                //     这正是用户说的「输出操作会触发关键帧，但没有松开这个触发」。
+                //
+                //   【为什么是 urgent 而不是全部】
+                //     up/releaseall/click 发生在「画面即将静止」的时刻（松手后桌面不再变化），
+                //     也是客户端最可能处在等 IDR 窗口里的时刻；
+                //     而 move 是连续高频的，给它升 IDR 只会打出 IDR 风暴。
+                //
+                //   【节流】RequestKeyFrame 内部已有 200ms 进程内节流（防止连点/拖拽尾部风暴），
+                //     这里直接调用即可；返回 false 表示被节流，属预期，不影响抓帧。
+                if (urgent) SessionRecorder.RequestKeyFrame();
+            }
             // ★ 2026-11-24 光标回传（一步到位修复「网页没有光标」）：
             //   前端 #scr 设了 cursor:none（防本机影子与帧内光标双影），
             //   因此必须由服务端把**宿主真实光标位置**回传，前端画 rcCursor。

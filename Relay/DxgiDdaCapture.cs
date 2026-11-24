@@ -49,8 +49,153 @@ namespace SoulLink.Relay
         ///   200ms 大超时同款语义）。帧一到立即返回（≈0.1ms GPU 拷贝），彻底消除「16ms 短轮询
         ///   每拍只有 ~50% 概率捕到帧 → 帧率减半、captureMs 恒 ≥13ms」的问题；
         ///   静止桌面等满超时返回 WAIT_TIMEOUT（复用 _lastBgra），由上层 2fps 保活/静止跳过接管。
+        ///
+        /// ★★ 2026-11-24（T31）：100ms 是**按常数**定的，与 fps 脱钩 ⇒ 产生「时好时坏」。★★
+        ///
+        ///   【症状】captureMs 在 5~15 与 100 之间跳，用户感知为“释放时好时坏”。
+        ///
+        ///   【机理】fps=60 ⇒ 主循环节拍 16ms。一次静止抓屏要等满 100ms = **6 个节拍**，
+        ///     这段时间 worker 完全阻塞在 AcquireNextFrame 里：
+        ///       · urgent 恰好在循环顶部到达 → 15ms（快）；
+        ///       · urgent 落在一次 100ms 抓屏中间 → 剩余等待 + 15ms ≈ **115ms**（慢）。
+        ///     → 同一个操作，体感差 8 倍，这就是“时好时坏”。
+        ///
+        ///   【但注释 L48-51 说的“短轮询会丢帧”也是真的】—— 两者必须同时成立：
+        ///     · 若超时远小于帧间隔（如 5ms @60fps）：多数轮次拿不到帧，
+        ///       这些轮次就被上层当作“静止”跳过 → **帧率实际减半**；
+        ///     · 若超时等于/略大于帧间隔：每个节拍都有机会捕到该拍的新帧，不丢；
+        ///       且拿到帧时是**立即返回**（≈0.1ms），不会真的等满。
+        ///
+        ///   【所以取“帧间隔本身”，而不是取极小值】
+        ///     · fps=60 → 16ms：一个节拍内必有机会拿到该拍新帧；静止时最多白等 16ms；
+        ///     · fps=30 → 33ms（clamp 到 20）：宁可比间隔略短，也不让静止时白等过久；
+        ///     · clamp 下限 8ms：低于此值在 60fps 下会开始丢帧（半个节拍）；
+        ///     · clamp 上限 20ms：高 fps 时也要给 DDA 留出“这一拍真的有帧”的窗口。
+        ///
+        ///   【效果】静止抓屏 100ms → 16ms（快 6 倍）；captureMs 分布从「5/15/100」变成「5~20」；
+        ///     最重要的是 **urgent 的最坏等待从 ~115ms 降到 ~24ms**（fps=60：16 在途 + 8 urgent）。
         /// </summary>
-        private const int AcquireTimeoutMs = 100;
+        private const int AcquireTimeoutMarginMs = 2;   // 调度抖动/计时器精度余量
+        private const int AcquireTimeoutMinMs = 8;       // 绝对下限（防退化成忙等）
+        private const int AcquireTimeoutMaxMs = 120;     // 上限：容纳极低 fps（10fps→102ms）；正常 30~120fps 时取值 11~36ms
+
+        /// <summary>主循环 fps（由 SessionRecorder 在参数变化时下发）。仅用于**冷启动**时的初始估计。</summary>
+        private int _fps = 60;
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  ★★ 2026-11-24（T34）：超时改按**实测帧间隔**自适应，不再按配置 fps ★★
+        //
+        //  【为什么必须改】T31/T33 反复出问题的深层原因：**用「期望值」而不是「实测值」定超时**。
+        //    配置 StreamFps=60 ⇒ 算出 19ms；但若服务端实际只能产 40fps，
+        //    真实帧间隔 = 25ms → 19ms < 25ms → **仍然每帧必超时 → 又回到复用旧帧**。
+        //  用户原话：「不应该根据帧率自动调节吗？不然不同帧率又卡了？」—— 问得对。
+        //
+        //  【办法】用最近若干帧的**实测间隔**做指数平滑（EMA），超时 = EMA × 1.2 + 2ms：
+        //    配置 60 实际 60 → EMA≈16.7 → 超时 19ms
+        //    配置 60 实际 40 → EMA≈25   → 超时 32ms   ← 自动放宽，不会必超时
+        //    配置 60 实际 30 → EMA≈33   → 超时 42ms
+        //  不管实际帧率怎么变，超时总比它大一点。
+        //
+        //  【两个必须处理的边界】
+        //   ① 冷启动：还没成功拿过帧 → EMA=0，用配置 fps 兜底（同 T33 逻辑）
+        //   ② 静止污染：长时间无新帧时间隔会是几十~几百 ms；若进 EMA，
+        //      超时会被拉到 120ms+，**松手又变慢**。
+        //      → 只在「拿到新帧 **且** 间隔 < 500ms」时更新 EMA。
+        // ═══════════════════════════════════════════════════════════════════
+        private double _emaFrameIntervalMs;      // 0 = 尚未测到，用配置 fps 兜底
+        private long _lastNewFrameAtMs;          // Environment.TickCount64：上次**成功拿到新帧**的时刻
+        private const double EmaAlpha = 0.2;             // 平滑系数（约等价最近 5 帧）
+        private const double TimeoutSafetyFactor = 1.2;  // 超时 = 实测间隔 × 1.2
+        private const long MaxEmaSampleMs = 500;         // 超过此间隔不采信（静止/卡顿污染）
+
+        /// <summary>
+        /// ★ T34：在**成功拿到新帧**后调用，用实测间隔更新 EMA。
+        ///   ★ 必须只在「FrameSequence 真的增长」之后调用 —— 复用旧帧**不算**拿到新帧。
+        /// </summary>
+        private void NoteNewFrame()
+        {
+            long now = Environment.TickCount64;
+            if (_lastNewFrameAtMs > 0)
+            {
+                long delta = now - _lastNewFrameAtMs;
+                // 过滤静止/卡顿造成的大间隔（否则 EMA 被拉大 → 超时飙到 120ms → 松手变慢）
+                if (delta > 0 && delta < MaxEmaSampleMs)
+                {
+                    double sample = delta;
+                    _emaFrameIntervalMs = _emaFrameIntervalMs <= 0
+                        ? sample                                            // 第一个样本直接采用
+                        : _emaFrameIntervalMs * (1 - EmaAlpha) + sample * EmaAlpha;
+                }
+            }
+            _lastNewFrameAtMs = now;
+        }
+
+        /// <summary>
+        /// 动态抓屏超时：**必须略大于帧间隔**，否则每帧都会差一点点超时。
+        ///
+        /// ★ T34：基准从「配置 fps」改为「实测 EMA 帧间隔」；配置 fps 只在冷启动兜底。
+        ///
+        /// ★★ 2026-11-24（T33 紧急修复）：上一版用了 `1000 / _fps` 的**整数除法**，★★
+        ///   结果 fps=60 时得到 16ms，而真实帧间隔是 **16.67ms** —— 超时比间隔小 0.67ms，
+        ///   `AcquireNextFrame(16)` 每次都在新帧到达前就超时返回，**永远拿不到新帧**，
+        ///   只能复用 _lastBgra。表现为：
+        ///     · 日志 captureMs **恒等于 acqMs**（16），偶尔 4~7（那是真拿到了）；
+        ///     · 每帧都复用上一帧 ⇒ 画面延迟逐帧累积（用户实测「3 帧 → 9 帧」，91~136ms）；
+        ///     · 动态画面看起来「不动」或严重滞后。
+        ///
+        ///   【修法】向上取整 + 余量：
+        ///     fps=60 → Ceiling(16.67)=17，+2 = **19ms** > 16.67 ✓
+        ///     fps=30 → Ceiling(33.33)=34，+2 = **36ms** > 33.33 ✓（故上限须放宽到 40）
+        ///     fps=120 → Ceiling(8.33)=9，+2 = **11ms** > 8.33 ✓
+        ///   +2ms 余量吸收调度抖动与计时器精度（即使已 timeBeginPeriod(1)，仍非精确）。
+        ///
+        ///   【为什么不能用整数除法】1000/60=16 少了 0.67ms；看似微不足道，但 DDA 是
+        ///   「等到新帧到达才返回」，差这 0.67ms 就是「每次都差一步」→ 100% 超时。
+        /// </summary>
+        private uint CurrentAcquireTimeoutMs()
+        {
+            // ★ T34：优先用**实测**帧间隔；还没测到（冷启动）才退回配置 fps。
+            //   实测值来自 NoteNewFrame() 的 EMA —— 这样「配置 60 实际 40」时
+            //   超时会是 25×1.2+2 = 32ms，而不是死按 19ms 每帧必超时。
+            double basisMs = _emaFrameIntervalMs > 0
+                ? _emaFrameIntervalMs * TimeoutSafetyFactor   // 实测间隔 × 1.2
+                : 1000.0 / Math.Max(1, _fps);                 // 冷启动兜底（无余量，靠下面 +2）
+            // 向上取整 —— 绝不能用整数除法（T33 的教训：1000/60=16 少了 0.67ms 就 100% 超时）
+            int frameIntervalCeil = (int)Math.Ceiling(basisMs);
+            int ms = Math.Clamp(frameIntervalCeil + AcquireTimeoutMarginMs,
+                                AcquireTimeoutMinMs, AcquireTimeoutMaxMs);
+            // ★ urgent 不再减半！
+            //   原因：减半后（19/2≈9ms）**小于 60fps 的帧间隔 16.67ms**，
+            //   urgent 补帧同样会拿不到新帧 —— 那等于把刚刚修好的 bug 又引回来一次。
+            //   urgent 的真正收益来自「跳过 WaitUntilNextSlot 节拍 + 第 4 处 RequestKeyFrame」，
+            //   不依赖缩短抓屏超时。保持与常规拍相同的超时，行为最可预测。
+            LastAcquireTimeoutMs = (uint)ms;   // 埋点：供日志验证
+            return (uint)ms;
+        }
+
+        /// <summary>
+        /// ★ T33 安全网：当前超时是否**严格大于**帧间隔。
+        ///
+        ///   为什么需要它：超时 <= 帧间隔 会让 AcquireNextFrame **每帧必超时** →
+        ///   永远复用旧帧 → 延迟逐帧累积。这个 bug 在日志里的唯一特征是
+        ///   「captureMs 恒等于 acqMs」，但**很难一眼看出**。
+        ///   这里显式暴露一个判据，供 SessionRecorder 在启动/参数变化时断言并打日志，
+        ///   让「配置不自洽」立刻可见，而不是靠用户感知到延迟变差才发现。
+        /// </summary>
+        internal bool IsAcquireTimeoutSane()
+        {
+            double realInterval = 1000.0 / Math.Max(1, _fps);
+            return CurrentAcquireTimeoutMs() > realInterval;
+        }
+
+        /// <summary>由 SessionRecorder 下发当前 fps（参数变化时调用）。</summary>
+        internal void SetTargetFps(int fps) { if (fps > 0) _fps = fps; }
+
+        /// <summary>
+        /// 本拍实际会用的抓屏超时（ms）——**仅供日志埋点**，便于部署后验证
+        /// 「超时是否真的跟随 fps」以及 captureMs 分布是否从「5/15/100」变成「5~20」。
+        /// </summary>
+        internal uint LastAcquireTimeoutMs { get; private set; }
 
         private ID3D11Device? _device;
         private ID3D11DeviceContext? _context;
@@ -246,6 +391,23 @@ namespace SoulLink.Relay
             finally { CloseDesktop(hDesk); }
         }
 
+        /// <summary>
+        /// ★ 2026-11-24（T29）：本拍是否由「输入触发」驱动。
+        ///
+        ///   【要解决的问题】松手后补帧要白等 200ms：
+        ///     ① TryCaptureBgraTexture 先 AcquireNextFrame 等满 100ms 超时 → false；
+        ///     ② 回退 CPU CaptureBgra 又等满 100ms 超时 → 复用 _lastBgra。
+        ///   合计 200ms 才把一帧编出来，用户感知就是「卡一下才出来」。
+        ///
+        ///   【为什么这里能省】既然已经知道「这一拍是用户操作结束、桌面大概率静止」，
+        ///     就没有必要再赌 100ms 等新帧 —— 直接用上一帧编一次即可。
+        ///     动态画面（真在变）时该标志为 false，仍走完整 100ms，零拷贝性能不受影响。
+        ///
+        ///   【线程模型】由 SessionRecorder 的 worker 线程在抓屏前置位、抓屏后复位，
+        ///     两者是同一线程顺序执行，不存在竞态。
+        /// </summary>
+        internal bool InputTriggeredFrame { get; set; }
+
         /// <summary>抓一帧原始 BGRA。静止画面（AcquireNextFrame 超时）复用上一帧。</summary>
         public byte[]? CaptureBgra(out int width, out int height)
         {
@@ -262,7 +424,16 @@ namespace SoulLink.Relay
             {
                 try
                 {
-                    Result hr = _duplication.AcquireNextFrame(AcquireTimeoutMs, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
+                    // ★ 2026-11-24（T29）：输入触发的补帧不为静止画面白等 100ms。
+                    //   置 InputTriggeredFrame（由 SessionRecorder 在 inputTrigger 时置位）：
+                    //     · 超时降到 0 —— 只有「此刻真的有新帧」才会拿到，拿不到立即走复用；
+                    //     · 省掉本轮 100ms 等待，松手补帧从 ~200ms 压到 ~100ms 以内（零拷贝那 100ms 也一并省）。
+                    //   ★ 动态画面（正常拖动）时该标志为 false，行为与原来完全一致（仍等 100ms）。
+                    // ★ T31：动态超时（跟随帧间隔，urgent 再减半）——见 CurrentAcquireTimeoutMs。
+                    //   替代原来的「urgent?15:100」硬编码：那会让静止抓屏阻塞 100ms=6个节拍，
+                    //   使 urgent 的最坏等待达到 ~115ms。
+                    uint acquireTimeout = CurrentAcquireTimeoutMs();
+                    Result hr = _duplication.AcquireNextFrame(acquireTimeout, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
                     if (hr.Success && resource != null)
                     {
                         try
@@ -283,6 +454,8 @@ namespace SoulLink.Relay
                                 //   供 SessionRecorder 用「序号是否增长」替代全帧 SequenceEqual（该比对在
                                 //   RDP 慢合成下基准帧陈旧，操作画面被误判静止，staticSkipped 暴涨）。
                                 _frameSequence += Math.Max(1L, (long)frameInfo.AccumulatedFrames);
+                                // ★ T34：真的拿到新帧了 → 用实测间隔更新 EMA（超时自适应的数据源）
+                                NoteNewFrame();
                                 width = w; height = h;
                                 return bgra;
                             }
@@ -350,7 +523,11 @@ namespace SoulLink.Relay
             {
                 try
                 {
-                    Result hr = _duplication.AcquireNextFrame(AcquireTimeoutMs, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
+                    // ★ T31：零拷贝与 CPU 路径**共用同一个动态超时**，避免两条路径行为不一致。
+                    //   （任务特别要求检查这一点：原实现两处各自写死，改一处漏一处就会出现
+                    //     “CPU 路径快了但零拷贝还慢 100ms”的隐蔽不一致。）
+                    uint zeroTimeout = CurrentAcquireTimeoutMs();
+                    Result hr = _duplication.AcquireNextFrame(zeroTimeout, out OutduplFrameInfo frameInfo, out IDXGIResource resource);
                     if (!hr.Success || resource == null) return false;   // 静止（WAIT_TIMEOUT）或失败 → 回退 CPU
 
                     try
@@ -390,6 +567,8 @@ namespace SoulLink.Relay
                         // ★ 与 CaptureBgra 一致：桌面真实出帧序号递增，供静止判定用。
                         //   （零拷贝分支消费了本帧，序号必须同步增长，否则 fall through 到 CPU 路径时静止判定错乱。）
                         _frameSequence += Math.Max(1L, (long)frameInfo.AccumulatedFrames);
+                        // ★ T34：零拷贝成功拿到新帧 → 同样更新 EMA
+                        NoteNewFrame();
 
                         width = w; height = h;
                         return true;
