@@ -66,6 +66,8 @@ namespace SoulLink.Services
             if (path == "/stream") return true;
             if (path == "/api/input") return true;
             if (path == "/api/info") return true;
+            if (path == "/api/idr") return true;     // 按需关键帧（客户端解码失败时请求 IDR 而非断流重连）
+            if (path == "/ws/input") return true;    // 输入 WebSocket 持久通道（键鼠低延迟，HTTP 降级保留）
             // 注意：**没有** /file/。历史录像是磁盘文件，主程序直接读，
             //       代理不该服务它（详见 Relay/AgentWebServer.cs 的类注释）。
             return false;

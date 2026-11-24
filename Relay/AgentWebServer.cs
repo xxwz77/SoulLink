@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net;
+using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -59,6 +60,17 @@ namespace SoulLink.Relay
 
         /// <summary>本代理的会话号（/api/info 用）。</summary>
         private static int _sessionId;
+
+        /// <summary>
+        /// ★ P0 传输层（2026-11-24）：/stream 流协议版本。
+        ///   2 = /stream?v=2 使用「4 字节大端长度前缀 + 帧数据」帧边界语义；
+        ///   旧客户端不传 v（或 v=1）继续走裸 Annex-B 字节流（兼容 Android / 旧网页）。
+        /// </summary>
+        private const int StreamProtocolVersion = 2;
+
+        /// <summary>按需 IDR 限流：上次成功请求关键帧的时刻（Environment.TickCount64 毫秒）。</summary>
+        private static long _lastIdrAtMs;
+        private const long IdrMinIntervalMs = 300;   // 两次 IDR 请求最小间隔（Moonlight 教训：狂请求会拥塞崩溃）
 
         /// <summary>
         /// 启动。端口被占用时**不自动顺延** —— 端口是按账号算出来的固定值，
@@ -261,6 +273,8 @@ namespace SoulLink.Relay
                     session = _sessionId,
                     pid = Environment.ProcessId,
                     port = _port,
+                    // ★ P0 传输层：流协议版本。网页端据此决定 /stream 是否带 v=2（帧边界）。
+                    streamVersion = StreamProtocolVersion,
                     // ★ 当前实际生效的抓屏后端（DXGI-DDA / WGC / BitBlt），网页端用于「配置的 vs 实际」对照显示。
                     captureBackend = SessionRecorder.CaptureBackend,
                     captureWidth = geo ? geoW : 0,
@@ -301,6 +315,18 @@ namespace SoulLink.Relay
             if (path == "/api/input" && req.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
             {
                 await HandleInputAsync(ctx).ConfigureAwait(false);
+                return;
+            }
+
+            if (path == "/api/idr" && req.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleIdrAsync(ctx).ConfigureAwait(false);
+                return;
+            }
+
+            if (path == "/ws/input")
+            {
+                await HandleInputWebSocketAsync(ctx).ConfigureAwait(false);
                 return;
             }
 
@@ -449,19 +475,26 @@ namespace SoulLink.Relay
                 ctx.Response.SendChunked = true;
                 ctx.Response.KeepAlive = true;
                 var stream = ctx.Response.OutputStream;
+                // ★ P0 传输层（2026-11-24）：帧边界语义。/stream?v=2 时每帧前加 4 字节大端长度前缀，
+                //   网页端按长度切帧不再扫起始码（网络抖动下起始码扫描会切错帧致花屏/卡死）。
+                bool framed = string.Equals(ctx.Request.QueryString["v"], "2", StringComparison.Ordinal);
+                async Task WriteFrameAsync(byte[] data)
+                {
+                    if (framed) await WriteFramedAsync(stream, data).ConfigureAwait(false);
+                    else await stream.WriteAsync(data).ConfigureAwait(false);
+                    await stream.FlushAsync().ConfigureAwait(false);
+                }
                 int frames = 0;
                 try
                 {
-                    await stream.WriteAsync(initial).ConfigureAwait(false);
-                    await stream.FlushAsync().ConfigureAwait(false);
+                    await WriteFrameAsync(initial).ConfigureAwait(false);
                     frames++;
                     while (true)
                     {
                         byte[]? nal = SessionRecorder.ReadViewerFrame(viewerId);
                         if (nal != null)
                         {
-                            await stream.WriteAsync(nal).ConfigureAwait(false);
-                            await stream.FlushAsync().ConfigureAwait(false);
+                            await WriteFrameAsync(nal).ConfigureAwait(false);
                             frames++;
                         }
                         // ★ P0（2026-11-24）：事件驱动等帧替代 Task.Delay(10) 轮询。
@@ -474,6 +507,49 @@ namespace SoulLink.Relay
                 finally { try { ctx.Response.Close(); } catch (Exception ex) { Log("[stream] 关闭响应异常：" + ex.Message); } }
             }
             finally { SessionRecorder.Unsubscribe(viewerId); }
+        }
+
+        /// <summary>
+        /// 写一帧：4 字节大端长度前缀 + 帧数据（帧边界语义，/stream?v=2）。
+        /// 长度前缀每帧一个独立 4 字节缓冲（多 viewer 并发写不能用共享静态缓冲，会互相覆盖）。
+        /// </summary>
+        private static async Task WriteFramedAsync(Stream stream, byte[] data)
+        {
+            byte[] len = new byte[4];
+            len[0] = (byte)(data.Length >> 24);
+            len[1] = (byte)(data.Length >> 16);
+            len[2] = (byte)(data.Length >> 8);
+            len[3] = (byte)data.Length;
+            await stream.WriteAsync(len, 0, 4).ConfigureAwait(false);
+            await stream.WriteAsync(data, 0, data.Length).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// ★ P0 传输层（2026-11-24）：按需 IDR。POST /api/idr → SessionRecorder.RequestKeyFrame()。
+        /// 前端解码失败/花屏时先请求 IDR 而非断流重连（重连代价极大：新订阅 + 等按需 IDR + 首帧）。
+        /// ★ 必须限流：Moonlight 教训——网络不稳时前端会狂请求 IDR，不限流会把
+        ///   RequestKeyFrame（置位 _forceKeyFrame + 唤醒 worker）打成风暴 → 编码器反复重建拥塞。
+        ///   这里服务端按「距上次 ≥ IdrMinIntervalMs」限流（客户端也有一层，双保险）。
+        /// </summary>
+        private static async Task HandleIdrAsync(HttpListenerContext ctx)
+        {
+            try
+            {
+                long now = Environment.TickCount64;
+                long last = Interlocked.Read(ref _lastIdrAtMs);
+                if (now - last < IdrMinIntervalMs)
+                {
+                    await WriteJson(ctx, new { ok = false, error = "限流：请稍后再请求关键帧" }).ConfigureAwait(false);
+                    return;
+                }
+                Interlocked.Exchange(ref _lastIdrAtMs, now);
+                SessionRecorder.RequestKeyFrame();
+                await WriteJson(ctx, new { ok = true }).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await WriteJson(ctx, new { ok = false, error = ex.Message }).ConfigureAwait(false);
+            }
         }
 
 
@@ -497,73 +573,140 @@ namespace SoulLink.Relay
                 string body;
                 using (var sr = new StreamReader(ctx.Request.InputStream, Encoding.UTF8))
                     body = await sr.ReadToEndAsync().ConfigureAwait(false);
-
-                var dto = System.Text.Json.JsonSerializer.Deserialize<InputDto>(body,
-                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (dto == null) { await WriteJson(ctx, new { ok = false, error = "请求格式错误" }).ConfigureAwait(false); return; }
-
-                // ★ 2026-11-24 P1-A2（落点误差根因）：坐标基准从「主屏尺寸」改为「实际抓屏几何」。
-                //   网页 norm() 按抓屏帧（canvas 物理分辨率）归一化到 [0,1]，agent 必须用同一基准反算。
-                //   旧实现用 GetSystemMetrics(0/1)（主屏宽高）+ clamp 到主屏，当抓屏后端尺寸/原点 ≠ 主屏时
-                //   （DDA 抓第一个枚举输出、WGC 抓前台窗口、多屏主屏原点非 0,0）落点必偏、副屏永远点不到。
-                int w, h, ox, oy;
-                if (!SessionRecorder.TryGetCaptureGeometry(out w, out h, out ox, out oy))
-                {
-                    // 兜底：尚未出帧 / 几何未知 → 回退主屏尺寸、原点 (0,0)（等价旧行为，仅保证不 NRE）
-                    w = Math.Max(1, GetSystemMetrics(0));
-                    h = Math.Max(1, GetSystemMetrics(1));
-                    ox = 0; oy = 0;
-                }
-                bool hasX = dto.x >= 0;
-                bool hasY = dto.y >= 0;
-                int px = hasX ? ox + (int)Math.Round(dto.x * w) : ox;
-                int py = hasY ? oy + (int)Math.Round(dto.y * h) : oy;
-
-                // 坐标 → 绝对位置；按键/滚轮不需要坐标
-                string cmd;
-                switch ((dto.action ?? "").ToLowerInvariant())
-                {
-                    case "click":   cmd = "click";   break;
-                    case "down":    cmd = "down";    break;
-                    case "up":      cmd = "up";      break;
-                    case "move":    cmd = "move";    break;
-                    case "wheel":   cmd = "wheel";   break;
-                    case "key":     cmd = "key";     break;
-                    case "keydown": cmd = "keydown"; break;
-                    case "keyup":   cmd = "keyup";   break;
-                    case "moverel": cmd = "moverel"; break;
-                    case "text":    cmd = "text";    break;
-                    case "noop":    cmd = "noop";    break;
-                    default:
-                        await WriteJson(ctx, new { ok = false, error = "未知动作 " + dto.action }).ConfigureAwait(false);
-                        return;
-                }
-
-                // key / keydown / keyup 复用 key 字段；text 走 text 字段；
-                // click / down / up 走 button 字段（与老网页语义一致）。
-                string keyName = cmd == "text" ? (dto.text ?? "") : (dto.key ?? "");
-                var req = new RelayAgent.Request
-                {
-                    Cmd = cmd,
-                    // ★ clamp 到「抓屏矩形」（虚拟桌面坐标），而非主屏；副屏（原点可为负）也能点到。
-                    X = Math.Clamp(px, ox, ox + w - 1),
-                    Y = Math.Clamp(py, oy, oy + h - 1),
-                    Move = (cmd == "click" && hasX) ? 1 : 0,
-                    Button = (cmd == "key" || cmd == "keydown" || cmd == "keyup" || cmd == "text")
-                        ? keyName
-                        : (dto.button ?? "left"),
-                    Dx = dto.dx,
-                    Dy = dto.dy,
-                    Delta = dto.delta,
-                    Count = dto.count
-                };
-
-                var resp = RelayAgent.ExecuteWeb(req);
-                await WriteJson(ctx, new { ok = resp.Ok, error = resp.Ok ? null : resp.Message }).ConfigureAwait(false);
+                await WriteJson(ctx, ExecuteInput(body)).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 await WriteJson(ctx, new { ok = false, error = ex.Message }).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// 把一条输入指令的 JSON 文本解析并执行，返回给客户端的结果对象（HTTP 与 WebSocket 共用）。
+        /// 返回 { ok, error } 匿名对象；调用方（WriteJson / WebSocket 文本回写）负责序列化。
+        /// </summary>
+        private static object ExecuteInput(string body)
+        {
+            var dto = System.Text.Json.JsonSerializer.Deserialize<InputDto>(body,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (dto == null) return new { ok = false, error = "请求格式错误" };
+
+            // ★ 2026-11-24 P1-A2（落点误差根因）：坐标基准从「主屏尺寸」改为「实际抓屏几何」。
+            //   网页 norm() 按抓屏帧（canvas 物理分辨率）归一化到 [0,1]，agent 必须用同一基准反算。
+            //   旧实现用 GetSystemMetrics(0/1)（主屏宽高）+ clamp 到主屏，当抓屏后端尺寸/原点 ≠ 主屏时
+            //   （DDA 抓第一个枚举输出、WGC 抓前台窗口、多屏主屏原点非 0,0）落点必偏、副屏永远点不到。
+            int w, h, ox, oy;
+            if (!SessionRecorder.TryGetCaptureGeometry(out w, out h, out ox, out oy))
+            {
+                // 兜底：尚未出帧 / 几何未知 → 回退主屏尺寸、原点 (0,0)（等价旧行为，仅保证不 NRE）
+                w = Math.Max(1, GetSystemMetrics(0));
+                h = Math.Max(1, GetSystemMetrics(1));
+                ox = 0; oy = 0;
+            }
+            bool hasX = dto.x >= 0;
+            bool hasY = dto.y >= 0;
+            int px = hasX ? ox + (int)Math.Round(dto.x * w) : ox;
+            int py = hasY ? oy + (int)Math.Round(dto.y * h) : oy;
+
+            // 坐标 → 绝对位置；按键/滚轮不需要坐标
+            string cmd;
+            switch ((dto.action ?? "").ToLowerInvariant())
+            {
+                case "click":   cmd = "click";   break;
+                case "down":    cmd = "down";    break;
+                case "up":      cmd = "up";      break;
+                case "move":    cmd = "move";    break;
+                case "wheel":   cmd = "wheel";   break;
+                case "key":     cmd = "key";     break;
+                case "keydown": cmd = "keydown"; break;
+                case "keyup":   cmd = "keyup";   break;
+                case "moverel": cmd = "moverel"; break;
+                case "text":    cmd = "text";    break;
+                case "noop":    cmd = "noop";    break;
+                default:
+                    return new { ok = false, error = "未知动作 " + dto.action };
+            }
+
+            // key / keydown / keyup 复用 key 字段；text 走 text 字段；
+            // click / down / up 走 button 字段（与老网页语义一致）。
+            string keyName = cmd == "text" ? (dto.text ?? "") : (dto.key ?? "");
+            var req = new RelayAgent.Request
+            {
+                Cmd = cmd,
+                // ★ clamp 到「抓屏矩形」（虚拟桌面坐标），而非主屏；副屏（原点可为负）也能点到。
+                X = Math.Clamp(px, ox, ox + w - 1),
+                Y = Math.Clamp(py, oy, oy + h - 1),
+                Move = (cmd == "click" && hasX) ? 1 : 0,
+                Button = (cmd == "key" || cmd == "keydown" || cmd == "keyup" || cmd == "text")
+                    ? keyName
+                    : (dto.button ?? "left"),
+                Dx = dto.dx,
+                Dy = dto.dy,
+                Delta = dto.delta,
+                Count = dto.count
+            };
+
+            var resp = RelayAgent.ExecuteWeb(req);
+            return new { ok = resp.Ok, error = resp.Ok ? null : resp.Message };
+        }
+
+        /// <summary>
+        /// ★ P0 传输层（2026-11-24）：输入 WebSocket 持久通道。move/click/wheel/key 走 WS（低延迟 +
+        ///   天然保序，顺带解决「按键走一条 FIFO、move 各走一条」的问题），HTTP POST /api/input 保留为降级。
+        ///   HttpListener 经 AcceptWebSocketAsync 原生支持 RFC 6455 升级，无需第三方库。
+        ///   复用 ExecuteInput，与 HTTP 输入完全同一套语义（同一坐标基准、同一 RelayAgent.Execute）。
+        /// </summary>
+        private static async Task HandleInputWebSocketAsync(HttpListenerContext ctx)
+        {
+            if (!ctx.Request.IsWebSocketRequest)
+            {
+                await WriteText(ctx, 400, "需要 WebSocket 升级").ConfigureAwait(false);
+                return;
+            }
+            // 安全：WebSocket 无 CORS 预检，恶意站可对无口令代理发起跨站 WS 劫持（CSWSH）。
+            // 显式校验 Origin（同主机/本机回环才放行），口径与 ResolveCorsOrigin 一致。
+            string? origin = ctx.Request.Headers["Origin"];
+            if (!string.IsNullOrWhiteSpace(origin) && ResolveCorsOrigin(ctx) == null)
+            {
+                await WriteText(ctx, 403, "来源不被允许").ConfigureAwait(false);
+                return;
+            }
+            try
+            {
+                var wsCtx = await ctx.AcceptWebSocketAsync(null).ConfigureAwait(false);
+                using var ws = wsCtx.WebSocket;
+                var buffer = new byte[64 * 1024];
+                while (ws.State == WebSocketState.Open)
+                {
+                    WebSocketReceiveResult result;
+                    using (var ms = new MemoryStream())
+                    {
+                        do
+                        {
+                            result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).ConfigureAwait(false);
+                            ms.Write(buffer, 0, result.Count);
+                        } while (!result.EndOfMessage);
+
+                        if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None).ConfigureAwait(false); } catch { }
+                            break;
+                        }
+                        if (result.MessageType != WebSocketMessageType.Text) continue;   // 只接受文本 JSON 指令
+
+                        string body = Encoding.UTF8.GetString(ms.ToArray());
+                        object respObj;
+                        try { respObj = ExecuteInput(body); }
+                        catch (Exception ex) { respObj = new { ok = false, error = ex.Message }; }
+                        string respJson = System.Text.Json.JsonSerializer.Serialize(respObj);
+                        var respBytes = Encoding.UTF8.GetBytes(respJson);
+                        await ws.SendAsync(new ArraySegment<byte>(respBytes), WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogFailure("[ws/input] WebSocket 异常：" + ex);
             }
         }
 
