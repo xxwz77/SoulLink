@@ -647,7 +647,40 @@ namespace SoulLink.Relay
             };
 
             var resp = RelayAgent.ExecuteWeb(req);
-            return new { ok = resp.Ok, error = resp.Ok ? null : resp.Message };
+            // ★ 2026-11-24 光标回传（一步到位修复「网页没有光标」）：
+            //   前端 #scr 设了 cursor:none（防本机影子与帧内光标双影），
+            //   因此必须由服务端把**宿主真实光标位置**回传，前端画 rcCursor。
+            //   之前只做了前端消费端、服务端从未回传 → 画面区完全无光标（比旧蓝球更糟）。
+            //   这里在每条输入响应里附带 cursor{nx,ny,visible}：
+            //     nx/ny = 相对抓屏矩形的归一化坐标（与前端 norm() 同一基准）；
+            //     visible = 光标是否在抓屏区域内。
+            //   ★ 必须在执行完注入之后再读（读到的是注入后的新位置），否则回显永远慢一拍。
+            int cw, ch, cox, coy;
+            if (!SessionRecorder.TryGetCaptureGeometry(out cw, out ch, out cox, out coy))
+            {
+                cw = Math.Max(1, GetSystemMetrics(0));
+                ch = Math.Max(1, GetSystemMetrics(1));
+                cox = 0; coy = 0;
+            }
+            object cursorInfo = CursorEcho(cw, ch, cox, coy);
+            return new { ok = resp.Ok, error = resp.Ok ? null : resp.Message, cursor = cursorInfo };
+        }
+
+        /// <summary>
+        /// ★ 2026-11-24：读取宿主真实光标并换算成抓屏矩形内的归一化坐标。
+        ///   GetCursorPos 可能失败（跨会话/权限），失败时 visible=false，前端静默不画。
+        /// </summary>
+        private static object CursorEcho(int w, int h, int ox, int oy)
+        {
+            try
+            {
+                if (!GetCursorPos(out POINT pt)) return new { nx = 0.0, ny = 0.0, visible = false };
+                bool inside = pt.X >= ox && pt.X < ox + w && pt.Y >= oy && pt.Y < oy + h;
+                double nx = (pt.X - ox) / (double)Math.Max(1, w);
+                double ny = (pt.Y - oy) / (double)Math.Max(1, h);
+                return new { nx, ny, visible = inside };
+            }
+            catch { return new { nx = 0.0, ny = 0.0, visible = false }; }
         }
 
         /// <summary>
@@ -727,6 +760,13 @@ namespace SoulLink.Relay
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern int GetSystemMetrics(int nIndex);
+
+        // ★ 2026-11-24：光标回传用（读宿主真实光标位置，前端画 rcCursor）
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct POINT { public int X; public int Y; }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+        private static extern bool GetCursorPos(out POINT lpPoint);
 
         private static async Task WriteText(HttpListenerContext ctx, int code, string text)
         {
