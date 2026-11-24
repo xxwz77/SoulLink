@@ -38,10 +38,15 @@ if (-not $UseProxy) {
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
-$bucket    = "COS_BUCKET_REDACTED"
-$region    = "ap-shanghai"
+# ★ 发布目标配置：真实值放在本地 scripts\publish-release.local.ps1（已被 .gitignore 排除）。
+#   开源仓库里不含任何桶名/域名；缺失时下面的占位值会让发布直接失败，避免误发到别人的桶。
+$localCfg = Join-Path $PSScriptRoot "publish-release.local.ps1"
+if (Test-Path -LiteralPath $localCfg) { . $localCfg }
+if (-not $bucket -or $bucket -eq "CHANGE_ME" -or -not $cdnBase -or $cdnBase -like "*example.invalid*") {
+    throw "未配置发布目标：请在 scripts\publish-release.local.ps1 里填写 $bucket / $region / $cdnBase（该文件不入库）"
+}
+$region    = if ($region) { $region } else { "ap-shanghai" }
 $cosHost   = "$bucket.cos.$region.myqcloud.com"
-$cdnBase   = "https://cdn.example.invalid/SoulLink"
 $keyPrefix = "SoulLink"
 
 $version = (& dotnet msbuild SoulLink.csproj -getProperty:Version -nologo).Trim()
