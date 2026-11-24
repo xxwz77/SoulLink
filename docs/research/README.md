@@ -199,3 +199,4 @@
 - [AUDIT-20261124-00-EVIDENCE-BASELINE.md](AUDIT-20261124-00-EVIDENCE-BASELINE.md) ← **取证与测量基准（2026-11-24）**：444ms 拆段实测（agent 侧 captureMs≈25+convertMs≈8+encodeMs≈3=36ms，其余在「有效帧率仅~14fps + 浏览器侧 + 前端断流重连」）；GPU 零拷贝**代码存在但从未生效**（日志 0 条 PSNR/降级行，静默 fall-through 证据穷举到行号：DxgiDdaCapture.TryCaptureBgraTexture:265/297、GpuColorConverter:191/192）；「零拷贝导致回到444」被推翻；附最小验证清单 V1~V5
 - `GPU-ADAPTATION-DESIGN-20261124.md` —— P0-G/P0-H GPU 自适应路由设计（N/A/i 卡任意组合自动选抓屏/编码路径，同 GPU 才开零拷贝）
 - `E2E-LATENCY-BASELINE-20261124.md` —— 端到端延迟基线复测（444ms→85~130ms 拆解：三组 15s 场景实测 + 分段延迟模型 + 剩余瓶颈）
+- `DEPLOY-VERIFY-4b5e99f.md` —— 部署验证 V2（4b5e99f，3.3.34）：版本确认为 3.3.34+4b5e99f 已部署；真实观看日志 64 行实测 captureMs p50=8/convertMs p50=1/encodeMs p50=5；跨 GPU 零拷贝=禁用为物理正确降级；三项 P0 代码齐全（帧边界 length-prefix/按需IDR/输入WS），仅服务端按需IDR拿到运行实证、其余两项因无token/agent已退出未端到端验证；6 次客户端断开待查；端到端未新测（引用 baseline 85~130ms）

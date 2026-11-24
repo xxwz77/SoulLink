@@ -1862,11 +1862,20 @@ let rcCursorVisible = false;      // 远端光标当前是否可见（visible:fa
 function updateRemoteCursor(nx, ny, visible) {
   if (!rcCursorEl) return;
   if (visible === false) { rcCursorEl.style.display = 'none'; rcCursorVisible = false; return; }
-  const g = frameRect();
-  // ★ 相对 #scr：rcCursor 是 #scr 的绝对定位子元素，把 rect(视口坐标) 转局部坐标
+  // ★ 2026-11-24 修复「点一下光标跳到右上角」：
+  //   rcCursor 是 #scr 的绝对定位子元素，所以位移基准必须用 #scr 的矩形；
+  //   而画面内容（canvas 显示区域 + object-fit:contain 黑边）要用 #vframe 的矩形算。
+  //   旧实现把两者混用：frameRect() 返回的是 #vframe 的 rect（视口坐标），
+  //   又拿它减 #scr.left 再加进 translate —— 当 canvas 不是从 #scr 左上角铺满时，
+  //   系数完全错位，光标就飞到角落。
+  //   正确做法：全部换算到 #scr 的局部坐标系再定位。
   const scrRect = $('scr').getBoundingClientRect();
-  const x = (g.rect.left - scrRect.left) + g.ox + nx * g.dwContent;
-  const y = (g.rect.top - scrRect.top) + g.oy + ny * g.dhContent;
+  const g = frameRect();
+  // 画面内容在 #scr 局部坐标系里的左上角与尺寸
+  const contentLeft = (g.rect.left - scrRect.left) + g.ox;
+  const contentTop  = (g.rect.top  - scrRect.top ) + g.oy;
+  const x = contentLeft + nx * g.dwContent;
+  const y = contentTop  + ny * g.dhContent;
   rcCursorEl.style.transform = 'translate(' + x + 'px,' + y + 'px)';
   rcCursorEl.style.display = 'block';
   rcCursorVisible = true;
@@ -1921,6 +1930,10 @@ let plLockPending = null;      // 首击挂起：{nx,ny} 待锁定结果决定�
 let plExitByShortcut = false;    // 快捷键逃生门主动退出（不补发 ESC）
 let plExitByLifecycle = false;   // 生命周期/断线/关画面主动退出（不补发 ESC）
 let plLockCooldownUntil = 0;     // Esc 后重锁冷却（规范：立即重锁会被拒）
+// ★ 2026-11-24：Pointer Lock 改为「用户显式要求才进」。
+//   默认 false → 左键是普通点击，光标始终可见（修复"点一下就没光标"）。
+//   只有顶栏锁定按钮把它置 true 后，下一次左键才真正进入锁定态（用于游戏转视角）。
+let plLockWanted = false;
 let plSensitivity = 1.0;         // movementX/Y 灵敏度（浏览器单位不统一）
 let plEscape = 'ctrl_alt_shift'; // 逃生门快捷键
 let plAltHoldTimer = null;       // 长按 Alt 计时器
@@ -2119,13 +2132,27 @@ $('scr').addEventListener('pointerdown', e => {
 
   // 鼠标 / 触控笔：保持桌面原有行为不变
   const btn = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
-  // ★ Pointer Lock（2026-11-24 修吞点击死循环）：桌面左键且未锁定 → 发起锁定请求并挂起首击。
-  //   requestPointerLock 是异步，成功/失败由 pointerlockchange/error 决定：
-  //     · 锁定成功 → 吃掉首击（不补发 click，对齐月光）
-  //     · 锁定失败 → 补发 click（回退绝对模式，本次点击不丢）
-  //   挂起期间 return，绝不吞掉首击；失败后 pointerLocked 保持 false，下次点击重试。
+  // ★★ 2026-11-24 关键修复：「点一下鼠标左键，光标跳到右上角 / 完全没光标」★★
+  //
+  //  根因链（用户实测）：
+  //    1) 左键点击 → 触发 requestPointerLock() → 进入 Pointer Lock；
+  //    2) Pointer Lock 锁定态下浏览器**自动隐藏系统光标**；
+  //    3) 我们又给 #scr 设了 cursor:none（防双影）；
+  //    4) rcCursor 靠服务端 cursor 回传驱动，但首次点击后没有 move 事件 →
+  //       没有新的 cursor 回传 → rcCursor 停在旧位置或干脆没显示；
+  //    5) 且 updateRemoteCursor 的几何基准混用了 #vframe 与 #scr，
+  //       画布非满铺时算出的位置完全错位 → 光标"跳到右上角"。
+  //
+  //  修复策略：**左键绝不再触发 Pointer Lock**。
+  //    Pointer Lock 本来是给「转视角」用的（游戏类相对移动），
+  //    而用户的诉求是「正常操作桌面」——左键就该是普通点击。
+  //    转视角仍可用右键拖动（下面的 btn === 'right' 分支），那条路径不锁光标。
+  //    如需真正的锁定态，由用户显式点顶栏的锁定按钮进入（见 plEnterByButton）。
+  //
+  //  这样左键 = 普通点击（发 click），光标始终可见，交互立刻恢复正常。
   if (e.pointerType === 'mouse' && btn === 'left' && PL_SUPPORTED && window.isSecureContext
-      && !pointerLocked && Date.now() >= plLockCooldownUntil) {
+      && plLockWanted && !pointerLocked && Date.now() >= plLockCooldownUntil) {
+    // 仅当用户**显式要求**锁定（顶栏按钮置位 plLockWanted）时才进入 Pointer Lock。
     const p0 = norm(e);
     plLockPending = { nx: p0.nx, ny: p0.ny };
     try { $('scr').requestPointerLock(); } catch (err) {}
