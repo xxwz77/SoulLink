@@ -661,6 +661,15 @@ namespace SoulLink.Views
             _updateChecking = true;
             try
             {
+                // ★ 服务器地址外部化：未配置时不发请求，并给出明确提示（不要误报「已是最新」）
+                if (!Services.ServerEndpoints.IsConfigured)
+                {
+                    ShowVersion();
+                    Views.ThemedMessage.Info(this, "未配置服务器地址",
+                        "请在「设置 → 服务器」填写服务器地址后再检查更新。");
+                    return;
+                }
+
                 VersionText.Text = "检查更新…";
                 var m = await Services.CloudUpdater.CheckAsync();
                 if (m == null)

@@ -19,8 +19,8 @@ namespace SoulLink.Services
     {
         private static readonly HttpClient _http;
         /// <summary>
-        /// 内置默认地址：**空**。旧服务器已停用，代码不再写死任何服务器地址。
-        /// 留空 = 联机功能未配置 → 不发起任何请求（彻底静默）。
+        /// 内置默认地址：**空**。服务器地址来自单一设置（ServerEndpoints），
+        /// 代码不再写死任何服务器地址。留空 = 联机功能未配置 → 不发起任何请求（彻底静默）。
         /// 用户在「服务器」设置里填新地址后才会联网。
         /// </summary>
         public const string DefaultBaseUrl = "";
@@ -42,7 +42,7 @@ namespace SoulLink.Services
 
         /// <summary>
         /// 用户在配置里显式填写的地址（未填则为空串）。
-        /// ★ 界面应当只显示这个：留空代表"使用内置默认地址"，而不是把默认地址印出来。
+        /// ★ 界面应当只显示这个：留空代表"未配置服务器地址"，而不是把默认地址印出来。
         /// </summary>
         public static string ConfiguredUrl
         {
@@ -50,8 +50,8 @@ namespace SoulLink.Services
             {
                 try
                 {
-                    var s = App.Config?.Settings?.LobbyServerUrl;
-                    return string.IsNullOrWhiteSpace(s) ? "" : s.TrimEnd('/');
+                    var s = App.Config?.Settings?.ServerBaseUrl;
+                    return ServerEndpoints.NormalizeBase(s);
                 }
                 catch { return ""; }
             }
@@ -70,8 +70,7 @@ namespace SoulLink.Services
         {
             try
             {
-                var s = App.Config.Settings;
-                BaseUrl = string.IsNullOrWhiteSpace(s.LobbyServerUrl) ? "" : s.LobbyServerUrl;
+                BaseUrl = ServerEndpoints.Base;
             }
             catch { }
         }
@@ -82,7 +81,7 @@ namespace SoulLink.Services
             try
             {
                 BaseUrl = url;
-                App.Config.Settings.LobbyServerUrl = _baseUrl;
+                App.Config.Settings.ServerBaseUrl = _baseUrl;
                 ConfigStore.Save(App.Config);
             }
             catch { }

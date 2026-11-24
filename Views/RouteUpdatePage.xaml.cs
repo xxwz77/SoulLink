@@ -403,6 +403,13 @@ namespace SoulLink.Views
 
             try
             {
+                // ★ 未配置服务器地址时不发请求，并给出明确提示
+                if (!ServerEndpoints.IsConfigured)
+                {
+                    SetCloudState("未配置服务器地址（设置 → 服务器）", true);
+                    return;
+                }
+
                 var s = Settings;
                 var (ok, _, version, _) = await RouteUpdater.ProbeAsync(s.EffectiveCloudUrl)
                                                           .ConfigureAwait(true);

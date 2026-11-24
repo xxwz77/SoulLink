@@ -124,8 +124,9 @@ next\*                    辅助工具
 - 启动后 **6 秒**静默检查一次；有新版本时版本号变琥珀色 + 显示红点。
 - 点击版本号 → 弹更新窗口（版本对比 + 更新说明 + 确认/取消）。
 - 更新失败只显示中性提示（「网络连接失败」等），**不暴露任何发布地址**。
-- `cdn.example.invalid` 只允许出现在 `Services/CloudUpdater.cs` 的两个常量里。
-  界面上出现该域名属于**缺陷**。
+- ★ 3.3.36 起服务器地址已外部化：客户端不再硬编码任何发布域名，
+  统一从「设置 → 服务器」的 `ServerBaseUrl` 派生（`Services/ServerEndpoints.cs`）。
+  发布域名只允许出现在 `scripts/publish-release.ps1`；任何用户可见位置出现域名属于**缺陷**。
 
 ---
 
@@ -217,8 +218,9 @@ COS 凭据来自本机 **COSBrowser 登录态**（%APPDATA%\cosbrowser\），
 
 ### 9.3 发布域名不可见
 
-`cdn.example.invalid` 只允许出现在 `Services/CloudUpdater.cs` 的两个常量里。
-界面上出现该域名属于**缺陷**。
+★ 3.3.36 起客户端不再硬编码发布域名：统一从「设置 → 服务器」的 `ServerBaseUrl`
+派生（`Services/ServerEndpoints.cs`）。发布域名只允许出现在 `scripts/publish-release.ps1`。
+任何用户可见位置出现该域名属于**缺陷**。
 
 更新失败时只显示中性提示（「网络连接失败，请检查网络后重试」等），
 不暴露任何内部地址。

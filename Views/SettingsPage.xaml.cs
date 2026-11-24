@@ -201,7 +201,7 @@ namespace SoulLink.Views
                 LobbyServerStatus.Foreground = new System.Windows.Media.SolidColorBrush(
                     System.Windows.Media.Color.FromRgb(0x6E, 0xF0, 0xC8));
 
-                LogBus.Ok("联机大厅服务器地址已更新");
+                LogBus.Ok("服务器地址已更新");
             }
             catch (Exception ex)
             {
@@ -226,12 +226,11 @@ namespace SoulLink.Views
             ConfigPathText.Text = ConfigStore.ConfigPath;
             ShowDataDirInfo();
 
-            // 联机大厅服务器地址
+            // 服务器地址（联机大厅 / 路线更新 / 客户端更新共用）
             try
             {
                 Services.LobbyApi.LoadFromConfig();
-                // ★ 只显示用户配置过的地址。内置默认地址属于实现细节，
-                //   不能回填到输入框里（否则用户会以为那是他自己填的）。
+                // ★ 只显示用户配置过的地址；未配置就是空（不会把任何默认地址印出来）。
                 LobbyServerBox.Text = Services.LobbyApi.ConfiguredUrl;
                 UpdateLobbyPlaceholder();
                 LobbyServerStatus.Text = "";

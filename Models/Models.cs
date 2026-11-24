@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using SoulLink.Services;
 
 namespace SoulLink.Models
 {
@@ -478,8 +479,17 @@ namespace SoulLink.Models
         public bool BgiMigrated { get; set; }
 
         /// <summary>
-        /// 联机大厅服务端地址（用户自定义，例如 http://服务器地址:端口）。
-        /// 空 = 未配置服务器，联机功能不发任何请求。
+        /// ★ 服务器地址（单一设置项）：联机大厅 / 路线更新 / 客户端更新三处共用的基地址。
+        ///   · 用户自定义，例如 https://服务器地址 或 http://服务器地址:端口；
+        ///   · 空 = 未配置：三处功能都静默短路，不发任何请求；
+        ///   · 老用户的 <see cref="RouteUpdate"/>.CloudUrl 若不为空，会在迁移时回填到这里。
+        /// </summary>
+        public string ServerBaseUrl { get; set; } = "";
+
+        /// <summary>
+        /// 联机大厅服务端地址（历史字段，保留兼容）：
+        /// ★ 2.17 以前是独立的联机大厅地址；现与 ServerBaseUrl 合并。
+        ///   加载时若 ServerBaseUrl 为空且此字段非空，会回填到 ServerBaseUrl。
         /// </summary>
         public string LobbyServerUrl { get; set; } = "";
 
@@ -792,28 +802,20 @@ namespace SoulLink.Models
         public List<RouteUpdateTarget> Targets { get; set; } = new List<RouteUpdateTarget>();
 
         /// <summary>
-        /// 官方默认更新源（清单地址）。
-        /// ★ 用途：用户没改过设置时自动使用它；界面上**绝不显示**这个地址。
-        /// </summary>
-        public const string DefaultCloudUrl = "https://cdn.example.invalid/pathing/update.txt";
-
-        /// <summary>
-        /// 云端地址：清单或压缩包地址。
-        /// ★ 界面不提供输入框、不显示地址。
-        /// ★ 不写进配置文件（[JsonIgnore]）：免得用户打开 config.json 就看到服务器地址，
-        ///   每次从默认源取。
+        /// ★ 历史字段：旧的路线云端地址（清单或压缩包地址）。
+        ///   2.17 起路线更新走单一服务器设置（AppSettings.ServerBaseUrl），不再用内置默认源。
+        ///   保留它只为迁移老配置：[JsonIgnore] 不再序列化，ConfigStore.Load 会把它回填到
+        ///   ServerBaseUrl 后清空。新代码不得直接读它（读 <see cref="ServerEndpoints.RouteManifest"/>）。
         /// </summary>
         [JsonIgnore]
-        public string CloudUrl { get; set; } = DefaultCloudUrl;
+        public string CloudUrl { get; set; } = "";
 
         /// <summary>
-        /// 实际使用的云端地址：用户没配置过就用默认源。
-        /// ★ [JsonIgnore]：这是计算属性，不参与序列化 ——
-        ///   漏了它会让默认地址被写进 config.json（实测踩到）。
+        /// 实际使用的云端清单地址。
+        /// ★ 改为从单一服务器设置派生（不再有任何内置默认域名）；未配置时为空串。
         /// </summary>
         [JsonIgnore]
-        public string EffectiveCloudUrl =>
-            string.IsNullOrWhiteSpace(CloudUrl) ? DefaultCloudUrl : CloudUrl.Trim();
+        public string EffectiveCloudUrl => ServerEndpoints.RouteManifest;
 
         /// <summary>
         /// 云端清单里当前包的版本标识。

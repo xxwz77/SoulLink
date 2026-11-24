@@ -831,7 +831,7 @@ namespace SoulLink.Services
                 string first = await DownloadToAsync(uri, dir, log, progress, ct).ConfigureAwait(false);
 
                 // ★ 自动识别「清单」：
-                //   cdn.example.invalid/pathing/update.txt 只有 16 字节，内容是 pathing11.19.zip。
+                //   路线清单（如 pathing/update.txt）通常只有十几字节，内容是一个包名。
                 //   这里判断下载到的不是压缩包而是清单文本，就按清单里的名字再下一次。
                 if (LooksLikeManifest(first, out string entry))
                 {

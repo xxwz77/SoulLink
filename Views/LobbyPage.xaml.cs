@@ -322,7 +322,7 @@ namespace SoulLink.Views
         /// <summary>修改服务器地址。</summary>
         private async void Server_Click(object sender, RoutedEventArgs e)
         {
-            // ★ 不要用 LobbyApi.BaseUrl 预填：那会把内置默认地址暴露出来。
+            // ★ 不要用 LobbyApi.BaseUrl 预填：那会把生效地址暴露出来。
             //   只回填用户自己配置过的值（没配过就是空）。
             var dlg = new InputDialogWindow("服务器地址",
                 "填服务端地址，例如 http://服务器地址:端口",

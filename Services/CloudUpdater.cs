@@ -13,14 +13,16 @@ namespace SoulLink.Services
     /// <summary>
     /// 云端更新检查与下载。
     ///
-    /// ★ 发布地址只出现在这个类里，且**不进入任何面向用户的文本**
-    ///   （对话框、日志、异常消息一律只写"检查更新失败"这类中性描述）。
+    /// ★ 服务器地址来自单一设置（ServerEndpoints），代码不硬编码任何域名；
+    ///   未配置时静默短路，不发起任何请求。
+    /// ★ 地址**不进入任何面向用户的文本**（对话框、日志、异常消息一律只写
+    ///   "检查更新失败"这类中性描述）。
     /// </summary>
     public static class CloudUpdater
     {
         // ── 发布位置（客户端不展示，不要拼进任何 UI 文案）──
-        private const string BaseUrl     = "https://cdn.example.invalid/SoulLink/";
-        private const string ManifestUrl = BaseUrl + "latest.json";
+        // ★ 地址来自单一服务器设置（ServerEndpoints），不再硬编码任何域名。
+        //   未配置时 Base 为空 → CheckAsync/DownloadAsync 直接短路，不发请求。
 
         private static readonly HttpClient Http = CreateHttp();
 
@@ -146,8 +148,11 @@ namespace SoulLink.Services
         /// <summary>读取云端清单。带时间戳绕过 CDN 缓存。</summary>
         public static async Task<Manifest?> FetchManifestAsync(CancellationToken ct = default)
         {
+            // ★ 未配置服务器地址时不发任何请求（外部化后默认无内置地址）
+            if (!ServerEndpoints.IsConfigured) return null;
+
             // ★ 加 ?t= 破缓存：CDN 刷新是异步的，不破缓存会读到上一个版本
-            string url = ManifestUrl + "?t=" + DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            string url = ServerEndpoints.UpdateManifest + "?t=" + DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             using var resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
                                        .ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return null;
@@ -186,7 +191,10 @@ namespace SoulLink.Services
                 try { File.Delete(dest); } catch { }
             }
 
-            string url = BaseUrl + Uri.EscapeDataString(m.File);
+            // ★ 未配置服务器地址时不发任何请求
+            if (!ServerEndpoints.IsConfigured)
+                throw new InvalidOperationException("未配置服务器地址");
+            string url = ServerEndpoints.UpdateBase + Uri.EscapeDataString(m.File);
             using var resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
                                        .ConfigureAwait(false);
             resp.EnsureSuccessStatusCode();

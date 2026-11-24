@@ -162,11 +162,11 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- ══════════ ③ 联机大厅服务器 ══════════ -->
-                    <TextBlock Text="联机大厅" Style="{StaticResource Label}" Margin="0,18,0,6" />
+                    <!-- ══════════ ③ 服务器 ══════════ -->
+                    <TextBlock Text="服务器" Style="{StaticResource Label}" Margin="0,18,0,6" />
                     <Border Style="{StaticResource GlassPanel}" Padding="14,12">
                         <StackPanel>
-                            <TextBlock Text="联机大厅服务端地址。改完立即生效，不用重启。"
+                            <TextBlock Text="服务器地址（联机大厅 / 路线更新 / 客户端更新三处共用）。留空 = 不联网。改完立即生效，不用重启。"
                                        Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="18" />
 
                             <Grid Margin="0,10,0,0">
@@ -184,7 +184,7 @@
                                              TextChanged="LobbyServerBox_TextChanged" />
 
                                     <TextBlock x:Name="LobbyServerPlaceholder"
-                                               Text="留空 = 使用内置默认地址"
+                                               Text="留空 = 未配置服务器（不联网）"
                                                FontSize="12" Margin="12,0,0,0"
                                                VerticalAlignment="Center"
                                                IsHitTestVisible="False"

@@ -212,6 +212,39 @@ namespace SoulLink.Services
                 // 2.14.0 只有单目标字段 RouteUpdatePath；2.15 起是多目标 + 云端 + 定时。
                 if (cfg.Settings.RouteUpdate.MigrateFromLegacy(cfg.Settings)) migrated = true;
 
+                // ★★ 服务器地址外部化：把旧的三处分散地址归一进 ServerBaseUrl ★★
+                //   · 优先用新的 ServerBaseUrl；为空则依次回填 RouteUpdate.CloudUrl、LobbyServerUrl；
+                //   · 回填后清空旧字段，避免两处地址不一致。
+                string baseUrl = ServerEndpoints.NormalizeBase(cfg.Settings.ServerBaseUrl);
+                if (baseUrl.Length == 0)
+                {
+                    string route = ServerEndpoints.NormalizeBase(cfg.Settings.RouteUpdate?.CloudUrl);
+                    string lobby = ServerEndpoints.NormalizeBase(cfg.Settings.LobbyServerUrl);
+                    // 路线旧地址是完整清单 URL（…/pathing/update.txt），需裁回基地址：
+                    // 联机旧地址本身就是基地址（…/api/…），两者结构不同，优先联机地址。
+                    if (lobby.Length > 0) baseUrl = lobby;
+                    else if (route.Length > 0)
+                    {
+                        string marker = "/pathing/";
+                        int i = route.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                        baseUrl = i > 0 ? route.Substring(0, i) : route;
+                    }
+                }
+                if (baseUrl.Length > 0)
+                {
+                    cfg.Settings.ServerBaseUrl = baseUrl;
+                    if (cfg.Settings.RouteUpdate != null && cfg.Settings.RouteUpdate.CloudUrl != baseUrl)
+                    {
+                        cfg.Settings.RouteUpdate.CloudUrl = "";
+                        migrated = true;
+                    }
+                    if (!string.Equals(cfg.Settings.LobbyServerUrl, baseUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cfg.Settings.LobbyServerUrl = "";
+                        migrated = true;
+                    }
+                }
+
                 // ★★ 3.2.4 修正：清掉误设的 Esc 备用热键 ★★
                 //   3.2.4 第一版把「退出全屏备用热键」默认写成了 "Escape"，
                 //   而游戏里 Esc 是菜单/取消键，全屏时被钩子吞掉会让游戏没法用。
