@@ -13,6 +13,6 @@
     <Compile Include="..\..\Models\FlowGraphRules.cs" />
     <Compile Include="..\..\Services\FlowValidator.cs" />
     <!-- BgiPathResolver 依赖 App.Config 等运行时设施，做最小替身 -->
-    <Compile Include="ValidatorStubs.cs" /><Compile Include="..\..\Models\PlcLogic.cs" />
+    <Compile Include="ValidatorStubs.cs" /><Compile Include="..\..\Models\PlcLogic.cs" /><Compile Include="..\..\Services\BgiDataDependency.cs" />
   </ItemGroup>
 </Project>

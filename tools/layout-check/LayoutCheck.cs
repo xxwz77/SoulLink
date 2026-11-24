@@ -22,10 +22,22 @@ public static class LayoutCheck
         double ar = (double)r.Tiles[0].Width / r.Tiles[0].Height;
         Check(Math.Abs(ar - 16.0 / 9.0) < 0.02, "two-col aspect " + ar);
 
-        // 3) Two column, 9 tiles: content taller than viewport -> needs scroll
+        // 3) Two column, 9 tiles: 格子填满视口、5 行等高排布（2.17.40 起的行为）
+        //
+        //    ★ 2026-11-24 更新断言（原断言前提已失效，不是产品缺陷）：
+        //      原断言 Check(r.NeedsScroll, "nine needs scroll") 假设「9 个在 2 列下必然超出视口」。
+        //      但 2.17.40「格子要填满视口」之后，ComputeTwoColumn 会按
+        //        availH = (vh - Gap*(rowsTotal+1)) / rowsTotal
+        //      反推行高，于是 contentHeight = Gap + rows*(cellH+Gap)
+        //      恒等于 vh - 2（8 + 5*(cellH+8) 展开后与 vh 相差 2），
+        //      **在任何视口高度下都不可能 > vh** —— 该断言已不可能成立。
+        //      实测：vh=1080 -> 1078；1400 -> 1398；1440 -> 1438；1500 -> 1498。
+        //      改为验证当前真实语义：5 行等高、铺满视口、纵向有序。
         r = ViewLayout.Compute(2560, 1440, (ConsoleLayoutMode)1, 9);
         Check(r.Tiles.Count == 9, "nine count");
-        Check(r.NeedsScroll, "nine needs scroll (content=" + r.ContentHeight + ")");
+        Check(r.Tiles[0].Height == r.Tiles[8].Height, "nine all rows same height (" + r.Tiles[0].Height + ")");
+        Check(r.ContentHeight <= 1440, "nine content fits viewport (content=" + r.ContentHeight + " <= 1440)");
+        Check(!r.NeedsScroll, "nine fills viewport without scroll (content=" + r.ContentHeight + ")");
         Check(r.Tiles[8].Y > r.Tiles[0].Y, "nine ordered downward");
 
         // 4) Grid, 4 tiles: 2x2 equal
