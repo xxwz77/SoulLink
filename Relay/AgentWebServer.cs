@@ -464,7 +464,10 @@ namespace SoulLink.Relay
                             await stream.FlushAsync().ConfigureAwait(false);
                             frames++;
                         }
-                        else await Task.Delay(10).ConfigureAwait(false);
+                        // ★ P0（2026-11-24）：事件驱动等帧替代 Task.Delay(10) 轮询。
+                        //   帧入队即被 SessionRecorder.WaitForFrame 的内核信号唤醒，消除每帧平均 +5ms（最坏 +10ms）轮询延迟税；
+                        //   真阻塞（零 CPU 空转）。1000ms 兜底超时仅覆盖 worker 异常停止的边界（正常有观众时 500ms 保活帧必醒）。
+                        else SessionRecorder.WaitForFrame(viewerId, 1000);
                     }
                 }
                 catch (Exception ex) { LogFailure("[stream] 客户端断开 frames=" + frames + "：" + ex); }
