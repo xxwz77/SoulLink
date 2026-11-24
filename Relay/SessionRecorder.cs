@@ -86,7 +86,16 @@ namespace SoulLink.Relay
         private static int _viewerQueueDepthMax;      // ★ P0 队列优化：入队瞬间观众队列最大深度（可观测）
         private static long _queueAgeMs;              // ★ P0 队列优化：最近一次出队帧龄（服务端队列等待）
         private static long _queueAgeMaxMs;           // ★ P0 队列优化：出队帧龄历史最大
-        private const int KeepaliveIntervalMs = 500;  // 保活节拍：2fps
+        // ★ P0（2026-11-24）：保活节拍可调（SOULLINK_KEEPALIVE_MS，1~2000，默认 250=4fps）。
+        //   原 500（2fps）：静止画面「兜底出帧」最坏延迟 500ms——对秒表类低频跳变内容，
+        //   当 DDA 事件驱动帧未覆盖时（真静止）用户要等保活帧才看到更新。降到 250 减半最坏等待。
+        //   带宽代价：静止 P 帧实测 ~7.2KB/帧 → 4fps ≈ 230kbps（原 2fps 115kbps，+115kbps）。
+        private static readonly int KeepaliveIntervalMs = ReadKeepaliveMs();
+        private static int ReadKeepaliveMs()
+        {
+            string? raw = Environment.GetEnvironmentVariable("SOULLINK_KEEPALIVE_MS");
+            return int.TryParse(raw, out int v) ? Math.Clamp(v, 1, 2000) : 250;
+        }
         private const int ZeroCopyFailDisableThreshold = 3;   // P0-E：零拷贝连续失败 ≥3 禁用 GPU 直通（防吞帧）
         /// <summary>
         /// ★ P0 队列延迟优化（2026-11-24）：观众待发队列深度上限（丢旧保新，关键帧头永不被丢）。
@@ -617,6 +626,7 @@ namespace SoulLink.Relay
                     + "|staticSkipped=" + _skippedStaticFrames + "|noNal=" + _noNalFrames
                     + "|keepalive=" + _keepaliveFrames + "|zeroMs=" + _zeroMs + "|zeroConvMs=" + _zeroConvertMs
                     + "|queueDrops=" + _viewerQueueDrops + "|queueDepthMax=" + _viewerQueueDepthMax
+                + "|inputTrigger=" + _inputTriggerCount + "|keepaliveMs=" + KeepaliveIntervalMs
                     + "|queueAge=" + _queueAgeMs + "|queueAgeMax=" + _queueAgeMaxMs
                     + "|fallbackReason=" + _captureFallbackReason
                     + "|fallbackAtUtc=" + (_captureFallbackAtUtc == default ? "" : _captureFallbackAtUtc.ToString("yyyy-MM-dd HH:mm:ss"))
@@ -755,8 +765,13 @@ namespace SoulLink.Relay
                     //   到拍（距上次编码 ≥ 1/fps）才抓屏，抓到即编码；未到拍则挂起等到拍，
                     //   期间被生命周期事件（stop/热切/参数更新/IDR 请求）唤醒则回顶重新判断。
                     //   forceKeyFrame（按需 IDR）必须立即编码，绕过节流。
+                    //   ★ P0 输入触发（2026-11-24）：输入活动同样绕过节拍立即抓帧——
+                    //     注入后的光标/界面变化是用户「预期马上看到」的内容，不能等下一拍。
+                    //     只消费一次性标志；真实帧仍走 fps 节流（不破坏节拍器累计语义）。
+                    bool inputTrigger = _inputActivityPending;
+                    _inputActivityPending = false;
                     bool forceKeyFrame = ConsumeKeyFrameRequest();
-                    if (!forceKeyFrame && !WaitUntilNextSlot(ref nextAt))
+                    if (!forceKeyFrame && !inputTrigger && !WaitUntilNextSlot(ref nextAt))
                     {
                         continue;
                     }
@@ -1138,6 +1153,35 @@ namespace SoulLink.Relay
         {
             lock (Gate) { _forceKeyFrame = true; }
             LifecycleChanged.Set();
+        }
+
+        // ── ★ P0（2026-11-24）：输入触发出帧（方案 B）────────────────────────────
+        // 输入（move/click/keydown…）是「用户预期画面马上变化」的最强先验：注入后桌面
+        // 几乎必然产生光标/界面变化。让 worker 绕过 WaitUntilNextSlot 节拍立即抓帧编码，
+        // 把「输入→画面反馈」从「≤下一拍(1/fps)+等帧超时」压到「立即」。
+        // 限流：距上次触发 >50ms 才置位（move 高频事件不成风暴）；开关：SOULLINK_INPUT_TRIGGER=0 关闭。
+        private static long _lastInputTriggerMs;      // Environment.TickCount64：上次输入触发时刻
+        private static long _inputTriggerCount;       // 可观测：累计触发次数
+        private static bool _inputTriggerArmed = ReadInputTriggerEnabled();
+        private static bool ReadInputTriggerEnabled()
+        {
+            // 默认开启；显式 =0 关闭（现场排障/回退用）
+            string? raw = Environment.GetEnvironmentVariable("SOULLINK_INPUT_TRIGGER");
+            return !(raw == "0");
+        }
+        private static volatile bool _inputActivityPending;   // worker 侧消费的一次性标志
+
+        /// <summary>输入通道成功注入后调用：立即安排一次抓帧编码（限流 50ms，绕过 fps 节拍）。</summary>
+        public static void NotifyInputActivity()
+        {
+            if (!_inputTriggerArmed) return;
+            long now = Environment.TickCount64;
+            // 无锁快路径读 + Interlocked 竞态无害（多线程同时通过限流只多触发一拍，worker 有 fps 节流兜底）
+            if (now - Interlocked.Read(ref _lastInputTriggerMs) < 50) return;
+            Interlocked.Exchange(ref _lastInputTriggerMs, now);
+            Interlocked.Increment(ref _inputTriggerCount);
+            _inputActivityPending = true;
+            LifecycleChanged.Set();   // 唤醒 worker（可能在 WaitUntilNextSlot/IdleWait 里）
         }
 
         private static bool ConsumeKeyFrameRequest()

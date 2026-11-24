@@ -24,15 +24,29 @@
                     <Border Style="{StaticResource GlassPanel}" Padding="14,13">
                         <StackPanel>
                             <StackPanel Orientation="Horizontal">
+                                <!-- ★ 2026-11-24 P0-2：默认值改中性灰（检测中…），
+                                     原绿色 #FF41F0C0 是「未检测先显示就绪」的假绿。 -->
                                 <ctl:GlowDot x:Name="EngineDot" Width="18" Height="18" VerticalAlignment="Center"
-                                             Color="#FF41F0C0" />
+                                             Color="#FF8B9CC8" />
                                 <StackPanel Margin="10,0,0,0">
+                                    <!-- ★ 2026-11-24 P0-2：三方版本行「当前程序 X · 服务 Y · 注入代理 Z」
+                                         数据源 = AgentSync.Inspect / AgentSync.LastVerdict（t1 单一判据），
+                                         由 DetectAsync 的 Broker 分支刷新；未检测前保持占位「—」。 -->
                                     <TextBlock x:Name="EngineState" Text="检测中…" FontSize="12.5" FontWeight="SemiBold"
                                                Foreground="{DynamicResource TextPrimary}" />
                                     <TextBlock x:Name="EnginePath" Text="—" Style="{StaticResource Mono}"
                                                TextWrapping="Wrap" MaxWidth="360" Margin="0,3,0,0" />
+                                    <TextBlock x:Name="EngineVer" Text="当前程序 — · 服务 — · 注入代理 —"
+                                               Style="{StaticResource Mono}" FontSize="10.5" Opacity="0.85"
+                                               TextWrapping="Wrap" MaxWidth="360" Margin="0,4,0,0"
+                                               ToolTipService.ShowDuration="15000" />
                                 </StackPanel>
                             </StackPanel>
+
+                            <!-- ★ 兜底修复入口：注入代理版本不一致/缺失时一键修复（AgentSync） -->
+                            <Button x:Name="BtnRepairAgent" Content="修复注入代理"
+                                    Style="{StaticResource GhostButton}" HorizontalAlignment="Left"
+                                    Margin="0,10,0,0" Click="RepairAgent_Click" />
 
                             <Border Style="{StaticResource Divider}" Margin="0,12" />
 

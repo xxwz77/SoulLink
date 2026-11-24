@@ -154,7 +154,7 @@ namespace SoulLink.Services
         {
             try
             {
-                string self = SystemLauncher.ResolveSelfExe();
+                string self = AppIdentity.ResolveSelfExe();
                 if (string.IsNullOrWhiteSpace(self) || !File.Exists(self))
                     return (false, "找不到 SoulLink.exe 本体");
 
@@ -176,6 +176,15 @@ namespace SoulLink.Services
                 if (File.Exists(target)) { try { File.SetAttributes(target, FileAttributes.Normal); File.Delete(target); } catch { } }
 
                 File.Copy(self, target, true);
+
+                // ★ P0-1：随包 version 标记文件必须跟着手动代理一起导出，否则单文件代理读不到版本。
+                string selfVer = AppIdentity.VersionFileFor(self);
+                if (File.Exists(selfVer))
+                {
+                    try { File.Copy(selfVer, Path.Combine(targetDirectory, AppIdentity.AgentVersionFileName), true); } catch { }
+                }
+
+
                 if (!ManifestPatcher.MakeAsInvoker(target))
                 {
                     byte[] bytes = File.ReadAllBytes(target);

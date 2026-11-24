@@ -90,13 +90,18 @@ if (-not (Test-Path -LiteralPath $dist)) {
 $includeDirs  = @('', 'tools', 'next')
 $excludeNames = @('data', 'stable')
 $excludeExt   = @('.log', '.bak', '.old', '.tmp', '.pdb')
+# ★ 旧 exe 备份/改名文件的扩展名会被后缀污染（如 .bak-20261124-100501、.old-running），
+#   纯扩展名黑名单匹配不到，会把几十 MB 的旧程序打进发布包。改用文件名正则兜底：
+#   名字里出现 .bak/.old 且后跟 '-'、'.' 或结尾，一律视为备份/改名文件排除。
+#   同时保留上面的扩展名黑名单，覆盖面只增不减。
+$excludeRe    = '\.(bak|old)(-|\.|$)'
 
 $files = @()
 foreach ($sub in $includeDirs) {
     $dir = if ($sub -eq '') { $dist } else { Join-Path $dist $sub }
     if (-not (Test-Path -LiteralPath $dir)) { continue }
     Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
-        Where-Object { $excludeExt -notcontains $_.Extension.ToLower() } |
+        Where-Object { $excludeExt -notcontains $_.Extension.ToLower() -and $_.Name -notmatch $excludeRe } |
         ForEach-Object {
             $rel = if ($sub -eq '') { $_.Name } else { "$sub/$($_.Name)" }
             $files += [pscustomobject]@{ Rel = $rel; Full = $_.FullName }

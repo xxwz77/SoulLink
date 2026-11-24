@@ -796,6 +796,207 @@ namespace SoulLink.Controls
         private int _rebuildAttempt;
         private const int MaxRebuildAttempts = 5;
 
+        // ── P0-3：不可恢复错误停止无脑重试 ────────────────────────────────
+        //
+        // ★ 用户原话：「版本不对的情况下还在疯狂尝试注入，有意义吗？」
+        //   旧逻辑：投送失败（含 AGENT_INVALID）一律 ScheduleInputRebuild 指数退避，
+        //   每 10 秒重投一次、日志刷一遍。对「agent 缺失/版本不符/服务没装」这类
+        //   硬错误，重试一万次结果也一样。
+        //
+        // ★ 状态机：
+        //   投送失败 → ClassifyDeployFailure：
+        //     · 不可恢复（Inspect 5 态非 Ready 且属于安装/版本类，或 message 命中
+        //       已知 Broker 不可恢复码）→ HaltDeploy：日志只记一次、不再重排退避、
+        //       挂 30s 自动恢复订阅（TickHub，非 DispatcherTimer）；
+        //     · 可恢复（瞬时/超时/管道抖动）→ 维持既有退避重试。
+        //   恢复入口（全部保留）：
+        //     · 手动：重新连接 / 修复注入代理 / 重新检测 → BeginInput 入口先复检，
+        //       Inspect == Ready 即放行（清 halted）；
+        //     · 自动：_autoResumeTimer 周期 Inspect，Ready → ResetRebuildCounter()（
+        //       _rebuildAttempt 归零）+ 重新投送，无需重启程序。
+        private bool _deployHalted;
+        private string _haltedReason = "";
+        private string _haltLoggedKey = "";      // 同一原因只记一次日志
+        private IDisposable? _autoResumeTimer;   // TickHub.RegisterBackground 句柄
+        private int _resumeQueued;               // 0=空闲 1=已有恢复动作在 UI 队列
+
+        /// <summary>自动恢复复检周期（秒）：与顶栏引擎周期复检同档（30~60s 红线内）。</summary>
+        private const int DeployAutoResumeSeconds = 30;
+
+        /// <summary>
+        /// 投送失败是否不可恢复（重试无意义）。
+        ///
+        /// ★ 权威判据 = AgentSync.Inspect 的 5 态（t1/t2 收敛的单一口径）：
+        ///   NotInstalled / AgentNeedsUpdate → 重投必失败（装/修才能解决）；
+        ///   NotRunning → 重投也必失败（服务没跑，ensure 会被拒），
+        ///     但服务可能很快被启回来 → 归入「停止重试 + 自动恢复」而非纯退避
+        ///     （继续退避重投 = 每 10 秒刷一次失败日志，正是用户抱怨的刷屏）。
+        ///   Ready → 失败是瞬时性的（管道抖动/超时/杀软）→ 可恢复。
+        ///
+        /// ★ message 兜底：Broker 的 Code 不会透传到 DeployAsync 的返回字符串
+        ///   （只拼 Message 文案），所以按已知不可恢复码的人话文案做一次匹配，
+        ///   命中即视为不可恢复——即使 Inspect 误报 Ready（例如服务在跑但 agent
+        ///   刚被删，文件系统有延迟）也能停下来。
+        ///   文案来源：Services/BrokerService.cs Fail(...) 与 Services/BrokerProtocol.cs
+        ///   Fail(...) 的 AGENT_INVALID / INSTALL_INVALID / NOT_INSTALLED / SERVICE_OUTDATED。
+        /// </summary>
+        private static (bool unrecoverable, string reason) ClassifyDeployFailure(string message)
+        {
+            // ① Inspect 5 态（权威）
+            try
+            {
+                EngineState st = AgentSync.Inspect(out _, out _);
+                if (st == EngineState.NotInstalled) return (true, "Broker 服务未安装");
+                if (st == EngineState.AgentNeedsUpdate) return (true, "注入代理缺失或版本不符");
+                if (st == EngineState.NotRunning) return (true, "Broker 服务已安装但未运行");
+                if (st == EngineState.Error) return (true, "引擎状态异常");
+            }
+            catch { /* Inspect 失败不阻断分类，落到 message 匹配 */ }
+
+            // ② message 文案兜底（Broker 不可恢复码的人话片段）
+            if (message != null)
+            {
+                if (message.Contains("管理员代理缺失或版本不符")) return (true, "注入代理缺失或版本不符（AGENT_INVALID）");
+                if (message.Contains("固定测试版目录")) return (true, "Broker 安装目录无效（INSTALL_INVALID）");
+                if (message.Contains("Broker 服务未安装")) return (true, "Broker 服务未安装（NOT_INSTALLED）");
+                if (message.Contains("版本过低") || message.Contains("最低要求")) return (true, "Broker 服务版本过低（SERVICE_OUTDATED）");
+            }
+            return (false, "");
+        }
+
+        /// <summary>
+        /// 停止自动重试并进入「待恢复」状态：
+        /// · 日志每个原因只记一次（不刷屏）；
+        /// · InputActivity 给出可执行指引；
+        /// · 挂 30s 自动恢复订阅（Inspect 回 Ready 即重投，_rebuildAttempt 归零）。
+        /// 幂等：重复调用（多账号连环失败）只更新已有状态，不重复挂订阅。
+        /// </summary>
+        private void HaltDeploy(string reason, string rawMessage)
+        {
+            if (_disposed) return;
+            bool firstForThisReason = _haltLoggedKey != reason;
+            _deployHalted = true;
+            _haltedReason = reason;
+
+            if (firstForThisReason)
+            {
+                _haltLoggedKey = reason;
+                // ★ 只记一次：P0-3 的核心诉求。换原因（如服务停→agent 版本不符）才再记。
+                LogBus.Warn("投送已暂停（不可恢复错误，停止自动重试）",
+                    "会话 " + CurrentSessionId + " · " + reason
+                    + (string.IsNullOrWhiteSpace(rawMessage) ? "" : "\n原始错误：" + rawMessage)
+                    + "\n指引：修复后点「重新连接」，或在设置页点「修复注入代理」；每 "
+                    + DeployAutoResumeSeconds + " 秒自动复检，恢复后自动重投。");
+            }
+
+            // 指引走 InputActivity（会话级状态栏），每轮失败一条可接受（用户主动重连场景少），
+            // 但连续多账号时也会收敛：_deployHalted 已置位，BeginInput 入口会拦掉后续重投。
+            InputActivity?.Invoke(this, "注入已暂停：" + reason + " · 修复后点「重新连接」或等待自动恢复（" + DeployAutoResumeSeconds + "s 复检）");
+
+            // 取消挂起中的退避重建（halted 期间不再退避重投）
+            try { _rebuildCts?.Cancel(); } catch { }
+            try { _rebuildCts?.Dispose(); } catch { }
+            _rebuildCts = null;
+
+            StartAutoResumeWatch();
+        }
+
+        /// <summary>
+        /// 挂自动恢复订阅（幂等）：30 秒一次 Inspect，Ready → 恢复重投。
+        /// ★ 必须走 TickHub.RegisterBackground（AGENTS.md 性能约束 1），
+        ///   每个 halted Console 只挂一个；Dispose / 恢复时释放。
+        /// </summary>
+        private void StartAutoResumeWatch()
+        {
+            if (_autoResumeTimer != null || _disposed) return;
+            try
+            {
+                _autoResumeTimer = TickHub.RegisterBackground("DeployAutoResume", DeployAutoResumeSeconds, () =>
+                {
+                    try
+                    {
+                        if (_disposed || !_deployHalted) return;
+                        EngineState st = AgentSync.Inspect(out string detail, out _);
+                        if (st != EngineState.Ready) return;   // 还没修好，静默跳过（不刷日志）
+                        // 修好了 → 回 UI 线程恢复投送
+                        if (Interlocked.CompareExchange(ref _resumeQueued, 1, 0) != 0) return;
+                        try
+                        {
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                _resumeQueued = 0;
+                                try { AutoResumeDeploy(detail); }
+                                catch (Exception ex) { Debug("自动恢复异常：" + ex.Message); }
+                            }));
+                        }
+                        catch { _resumeQueued = 0; }
+                    }
+                    catch { /* 复检失败不影响下一拍 */ }
+                });
+            }
+            catch (Exception ex) { Debug("挂自动恢复订阅失败：" + ex.Message); }
+        }
+
+        /// <summary>
+        /// 自动恢复：引擎回到 Ready → 清 halted、_rebuildAttempt 归零、重新投送。
+        /// 在 UI 线程执行（由 StartAutoResumeWatch 的订阅回调投递）。
+        /// </summary>
+        private void AutoResumeDeploy(string readyDetail)
+        {
+            if (_disposed || !_deployHalted) return;
+            if (CurrentSessionId <= 0 || Account == null) { StopAutoResumeWatch(); return; }
+            _deployHalted = false;
+            _haltedReason = "";
+            StopAutoResumeWatch();
+            // ★ _rebuildAttempt 归零点（恢复入口之一，与 :844 / ResetRebuildCounter 同语义）：
+            //   既有 :844 是「重建后发现通道已连」归零；这里是「引擎修复后重新起跑」归零。
+            ResetRebuildCounter();
+            LogBus.Info("投送自动恢复", "引擎判据已恢复就绪（" + readyDetail + "）会话 " + CurrentSessionId + "，重新投送");
+            InputActivity?.Invoke(this, "引擎已恢复，正在重新投送注入代理…");
+            BeginInput(CurrentSessionId, Account);
+        }
+
+        /// <summary>停掉自动恢复订阅（恢复 / 断开 / Dispose 时调用）。</summary>
+        private void StopAutoResumeWatch()
+        {
+            var t = _autoResumeTimer;
+            _autoResumeTimer = null;
+            try { t?.Dispose(); } catch { }
+        }
+
+        /// <summary>
+        /// 手动恢复入口（「重新连接」/「修复注入代理」/「重新检测」后的重连）：
+        /// halted 状态下先复检引擎，Ready → 清标志 + _rebuildAttempt 归零 + 立即重投；
+        /// 仍非 Ready → 提示卡点（不投送，不刷日志——原因在 HaltDeploy 已记过一次）。
+        /// Inspect 纯读取，放后台线程；结论回 UI 线程执行。
+        /// </summary>
+        private async Task ResumeIfEngineReadyAsync(int sessionId, Account account)
+        {
+            try
+            {
+                EngineState st = await Task.Run(() => AgentSync.Inspect(out string d, out _)).ConfigureAwait(true);
+                if (st != EngineState.Ready)
+                {
+                    // 仍卡在不可恢复状态：只回 UI 提示，不再投送、不再记日志（已记过）。
+                    InputActivity?.Invoke(this, "注入仍暂停：" + _haltedReason
+                        + " · 修复后点「重新连接」，或等待自动恢复（" + DeployAutoResumeSeconds + "s 复检）");
+                    return;
+                }
+                _deployHalted = false;
+                _haltedReason = "";
+                StopAutoResumeWatch();
+                // ★ _rebuildAttempt 归零点（手动恢复入口）：引擎修好了，从第一次退避重新起跑。
+                ResetRebuildCounter();
+                LogBus.Info("投送恢复（手动入口）", "引擎判据已就绪，会话 " + sessionId + " 重新投送");
+                InputActivity?.Invoke(this, "引擎已恢复，正在重新投送注入代理…");
+                BeginInput(sessionId, account);
+            }
+            catch (Exception ex)
+            {
+                Debug("复检恢复失败：" + ex.Message);
+            }
+        }
+
         /// <summary>
         /// 安排一次通道重建（指数退避，最多 5 次）。
         /// 触发来源：relay 断开事件、连接后探测失败。
@@ -807,6 +1008,11 @@ namespace SoulLink.Controls
                 if (_disposed || !IsConnected) return;
                 if (Input?.Relay.IsConnected == true) return;   // 已经好了
                 if (CurrentSessionId <= 0) return;
+
+                // ★ P0-3：不可恢复错误已停止重试 → 一切退避重建都暂停，
+                //   恢复统一走 HaltDeploy 挂的自动复检 / 手动入口。
+                //   （否则「通道断开」等旧路径仍会在 halted 期间重投。）
+                if (_deployHalted) return;
 
                 if (_rebuildAttempt >= MaxRebuildAttempts)
                 {
@@ -2987,6 +3193,18 @@ namespace SoulLink.Controls
                 Debug("会话 " + sessionId + " 正在投送中，本次跳过");
                 return;
             }
+
+            // ★ 2026-11-24 P0-3：不可恢复错误已暂停投送时，手动入口（重新连接 /
+            //   修复注入代理后重连）在这里复检一次：引擎已 Ready → 清标志放行重投；
+            //   仍非 Ready → 提示当前卡点并跳过（不进入 DeployAsync，避免又一轮
+            //   必败投送把日志刷起来）。周期自动恢复由 StartAutoResumeWatch 负责。
+            if (_deployHalted)
+            {
+                System.Threading.Interlocked.Exchange(ref _inputStartPending, 0);
+                DeployingSessions.TryRemove(sessionId, out _);
+                _ = ResumeIfEngineReadyAsync(sessionId, account);
+                return;
+            }
             try
             {
                 // ★ 硬超时：DeployAsync 内部虽有 20 秒超时，
@@ -3060,6 +3278,20 @@ namespace SoulLink.Controls
                     relay.Dispose();
                     Debug("注入代理投送失败：" + msg);
                     InputActivity?.Invoke(this, "注入不可用：" + msg);
+                    // ★ 2026-11-24 修「投送失败不反馈」：触发顶栏引擎重查（版本不符/服务异常会立刻显示真实态）
+                    Services.AgentSync.RequestRecheck("投送失败：" + msg);
+
+                    // ★ 2026-11-24 P0-3：先分类再决定要不要重试。
+                    //   不可恢复（agent 缺失/版本不符/服务未安装未运行）→ 停止退避重投
+                    //   （重试必失败 + 每 10 秒刷日志 = 用户抱怨的「疯狂尝试注入」），
+                    //   保留手动与自动恢复入口；
+                    //   可恢复（瞬时/超时/管道抖动）→ 维持既有指数退避。
+                    var (unrecoverable, reason) = ClassifyDeployFailure(msg);
+                    if (unrecoverable)
+                    {
+                        HaltDeploy(reason, msg);
+                        return;
+                    }
                     // ★ 投送失败同样重试：会话刚登录/杀软临时拦截都可能是一过性的
                     ScheduleInputRebuild("投送失败");
                     return;
@@ -3461,6 +3693,8 @@ namespace SoulLink.Controls
             try { _rebuildCts?.Cancel(); } catch { }
             try { _rebuildCts?.Dispose(); } catch { }
             _rebuildCts = null;
+            // ★ P0-3：释放自动恢复订阅（TickHub 句柄），销毁的 Console 不再复检。
+            StopAutoResumeWatch();
             ReleaseCapture("释放控制台");
             ReleaseInjectedButtonsAsync();   // 兜底：即使 ReleaseCapture 提前返回也要释放
             UninstallMouseHook();

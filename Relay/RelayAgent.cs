@@ -172,8 +172,15 @@ namespace SoulLink.Relay
         private static extern uint SendInput(uint nInputs, KEYINPUT[] pInputs, int cbSize);
 
         private const uint INPUT_KEYBOARD = 1;
+        private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;   // ★ FIX-KEYBOARD-TOGGLE-SYNC：扩展键（E0 前缀）
         private const uint KEYEVENTF_KEYUP = 0x0002;
         private const uint KEYEVENTF_UNICODE = 0x0004;
+
+        [DllImport("user32.dll")]
+        private static extern uint MapVirtualKeyEx(uint wCode, uint wMapType, IntPtr hkl);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetKeyboardLayout(uint idThread);
 
         /// <summary>发送 "F12" / "Ctrl+A" / "Alt+F4" 这类按键组合。</summary>
         private static bool SendKeyCombo(string spec, out string error)
@@ -202,9 +209,38 @@ namespace SoulLink.Relay
             catch (Exception ex) { error = ex.Message; return false; }
         }
 
-        /// <summary>发送一个虚拟键；返回是否真的被系统接受。</summary>
+        /// <summary>
+        /// VK → Set1 扫描码（低字节；高位 0xE0 表示扩展键）。失败返回 0。
+        /// ★ 用 MAPVK_VK_TO_VSC_EX(=4) 而不是 MAPVK_VK_TO_VSC(=0)：后者不带 E0 信息，
+        ///   无法区分「方向键」与「小键盘数字」（两者扫描码完全相同）。
+        /// </summary>
+        private static uint MapVkToScanEx(ushort vk)
+        {
+            try { return MapVirtualKeyEx(vk, 4, GetKeyboardLayout(0)); }
+            catch { return 0; }
+        }
+
+        /// <summary>
+        /// 发送一个虚拟键；返回是否真的被系统接受。
+        ///
+        /// ★★ FIX-2026-11-24（KEYBOARD-TOGGLE-SYNC）：旧实现只填 <c>wVk</c>，
+        ///   <c>wScan</c> 恒 0、<c>dwFlags</c> 不带 <c>KEYEVENTF_EXTENDEDKEY</c>。
+        ///   本会话用「低级键盘钩子 + 隐藏窗口消息」两路实测坐实其后果：
+        ///   目标程序收到的 **lParam 扫描码恒为 0、扩展位恒为 0**，于是
+        ///   ① 方向键与同扫描码的小键盘数字在消息层完全无法区分；
+        ///   ② 右 Ctrl / 右 Alt / 小键盘除号丢失扩展位，被当成左修饰键或主键盘键；
+        ///   ③ 依赖扫描码的程序（Raw Input / DirectInput 游戏、终端、部分 IME）行为异常。
+        ///   现按 MAPVK_VK_TO_VSC_EX 取出真实扫描码并显式携带扩展位。
+        /// </summary>
         private static bool SendVk(ushort vk, bool up)
         {
+            uint vscEx = MapVkToScanEx(vk);
+            ushort scan = (ushort)(vscEx & 0xFF);
+            bool extended = (vscEx >> 8) == 0xE0 || Services.InputKeys.IsExtendedVk(vk);
+
+            uint flags = up ? KEYEVENTF_KEYUP : 0;
+            if (extended) flags |= KEYEVENTF_EXTENDEDKEY;
+
             var input = new KEYINPUT
             {
                 type = INPUT_KEYBOARD,
@@ -213,7 +249,8 @@ namespace SoulLink.Relay
                     ki = new KEYBDINPUT
                     {
                         wVk = vk,
-                        dwFlags = up ? KEYEVENTF_KEYUP : 0,
+                        wScan = scan,
+                        dwFlags = flags,
                         dwExtraInfo = IntPtr.Zero
                     }
                 }
@@ -226,6 +263,63 @@ namespace SoulLink.Relay
             Log("SendInput 失败 vk=0x" + vk.ToString("X2") + " up=" + up
                 + " cbSize=" + Marshal.SizeOf<KEYINPUT>() + " err=" + err);
             return false;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern short GetKeyState(int nVirtKey);
+
+        /// <summary>
+        /// 读本会话当前的 CapsLock / NumLock / ScrollLock 状态。
+        /// ★ GetKeyState 的低位 = toggle 状态（1 = ON），必须在**有消息泵的线程**上读才有意义；
+        ///   agent 的 ServePipe / Web 线程都是普通线程，GetKeyState 仍会返回该桌面
+        ///   的当前 toggle 状态（实测有效，见 FIX 报告 §实测）。
+        /// </summary>
+        private static Services.ToggleKeys.State ReadToggleState()
+        {
+            const int VK_CAPITAL = 0x14, VK_NUMLOCK = 0x90, VK_SCROLL = 0x91;
+            try
+            {
+                return new Services.ToggleKeys.State(
+                    caps: (GetKeyState(VK_CAPITAL) & 1) != 0,
+                    num: (GetKeyState(VK_NUMLOCK) & 1) != 0,
+                    scroll: (GetKeyState(VK_SCROLL) & 1) != 0);
+            }
+            catch
+            {
+                return new Services.ToggleKeys.State(false, false, false);
+            }
+        }
+
+        /// <summary>
+        /// 按一次 toggle 键（按下 + 抬起，中间 20ms）。
+        /// ★ toggle 键按一次翻转一次，所以调用方必须先 Diff 再逐个按，**绝不能无脑全按**。
+        /// </summary>
+        private static bool TapToggle(ushort vk)
+        {
+            if (!SendVk(vk, up: false)) return false;
+            Thread.Sleep(20);
+            return SendVk(vk, up: true);
+        }
+
+        /// <summary>
+        /// 解析 <c>"1,0,1"</c> 简写（caps,num,scroll，1=ON / 0=off）。
+        /// 字段数不是 3、或有非 0/1 值 → 返回 false（不猜）。
+        /// </summary>
+        private static bool TryParseToggleTriple(string? text, out Services.ToggleKeys.State state)
+        {
+            state = default;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var parts = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length != 3) return false;
+            var on = new bool[3];
+            for (int i = 0; i < 3; i++)
+            {
+                if (parts[i] == "1" || parts[i].Equals("on", StringComparison.OrdinalIgnoreCase)) on[i] = true;
+                else if (parts[i] == "0" || parts[i].Equals("off", StringComparison.OrdinalIgnoreCase)) on[i] = false;
+                else return false;
+            }
+            state = new Services.ToggleKeys.State(on[0], on[1], on[2]);
+            return true;
         }
 
         /// <summary>
@@ -470,7 +564,7 @@ namespace SoulLink.Relay
                 string raw = Environment.GetEnvironmentVariable("SOULLINK_USER_POLICY") ?? "";
                 if (raw.Length == 0) { Log("用户级策略：未下发开关，跳过"); return; }
                 bool enable = raw != "0";
-                SoulLink.Services.SessionSlimmer.ApplyUserPolicy(enable);
+                SoulLink.Services.EdgeStartupPolicy.ApplyUserPolicy(enable);
                 Log("用户级策略：已" + (enable ? "写入禁用" : "删值恢复默认") + "（Edge 预启动/后台）");
             }
             catch (Exception ex)
@@ -759,6 +853,9 @@ namespace SoulLink.Relay
 
         private static Response Fail(string message) => new Response { Ok = false, Message = message };
 
+        // ★ shot 后台执行的串行锁：防止两张截图并发写同一时间戳目录（AUDIT-20261124-17）。
+        private static readonly object _shotGate = new();
+
         // ── 指令实现 ─────────────────────────────────────────────────────────
 
         internal static Response Execute(Request req)
@@ -865,11 +962,15 @@ namespace SoulLink.Relay
                     }
 
                 // 按下/抬起分开控制：转视角时要「按住右键 + 相对移动 + 松开」
+                // ★ 2026-11-24 修复（AUDIT-20261124-17）：req.Move!=0 时先定位再按键，
+                //   让 up 的最终落点与松手位置一致（Move 由 AgentWebServer 对带坐标的 down/up 置 1）。
                 case "down":
+                    if (req.Move != 0) SetCursorPos(req.X, req.Y);
                     MouseButton(req.Button, true);
                     return new Response { Ok = true, Message = (req.Button ?? "left") + " 按下" };
 
                 case "up":
+                    if (req.Move != 0) SetCursorPos(req.X, req.Y);
                     MouseButton(req.Button, false);
                     return new Response { Ok = true, Message = (req.Button ?? "left") + " 抬起" };
 
@@ -922,6 +1023,66 @@ namespace SoulLink.Relay
                         else PressedKeys.TryRemove(vk, out _);
 
                         return new Response { Ok = true, Message = (isDown ? "按下 " : "抬起 ") + spec };
+                    }
+
+                // ★★ FIX-2026-11-24（KEYBOARD-TOGGLE-SYNC）：键盘三锁（Caps/Num/Scroll）同步 ★★
+                //
+                //   为什么要有这个动作：
+                //     Caps/Num/Scroll 是**桌面/会话级状态**，观看端与宿主各有一份，天然会漂移。
+                //     宿主 NumLock=ON、观看端 OFF 时，观看端按小键盘 4 期望 "4"，远端却按
+                //     自己的 NumLock 解释成方向键。更糟的是：**只按「切换键」会把远端翻到
+                //     相反值**，所以必须先读远端真实状态再算差集，不能盲按（见 ToggleKeys.Diff）。
+                //
+                //   请求体（两种写法都接受）：
+                //     { "action":"keysync", "key":"caps=1,num=0,scroll=1" }   ← 目标状态（推荐）
+                //     { "action":"keysync", "key":"1,0,1" }                   ← 同上的简写
+                //   不带 key / 解析失败 → 只回报当前状态，不注入任何键（宁可不做也不猜）。
+                case "keystate":
+                    {
+                        var st = ReadToggleState();
+                        return new Response
+                        {
+                            Ok = true,
+                            Message = st.ToString(),
+                            Info = "mask=" + Services.ToggleKeys.ToMask(st)
+                        };
+                    }
+
+                case "keysync":
+                    {
+                        var current = ReadToggleState();
+                        string spec = req.Button ?? "";
+                        Services.ToggleKeys.State target;
+                        if (!Services.ToggleKeys.TryParse(spec, out target)
+                            && !TryParseToggleTriple(spec, out target))
+                        {
+                            // 没有目标状态：只回报现状（幂等、零副作用）
+                            return new Response
+                            {
+                                Ok = true,
+                                Message = "当前 " + current + "（未提供目标状态，未注入）",
+                                Info = "mask=" + Services.ToggleKeys.ToMask(current)
+                            };
+                        }
+
+                        var todo = Services.ToggleKeys.Diff(current, target);
+                        int tapped = 0;
+                        foreach (ushort vk in todo)
+                        {
+                            if (!TapToggle(vk))
+                                return Fail("同步 " + current + " → " + target + " 时按键失败（SendInput 被系统拒绝）");
+                            tapped++;
+                            Thread.Sleep(30);   // 三个锁之间留间隔，避免被合并
+                        }
+                        var after = ReadToggleState();
+                        bool matched = Services.ToggleKeys.ToMask(after) == Services.ToggleKeys.ToMask(target);
+                        return new Response
+                        {
+                            Ok = matched,      // ★ 读回不一致就如实报失败，不假装成功
+                            Message = (tapped == 0 ? "已一致 " : ("按键 " + tapped + " 次 → "))
+                                      + current + " → " + after,
+                            Info = "mask=" + Services.ToggleKeys.ToMask(after)
+                        };
                     }
 
                 // ★★ 3.3.x 中文输入：KEYEVENTF_UNICODE 逐字符注入 ★★
@@ -1024,15 +1185,33 @@ namespace SoulLink.Relay
                 case "shot":
                     {
                         // 字段复用：Button = 用户名-昵称，Hotkey = 触发条件，X = 质量
+                        // ★ 2026-11-24 修复（AUDIT-20261124-17 缺陷2 第一步）：
+                        //   CaptureOnce（JPEG 抓屏 + 落盘，100ms~秒级）原来在本 ServePipe 线程同步执行，
+                        //   会把后面排队的 move/down/up 全部堵住（松手迟钝的输入侧根因之一）。
+                        //   现改为后台线程执行（SemaphoreSlim 串行防并发写同一目录），
+                        //   ServePipe 立即回「已受理」，up/移动不再被截图卡住。
+                        //   代价：调用方拿到的是「受理」而非「完成」，真实成败看 agent 日志
+                        //   （现有调用方 FlowRunner 只判断 Ok/Message，语义兼容）。
                         int sid = Process.GetCurrentProcess().SessionId;
-                        bool ok = SessionRecorder.CaptureOnce(
-                            req.Button ?? "", req.Hotkey ?? "", req.X > 0 ? req.X : 75,
-                            sid, out string path, out string msg);
+                        string btn = req.Button ?? "";
+                        string trig = req.Hotkey ?? "";
+                        int quality = req.X > 0 ? req.X : 75;
+                        _ = System.Threading.Tasks.Task.Run(() =>
+                        {
+                            try
+                            {
+                                lock (_shotGate)
+                                {
+                                    bool okBg = SessionRecorder.CaptureOnce(btn, trig, quality, sid, out string pathBg, out string msgBg);
+                                    RelayAgent.LogQuiet("[shot] 后台截图 " + (okBg ? "完成：" + pathBg : "失败：" + msgBg));
+                                }
+                            }
+                            catch (Exception exBg) { RelayAgent.LogQuiet("[shot] 后台截图异常：" + exBg.Message); }
+                        });
                         return new Response
                         {
-                            Ok = ok,
-                            Message = ok ? ("已截图：" + path) : msg,
-                            Info = path,
+                            Ok = true,
+                            Message = "已受理（后台保存中）",
                             SessionId = sid
                         };
                     }

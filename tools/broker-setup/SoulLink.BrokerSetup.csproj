@@ -1,4 +1,7 @@
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0-windows</TargetFramework><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include="Program.cs" /></ItemGroup><ItemGroup>
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><!-- ★ T17 修「安装服务黑框」：原 OutputType=Exe 是控制台子系统，
+      runas 提权启动时 Windows 分配控制台宿主窗口 = 用户看到的黑色方块（不是圆角问题，
+      与 BrokerWindow 无关）。它靠 Log() 写日志文件 + 退出码与宿主通信，零 Console 使用
+      （grep 证实），不需要控制台 —— 与 tools/updater 的 WinExe 同形态。 --><OutputType>WinExe</OutputType><TargetFramework>net11.0-windows</TargetFramework><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include="Program.cs" /></ItemGroup><ItemGroup>
   <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
   <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
 </ItemGroup></Project>

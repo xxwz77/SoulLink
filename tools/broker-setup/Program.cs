@@ -56,9 +56,26 @@ public static class Program
             string service = Path.Combine(InstallRoot, "SoulLink.exe");
             string agent = Path.Combine(InstallRoot, "SoulLink.Agent.exe");
             CopyFile(source, service); Log("SERVICE_COPIED");
-            // 主程序 → 服务本体（requireAdministrator），再复制一份改成 asInvoker 作为代理。
-            // 代理清单是判定"代理是否就绪"的依据，必须每次都校验，不能因为内容相同就跳过。
-            if (!File.Exists(agent) || !PatchManifest(agent, source)) { CopyFile(source, agent); PatchManifest(agent, null); }
+            // ★ t7a（3.3.40）：注入代理已是独立无 UI 工程产物（dist\SoulLink.Agent.exe，约 2.7 MB，无 WPF 依赖）。
+            //   优先用它；找不到才回退「复制主程序 + 改清单为 asInvoker」的老办法（兼容老发布包）。
+            //   老办法会把整套 WPF 塞进每个会话的代理进程（实测 47MB×N），是拆分要消灭的东西。
+            string sourceDir = Path.GetDirectoryName(source) ?? "";
+            string standaloneAgent = Path.Combine(sourceDir, "SoulLink.Agent.exe");
+            if (File.Exists(standaloneAgent))
+            {
+                CopyFile(standaloneAgent, agent);
+                Log("AGENT_STANDALONE " + Path.GetFileName(standaloneAgent));
+                // 独立 agent 工程自带 asInvoker 清单。PatchManifest(file, null) 的语义：
+                //   已在 asInvoker → 返回 true（无需改写）；仍是 requireAdministrator → 就地改写并返回 true；
+                //   两者都不是（清单缺失/异常）→ 返回 false。所以 false 才是需要警惕的情况。
+                if (!PatchManifest(agent, null)) Log("AGENT_MANIFEST_UNVERIFIED " + agent);
+            }
+            else
+            {
+                // 兼容老发布包（没有独立 agent 产物）
+                if (!File.Exists(agent) || !PatchManifest(agent, source)) { CopyFile(source, agent); PatchManifest(agent, null); }
+                Log("AGENT_FALLBACK_FROM_MAIN");
+            }
             Log("AGENT_READY");
             // ★ 部署链路修复（2026-11-23）：只复制 exe 会缺旁挂运行库，
             //   见 SyncRuntimeFiles。必须在建服务前把 DLL / 网页 / tools 补齐。
@@ -133,6 +150,14 @@ public static class Program
 
         // 2) 7za.exe：BGI 更新包解压依赖，必须随 exe 一起。
         SyncFile(Path.Combine(sourceDir, "7za.exe"), Path.Combine(root, "7za.exe"));
+
+        // 2b) P0-1（3.3.40）：随包 version 标记文件（版本号单行）。agent 由 source 复制而来，
+        //      version 必须跟着走，否则单文件发布的 agent 读不到版本 → 投送全线 AGENT_INVALID。
+        SyncFile(Path.Combine(sourceDir, "SoulLink.Agent.version"), Path.Combine(root, "SoulLink.Agent.version"));
+        // 2c) t7a（3.3.40）：主程序要求的 agent 最低版本标记，跟着服务本体 SoulLink.exe 走，
+        //      ReadRequiredAgentVersion 依赖它，缺失会让 ValidAgent 一律放行。
+        SyncFile(Path.Combine(sourceDir, "SoulLink.Agent.required.version"), Path.Combine(root, "SoulLink.Agent.required.version"));
+
 
         // 3) 旁挂运行时 DLL：单文件外置的 Vortice / SharpGen / WinRT 投影。
         foreach (var pattern in new[] { "Vortice.*.dll", "SharpGen.Runtime*.dll", "WinRT.Runtime.dll", "Microsoft.Windows.SDK.NET.dll", "Microsoft.Windows.UI.Xaml.dll" })

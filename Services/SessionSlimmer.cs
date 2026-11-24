@@ -608,24 +608,8 @@ namespace SoulLink.Services
         /// <param name="enable">true=写入禁用；false=删值恢复默认。</param>
         public static void ApplyUserPolicy(bool enable)
         {
-            try
-            {
-                if (enable)
-                {
-                    WriteDword(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled", 0);
-                    WriteDword(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "BackgroundModeEnabled", 0);
-                }
-                else
-                {
-                    DeleteValue(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled");
-                    DeleteValue(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "BackgroundModeEnabled");
-                }
-            }
-            catch (Exception ex)
-            {
-                // ★ 静默降级：只落日志，不抛出，不阻塞代理主循环。
-                try { SoulLink.Relay.RelayAgent.LogQuiet("ApplyUserPolicy 失败：" + ex.Message); } catch { }
-            }
+            // ★ t7a：实现已抽取到 Services/EdgeStartupPolicy.cs（主程序与无 UI 代理共用同一份真实实现）。
+            EdgeStartupPolicy.ApplyUserPolicy(enable);
         }
 
         // ── 内部工具 ────────────────────────────────────────────────────

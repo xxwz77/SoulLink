@@ -84,6 +84,26 @@ if exist "docs\web-index.html" echo   网页界面：web-index.html
 if not exist dist mkdir dist
 copy /y "!STAGE!\SoulLink.exe" "dist\SoulLink.exe" >nul
 
+rem ★ 注入代理随包发出（3.3.38+）：
+rem   SoulLink.Agent.exe 是主程序的副本，按文件名切身份（Services/AppIdentity.cs
+rem   IsAgentExecutable），不需要改参数。以前不在包里，只能靠运行时从主程序复制，
+rem   导致主程序升级后 agent 还是旧版、投送直接失败（BrokerInstall.ValidAgent
+rem   要求 FileVersion 完全一致）。
+rem   ★ 待办：后续会拆成真正的独立 exe（去掉 WPF 依赖、体积从 4.4MB 降到 ~1.4MB），
+rem     届时这里改为复制 SoulLink.Agent 项目产物，路径不变，无需改调用方。
+rem ★ t7a（2026-11-24）：注入代理拆成独立无 UI 工程，不再是主程序字节副本。
+rem   产物由 Agent\SoulLink.Agent.csproj 单独 publish（含 SoulLink.Agent.version）。
+dotnet publish "Agent\SoulLink.Agent.csproj" -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o "!STAGE!\agent" --nologo
+if errorlevel 1 goto :fail
+rem ★ copy 失败断言：上一轮踩过「dist\SoulLink.exe 被占用、copy 静默失败停在旧版」。
+rem   这里每个产物复制后立即校验目标存在，失败即报错退出，绝不静默。
+copy /y "!STAGE!\agent\SoulLink.Agent.exe" "dist\SoulLink.Agent.exe" >nul || (echo [失败] 复制 dist\SoulLink.Agent.exe 失败（文件被占用？） & goto :fail)
+copy /y "!STAGE!\agent\SoulLink.Agent.version" "dist\SoulLink.Agent.version" >nul || (echo [失败] 复制 dist\SoulLink.Agent.version 失败 & goto :fail)
+copy /y "!STAGE!\SoulLink.Agent.required.version" "dist\SoulLink.Agent.required.version" >nul || (echo [失败] 复制 dist\SoulLink.Agent.required.version 失败 & goto :fail)
+if exist "dist\SoulLink.Agent.exe" echo   注入代理：dist\SoulLink.Agent.exe
+if exist "dist\SoulLink.Agent.version" echo   注入代理版本标记：dist\SoulLink.Agent.version
+if exist "dist\SoulLink.Agent.required.version" echo   要求代理版本标记：dist\SoulLink.Agent.required.version
+
 rem ★ 同步 tools\ 子目录（服务安装器在这里）。
 rem   BrokerSetup 现在是框架依赖单文件（约 1.1 MB），由 csproj 的
 rem   PublishBrokerSetup 目标自动发布；build.bat 只负责同步到 dist。
@@ -108,6 +128,7 @@ if exist "!STAGE!\SoulLink.Updater.exe" (
     echo  [警告] 没找到 SoulLink.Updater.exe，云更新将无法完成替换。
     echo         请确认 tools\updater 已构建。
 )
+
 if errorlevel 1 (
     echo.
     echo  [提示] 覆盖 dist\SoulLink.exe 失败，通常是它正在运行。
@@ -115,6 +136,25 @@ if errorlevel 1 (
     echo         已发布的成品仍在：!STAGE!
     goto :fail
 )
+
+rem ★ 第三方许可证声明必须随包分发（3.3.40+，task t11）。
+rem   为什么做成构建步骤而不是手工放：MIT 要求「copyright notice 与
+rem   permission notice 必须随副本或实质部分一并提供」，LGPL-2.1 §6 要求
+rem   随分发提供许可证副本。手工复制一定会漏，而漏了不会有任何报错 ——
+rem   用户拿到的包里就是没有，谁也不会发现。所以这里复制 + 找不到即判红。
+rem   ★ 故意放在上面那个 if errorlevel 1 之后：本段的 copy/echo 会改写
+rem     errorlevel，放在前面会把「覆盖 exe 失败」的判定搅乱。
+rem   见仓库根 THIRD-PARTY-NOTICES.txt。
+if not exist "THIRD-PARTY-NOTICES.txt" (
+    echo.
+    echo  [错误] 缺少 THIRD-PARTY-NOTICES.txt（仓库根）。
+    echo         它会随包分发给每个用户，是 MIT / LGPL-2.1 的合规要求。
+    echo         不要为了让构建通过而删掉这段检查 —— 请恢复该文件。
+    goto :fail
+)
+copy /y "THIRD-PARTY-NOTICES.txt" "dist\THIRD-PARTY-NOTICES.txt" >nul
+if exist "!STAGE!" copy /y "THIRD-PARTY-NOTICES.txt" "!STAGE!\THIRD-PARTY-NOTICES.txt" >nul
+echo   第三方许可证声明：dist\THIRD-PARTY-NOTICES.txt
 
 echo.
 echo  --------------------------------------------

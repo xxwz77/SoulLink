@@ -45,7 +45,7 @@ namespace SoulLink.Services
             try
             {
                 AsyncLog.Append(
-                    ConfigStore.DailyLogPath("input-trace"),
+                    AppIdentity.DailyLogPath("input-trace"),
                     DateTime.Now.ToString("HH:mm:ss.fff")
                         + "  [" + Environment.CurrentManagedThreadId.ToString("D3") + "]"
                         + "  " + Prefix + " " + (tag ?? "?") + " | " + message

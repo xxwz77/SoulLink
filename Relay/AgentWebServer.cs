@@ -623,6 +623,11 @@ namespace SoulLink.Relay
                 case "moverel": cmd = "moverel"; break;
                 case "text":    cmd = "text";    break;
                 case "noop":    cmd = "noop";    break;
+                // ★★ FIX-2026-11-24（KEYBOARD-TOGGLE-SYNC）：键盘三锁状态读取 / 同步。
+                //   注意：这里是**独立于 RelayAgent.Execute 的白名单**，两处都要加，
+                //   否则网页/手机调用会得到「未知动作」而桌面管道能用（很容易漏）。
+                case "keystate": cmd = "keystate"; break;
+                case "keysync":  cmd = "keysync";  break;
                 default:
                     return new { ok = false, error = "未知动作 " + dto.action };
             }
@@ -630,14 +635,18 @@ namespace SoulLink.Relay
             // key / keydown / keyup 复用 key 字段；text 走 text 字段；
             // click / down / up 走 button 字段（与老网页语义一致）。
             string keyName = cmd == "text" ? (dto.text ?? "") : (dto.key ?? "");
+            // ★ keysync 的目标状态也走 key 字段（传值形如 "caps=1,num=0,scroll=1" 或 "1,0,1"）。
             var req = new RelayAgent.Request
             {
                 Cmd = cmd,
                 // ★ clamp 到「抓屏矩形」（虚拟桌面坐标），而非主屏；副屏（原点可为负）也能点到。
                 X = Math.Clamp(px, ox, ox + w - 1),
                 Y = Math.Clamp(py, oy, oy + h - 1),
-                Move = (cmd == "click" && hasX) ? 1 : 0,
-                Button = (cmd == "key" || cmd == "keydown" || cmd == "keyup" || cmd == "text")
+                // ★ 2026-11-24 修复（AUDIT-20261124-17）：down/up 带坐标时同样定位，
+                //   否则网页 pointerup 发的最终坐标被丢弃，up 落在最后一次 8ms 节流 move 的旧位置。
+                Move = ((cmd == "click" || cmd == "down" || cmd == "up") && hasX) ? 1 : 0,
+                Button = (cmd == "key" || cmd == "keydown" || cmd == "keyup" || cmd == "text"
+                          || cmd == "keysync" || cmd == "keystate")
                     ? keyName
                     : (dto.button ?? "left"),
                 Dx = dto.dx,
@@ -647,6 +656,9 @@ namespace SoulLink.Relay
             };
 
             var resp = RelayAgent.ExecuteWeb(req);
+            // ★ P0 输入触发（2026-11-24）：注入成功 → 立即安排抓帧（方案 B）。
+            //   光标/界面变化是用户预期马上看到的；节流与开关在 NotifyInputActivity 内部。
+            if (resp.Ok) SessionRecorder.NotifyInputActivity();
             // ★ 2026-11-24 光标回传（一步到位修复「网页没有光标」）：
             //   前端 #scr 设了 cursor:none（防本机影子与帧内光标双影），
             //   因此必须由服务端把**宿主真实光标位置**回传，前端画 rcCursor。
@@ -663,6 +675,19 @@ namespace SoulLink.Relay
                 cox = 0; coy = 0;
             }
             object cursorInfo = CursorEcho(cw, ch, cox, coy);
+            // ★★ FIX-2026-11-24（KEYBOARD-TOGGLE-SYNC）：keystate / keysync 需要把
+            //   「读到的三锁状态」回给调用方，而通用响应只带 ok/error/cursor。
+            //   这里**只对新动作**追加 state/mask 字段，其它动作的响应体一个字节都不变
+            //   （前端与手机端是宽松解析，多字段无影响；老调用方完全无感）。
+            if (cmd == "keystate" || cmd == "keysync")
+                return new
+                {
+                    ok = resp.Ok,
+                    error = resp.Ok ? null : resp.Message,
+                    cursor = cursorInfo,
+                    state = resp.Message,           // 人类可读："Caps=ON Num=off Scroll=off → ..."
+                    mask = resp.Info                 // "mask=3"
+                };
             return new { ok = resp.Ok, error = resp.Ok ? null : resp.Message, cursor = cursorInfo };
         }
 

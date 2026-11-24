@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -114,6 +115,8 @@ namespace SoulLink.Views
 
             LaunchView.StatusChanged += OnEngineStatus;
             SettingsView.StatusChanged += OnEngineStatus;
+            // ★ 2026-11-24 修「引擎状态只查一次」：投送失败/手动重试随时触发重查（订阅一次，全局静态事件）
+            Services.AgentSync.RecheckRequested += OnEngineRecheck;
             LaunchView.MainWindowRef = this;
 
 
@@ -490,16 +493,8 @@ namespace SoulLink.Views
 
             _ = System.Threading.Tasks.Task.Run(async () =>
             {
-                bool ok = await System.Threading.Tasks.Task.Run(() =>
-                {
-                    SystemLauncher.EnablePrivileges();
-                    return SystemLauncher.IsElevated;
-                }).ConfigureAwait(false);
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    OnEngineStatus(ok, ok ? "SYSTEM 投送通道" : "需要管理员权限");
-                    LaunchView.RefreshSessions();
-                });
+                await EnsureEngineAsync().ConfigureAwait(false);
+                await Dispatcher.InvokeAsync(() => LaunchView.RefreshSessions());
             });
 
             // ★ 只有"没被 --page 指定过页面"时才强制回到启动台。
@@ -708,12 +703,203 @@ namespace SoulLink.Views
             return version;
         }
 
+        /// <summary>
+        /// ★ 2026-11-24：AgentSync 主动请求重查（投送失败 / 手动重试 / 周期性检测）。
+        ///   补登记时该方法体只被订阅、定义缺失导致编译失败（CS0103），此处补齐最小实现：
+        ///   回到 UI 线程重新 Inspect 并渲染，不阻塞调用方。
+        /// </summary>
+        private void OnEngineRecheck(string reason)
+        {
+            // ★ 2026-11-24 P0-2：多账号连续投送失败会瞬间触发多次重查，
+            //   每次都重新 Inspect + 重渲染。这里做轻量节流：
+            //   300ms 内合并为一次（只保留最后一个 reason），避免 UI 线程排队风暴。
+            //   「立刻」语义不变——首次触发在 300ms 内一定上屏。
+            _engineRecheckReason = reason;
+            if (_engineRecheckQueued) return;
+            _engineRecheckQueued = true;
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _engineRecheckQueued = false;
+                    try
+                    {
+                        // ★ reason 仅进日志：Tooltip 交给 Inspect 输出（统一口径）。
+                        LogBus.Info("引擎状态重查", _engineRecheckReason);
+                        if (!App.Config.Settings.UseBrokerChannel) return;
+                        EngineState state = AgentSync.Inspect(out string detail, out string tooltip);
+                        RenderEngine(state, detail, tooltip);
+                    }
+                    catch (Exception ex) { LogBus.Warn("引擎状态重查失败", ex.Message); }
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }
+            catch { _engineRecheckQueued = false; }
+        }
+
+        private string _engineRecheckReason = "";
+        private bool _engineRecheckQueued;
+
         private void OnEngineStatus(bool ok, string detail)
         {
-            EngineDot.Color = ok ? System.Windows.Media.Color.FromRgb(0x41, 0xF0, 0xC0)
-                                 : System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B);
-            EngineText.Text = ok ? "引擎就绪" : "引擎待配置";
-            EngineText.ToolTip = detail;
+            // ★ 注入代理版本自检只对 **Broker 通道** 有意义：schtasks 通道用 %TEMP% 里的
+            //   proxy 副本，不走 C:\Program Files\SoulLinkDev。
+            bool broker = App.Config.Settings.UseBrokerChannel;
+            if (!broker)
+            {
+                if (ok)
+                {
+                    EngineDot.Color = System.Windows.Media.Color.FromRgb(0x41, 0xF0, 0xC0);
+                    EngineText.Text = "引擎就绪";
+                    SetEngineTooltip(detail);
+                }
+                else
+                {
+                    EngineDot.Color = System.Windows.Media.Color.FromRgb(0xFF, 0x6B, 0x6B);
+                    EngineText.Text = "引擎异常";
+                    SetEngineTooltip(detail.Length > 0 ? detail : "需要管理员权限");
+                }
+                return;
+            }
+
+            // ★ 2026-11-24 P0-2：Broker 通道的顶栏状态**只信 AgentSync.Inspect 的 5 态**，
+            //   不再用 SettingsPage health 探测结果覆写（原逻辑 ok=false 时直接判 Error，
+            //   掩盖了 NotInstalled/NotRunning/AgentNeedsUpdate 等真实原因，就是「全绿/全红」造假的根）。
+            //   health 探测失败作为 detail 附加说明（证据保留），状态本身仍由统一判据给出。
+            // ★ 只要 agent 缺失/版本不一致，就绝不能显示「引擎就绪」（用户痛点）。
+            EngineState state = AgentSync.Inspect(out string agentDetail, out string tooltip);
+            string shown = state == EngineState.Ready
+                ? (detail.Length > 0 ? detail : agentDetail)
+                : agentDetail;
+            RenderEngine(state, shown, tooltip);
+        }
+
+        /// <summary>把引擎 5 态渲染到顶栏（EngineDot + EngineText + Tooltip）。
+        /// ★ 2026-11-24 P0-2：Tooltip 挂在 EngineBadge（Border）上，正文 = Inspect 给出的
+        ///   三方版本行「当前程序 X · 服务 Y · 注入代理 Z」+ 判据/依据，detail 附在后面。
+        ///   版本数据全部来自 AgentSync.Inspect / AgentSync.SelfVersion（t1 收敛的单一判据），
+        ///   本类不另算任何版本口径。
+        /// </summary>
+        private void RenderEngine(EngineState state, string detail, string tooltip)
+        {
+            var (color, text) = state switch
+            {
+                EngineState.Ready => (System.Windows.Media.Color.FromRgb(0x41, 0xF0, 0xC0), "引擎就绪"),
+                EngineState.NotInstalled => (System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B), "引擎待安装"),
+                EngineState.NotRunning => (System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B), "引擎未运行"),
+                EngineState.AgentNeedsUpdate => (System.Windows.Media.Color.FromRgb(0xFF, 0x9B, 0x4D), "注入代理待更新"),
+                _ => (System.Windows.Media.Color.FromRgb(0xFF, 0x6B, 0x6B), "引擎异常"),
+            };
+            EngineDot.Color = color;
+            EngineText.Text = text;
+            SetEngineTooltip(string.IsNullOrWhiteSpace(detail) ? tooltip : tooltip + "\n" + detail);
+        }
+
+        /// <summary>把三方版本 Tooltip 写到 EngineBadge；非 Broker 通道只有说明文字。</summary>
+        private void SetEngineTooltip(string tooltip)
+        {
+            if (EngineBadge != null) EngineBadge.ToolTip = tooltip;
+            if (EngineText != null) EngineText.ToolTip = null;   // ★ 避免两层 Tooltip 叠加重复
+        }
+
+        /// <summary>启动后台引擎自检 + 自动修复（不阻塞 UI）。</summary>
+        private async Task EnsureEngineAsync()
+        {
+            try
+            {
+                SystemLauncher.EnablePrivileges();
+                // ★ 仅 Broker 通道需要检查安装目录里的 agent；schtasks 通道无此概念。
+                //   ★ 2026-11-24 修「启动间隙假就绪」：非 Broker 通道也要渲染真实态
+                //     （此前直接 return → 顶栏停留在 XAML 默认值，旧版默认是「引擎就绪」= 造假）。
+                if (!App.Config.Settings.UseBrokerChannel)
+                {
+                    // schtasks 通道的「引擎」= 计划任务通道本身：能走到这里说明主程序在跑，
+                    // 给中性真实态（无服务概念，不显示就绪也不显示异常）。
+                    await Dispatcher.InvokeAsync(() =>
+                        RenderEngine(EngineState.NotRunning, "当前投送方式：计划任务（schtasks）通道", "计划任务通道无服务概念"));
+                    return;   // ★ 无服务可复检（不挂周期任务）
+                }
+
+                EngineState state = AgentSync.Inspect(out string detail, out string tooltip);
+                StartEnginePeriodicRecheck();
+
+                // 版本不一致/缺失且已是管理员 → 自动修复（静默不弹窗，完成后刷新为就绪）。
+                if (state == EngineState.AgentNeedsUpdate && SystemLauncher.IsElevated)
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                        RenderEngine(EngineState.AgentNeedsUpdate, "正在更新注入代理…", tooltip));
+                    var (ok, msg) = await AgentSync.RepairAsync().ConfigureAwait(false);
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (ok)
+                        {
+                            AgentSync.Inspect(out detail, out tooltip);
+                            RenderEngine(EngineState.Ready, msg, tooltip);
+                        }
+                        else
+                        {
+                            RenderEngine(EngineState.Error, msg, tooltip);
+                        }
+                    });
+                    return;
+                }
+
+                await Dispatcher.InvokeAsync(() => RenderEngine(state, detail, tooltip));
+            }
+            catch (Exception ex)
+            {
+                await Dispatcher.InvokeAsync(() =>
+                    RenderEngine(EngineState.Error, ex.Message, "引擎自检失败"));
+            }
+        }
+
+        // ── 引擎周期复检（P0-2：状态不能只查一次）────────────────────────
+        //
+        // ★ 必须挂 TickHub.RegisterBackground（禁止 DispatcherTimer，AGENTS.md 性能约束 1：
+        //   6 个独立 1 秒定时器曾把空闲 CPU 打到 27%）。Inspect 是纯读取，回调在后台线程
+        //   直接执行，渲染回 UI 线程，且设置了标志位：上一拍没画完就跳过本拍（TickHub
+        //   本身还有防重入），UI 线程零阻塞。
+        // ★ OnEngineRecheck 的 Dispatcher.BeginInvoke 队列不会堆积：_engineRenderQueued
+        //   保证同一时刻最多一个渲染排队。
+        private IDisposable? _engineRecheckTimer;
+        private int _engineRenderQueued;   // 0=空闲 1=已有渲染在 UI 队列
+
+        /// <summary>引擎状态周期复检间隔（秒）。</summary>
+        private const int EngineRecheckIntervalSeconds = 30;
+
+        /// <summary>启动引擎状态周期复检（幂等；只在 Broker 通道挂）。</summary>
+        private void StartEnginePeriodicRecheck()
+        {
+            if (_engineRecheckTimer != null) return;   // 已挂载（EnsureEngineAsync 可能重入）
+            try
+            {
+                _engineRecheckTimer = TickHub.RegisterBackground("EnginePeriodicRecheck", EngineRecheckIntervalSeconds, () =>
+                {
+                    try
+                    {
+                        if (!App.Config.Settings.UseBrokerChannel) return;
+                        EngineState state = AgentSync.Inspect(out string detail, out string tooltip);
+                        RenderEngineFromBackground(state, detail, tooltip);
+                    }
+                    catch { /* 周期复检失败不影响下一拍 */ }
+                });
+            }
+            catch (Exception ex) { App.AppendErrorLog("StartEnginePeriodicRecheck", ex); }
+        }
+
+        /// <summary>后台线程 Inspect 完成后回 UI 线程渲染（不堆积队列）。</summary>
+        private void RenderEngineFromBackground(EngineState state, string detail, string tooltip)
+        {
+            if (Interlocked.CompareExchange(ref _engineRenderQueued, 1, 0) != 0) return;
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _engineRenderQueued = 0;
+                    try { RenderEngine(state, detail, tooltip); }
+                    catch { }
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }
+            catch { _engineRenderQueued = 0; }
         }
 
         private void TryBeginStoryboard(Storyboard? sb)

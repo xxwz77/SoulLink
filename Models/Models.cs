@@ -404,6 +404,12 @@ namespace SoulLink.Models
         public string LastExportPath { get; set; } = "";
         /// <summary>自动化编辑器首次打开时显示引导动画；用户勾选“不再弹出”后置为 false。</summary>
         public bool ShowFlowGuide { get; set; } = true;
+
+        /// <summary>
+        /// 会话连接后延迟回收工作集（t12）。默认开启。
+        /// 硬关：环境变量 SOULLINK_TRIM_DISABLED=1（不落盘即可停）。
+        /// </summary>
+        public bool WorkingSetTrimEnabled { get; set; } = true;
         public bool UseBrokerChannel { get; set; }
 
         /// <summary>

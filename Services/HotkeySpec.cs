@@ -61,7 +61,15 @@ namespace SoulLink.Services
         public const uint WinMask = 0x0008;
 
         /// <summary>键盘和鼠标钩子共用同一份物理修饰键状态，不在回调里读异步状态。</summary>
-        public bool ModifiersMatch() => LowLevelKeyboardHook.CurrentModifiers == ToModifiers();
+        public bool ModifiersMatch()
+        {
+#if SOULLINK_AGENT
+            // 注入代理不装本机键盘钩子（无物理修饰键状态）；该判定仅宿主 UI 使用。
+            return ToModifiers() == 0;
+#else
+            return LowLevelKeyboardHook.CurrentModifiers == ToModifiers();
+#endif
+        }
 
         public HotkeySpec Clone() => new HotkeySpec
         {

@@ -119,11 +119,19 @@
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
                                     WindowChrome.IsHitTestVisibleInChrome="True">
-                            <Border CornerRadius="12" Padding="11,5" Margin="0,0,12,0" Background="{DynamicResource ButtonBackground}" BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1">
+                            <Border CornerRadius="12" Padding="11,5" Margin="0,0,12,0" Background="{DynamicResource ButtonBackground}" BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1"
+                                    x:Name="EngineBadge">
                                 <StackPanel Orientation="Horizontal">
+                                    <!-- ★ 2026-11-24 修「引擎就绪」造假：XAML 默认值改中性态（检测中…+灰点），
+                                         真实状态由 EnsureEngineAsync/OnEngineStatus 渲染——启动间隙不再显示假就绪。
+                                         ★ 2026-11-24 P0-2：Tooltip 统一由 RenderEngine 写三方版本
+                                           「当前程序 X · 服务 Y · 注入代理 Z」（数据源 AgentSync.Inspect，
+                                           不另造口径）；未检测前不显示任何版本，避免默认值骗人。 -->
                                     <ctl:GlowDot Width="9" Height="9" x:Name="EngineDot" VerticalAlignment="Center"
-                                                 Color="#FF41F0C0" />
-                                    <TextBlock x:Name="EngineText" Text="引擎就绪" Margin="7,0,0,0" FontSize="11.5"
+                                                 Color="#FF8B9CC8" />
+                                    <!-- ★ 2026-11-24 P0-2：Tooltip 挂在 Border（EngineBadge）上，
+                                         整个徽章可悬停；TextBlock 自身的 Tooltip 在 RenderEngine 里清空。 -->
+                                    <TextBlock x:Name="EngineText" Text="检测中…" Margin="7,0,0,0" FontSize="11.5"
                                                Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>

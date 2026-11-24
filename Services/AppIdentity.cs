@@ -174,6 +174,54 @@ namespace SoulLink.Services
         /// </summary>
         public const string AgentFileName = "SoulLink.Agent";
 
+        /// <summary>随包 agent 版本标记文件名（内容 = 版本号单行）。t7a 起由 Agent 独立工程写出。</summary>
+        public const string AgentVersionFileName = "SoulLink.Agent.version";
+
+        /// <summary>与 exe 同目录的 version 标记文件路径（供 ManualAgent.Export 复制 version 文件用）。</summary>
+        public static string VersionFileFor(string exePath)
+        {
+            string? dir = Path.GetDirectoryName(exePath);
+            if (string.IsNullOrEmpty(dir)) dir = ExeDir;
+            return Path.Combine(dir, AgentVersionFileName);
+        }
+
+        /// <summary>
+        /// 真实自身 exe 路径（t7a 从 SystemLauncher.ResolveSelfExe 抽出，供 agent 与主程序共用）。
+        /// </summary>
+        public static string ResolveSelfExe()
+        {
+            string path = Environment.ProcessPath ?? "";
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                string file = Path.GetFileNameWithoutExtension(path);
+                if (string.Equals(file, Name, StringComparison.OrdinalIgnoreCase) ||
+                    file.StartsWith("SoulLink", StringComparison.OrdinalIgnoreCase))
+                    return path;
+            }
+
+            string baseDir = AppContext.BaseDirectory;
+            string candidate = Path.Combine(baseDir, Name + ".exe");
+            if (File.Exists(candidate)) return candidate;
+
+            try
+            {
+                var self = Process.GetCurrentProcess().MainModule?.FileName ?? "";
+                if (File.Exists(self)) return self;
+            }
+            catch { }
+
+            return path;
+        }
+
+        /// <summary>
+        /// 按日期分文件的日志路径（t7a 从 ConfigStore.DailyLogPath 抽出；agent 的 InputTrace 需要，但不需要整份 ConfigStore）。
+        /// </summary>
+        public static string DailyLogPath(string prefix)
+        {
+            try { return Path.Combine(ConfigDir, prefix + "-" + DateTime.Now.ToString("yyyyMMdd") + ".log"); }
+            catch { return Path.Combine(ConfigDir, prefix + ".log"); }
+        }
+
         /// <summary>当前进程是不是"手动代理"副本（按文件名判断，不看参数）。</summary>
         public static bool IsAgentExecutable
         {

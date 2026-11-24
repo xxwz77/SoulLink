@@ -94,6 +94,12 @@ tools/*
 !tools/rescue/Program.cs
 !tools/rescue/Rescue.csproj
 
+# ★★ 注入代理独立工程（t7a，2026-11-24）：源码入库，构建产物忽略。
+!Agent
+!Agent/SoulLink.Agent.csproj
+!Agent/Program.cs
+!Agent/Stubs.cs
+
 # ★ 媒体能力探测（DXGI 桌面复制 / 硬件编码器可用性）——
 # 决定 60fps 直播走哪条路；也是以后换抓屏方式时的复用诊断工具，源码必须入库。
 !tools/media-probe
@@ -127,3 +133,7 @@ release-build/
 
 # ── 发布脚本的本地真实配置（含 COS 桶名/CDN 域名，永远不入库；2026-11-24）──
 scripts/publish-release.local.ps1
+
+# ── 团队协作运行态（dsh-team 的 sidecar 状态与信箱，永远不入库；2026-11-24）──
+.agent-teams/
+

@@ -12,6 +12,9 @@ using System.Windows.Input;
 using System.Windows.Media;
 using SoulLink.Models;
 using SoulLink.Services;
+// ★ P0-2：XAML 字段 EngineState（TextBlock）会遮蔽同名枚举 EngineState，
+//   本文件里所有 5 态判断统一用别名 EngState 引用枚举，避免二义性编译错误。
+using EngState = SoulLink.Services.EngineState;
 
 namespace SoulLink.Views
 {
@@ -490,17 +493,45 @@ namespace SoulLink.Views
                 _accounts.Add(new AccountVm(a));
         }
 
+        /// <summary>兜底：手动点「修复注入代理」触发 AgentSync 修复。</summary>
+        private async void RepairAgent_Click(object sender, RoutedEventArgs e)
+        {
+            if (BtnRepairAgent != null) BtnRepairAgent.IsEnabled = false;
+            EngineState.Text = "正在更新注入代理…";
+            try
+            {
+                var (ok, msg) = await AgentSync.RepairAsync().ConfigureAwait(true);
+                EngineState.Text = ok ? "注入代理已就绪" : "注入代理更新失败";
+                EnginePath.Text = msg;
+                EngineDot.Color = ok ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0xFF, 0x6B, 0x6B);
+                if (ok) LogBus.Ok("注入代理已修复", msg);
+                else LogBus.Error("注入代理修复失败", msg);
+            }
+            catch (Exception ex)
+            {
+                EngineState.Text = "注入代理更新失败";
+                EnginePath.Text = ex.Message;
+                EngineDot.Color = Color.FromRgb(0xFF, 0x6B, 0x6B);
+            }
+            finally { if (BtnRepairAgent != null) BtnRepairAgent.IsEnabled = true; }
+        }
+
         /// <summary>
         /// 检测投送引擎状态。
         ///
         /// 现在的引擎是 **SYSTEM 计划任务通道**（schtasks /ru SYSTEM → CreateProcessAsUser），
         /// 不再依赖任何外部工具，唯一的硬性条件是「以管理员身份运行」。
+        ///
+        /// ★ 2026-11-24 P0-2：Broker 分支的「引擎可用/绿色」必须以 AgentSync.Inspect 的
+        ///   统一判据为准（服务在跑 + agent 存在 + 版本通过），health 探测不再单独放绿。
+        ///   版本三方行/Tooltip 数据同样取自 Inspect（含 LastVerdict 依据来源）。
         /// </summary>
         private async Task DetectAsync()
         {
             // ★ 三选一：手动代理优先于 Broker（手动模式下不投送任何东西）
             ApplyDeliveryModeToUi();
             EngineState.Text = "检测中…";
+            // （字段名与枚举同名：5 态判断用 EngState 别名，控件操作用 EngineState 字段）
             bool elevated = SystemLauncher.IsElevated;
             if (App.Config.Settings.UseBrokerChannel && elevated)
             {
@@ -513,22 +544,57 @@ namespace SoulLink.Views
                 string? versionNote = health.Ok
                     ? BrokerProtocol.DescribeAppVersionMismatch(health)
                     : null;
-
-                EngineDot.Color = !health.Ok ? Color.FromRgb(0xFF, 0x9B, 0x9B)
-                                 : versionNote != null ? Color.FromRgb(0xFF, 0xC4, 0x6B)   // 琥珀：可用但版本不符
-                                 : Color.FromRgb(0x41, 0xF0, 0xC0);
-
-                EngineState.Text = !health.Ok ? "Broker 服务不可用"
-                                 : versionNote != null ? "Broker 服务可用（版本不一致）"
-                                 : "Broker 服务可用";
-
-                EnginePath.Text = !health.Ok ? health.Message
-                                : versionNote ?? "服务健康；账号通道仍需单独投送";
-
                 if (versionNote != null)
                     LogBus.Warn("Broker 版本不一致", versionNote);
 
-                StatusChanged?.Invoke(health.Ok, versionNote ?? health.Message);
+                // ★ P0-2：5 态由 AgentSync.Inspect 统一给出（t1 收敛的单一判据）：
+                //   服务未安装→NotInstalled；非 Running→NotRunning；agent 缺失/判据不过→
+                //   AgentNeedsUpdate；全过→Ready。绿灯只有 Ready 一条路。
+                //   Inspect 纯读取（ServiceController + 文件元数据），放后台线程不卡 UI。
+                string agentDetail = "";
+                string verLine = "";
+                EngState state = await Task.Run(() =>
+                {
+                    EngState s = AgentSync.Inspect(out agentDetail, out verLine);
+                    return s;
+                });
+
+                string healthNote = !health.Ok
+                    ? health.Message
+                    : versionNote ?? "服务健康；账号通道仍需单独投送";
+
+                // health 探测失败（管道/超时）而服务管理器说 Running → 引擎异常（可能是
+                // 服务假死），这是 Inspect 覆盖不到的维度，只有这里能发现。
+                EngState finalState = state;
+                if (!health.Ok && state == EngState.Ready)
+                    finalState = EngState.Error;
+
+                EngineDot.Color = finalState switch
+                {
+                    EngState.Ready => Color.FromRgb(0x41, 0xF0, 0xC0),
+                    EngState.NotInstalled => Color.FromRgb(0xFF, 0xC4, 0x6B),
+                    EngState.NotRunning => Color.FromRgb(0xFF, 0xC4, 0x6B),
+                    EngState.AgentNeedsUpdate => Color.FromRgb(0xFF, 0x9B, 0x4D),
+                    _ => Color.FromRgb(0xFF, 0x6B, 0x6B),
+                };
+
+                EngineState.Text = finalState switch
+                {
+                    EngState.Ready => "引擎就绪",
+                    EngState.NotInstalled => "引擎待安装（Broker 未安装）",
+                    EngState.NotRunning => "引擎未运行（服务已安装未启动）",
+                    EngState.AgentNeedsUpdate => "注入代理待更新",
+                    _ => "引擎异常",
+                };
+
+                EnginePath.Text = finalState == EngState.Ready
+                    ? (versionNote ?? healthNote)
+                    : (agentDetail.Length > 0 ? agentDetail + " · " + healthNote : healthNote);
+
+                // ★ P0-2：三方版本行 + Tooltip（数据源 = AgentSync，不另算口径）。
+                RenderEngineVerFromVerdict(verLine);
+
+                StatusChanged?.Invoke(finalState == EngState.Ready, EnginePath.Text);
                 return;
             }
             var (ok, detail) = await Task.Run(() =>
@@ -545,6 +611,40 @@ namespace SoulLink.Views
             EngineState.Text = ok ? "可用" : "需要管理员权限";
             EnginePath.Text = detail;
             StatusChanged?.Invoke(ok, detail);
+        }
+
+        /// <summary>
+        /// ★ 2026-11-24 P0-2：把三方版本写到 EngineVer 行 + EngineState Tooltip。
+        ///   正文用 Inspect 返回的三方版本行（「当前程序 X · 服务 Y · 注入代理 Z · 判据 …（依据…）」，
+        ///   它由 LastVerdict 同源数据拼成，且在服务未安装/未运行的早退分支同样新鲜）；
+        ///   判据/依据补充段读 AgentSync.LastVerdict。
+        ///   ★ 硬约束：本方法不自行读 FileVersionInfo、不做任何版本比较（判据唯一来源 = AgentSync）。
+        /// </summary>
+        private void RenderEngineVerFromVerdict(string inspectTooltip)
+        {
+            try
+            {
+                var v = Services.AgentSync.LastVerdict;
+                string line = string.IsNullOrWhiteSpace(inspectTooltip)
+                    ? "当前程序 " + (Services.AgentSync.SelfVersion.Length > 0 ? Services.AgentSync.SelfVersion : "?")
+                      + " · 服务 缺失 · 注入代理 缺失"
+                    : inspectTooltip;
+                // ★ LastVerdict 只在判据分支（服务 Running 且 agent 存在）更新；
+                //   早退分支（未安装/未运行）它保持空 —— 此时 Inspect 的 tooltip 正文
+                //   已含「判据 …（依据…）」结论，不再追加空的 verdictNote 免得误导。
+                string verdictNote = v.Source.Length > 0
+                    ? "判据 " + (v.Passed ? "通过" : "不通过")
+                      + "（依据：" + v.Source + "）"
+                    : "";
+                if (EngineVer != null)
+                {
+                    EngineVer.Text = line;
+                    if (verdictNote.Length > 0) EngineVer.ToolTip = verdictNote;
+                }
+                if (EngineState != null && verdictNote.Length > 0)
+                    EngineState.ToolTip = line + "\n" + verdictNote;
+            }
+            catch { }
         }
 
         /// <summary>确认 schtasks 存在（SYSTEM 通道要用）。</summary>
