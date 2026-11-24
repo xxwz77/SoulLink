@@ -201,7 +201,37 @@ namespace SoulLink.Relay
 
                 foreach (var vk in vks)
                     if (!SendVk(vk, false)) { error = "按下 " + spec + " 失败（SendInput 被系统拒绝）"; return false; }
-                Thread.Sleep(20);
+
+                // ★★ 2026-11-24（t24 P0-1）：不再在本线程 Thread.Sleep(20) ★★
+                //
+                //   原实现：按下 → Thread.Sleep(20) → 抬起。
+                //   问题：本方法跑在 AgentWebServer 的 **WebSocket 串行处理循环**里
+                //   （AgentWebServer.cs:757 ExecuteInput → 逐条 await SendAsync），
+                //   睡 20ms 等于**整条输入链路停 20ms**。
+                //
+                //   实测（A2 直连 ws/input，见 docs/research/T24）：
+                //     key      往返 = 28.6 ms      ← 含这 20ms Sleep
+                //     keydown  往返 =  0.3 ms      ← 不含
+                //     病态验证：浏览器长按 repeat 间隔 < 处理时间时，积压线性增长
+                //       repeat=30ms → 积压 1 条；repeat=15ms → 积压 9 条；repeat=5ms → 积压 11 条
+                //   → 长按方向键时键盘把队列塞满，**排在后面的 up 出不去**，
+                //     表现就是「松手很久才判定松开」。
+                //
+                //   改法：**去掉这 20ms 的 Sleep**，保持「全部按下 → 逆序全部抬起」的原子结构不变。
+                //
+                //   ★ 为什么敢去掉（有实测支撑，不是拍脑袋）：
+                //     ① 前端已有 keydown/keyup 分离动作，需要"按住"的场景本就该走它们；
+                //        实测 0ms 间隔的 keydown + keyup，远端**两者都返回 ok**
+                //        （见报告 §验证「零间隔 keydown+keyup」）。
+                //     ② key 的语义是「点按一次」，20ms 与 0ms 对远端 Windows 而言
+                //        都是一次完整的按下-抬起，不改变可观察结果。
+                //     ③ 这 20ms 原本是为了"组合键要按住" —— 但组合键的按下与抬起
+                //        在同一个 SendInput 序列里，中间不睡也不会漏掉任何一次注入。
+                //
+                //   ★ 未改变的东西（任务硬要求）：
+                //     · 组合键顺序：先按顺序全按下，再**逆序**全抬起（Ctrl+C 不会变成 C 先松）；
+                //     · 失败处理：任一 SendVk 失败即 return false（不吞错）；
+                //     · 方法签名与返回值语义完全不变。
                 for (int i = vks.Count - 1; i >= 0; i--)
                     if (!SendVk(vks[i], true)) { error = "抬起 " + spec + " 失败（SendInput 被系统拒绝）"; return false; }
                 return true;

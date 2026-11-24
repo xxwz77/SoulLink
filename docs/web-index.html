@@ -186,8 +186,18 @@
   .ucard-head .chev{margin-left:auto;font-size:10px;color:var(--txt3);
                     transition:transform .18s;display:inline-block;flex:0 0 auto}
   .ucard.open .ucard-head .chev{transform:rotate(90deg)}
-  .ucard-body{display:none;padding:0 14px 13px;border-top:1px solid var(--border)}
-  .ucard.open .ucard-body{display:block}
+  /* ★ 2026-11-24（T30）：展开/折叠用可过渡属性，不再 display 硬切换。
+     display:none→block 无法过渡（属性本身不可动画），悬停展开会「啪」一下很突兀。
+     改用 grid-template-rows 0fr→1fr（现代做法）：
+       · 不需要预先知道内容高度（max-height 方案要写死一个「够大」的值，容易夹断或留白）；
+       · 内层 .ucard-body-inner 设 min-height:0，让 grid 行能真正收缩到 0。
+     时长 180ms + ease：足够看清展开方向，又不会让悬停响应变「拖」。 */
+  .ucard-body{display:grid;grid-template-rows:0fr;opacity:0;
+              transition:grid-template-rows .18s ease,opacity .18s ease,padding .18s ease;
+              padding:0 14px 0;border-top:1px solid transparent;overflow:hidden}
+  .ucard-body-inner{min-height:0;overflow:hidden}
+  .ucard.open .ucard-body{grid-template-rows:1fr;opacity:1;padding:0 14px 13px;
+                          border-top-color:var(--border)}
   .ucard-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px}
   .uact-btn{padding:9px 14px;border-radius:9px;border:1px solid var(--accent-border);
             background:var(--accent-bg);color:var(--accent);font-size:12px;
@@ -785,8 +795,77 @@ async function loadUsers() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  ★★ 2026-11-24（T30）：卡片悬停自动展开/折叠（方案 C）+ 点击固定 ★★
+//
+//  【方案 C 是什么】鼠标在**整个卡片**（含展开区）内就不折叠，移出整个卡片才折叠。
+//    → 所以 mouseenter/mouseleave 必须绑在 .ucard 上，**不能**绑 .ucard-head：
+//      绑 head 的话，鼠标一进入展开区就等于「离开 head」→ 立刻折叠 → 根本点不到按钮。
+//
+//  【两个延迟，各自防不同的误操作】
+//    · HOVER_IN_DELAY_MS = 280ms（移入延迟）
+//        防「快速划过一排卡片引发连环展开」——这是最主要的误操作来源。
+//        取 280：<200ms 时鼠标快速掠过 3~4 张卡片会连续炸开；>400ms 时
+//        「想展开一张卡片」会明显觉得迟滞。280 落在「掠过不触发」与「停留即响应」之间。
+//    · HOVER_OUT_DELAY_MS = 500ms（移出延迟）
+//        防「从卡片移到旁边的按钮/滚动条时立刻收起」——移出过程要经过卡片边缘，
+//        期间指针会短暂离开 .ucard，立即折叠会导致展开区闪一下又回去。
+//        取 500 比移入更长：**误折叠的代价（要重新悬停+再等 280ms）远大于误展开的代价**，
+//        所以不对称地偏向「宁可多开一会儿」。
+//
+//  【多卡片互斥】全局只记一个 _hoverCard；移入新卡片时先取消旧卡片的全部定时器
+//    并清掉它的 open（除非它是被点击固定的）。否则会多张同时展开、页面跳动。
+//
+//  【点击语义】点击 = 用户**显式固定**，之后移出不再自动折叠，直到再次点击或移入别卡。
+//    理由：用户主动点击就是要「钉住」这张卡片去看/操作里面的按钮；
+//    如果移出还折回，他就得一直把鼠标悬在卡片上才能点按钮，这明显违背点击意图。
+//        → 但「移入其他卡片」时会解除固定（否则固定态会一直占着，体验割裂）。
+// ═══════════════════════════════════════════════════════════════════════════
+const __canHover = window.matchMedia
+  ? window.matchMedia('(hover: hover) and (pointer: fine)').matches
+  : false;
+const HOVER_IN_DELAY_MS = 280;
+const HOVER_OUT_DELAY_MS = 500;
+
+let _hoverCard = null;      // 当前因悬停而展开的卡片（全局唯一）
+let _lastPointerDownAt = 0; // 最近一次 pointerdown 时刻（触屏模拟悬停兜底）
+
+// 触屏兜底：有些设备同时报告 hover 能力但实际是触屏，
+//   此时 mouseenter 常由 touch 合成的 pointerdown 触发 —— 刚按下 <200ms 就来的 enter
+//   几乎一定是触摸模拟，不是真悬停，跳过自动展开逻辑。
+document.addEventListener('pointerdown', () => { _lastPointerDownAt = Date.now(); },
+  { capture: true, passive: true });
+
+function __cancelCardTimers(card) {
+  if (!card) return;
+  if (card.__hoverInT) { clearTimeout(card.__hoverInT); card.__hoverInT = null; }
+  if (card.__hoverOutT) { clearTimeout(card.__hoverOutT); card.__hoverOutT = null; }
+}
+
+// 取消旧卡片的悬停展开（多卡片互斥的落地点）
+function __collapseHoverCard() {
+  const old = _hoverCard;
+  _hoverCard = null;
+  if (!old) return;
+  __cancelCardTimers(old);
+  // 悬停展开的卡片：移入别卡时收起（多卡片互斥，避免页面跳动）。
+  //   ★ 被点击固定的卡片**也在此收起**（解除固定）。
+  //     依据：任务③明确要求「鼠标从 A 移到 B 时 A 应该折叠，否则多张同时展开、页面跳动」。
+  //     若固定卡不收，用户固定 A 后再去操作 B，屏幕上会同时开两张 → 正是要避免的现象。
+  //     语义上「固定」= 相对当前这张卡保持展开（移出不折），但「注意力只有一处」，
+  //     移入另一张时让位，符合直觉且不产生页面跳动。
+  old.classList.remove('open');
+  old.__pinned = false;
+}
+
 function renderUsers() {
   const box = $('users');
+  // ★ T30：重建前先清掉旧卡片的悬停定时器与全局引用。
+  //   否则旧 setTimeout 仍会在已移除的节点上执行（无害但泄漏），
+  //   更糟的是 _hoverCard 会指向一个已脱离文档的节点，导致「互斥」逻辑对空气作用、
+  //   新渲染出来的卡片反而不能正确收起上一张。
+  if (_hoverCard) { __cancelCardTimers(_hoverCard); _hoverCard = null; }
+  box.querySelectorAll('.ucard').forEach(__cancelCardTimers);
   box.innerHTML = '';
   if (!users.length) {
     $('empty').style.display = 'block';
@@ -844,16 +923,82 @@ function renderUsers() {
       + '<span class="chev">▸</span>'
       + '</div>'
       + '<div class="ucard-body">'
+      // ★ T30：内层容器 —— grid 0fr→1fr 过渡要求子项能收缩（min-height:0），
+      //   直接放内容会在折叠态撑出高度，导致「折叠了但还占位」。
+      + '<div class="ucard-body-inner">'
       + detail
       + '<div class="ucard-actions">'
       + '<button class="uact-btn" data-act="remote">查看画面</button>'
       + '<button class="uact-btn" data-act="ledger">配置组分析</button>'
       + '<button class="uact-btn" data-act="earnings">摩拉收益</button>'
       + '</div>'
+      + '</div>'
       + '</div>';
 
-    // 点头部折叠/展开
-    card.querySelector('.ucard-head').onclick = () => card.classList.toggle('open');
+    // ── 点击：显式切换 + 固定（T30）──────────────────────────────────────
+    //   ★ 点击仍绑在 .ucard-head 上：只有点头部才切换，点展开区里的内容不会误折叠。
+    //   ★ 点击时必须取消进行中的悬停定时器，否则「点开 → 移出」会立刻被 500ms 后的
+    //     自动折叠覆盖，用户会觉得点了没用。
+    card.querySelector('.ucard-head').onclick = () => {
+      __cancelCardTimers(card);
+      const willOpen = !card.classList.contains('open');
+      card.classList.toggle('open', willOpen);
+      card.__pinned = willOpen;   // 点开 = 固定；点收 = 解除
+      if (willOpen) {
+        // 点开这张 → 别的**未固定**的悬停卡收起（注意力只有一处）。
+        //   __collapseHoverCard 内部已保护 __pinned 的卡，这里不必再判。
+        if (_hoverCard && _hoverCard !== card) __collapseHoverCard();
+        // ★ 本卡是「点击固定」，不是「悬停展开」→ 不占用 _hoverCard。
+        //   否则悬停逻辑会把它当自己的卡，移出时按 _hoverCard 清理，导致固定态被误清。
+        if (_hoverCard === card) _hoverCard = null;
+      } else {
+        // 点收：若它恰好是悬停卡，一并让出
+        if (_hoverCard === card) _hoverCard = null;
+      }
+    };
+
+    // ── 悬停：自动展开/折叠（仅鼠标设备，T30 方案 C）─────────────────────
+    //   绑在**整个 .ucard**上：鼠标从头部移进展开区不会触发 mouseleave，
+    //   所以能正常点到里面的按钮（这正是方案 C 的关键）。
+    if (__canHover) {
+      card.addEventListener('mouseenter', () => {
+        // 触屏兜底：刚 pointerdown 完就来的 enter 是触摸模拟，不是真悬停
+        if (Date.now() - _lastPointerDownAt < 200) return;
+        __cancelCardTimers(card);
+        // ★ 已展开的卡片：不再排队展开，但**也不能抢 _hoverCard**。
+        //   如果它是被点击固定的，把它记成 _hoverCard 会导致「鼠标只是划过，
+        //   移出后就被折叠」—— 固定态被悬停逻辑劫持，用户会觉得点了没保住。
+        if (card.classList.contains('open')) return;
+        card.__hoverInT = setTimeout(() => {
+          card.__hoverInT = null;
+          // 互斥：先收起上一张悬停卡
+          if (_hoverCard && _hoverCard !== card) __collapseHoverCard();
+          // ★ 再收起「其它任何已展开的卡片」—— 特别是被点击固定的那张。
+          //   固定的卡片不占用 _hoverCard（见 onclick），所以上面的 _collapseHoverCard 管不到它；
+          //   不补这一步就会出现「固定 A 后悬停 B，A 和 B 同时展开」→ 页面跳动（任务③明令禁止）。
+          document.querySelectorAll('#users .ucard.open').forEach(function (other) {
+            if (other === card) return;
+            __cancelCardTimers(other);
+            other.classList.remove('open');
+            other.__pinned = false;
+            if (_hoverCard === other) _hoverCard = null;
+          });
+          _hoverCard = card;
+          card.classList.add('open');
+        }, HOVER_IN_DELAY_MS);
+      });
+      card.addEventListener('mouseleave', () => {
+        __cancelCardTimers(card);
+        // 被点击固定的卡片：移出不折叠（用户显式要求钉住）
+        if (card.__pinned) return;
+        card.__hoverOutT = setTimeout(() => {
+          card.__hoverOutT = null;
+          if (card.__pinned) return;      // 延迟期间被点击固定了 → 不折
+          card.classList.remove('open');
+          if (_hoverCard === card) _hoverCard = null;
+        }, HOVER_OUT_DELAY_MS);
+      });
+    }
 
     // 功能按钮：hash 路由同页跳转（不再 window.open 新标签）
     card.querySelectorAll('.uact-btn').forEach(btn => {
@@ -895,6 +1040,9 @@ function closeViewer() {
 //     · 暂停 → 断流；继续 → 重连。
 //   （保留的 liveMs/computeLiveMs 只服务鼠标移动节流和设置回显，与拉帧无关。）
 let liveRunning = false;      // 是否处于「应播放」状态（true 时才允许重连）
+// ★ T34：fps 轮询句柄 —— 必须声明在这里（而非函数定义处），
+//   因为 startLive/stopLive 定义在更早位置会引用它；若用后置 let 会落进 TDZ。
+let __fpsPollTimer = null;
 let failStreak = 0;           // 连续连接失败次数（出画面即清零）
 let reconnectTimer = null;    // 自动重连的 setTimeout 句柄
 
@@ -933,6 +1081,8 @@ function stopH264() {
 
 function stopLive() {
   liveRunning = false;
+  // ★ T34：停画面就停 fps 轮询（避免后台继续每 2s 请求 /api/info）
+  if (typeof stopFpsPolling === 'function') stopFpsPolling();
   stopH264();                  // 也断掉视频流（旧版漏了，流会在后台一直跑）
   closeWsInput();              // 断开输入 WebSocket（切账号/暂停时释放，下次输入时按新 base 重建）
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -943,6 +1093,8 @@ function startLive() {
   if (!cur) return;
   if (!cur.online) { setPh('该账号不在线', false); return; }
   liveRunning = true;
+  // ★ T34：开画面就启动 fps 轮询（每 2s 刷新「推送实测 fps」）
+  if (typeof startFpsPolling === 'function') startFpsPolling();
   failStreak = 0;
   if (!webCodecsSupported) {
     // 没有降级通路（用户指令），只能明确告知
@@ -1234,6 +1386,11 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
     let gotFrame = false;        // 本轮是否已出过画面（区分「连不上」和「断了」）
     let stallTimer = null;       // 画面看门狗 setInterval 句柄（函数级声明，finally 才能安全 clear）
     let lastFrameAt = 0;         // 最近一次解码出帧时间戳（函数级声明，output/finally 共用）
+    // ★ 2026-11-24（T26）：首关键帧兜底（修 firstKey 死锁）—— 必须在函数级声明，finally 才能清
+    let firstKeyWaitTimer = null;   // 「还没拿到首 key」时的 IDR 重试定时器
+    let firstKeyIdrTries = 0;       // 已请求次数（上限 5）
+    let noFrameSince = 0;           // 本轮「从未出过画面」的起始时刻（看门狗用）
+    let noFrameIdrSent = false;     // 5s 未出画面时是否已补发过 IDR（只发一次）
     let lastCodec = '';          // 最近一次 SPS 解析出的 codec 串（IDR 恢复时 reconfigure 用）
     let idrRecoveryCount = 0;    // 本轮已尝试按需 IDR 恢复次数（≥2 次失败则断流重连）
     let auNals = [];             // 当前 AU 的 NAL（纯 NAL 体，无起始码；framed 下 = 一帧的 NAL）
@@ -1375,13 +1532,67 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
       //   SPS/PPS/SEI 等非画面字节 —— 这些字节一直刷新 lastDataAt，看门狗永远不触发。
       //   改为 lastFrameAt：只有 decoder output 真的画出一帧才更新，画面卡住必重连。
       lastFrameAt = Date.now();
+      noFrameSince = Date.now();   // ★ T26：本轮「从未出过画面」的起点（看门狗用）
       stallTimer = setInterval(() => {
         if (myGen !== h264Gen) return;
         if (gotFrame && Date.now() - lastFrameAt >= STALL_MS) {
           console.warn('[H264] 画面 ' + STALL_MS + 'ms 无新帧，自动重连');
           fail('[H264] 画面无新帧超时', null);
+          return;
+        }
+        // ★★ 2026-11-24（T26）：**从未出过画面**也要兜底 ★★
+        //   原看门狗有 `gotFrame &&` 前置条件 → 首帧永远不来时它**根本不启用**，
+        //   这正是本案的形态：连上了、字节在流、但一帧都解不出来，看门狗全程沉默。
+        //   分级处理：
+        //     5s 仍未出画面 → 再要一次 IDR（可能是 500ms 限流吞掉了首次请求）
+        //     10s 仍未出画面 → 断流重连（重连 = 新订阅 = 服务端按需 IDR，最可靠的兜底）
+        if (!gotFrame) {
+          const stuck = Date.now() - noFrameSince;
+          if (stuck >= 10000) {
+            console.warn('[H264] 10s 未出任何画面，断流重连');
+            fail('[H264] 首帧超时', null);
+            return;
+          }
+          if (stuck >= 5000 && !noFrameIdrSent) {
+            noFrameIdrSent = true;   // 只补发一次（避免每拍都发）
+            console.warn('[H264] 5s 未出画面，补发一次 IDR 请求');
+            requestIdr();
+          }
         }
       }, 1000);
+
+      // ══════════════════════════════════════════════════════════════════
+      //  ★★ 2026-11-24（T26）：首帧 IDR 兜底 —— 修「firstKey 死锁」★★
+      //
+      //  【为什么会死锁】
+      //    :1536  if (!firstKey && !isKey && !isSps && !isPps) continue;  ← 首 key 前丢光所有 delta
+      //    :1537  if (isKey) firstKey = true;
+      //  但 requestIdr() **只在 recoverViaIdr() 里被调用**（:1288），
+      //  而 recoverViaIdr 由 decoder.error / 连续解码失败触发。
+      //  ⇒ 如果连上的那一刻服务端编码器**已经在跑**、下一帧不是 IDR，
+      //     firstKey 永远是 false → 永远丢 delta → **永久黑屏**，且没有任何东西会去请求 IDR。
+      //
+      //  【为什么以前能用】（时间线见报告）
+      //    首次连接时编码器刚创建，NVENC 启动第一帧必是 IDR → firstKey 立刻 true。
+      //    agent 重启 / 页面重连后，编码器已在跑，起点不是 IDR → 触发死锁。
+      //
+      //  【修法】连接建立后若还没拿到首帧，主动要一次 IDR，并**带兜底重试**
+      //    （单次请求可能撞上 500ms 客户端限流 / 服务端 300ms 限流而失败）。
+      //    不破坏任何既有语义：只是多了一条「主动要关键帧」的路径。
+      {
+        firstKeyWaitTimer = setInterval(() => {
+          if (myGen !== h264Gen) return;
+          if (firstKey) { clearInterval(firstKeyWaitTimer); firstKeyWaitTimer = null; return; }
+          firstKeyIdrTries++;
+          if (firstKeyIdrTries > 5) {   // 最多 5 次（约 10s），之后交给下面的看门狗
+            clearInterval(firstKeyWaitTimer); firstKeyWaitTimer = null;
+            console.warn('[H264] 首关键帧请求 5 次仍未到位，交给看门狗处理');
+            return;
+          }
+          console.warn('[H264] 首关键帧未到（firstKey=false），主动请求 IDR 第 ' + firstKeyIdrTries + ' 次');
+          requestIdr();
+        }, 2000);
+      }
 
       // ── AU（access unit）攒批 ──
       // ★ WebCodecs 的 chunk.data 必须是完整 AU（AVC Registration §2/§4）：
@@ -1452,19 +1663,45 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
           off += 4 + n.length;
         }
         try {
-          decoder.decode(new EncodedVideoChunk({
+          const decP = decoder.decode(new EncodedVideoChunk({
             type: auHasKey ? 'key' : 'delta',
             timestamp: ts,
             data
-          })).catch(e => {
-            // 异步 rejection（decoder 已 close/error 态时 decode() 的 Promise 会 reject，
-            // 同步 try 捕不到，不接会成未处理 Promise）→ 计数 + 限频日志，不吞。
-            // 真正的解码错误仍由 decoder.error 回调统一走 fail() 重连。
+          }));
+          // ★★ 2026-11-24（T25 BUG-2）：decode() 在 closed/error 态返回 **undefined** ★★
+          //   原来直接链式写 .decode(...).catch(...)，decoder 处于 closed 时 decode() 返回 undefined，
+          //   于是读 undefined 的属性 catch 直接抛 TypeError：
+          //     "Cannot read properties of undefined (reading 'catch')"
+          //   **这个报错每帧都在刷**，既污染 console 又说明解码链在异常态空转，
+          //   会掩盖真正的问题（也干扰排障）。
+          //   规范里 decode() 正常返回 Promise，但实现允许在不可用状态下返回 undefined，
+          //   所以必须先判空再用。
+          //   ★ 同步错误（InvalidStateError/DataError）由外层 catch 处理，这里只管异步 rejection。
+          if (decP && typeof decP.catch === 'function') {
+            decP.catch(e => {
+              // 异步 rejection（decoder 已 close/error 态时 decode() 的 Promise 会 reject，
+              // 同步 try 捕不到，不接会成未处理 Promise）→ 计数 + 限频日志，不吞。
+              // 真正的解码错误仍由 decoder.error 回调统一走 fail() 重连。
+              decodeErrors++;
+              if (decodeErrors <= 3 || decodeErrors % 100 === 0) {
+                console.warn('[H264] decode() 异步失败，丢弃本 AU:', e);
+              }
+            });
+          } else if (!decP) {
+            // decode() 返回 undefined = 解码器不可用（closed / 未就绪 / 正在 reset）。
             decodeErrors++;
             if (decodeErrors <= 3 || decodeErrors % 100 === 0) {
-              console.warn('[H264] decode() 异步失败，丢弃本 AU:', e);
+              console.warn('[H264] decode() 返回 undefined（解码器状态: ' + (decoder && decoder.state) + '），丢弃本 AU');
             }
-          });
+            // ★★ 2026-11-24（T26）：这条路径**必须触发恢复**，不能只记日志 ★★
+            //   原来这里只 console.warn，什么恢复动作都不做：
+            //   而 recoverViaIdr() 只由 decoder.error / 连续解码失败触发，
+            //   decode() 返回 undefined **既不抛异常也不触发 error 回调** →
+            //   firstKey 永远 false → 永远丢帧 → **永久黑屏，且无人请求 IDR**。
+            //   这就是死锁的第 4 环。
+            //   首次出现时立刻要一次 IDR（内部有 500ms 客户端限流，不会风暴）。
+            if (decodeErrors === 1) requestIdr();
+          }
         } catch (e) {
           // 同步抛错（InvalidStateError/DataError）：解码器饱和或状态异常时丢弃本 AU，
           // 等下一帧；异步错误仍由 decoder.error 回调统一走 fail() 重连。
@@ -1584,6 +1821,8 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
       fail('[H264] 流断开:', e);
     } finally {
       if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
+      // ★ 2026-11-24（T26）：首关键帧重试定时器必须一并清掉，否则换代后仍在跑
+      if (firstKeyWaitTimer) { clearInterval(firstKeyWaitTimer); firstKeyWaitTimer = null; }
       if (myGen === h264Gen) {
         h264Active = false;
         h264Reader = null;
@@ -1605,7 +1844,18 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
 //   move/click/wheel/key 优先走 /ws/input（低延迟 + 天然保序），HTTP POST /api/input 保留为降级。
 //   WS 握手失败 / 连接中断 → wsInputFailed=true，本次会话内永久回退 HTTP。
 let wsInput = null;             // 当前 WebSocket 实例
-let wsInputFailed = false;      // WS 曾失败 → 永久回退 HTTP
+// ★★ 2026-11-24（T32 P0-1）：失败**不再永久降级**，改为指数退避重连 ★★
+//
+//   【原来的 bug】wsInputFailed 一旦置 true，getWsInput() 直接 return null，
+//   本次会话内**永不恢复**。而现实中 agent 重启/网络抖动都会造成一次握手失败 ——
+//   于是用户被永久钉在 HTTP 降级路径上，那条路径**没有保序**（见 P0-2），
+//   表现就是「拖动落点偏移」，且**刷新页面才能好**（实际也很难想到要刷新）。
+//
+//   【修法】失败后进入退避：下次允许尝试的时刻 wsRetryAt，间隔指数增长 500→1s→2s…→30s 封顶。
+//   重连成功后立即清零，恢复正常 WS 通道。
+let wsInputFailed = false;      // WS 当前是否处于「失败退避」状态
+let wsRetryAt = 0;              // 下次允许尝试重建 WS 的时刻（Date.now()）
+let wsRetryDelay = 500;         // 当前退避间隔（指数增长，封顶 30s）
 let wsInputBase = '';           // WS 绑定的直连 base（切账号时据此重建）
 let wsInflight = null;          // 当前在途请求的 resolve（WS 单 in-flight 保序）
 let wsQueue = [];               // 排队中的 { body, resolve }
@@ -1632,8 +1882,32 @@ function failWsQueue() {
   if (wsInflight) { const r = wsInflight; wsInflight = null; r(null); }
 }
 
+// ★ T32 P0-1：标记一次 WS 失败 → 进入退避，而不是永久放弃
+function markWsFailed() {
+  wsInputFailed = true;
+  wsRetryAt = Date.now() + wsRetryDelay;
+  // 指数退避：500 → 1000 → 2000 → ... → 30000 封顶
+  wsRetryDelay = Math.min(wsRetryDelay * 2, 30000);
+}
+
+// ★ T32 P0-1：WS 重连成功 → 立刻恢复正常通道并清零退避
+function markWsHealthy() {
+  if (wsInputFailed || wsRetryDelay !== 500) {
+    // 只在「从失败中恢复」时打日志，避免正常连接刷屏
+    if (wsInputFailed) console.info('[WS] 输入通道已恢复走 WebSocket（退出 HTTP 降级）');
+  }
+  wsInputFailed = false;
+  wsRetryAt = 0;
+  wsRetryDelay = 500;
+}
+
 function getWsInput() {
-  if (wsInputFailed || typeof WebSocket === 'undefined') return null;
+  if (typeof WebSocket === 'undefined') return null;
+  // ★ T32 P0-1：处于失败退避期 —— 只在到达重试时刻后才允许重建
+  if (wsInputFailed) {
+    if (Date.now() < wsRetryAt) return null;
+    wsInputFailed = false;   // 退避到期：放行一次尝试（成功会走 markWsHealthy）
+  }
   const base = directBase(cur);
   if (!base) return null;
   if (wsInput && wsInputBase === base && (wsInput.readyState === WebSocket.CONNECTING || wsInput.readyState === WebSocket.OPEN)) return wsInput;
@@ -1641,7 +1915,8 @@ function getWsInput() {
   try {
     const ws = new WebSocket(wsInputUrl());
     wsInput = ws; wsInputBase = base;
-    ws.onopen = () => { pumpWs(); };
+    // ★ T32 P0-1：连上就说明通道健康 —— 清零退避，退出 HTTP 降级
+    ws.onopen = () => { markWsHealthy(); pumpWs(); };
     ws.onmessage = (ev) => {
       let d = null;
       try { d = JSON.parse(ev.data); } catch (e) {}
@@ -1649,9 +1924,16 @@ function getWsInput() {
       if (resolve) resolve(d);
       pumpWs();
     };
-    ws.onclose = () => { if (wsInput === ws) { wsInput = null; wsInputBase = ''; } failWsQueue(); };
-    ws.onerror = () => { wsInputFailed = true; if (wsInput === ws) { wsInput = null; wsInputBase = ''; } failWsQueue(); try { ws.close(); } catch (e) {} };
-  } catch (e) { wsInputFailed = true; wsInput = null; }
+    // ★ T32 P0-1：异常断开也进入退避（正常 closeWsInput 会先把 wsInput 置 null，此处不会误判）
+    ws.onclose = () => {
+      const wasCurrent = (wsInput === ws);
+      if (wasCurrent) { wsInput = null; wsInputBase = ''; }
+      failWsQueue();
+      if (wasCurrent && !wsInputFailed) markWsFailed();
+    };
+    // ★ T32 P0-1：失败进入退避（不再永久降级）
+    ws.onerror = () => { markWsFailed(); if (wsInput === ws) { wsInput = null; wsInputBase = ''; } failWsQueue(); try { ws.close(); } catch (e) {} };
+  } catch (e) { markWsFailed(); wsInput = null; }
   return wsInput;
 }
 
@@ -1672,13 +1954,17 @@ function pumpWs() {
   catch (e) { wsInflight = null; item.resolve(null); pumpWs(); }
 }
 
-async function postInputRaw(body) {
+async function postInputRaw(body, httpOnly) {
   const base = directBase(cur);
   const fullBody = Object.assign({}, body, base ? { sid: cur.sessionId } : {});
   // ★ WS 优先（低延迟 + 保序），HTTP 降级
-  const ws = getWsInput();
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    return await wsSend(fullBody);
+  //   ★ T32：httpOnly=true 时跳过 WS —— 供 sendInputNoWait 在 HTTP 降级模式下
+  //     用队列保序时冻结传输方式（详见 sendInputNoWait 的注释）。
+  if (!httpOnly) {
+    const ws = getWsInput();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      return await wsSend(fullBody);
+    }
   }
   const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
   const headers = { 'Content-Type': 'application/json' };
@@ -1736,18 +2022,22 @@ function pumpInput() {
   inputSending = true;
   (async () => {
     let resp = null;
-    try { resp = await postInputRaw(item.body); }
+    try { resp = await postInputRaw(item.body, item.httpOnly); }
     catch (e) { resp = null; }
     // up/releaseall 幂等：传输失败（fetch 抛异常）重试 1 次；
     // down/click 不重试——down 重试可能双 LEFTDOWN 反而粘键，click 重试会双击。
-    if (resp == null && INPUT_RETRYABLE.has(item.body.action)) {
-      try { resp = await postInputRaw(item.body); }
+    // ★ T32：move 也**不**重试 —— 它是过时位置，重发只会造成光标跳动；
+    //   且 fireAndForget 语义本就是「发出去就不管了」。
+    if (resp == null && !item.fireAndForget && INPUT_RETRYABLE.has(item.body.action)) {
+      try { resp = await postInputRaw(item.body, item.httpOnly); }
       catch (e) { resp = null; }
     }
     if (resp == null || resp.ok === false) {
-      console.warn('[input] ' + item.body.action + ' 发送失败', resp);
+      // ★ T32：fireAndForget（move）失败不刷屏 —— HTTP 降级下高频 move 失败是常态，
+      //   每 8ms 一条 warn 会把 console 冲爆、反而掩盖真问题。
+      if (!item.fireAndForget) console.warn('[input] ' + item.body.action + ' 发送失败', resp);
     }
-    else { consumeCursorEcho(resp); }   // down/up/click 响应也可能带光标位置
+    else { consumeCursorEcho(resp); }   // down/up/click 响应也可能带光标位置（move 亦然，P0-2 后走队列）
     item.resolve(resp);
     inputSending = false;
     pumpInput();               // 串行发下一条
@@ -1758,10 +2048,45 @@ function pumpInput() {
 function sendInputNoWait(action, nx, ny, extra) {
   if (!cur) return;
   const body = Object.assign({ action, x: nx, y: ny }, extra || {});
-  // ★ 回包虽不等（noWait 语义不变），但拿到了就读光标位置：
-  //   move 是光标位置最密集的来源，8ms 节流 + latest-wins 已天然限频，
-  //   这里只在回包到达时顺手消费，不追加任何请求/定时器。
-  postInputRaw(body).then(r => { if (r && r.ok !== false) consumeCursorEcho(r); }).catch(() => {});
+
+  // ★★ 2026-11-24（T32 P0-2）：HTTP 降级下 move **必须保序** ★★
+  //
+  //   【原来的 bug】这里直接 postInputRaw(body) 发一条独立 fetch。
+  //   WS 模式下没问题（同一条 TCP 连接天然有序），但 **HTTP 降级时**：
+  //     · move 走 fetch A（并发、不等回包）
+  //     · up   走 sendInputOrdered → pumpInput（单 in-flight 串行）→ fetch B
+  //     ⇒ A、B 是**两条独立 HTTP 请求，浏览器/网络不保证谁先到**
+  //     ⇒ up(P3) 先到、move(P1) 后到 → 服务端先松手再把光标拽回 P1
+  //     ⇒ **落点偏移**（用户说的「操作太快落点飘逸」）
+  //
+  //   【修法】HTTP 模式下把 move 也塞进 inputQueue，用同一条单 in-flight 串行链保序。
+  //     代价：HTTP 模式下 move 会排队（比并发慢）。
+  //     但这正是该付的代价 —— 用户明确表示「落点偏移比 move 慢严重得多」。
+  //     且 WS 一旦恢复（P0-1 退避重连），自动回到快速直发路径。
+  //
+  //   fireAndForget=true：语义仍是「不等回包」（resolve 空函数），不改变 noWait 契约；
+  //     光标回显仍由 pumpInput 在响应到达时照常消费。
+  const ws = getWsInput();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // WS：保持原样（低延迟 + TCP 天然保序），性能不受影响
+    //   ★ 回包虽不等（noWait 语义不变），但拿到了就读光标位置：
+    //     move 是光标位置最密集的来源，8ms 节流 + latest-wins 已天然限频。
+    postInputRaw(body).then(r => { if (r && r.ok !== false) consumeCursorEcho(r); }).catch(() => {});
+    return;
+  }
+
+  // HTTP 降级：进串行队列保序（单 in-flight），但不等回包。
+  //
+  //   ★★ 必须用 httpOnly=true 冻结传输方式，不能让 postInputRaw 再去判一次 WS ★★
+  //     否则会出现这个竞态：
+  //       ① 此刻 WS 未就绪 → 走到这里，决定「入队走 HTTP」
+  //       ② 入队后、pumpInput 真正发送前，WS 恰好连上
+  //       ③ postInputRaw 内部再判一次 WS，发现可用 → **走 wsSend 而不是 HTTP**
+  //     ⇒ 结果虽然也能发出去（顺序甚至更好），但「入队保序」的意图被绕过，
+  //       且若同一条 body 被其它路径也发一次，就会**重复注入一次 move**。
+  //     传 httpOnly 让 postInputRaw 直接走 fetch，行为可预测。
+  inputQueue.push({ body: body, resolve: function () {}, fireAndForget: true, httpOnly: true });
+  pumpInput();
 }
 
 // ── 按住心跳（Web 前端断连看门狗的「我还活着」信号）────────────
@@ -2182,6 +2507,44 @@ function sendMoveThrottled(nx, ny) {
   pumpMove();
 }
 
+// ★★ 2026-11-24（T27）：丢弃「待发的旧坐标」—— 修拖动松手落点偏移 ★★
+//
+//   【问题】sendMoveThrottled 是 latest-wins + 8ms 节流：
+//     pointermove 只把坐标记进 movePending，节流窗口内**不立即发**（靠 pumpMove._t 定时器补发）。
+//   于是「快速拖动 → 立刻松手」时会出现：
+//     t0  pointermove(P1) → movePending = P1，timer 排在 8ms 后
+//     t1  pointerup(P2)   → 发 up(P2)，服务端把光标定位到 P2 并松开
+//     t2  timer 到期      → 发出迟到的 move(P1)  ← ★ 光标又被拽回 P1
+//   ⇒ 用户看到「落点偏移」，**操作越快越明显**（节流窗口内更容易有存货）。
+//
+//   【修法】凡是「释放类」动作（up / click / cancel），发之前先清掉待发 move。
+//     顺序必须：先 clearTimeout + 清 movePending，再发 up。
+//     否则 timer 会在 up 之后补发一条旧坐标，把落点拽走。
+function dropPendingMove() {
+  if (pumpMove._t) { clearTimeout(pumpMove._t); pumpMove._t = null; }
+  movePending = null;
+  // ★★ 2026-11-24（T32 P0-3）：还要清掉**已经排队但还没发出**的 move ★★
+  //
+  //   为什么需要：dropPendingMove 原本只清 movePending（尚未进入队列的那一个），
+  //   但在 HTTP 降级模式下，move 会被 P0-2 塞进 inputQueue 排队。
+  //   此时若只清 movePending，队列里可能还压着 move(P1)，
+  //   up(P3) 排到它后面 → 服务端先收到 move(P1) 再收到 up(P3)？
+  //     不对 —— 队列是 FIFO 且串行，move(P1) 会先到，up 后到，顺序是对的。
+  //   但真正的问题是这个 move(P1) **本身已经过时**（用户早已移到 P3），
+  //   它会让光标先闪到 P1 再被 up 拉到 P3 —— 视觉上仍是一次「抽动」。
+  //   更要紧的是：如果 up 入队之前队列里压了多条旧 move，up 要等它们全部发完，
+  //   **松手响应被拖慢**。所以释放动作前应该把这些过时的 move 直接丢弃。
+  //
+  //   ★ 关键：只过滤 inputQueue（尚未发出的），**绝不能碰 inputSending 正在发的那一条**。
+  //     在途那条的 resolve 挂在 pumpInput 的闭包里，清掉它会让 resolve 链断裂 →
+  //     调用方的 Promise 永远 pending（up 的重试判定、光标回显都会失效）。
+  //     inputQueue 是纯数组、被 shift 出来后才置 inputSending=true，
+  //     所以在途项**不在** inputQueue 里 —— 过滤操作天然安全。
+  inputQueue = inputQueue.filter(function (it) {
+    return !(it && it.body && it.body.action === 'move');
+  });
+}
+
 function pumpMove() {
   if (!movePending) return;                      // 有货才发；move 已改 noWait，不再有 in-flight 等待
   const now = Date.now();
@@ -2301,6 +2664,8 @@ $('scr').addEventListener('pointerup', e => {
       const p = norm(e);
       ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: 'left' });
     } else if (was.mode === 'drag') {
+      // ★ T27：转视角拖动结束也是「释放」，先清待发 move 再发 up
+      dropPendingMove();
       sendInputOrdered('up', -1, -1, { button: 'left' });
     } else if (was.mode === 'look' && was.mouseRight) {
       // ★ 鼠标右键转视角结束：几乎没动 = 右键单击（菜单照常出）；
@@ -2317,6 +2682,150 @@ $('scr').addEventListener('pointerup', e => {
     return;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ★★ 2026-11-24（T28）：页面版本轮询 + 自动刷新 ★★
+  //
+  //  【要解决的问题】
+  //    改前端后用户必须自己 Ctrl+F5。响应头虽已是 no-store，但那只对**新请求**生效,
+  //    已打开的页面不会自己重拉。把这件事推给用户是缺陷。
+  //
+  //  【三个设计决策】
+  //    ① 版本来源：GET /api/pagever → { pageVer }（服务端对**实际返回的 HTML** 做 SHA-256 前 12 位）。
+  //       不用程序版本号 —— 只改 web-index.html 时版本号不变，会漏更新。
+  //    ② 刷新时机：**空闲才刷**。记录最后一次用户输入时刻，若 <5s 内有操作则**推迟**，
+  //       最多推迟 2 分钟；超过就强制刷（避免用户一直在操作导致永远不更新）。
+  //       理由：刷新会重连视频流（画面黑一下 + 等 IDR），用户正在拖动时刷会**打断操作**，
+  //       比晚几分钟更新更糟。
+  //    ③ 死循环保护：**60 秒内最多刷新一次**，且**最多连续 3 次**；
+  //       超过 3 次就停止并 warn —— 说明服务端返回的 pageVer 在刷新后没变（部署不同步），
+  //       再刷也没用。
+  // ═══════════════════════════════════════════════════════════════════════
+  (function startPageVersionWatch() {
+    const PAGEVER_POLL_MS = 30000;      // 轮询间隔
+    const IDLE_MS = 5000;               // 至少空闲 5s 才刷
+    const MAX_DEFER_MS = 120000;        // 最多推迟 2 分钟，超时强制刷
+    const MIN_RELOAD_GAP_MS = 60000;    // 两次刷新至少间隔 60s
+    const MAX_CONSECUTIVE_RELOADS = 3;  // 连续刷新上限（防死循环）
+
+    // ★ 关键：本页「已应用」的版本必须**跨 reload 持久化**，否则 reload 后又把
+    //   appliedVer 设成当前值，下次检测到更新就永远无法与「已应用」区分 —— 会漏刷。
+    //   做法：第一次拿到版本时写入 sessionStorage，之后一直以它为准（跨 reload 保留）。
+    let knownVer = null;        // 服务端当前版本（每拍从 /api/pagever 取）
+    let appliedVer = null;      // 本页面**已应用**的版本（首次加载时从 sessionStorage 恢复）
+    let lastInputAt = Date.now();   // 最后一次用户操作时刻
+    let pendingSince = 0;       // 发现新版本、开始等待空闲的时刻（0=无待处理）
+    let lastReloadAt = 0;       // 上次刷新时刻（跨 reload 用 sessionStorage 持久化）
+    let consecutive = 0;        // 连续刷新次数
+
+    // 跨 reload 保存「上次刷新时间 / 连续次数」—— 否则 reload 后计数清零，保护失效
+    // 跨 reload 恢复：刷新时间、连续次数、**已应用版本**
+    try {
+      const saved = sessionStorage.getItem('__pageReloadGuard');
+      if (saved) {
+        const g = JSON.parse(saved);
+        lastReloadAt = g.t || 0;
+        consecutive = g.n || 0;
+        if (g.v) appliedVer = g.v;   // ★ 恢复「本页已应用版本」
+      }
+    } catch (e) {}
+
+    function saveGuard() {
+      try { sessionStorage.setItem('__pageReloadGuard', JSON.stringify({ t: lastReloadAt, n: consecutive, v: appliedVer })); } catch (e) {}
+    }
+
+    // 任何输入都刷新 lastInputAt（用捕获阶段，避免被 stopPropagation 漏掉）
+    ['pointerdown','pointermove','pointerup','wheel','keydown','touchstart'].forEach(function (ev) {
+      document.addEventListener(ev, function () { lastInputAt = Date.now(); }, { capture: true, passive: true });
+    });
+
+    async function fetchPageVer() {
+      try {
+        // ★★ 2026-11-24（T32 BUG 修复）：必须用**页面自身的来源**，不是 directBase ★★
+        //
+        //   【原来的错误】这里写的是 directBase(cur)，即 agent 直连口（19081）。
+        //   但 /api/pagever 定义在**主程序** Services/WebServer.cs（19080）—— agent 没有这个端点。
+        //   实测：19081/api/pagever 返回 404 ⇒ **T28 的自动刷新从未生效过**。
+        //
+        //   【为什么该跟页面来源走】版本轮询要回答的问题是「**这个页面**该不该刷新」，
+        //   而页面本身是主程序 19080 发出来的（/api/sessions、/api/settings、/api/list
+        //   也都是相对路径 = 主程序）。agent 只负责画面流与输入注入，与页面版本无关。
+        //   用相对路径（''）即「当前页面同源」，天然正确。
+        //
+        //   【口令】主程序 WebServer 用 cookie 鉴权（IsAuthorized），同源请求自动带 cookie；
+        //   不需要 X-SoulLink-Token（那是 agent 校验的）。
+        const r = await fetch('/api/pagever', { cache: 'no-store', credentials: 'same-origin' });
+        if (!r.ok) return null;
+        const d = await r.json();
+        return (d && d.pageVer) || null;
+      } catch (e) { return null; }
+    }
+
+    function tryReload(now) {
+      if (!pendingSince) return;
+      // 保护 ①：两次刷新至少间隔 MIN_RELOAD_GAP_MS
+      if (now - lastReloadAt < MIN_RELOAD_GAP_MS) return;
+      // 保护 ②：连续刷新不超过 MAX_CONSECUTIVE_RELOADS
+      if (consecutive >= MAX_CONSECUTIVE_RELOADS) {
+        console.warn('[版本更新] 已连续刷新 ' + consecutive + ' 次仍未稳定，停止自动刷新（请手动 Ctrl+F5 或检查部署）');
+        pendingSince = 0;
+        return;
+      }
+      // 条件 ③：空闲（或已推迟超时）才刷
+      const idleFor = now - lastInputAt;
+      const waited = now - pendingSince;
+      if (idleFor < IDLE_MS && waited < MAX_DEFER_MS) {
+        return;   // 还在操作，且未超时 → 等下一拍
+      }
+      if (idleFor < IDLE_MS) {
+        console.warn('[版本更新] 等空闲超 ' + Math.round(MAX_DEFER_MS / 1000) + 's，强制刷新');
+      }
+      console.warn('[版本更新] ' + appliedVer + ' → ' + knownVer + '，自动刷新页面');
+      lastReloadAt = now;
+      consecutive++;
+      // ★ 关键：把 appliedVer 更新为**即将加载**的版本再 reload。
+      //   这样即使 reload 因故没发生（被打断/浏览器拦截），也不会在高频 tick 里反复触发；
+      //   而 sessionStorage 里存的是「刷新后应有的版本」，新页面启动时即以此为基线。
+      appliedVer = knownVer;
+      pendingSince = 0;
+      saveGuard();
+      location.reload();
+    }
+
+    async function tick() {
+      const v = await fetchPageVer();
+      if (!v) return;
+
+      // 首拍：建立基线。「本页已应用版本」若 sessionStorage 里没有，就用当前值并记住。
+      //   ★ 一旦写过就不再改 —— 只有 reload 之后的新页面才会重新建立基线。
+      if (appliedVer === null) {
+        appliedVer = v;
+        knownVer = v;
+        saveGuard();
+        return;
+      }
+
+      knownVer = v;
+
+      // 服务端版本 == 本页已应用版本 → 无需刷新；顺带清掉待处理窗口
+      if (v === appliedVer) {
+        if (pendingSince) { pendingSince = 0; console.warn('[版本更新] 服务端已回到本页版本，取消刷新'); }
+        return;
+      }
+
+      // 检测到新版本：开一个待处理窗口（只开一次），等空闲再刷
+      if (!pendingSince) {
+        pendingSince = Date.now();
+        console.warn('[版本更新] 检测到新版本 ' + appliedVer + ' → ' + v + '，等空闲后刷新');
+      }
+      tryReload(Date.now());
+    }
+
+    // 每 5s 检查一次「是否可以刷新」（比轮询密，保证空闲一出现就能刷）
+    setInterval(function () { if (pendingSince) tryReload(Date.now()); }, 5000);
+    setInterval(tick, PAGEVER_POLL_MS);
+    tick();
+  })();
+
   // ── 鼠标 / 触控笔 ──
   // ★ 首击挂起兜底：requestPointerLock 既未成功也未报错（罕见），pointerup 时补发 click
   if (!drag && plLockPending) {
@@ -2328,6 +2837,9 @@ $('scr').addEventListener('pointerup', e => {
   const moved = drag.moved, btn = drag.btn || 'left';
   drag = null;
   const p = norm(e);
+  // ★ T27：先丢掉待发的旧 move 坐标，再发 up/click ——
+  //   否则 8ms 节流的 timer 会在 up 之后补发一条迟到 move，把光标拽回上一个点（落点偏移）。
+  dropPendingMove();
   if (moved) sendInputOrdered('up', p.nx, p.ny, { button: btn });
   else { ripple(e); sendInputOrdered('click', p.nx, p.ny, { button: btn }); }
 });
@@ -2339,7 +2851,8 @@ $('scr').addEventListener('pointercancel', () => {
     return;
   }
   if (look) {
-    if (look.mode === 'drag') sendInputOrdered('up', -1, -1, { button: 'left' });
+    // ★ T27：取消时同样先丢掉待发 move，否则取消后会再补一条迟到 move
+    if (look.mode === 'drag') { dropPendingMove(); sendInputOrdered('up', -1, -1, { button: 'left' }); }
     if (look.mode === 'look' && look.mouseRight) {
       // 右键转视角被系统打断：不补发 click（无法区分用户意图），只退出
       if (lookAcc.timer) { clearTimeout(lookAcc.timer); lookAcc.timer = null; }
@@ -2352,7 +2865,8 @@ $('scr').addEventListener('pointercancel', () => {
     flushLook();
     return;
   }
-  if (drag && drag.moved) sendInputOrdered('up', -1, -1, { button: drag.btn || 'left' });
+  // ★ T27：同 pointercancel 上的 drag 分支 —— 先清待发 move 再发 up
+  if (drag && drag.moved) { dropPendingMove(); sendInputOrdered('up', -1, -1, { button: drag.btn || 'left' }); }
   drag = null;
 });
 $('scr').addEventListener('wheel', e => {
@@ -2379,6 +2893,37 @@ document.addEventListener('keydown', e => {
   // 锁定态 ESC 由 pointerlockchange 统一补发（浏览器解锁 + 补发一次 Esc 开菜单）；
   // 这里拦掉，避免「ESC keydown 派发时」键盘注入又发一次导致双重开菜单。
   if (pointerLocked && e.key === 'Escape') return;
+  // ★★ 2026-11-24（t24 P0-2）：过滤浏览器自动重复 ★★
+  //
+  //   原来没有这个判断：长按一个键，浏览器每 ~30ms 派发一次 keydown（e.repeat=true），
+  //   每次都发一条完整的 key 动作（按下+抬起+服务端 20ms Sleep）到服务端。
+  //
+  //   实测（docs/research/T24-DRAG-RELEASE-20261124.md）：服务端 key 处理 28.6ms/条，
+  //   浏览器 repeat 间隔 ~30ms —— 刚好卡在临界点，积压恒为 1 条；
+  //   一旦 repeat 更快（部分系统/无障碍设置可到 15ms 甚至 5ms），实测积压线性增长：
+  //     repeat=15ms → 积压 9 条；repeat=5ms → 积压 11 条。
+  //   积压会把排在后面的 up/click 一起堵住，表现为「松手很久才判定松开」。
+  //
+  //   ★ 标准做法：长按的重复由**远端系统自己产生**（真实键盘也是这样）。
+  //     这里只发第一次 keydown，浏览器自己的 repeat 一律丢掉；抬起由 keyup 处理 —— 语义无损失。
+  if (e.repeat) return;
+
+  // ★★ 2026-11-24（T25 BUG-1）：不能无条件 preventDefault ★★
+  //
+  //   原来这里对所有按键都 e.preventDefault()，于是浏览器的本地快捷键
+  //   （F5 刷新 / Ctrl+R 重载 / F12 开发者工具 / Ctrl+Shift+I / Ctrl+W 关页 / Ctrl+T 新标签）
+  //   全被吞掉，用户原话：「浏览器不响应这个快捷键」。
+  //
+  //   规则：**放行浏览器快捷键，只对"要发往远端"的普通键 preventDefault**。
+  //   · 放行清单（本地生效）：F5 / F12 / Ctrl+R / Ctrl+Shift+I / Ctrl+W / Ctrl+T / Ctrl+Shift+R
+  //   · 另外：只按修饰键（Ctrl/Alt/Shift/Meta）时不拦截。
+  const localShortcuts = (
+    e.key === 'F5' || e.key === 'F12' ||
+    ((e.ctrlKey || e.metaKey) && ['r','R','w','W','t','T','i','I'].includes(e.key)) ||
+    ((e.ctrlKey || e.metaKey) && e.shiftKey && ['i','I','r','R'].includes(e.key))
+  );
+  if (localShortcuts) return;   // 交给浏览器，不注入远端、不 preventDefault
+
   const parts = [];
   if (e.ctrlKey) parts.push('Ctrl');
   if (e.altKey) parts.push('Alt');
@@ -2443,6 +2988,37 @@ function syncCapture() {
   const sel = $('capMode');
   if (sel) sel.value = String(captureMode);
 }
+// ★ T34：fpsinfo 的单一渲染入口 —— 分辨率 + 实测推送 fps + 配置 fps
+//   （原来有两处各自写 textContent 会互相覆盖，统一到这里）
+let __fpsInfo = { screen: '', cfg: 0, act: 0 };
+function renderFpsInfo() {
+  const el = $('fpsinfo');
+  if (!el) return;
+  const parts = [];
+  if (__fpsInfo.screen) parts.push(__fpsInfo.screen);
+  if (__fpsInfo.act || __fpsInfo.cfg) {
+    parts.push('推送实测 ' + (__fpsInfo.act ? __fpsInfo.act.toFixed(1) : '—') + ' fps'
+               + (__fpsInfo.cfg ? ' · 配置 ' + __fpsInfo.cfg + ' fps' : ''));
+  }
+  el.textContent = parts.join(' · ');
+}
+
+// ★ T34：实测 fps 是**动态值**，只在进入画面时取一次会一直是旧值（甚至 0）。
+//   2 秒一次轻量轮询：只请求 /api/info（几十字节 JSON）+ 写一个 textContent，开销可忽略；
+//   只在「画面打开中」才跑，关闭自动停。
+//   ★ __fpsPollTimer 声明在文件上方（见「fps 轮询句柄」），不在此处 —— 避免 startLive
+//     （定义在更早位置）调用时落到 let 的 TDZ。
+function startFpsPolling() {
+  stopFpsPolling();
+  __fpsPollTimer = setInterval(function () {
+    if (!cur || !liveRunning || paused) return;   // 没在看画面 → 不打扰服务端
+    refreshCaptureBackend();
+  }, 2000);
+}
+function stopFpsPolling() {
+  if (__fpsPollTimer) { clearInterval(__fpsPollTimer); __fpsPollTimer = null; }
+}
+
 async function refreshCaptureBackend() {
   if (!cur) return;
   const base = directBase(cur);
@@ -2454,6 +3030,19 @@ async function refreshCaptureBackend() {
     const d = await r.json();
     const b = $('capBackend');
     if (b) b.textContent = (d && d.captureBackend) ? d.captureBackend : '—';
+    // ★★ 2026-11-24（T34）：区分显示「配置 fps」与「实测 fps」★★
+    //
+    //   用户看到浏览器里 `fps: 66.0 (render)` 会误以为「服务端在推 66fps」。
+    //   但那是**浏览器渲染帧率**（合成器/requestAnimationFrame），
+    //   与「服务端实际推了多少帧」是两件事：
+    //     · 渲染 fps 可远高于接收 fps —— 浏览器会把同一帧重复绘制多次；
+    //     · **只有实测推送 fps 才反映服务端真实产出能力与卡顿**。
+    //   分开显示，避免用户拿渲染 fps 判断「推送正常」。
+    if (d) {
+      __fpsInfo.cfg = (typeof d.configuredFps === 'number' && d.configuredFps > 0) ? d.configuredFps : 0;
+      __fpsInfo.act = (typeof d.actualFps === 'number' && d.actualFps > 0) ? d.actualFps : 0;
+      renderFpsInfo();
+    }
   } catch (e) {
     const b = $('capBackend'); if (b) b.textContent = '—';
   }
@@ -2795,7 +3384,9 @@ function applyRemoteUser(u) {
   curId = u.id;
   document.title = (u.label || u.user) + ' · 实时画面';
   const t = $('viewerTitle'); if (t) t.textContent = '实时画面 · ' + (u.label || u.user);
-  const fi = $('fpsinfo'); if (fi) fi.textContent = (u.screen || '');
+  // ★ T34：切账号时先只显示分辨率；实测/配置 fps 由 refreshCaptureBackend() 补齐
+  __fpsInfo = { screen: u.screen || '', cfg: 0, act: 0 };
+  renderFpsInfo();
   const cv = $('vframe'); if (cv) cv.classList.remove('show');
   const ph = $('ph'); if (ph) ph.style.display = 'none';
   hideRemoteCursor();   // 切账号：旧账号的光标回显清掉，等新回包再画

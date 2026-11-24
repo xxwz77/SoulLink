@@ -18,6 +18,13 @@ namespace SoulLink.Services
         NotRunning,
         /// <summary>注入代理缺失或版本不一致。</summary>
         AgentNeedsUpdate,
+        /// <summary>
+        /// 引擎本身（服务 + 注入代理版本）正常，但**投送通道没有连着**。
+        /// ★ 2026-11-24 P0-A：用户实测「界面一片绿，啥也用不了」——服务在跑、agent 版本对、
+        ///   但 relay 管道已断/代理进程已死。原 Ready 判据完全不看「通道是否真的连着」。
+        ///   此态必须渲染成**非绿**（琥珀），与「就绪」明确区分。
+        /// </summary>
+        ChannelDown,
         /// <summary>修复失败 / 状态异常。</summary>
         Error
     }
@@ -167,8 +174,35 @@ namespace SoulLink.Services
                 return EngineState.AgentNeedsUpdate;
             }
             LastVerdict = new AgentVerdict { Passed = true, ServiceVersion = serviceVer, AgentVersion = agentVer, Source = serviceSrc + "/" + agentSrc };
+
+            // ★ P0-A（2026-11-24）：「引擎就绪」必须同时反映「通道是否真的连着」。
+            //   判据 = 服务 Running + agent 文件存在 + 版本通过（上面已全过）+ **至少一个已投送账号的 relay 通道 IsConnected**。
+            //   · 信号 = RelayClient.GetLiveSessions()：投送成功 Register() 且 IsConnected==true 的会话集合（断开即 Unregister）。
+            //   · 没有配置自动投送账号（AutoConnectAccountIds 为空）→ 无从判断通道，仍按 Ready（纯手动场景不算 ChannelDown）。
+            //   · 配置了自动投送、但连一个活通道都没有 → ChannelDown（引擎在跑，但通道断了/代理死了）。
+            //   纯读取：RelayClient 是进程内静态注册表，O(会话数)、0 子进程、0 命名管道枚举。
+            if (HasConfiguredAutoDeploy() && !HasAnyLiveChannel())
+            {
+                detail = "引擎在跑，但投送通道未建立（代理可能已退出）";
+                return EngineState.ChannelDown;
+            }
+
             detail = "就绪";
             return EngineState.Ready;
+        }
+
+        /// <summary>是否配置了自动投送账号（AutoConnectAccountIds 非空）。纯读配置。</summary>
+        private static bool HasConfiguredAutoDeploy()
+        {
+            try { return App.Config.Settings.AutoConnectAccountIds?.Count > 0; }
+            catch { return false; }
+        }
+
+        /// <summary>是否至少有一条「真的活着」的 relay 通道（IsConnected + AgentPid 存活）。纯读进程内注册表。</summary>
+        private static bool HasAnyLiveChannel()
+        {
+            try { return RelayClient.CountLiveChannels() > 0; }
+            catch { return false; }
         }
 
         /// <summary>自动修复（后台线程执行，不阻塞 UI）。</summary>

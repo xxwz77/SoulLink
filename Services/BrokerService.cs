@@ -153,8 +153,8 @@ namespace SoulLink.Services
                 catch (Exception ex)
                 {
                     response = BrokerProtocol.Fail(ex is UnauthorizedAccessException ? "CLIENT_DENIED" : "BROKER_ERROR", ex.Message);
-                    LogBus.Error("Broker 请求失败", response.Code + "：" + response.Message);
-                    Trace("REQUEST_ERROR", response.Code + " " + response.Message);
+                    // ★ t16（T7b）：Broker 是无 UI 服务，只落 broker.log；LogBus 是 WPF（System.Windows.Media）
+                    //   在这里本就只会写进 UI 日志总线（服务进程无 UI，等于白写）。改成 Trace 落盘并去掉重复行。
                     Trace("REQUEST_ERROR", response.Code + " " + response.Message);
                 }
                 // 错误在关闭前尽力返回；不会把异常当作已启动。

@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- ★ t16（T7b，2026-11-24）：Broker 服务拆成独立「无 WPF / 无 WinForms」工程。
+         主程序（SoulLink.exe）不再兼作服务本体；服务 = SoulLink.Broker.exe，由 SCM 以 LocalSystem 启动。
+         只引用 Services 依赖闭包，不复制文件（避免双份维护）。
+         ★ 无版本 TFM：Broker 不做抓屏/编码，不需要 WinRT 投影（WGC）。 -->
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <UseWPF>false</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>15.0</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>SoulLink.Broker</RootNamespace>
+    <AssemblyName>SoulLink.Broker</AssemblyName>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RollForward>LatestMajor</RollForward>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1416;CS8618;CS1591;CS0649;CS8632</NoWarn>
+    <DefineConstants>$(DefineConstants);SOULLINK_BROKER</DefineConstants>
+    <!-- ★★ 必须与主程序 <Version> 同步（且 >= BrokerProtocol.MinimumServiceVersion = 2.17.13.0）。
+         BrokerProtocol.SelfAppVersion / ServerExeVersion 读这里的 FileVersion 做服务版本自检；
+         若这里低于 MinimumServiceVersion，服务会被判 OUTDATED、投送全被拦。语义未变，只是载体换成 Broker.exe。 -->
+    <Version>3.3.40</Version>
+    <FileVersion>$(Version).0</FileVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <AssemblyTitle>SoulLink Broker 服务</AssemblyTitle>
+    <Product>SoulLink</Product>
+    <Description>无 UI LocalSystem 服务：跨会话投送管理员输入代理</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="BrokerProgram.cs" />
+    <!-- Services 依赖闭包（引用，不复制）。BrokerService/Protocol/Install/Arguments 为核心，
+         SystemLauncher 只走服务内 LaunchAdminAgentFromBroker 直投路径（LaunchAsync 已被 #if !SOULLINK_BROKER 排除）。 -->
+    <Compile Include="../Services/AppIdentity.cs" Link="Services/AppIdentity.cs" />
+    <Compile Include="../Services/AsyncLog.cs" Link="Services/AsyncLog.cs" />
+    <Compile Include="../Services/InputTrace.cs" Link="Services/InputTrace.cs" />
+    <Compile Include="../Services/SystemLauncher.cs" Link="Services/SystemLauncher.cs" />
+    <Compile Include="../Services/BrokerService.cs" Link="Services/BrokerService.cs" />
+    <Compile Include="../Services/BrokerProtocol.cs" Link="Services/BrokerProtocol.cs" />
+    <Compile Include="../Services/BrokerInstall.cs" Link="Services/BrokerInstall.cs" />
+    <Compile Include="../Services/BrokerArguments.cs" Link="Services/BrokerArguments.cs" />
+    <Compile Include="../Services/SessionService.cs" Link="Services/SessionService.cs" />
+    <Compile Include="../Services/WtsSessionQuery.cs" Link="Services/WtsSessionQuery.cs" />
+    <Compile Include="../Services/Native.cs" Link="Services/Native.cs" />
+    <Compile Include="../Services/ManifestPatcher.cs" Link="Services/ManifestPatcher.cs" />
+    <!-- Models/SessionInfo 已从 Models.cs 抽出（无 WPF），SessionService 需要它。 -->
+    <Compile Include="../Models/SessionInfo.cs" Link="Models/SessionInfo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="11.0.0" />
+  </ItemGroup>
+</Project>

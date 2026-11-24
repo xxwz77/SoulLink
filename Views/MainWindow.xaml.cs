@@ -787,6 +787,9 @@ namespace SoulLink.Views
                 EngineState.NotInstalled => (System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B), "引擎待安装"),
                 EngineState.NotRunning => (System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B), "引擎未运行"),
                 EngineState.AgentNeedsUpdate => (System.Windows.Media.Color.FromRgb(0xFF, 0x9B, 0x4D), "注入代理待更新"),
+                // ★ 2026-11-24 P0-A：通道断 = 非绿（琥珀）。用户原话「界面一片绿，啥也用不了」——
+                //   服务在跑、版本对，但 relay 管道断了/代理死了，绝不能显示绿色。
+                EngineState.ChannelDown => (System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B), "通道未建立"),
                 _ => (System.Windows.Media.Color.FromRgb(0xFF, 0x6B, 0x6B), "引擎异常"),
             };
             EngineDot.Color = color;

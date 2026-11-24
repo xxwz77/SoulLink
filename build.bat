@@ -95,11 +95,18 @@ rem ★ t7a（2026-11-24）：注入代理拆成独立无 UI 工程，不再是�
 rem   产物由 Agent\SoulLink.Agent.csproj 单独 publish（含 SoulLink.Agent.version）。
 dotnet publish "Agent\SoulLink.Agent.csproj" -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o "!STAGE!\agent" --nologo
 if errorlevel 1 goto :fail
+rem ★ t16（T7b）：Broker 服务本体独立 publish（无 UI）。产物直接进 STAGE 根，与主程序/agent 平级。
+dotnet publish "Agent\SoulLink.Broker.csproj" -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o "!STAGE!\broker" --nologo
+if errorlevel 1 goto :fail
 rem ★ copy 失败断言：上一轮踩过「dist\SoulLink.exe 被占用、copy 静默失败停在旧版」。
 rem   这里每个产物复制后立即校验目标存在，失败即报错退出，绝不静默。
 copy /y "!STAGE!\agent\SoulLink.Agent.exe" "dist\SoulLink.Agent.exe" >nul || (echo [失败] 复制 dist\SoulLink.Agent.exe 失败（文件被占用？） & goto :fail)
 copy /y "!STAGE!\agent\SoulLink.Agent.version" "dist\SoulLink.Agent.version" >nul || (echo [失败] 复制 dist\SoulLink.Agent.version 失败 & goto :fail)
 copy /y "!STAGE!\SoulLink.Agent.required.version" "dist\SoulLink.Agent.required.version" >nul || (echo [失败] 复制 dist\SoulLink.Agent.required.version 失败 & goto :fail)
+rem ★ t16（T7b）：Broker 服务本体进 STAGE 根 + dist（服务路径迁移后 SCM 启动它）。copy 失败即报错，不静默。
+copy /y "!STAGE!\broker\SoulLink.Broker.exe" "!STAGE!\SoulLink.Broker.exe" >nul || (echo [失败] 复制 !STAGE!\SoulLink.Broker.exe 失败 & goto :fail)
+copy /y "!STAGE!\broker\SoulLink.Broker.exe" "dist\SoulLink.Broker.exe" >nul || (echo [失败] 复制 dist\SoulLink.Broker.exe 失败 & goto :fail)
+if exist "dist\SoulLink.Broker.exe" echo   Broker 服务：dist\SoulLink.Broker.exe
 if exist "dist\SoulLink.Agent.exe" echo   注入代理：dist\SoulLink.Agent.exe
 if exist "dist\SoulLink.Agent.version" echo   注入代理版本标记：dist\SoulLink.Agent.version
 if exist "dist\SoulLink.Agent.required.version" echo   要求代理版本标记：dist\SoulLink.Agent.required.version

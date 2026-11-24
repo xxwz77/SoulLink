@@ -74,6 +74,16 @@
                                 Margin="6,0,0,0" Click="BtnReconnect_Click" ToolTip="重新连接">
                             <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11.5" />
                         </Button>
+                        <!-- P0-C（2026-11-24）：显式「全部重投」。原来用户唯一的自救方式是点单行「打开画面」，
+                             界面没告诉他这能修复。这里给一个明确的全局按钮：清投送记录 + 立刻重扫。 -->
+                        <Button x:Name="BtnRedeployAll" Style="{StaticResource GhostButton}" Padding="8,5"
+                                Margin="6,0,0,0" Click="BtnRedeployAll_Click" ToolTip="清空投送记录并重新投送所有自动连接账号">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11.5"
+                                           VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="全部重投" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                         <!-- 全屏：只显示当前 RDP 画面，鼠标移到屏幕顶部呼出菜单 -->
                         <Button x:Name="BtnFullScreen" Style="{StaticResource GhostButton}" Padding="8,5"
                                 Margin="6,0,0,0" Click="BtnFullScreen_Click"

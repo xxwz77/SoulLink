@@ -147,6 +147,52 @@ namespace SoulLink.Services
         }
 
         /// <summary>
+        /// 这条通道此刻是否**真的可用**：IsConnected 且（若记录到 Broker 投送的 AgentPid）代理进程仍存活。
+        ///
+        /// ★ 2026-11-24 P0-A/P0-B（用户报「界面一片绿，啥也用不了」）：
+        ///   IsConnected 是标志位，代理进程被外部杀死后，宿主管道读到断开才翻成 false，
+        ///   中间有一拍窗口里标志仍为 true。这里把「进程还活着」也纳入判据，
+        ///   与 AgentSync.Inspect 的通道闸门共用，杜绝界面假绿。
+        ///   · AgentPid <= 0（手动代理没有 Broker 投送的 PID）→ 只信 IsConnected。
+        ///   · 进程对象读不到（已退出/权限）→ 判死。
+        /// </summary>
+        public bool IsLiveNow()
+        {
+            if (!IsConnected) return false;
+            int pid = AgentPid;
+            if (pid <= 0) return true;   // 手动代理：无 PID 可查，只信 IsConnected
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+                return !p.HasExited && p.SessionId == SessionId;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>按会话取「真的活着」的通道；没有或已死则返回 null。</summary>
+        public static RelayClient? FindLiveBySession(int sessionId)
+        {
+            if (LiveRegistry.TryGetValue(sessionId, out var r) && r.IsLiveNow()) return r;
+            return null;
+        }
+
+        /// <summary>本进程里「真的活着」的通道数（IsConnected + AgentPid 存活）。</summary>
+        public static int CountLiveChannels()
+        {
+            int n = 0;
+            try
+            {
+                foreach (var kv in LiveRegistry)
+                {
+                    try { if (kv.Value != null && kv.Value.IsLiveNow() && kv.Key > 0) n++; }
+                    catch { }
+                }
+            }
+            catch { }
+            return n;
+        }
+
+        /// <summary>
         /// 取进程命令行。用 wmic/powershell 都不稳，这里改用 .NET 自带的方式：
         /// 通过 Process 的 MainModule 只能拿到路径，拿不到参数；
         /// 因此改为从进程名 + 管道名前缀判断，不依赖命令行。

@@ -134,6 +134,10 @@ namespace SoulLink.Services
         // ── 投送 ─────────────────────────────────────────────────────────────
 
         /// <summary>
+#if !SOULLINK_BROKER
+        // ★ t16（T7b）：LaunchAsync 是「SYSTEM 计划任务」免安装投送通道（schtasks + AccountScope + BgiStartGuard）。
+        //   Broker 服务只走 LaunchAdminAgentFromBroker（服务内 WTSQueryUserToken 直投），不需要这条通道，
+        //   且 AccountScope → App.Config(WPF) / BgiStartGuard → BgiTaskPreparer 会把无 UI Broker 拉回 WPF。
         /// 把 exePath 投进 sessionId 对应的用户桌面。全程免安装，用完不留痕。
         /// </summary>
         /// <param name="bootstrapExe">
@@ -175,6 +179,7 @@ namespace SoulLink.Services
             }
             finally { LaunchGate.Release(); }
         }
+#endif
 
         private static async Task<Result> LaunchCoreAsync(int sessionId, string exePath, string arguments,
             string workingDir, bool interactive, string? bootstrapExe, CancellationToken ct,

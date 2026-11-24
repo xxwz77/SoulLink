@@ -94,11 +94,12 @@ tools/*
 !tools/rescue/Program.cs
 !tools/rescue/Rescue.csproj
 
-# ★★ 注入代理独立工程（t7a，2026-11-24）：源码入库，构建产物忽略。
+# ★★ 注入代理 + Broker 服务独立工程（t7a/t16，2026-11-24）：源码入库，构建产物忽略。
 !Agent
 !Agent/SoulLink.Agent.csproj
 !Agent/Program.cs
-!Agent/Stubs.cs
+!Agent/SoulLink.Broker.csproj
+!Agent/BrokerProgram.cs
 
 # ★ 媒体能力探测（DXGI 桌面复制 / 硬件编码器可用性）——
 # 决定 60fps 直播走哪条路；也是以后换抓屏方式时的复用诊断工具，源码必须入库。

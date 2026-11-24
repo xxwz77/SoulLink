@@ -169,6 +169,7 @@ namespace SoulLink.Views
             {
                 _shieldWatch?.Stop();
                 _shieldWatch = null;
+                try { _deadChannelTimer?.Dispose(); _deadChannelTimer = null; } catch { }
                 try { _fsKeyHook?.Dispose(); _fsKeyHook = null; } catch { }
                 try { _fsEscHook?.Dispose(); _fsEscHook = null; } catch { }
                 try { _fsMouseToggleHook?.Dispose(); _fsMouseToggleHook = null; } catch { }
@@ -1086,6 +1087,9 @@ namespace SoulLink.Views
         /// <summary>已经投送过（或正在等待）的账号 Id，避免重复触发。</summary>
         private readonly HashSet<string> _deployHandled = new HashSet<string>(StringComparer.Ordinal);
 
+        /// <summary>P0-B：独立于会话监控的「死通道收割」定时器（TickHub）。</summary>
+        private IDisposable? _deadChannelTimer;
+
         /// <summary>
         /// 启动会话监控：每隔几秒查一次在线会话，
         /// 命中「在自动连接列表里、且尚未投送」的账号就发起投送。
@@ -1119,10 +1123,84 @@ namespace SoulLink.Views
                     catch (Exception ex) { Debug("会话监控 tick#" + tickCount + " 异常：" + ex.Message); }
                 };
                 _sessionWatch.Start();
+                StartDeadChannelReaper();
                 Debug("会话监控已启动（每 5 秒扫描，命中后等 " +
                       RdpConsole.SessionSettleSeconds + " 秒稳定再投送）");
             }
             catch (Exception ex) { Debug("启动会话监控失败：" + ex.Message); }
+        }
+
+        /// <summary>
+        /// P0-B（2026-11-24）：独立「死通道收割」定时器。
+        ///
+        /// ★ 为什么独立：会话监控在投送完成后可能停摆（本文件 :520 早已承认），
+        ///   而「已投送但代理死了 → 重投」是自愈路径，绝不能跟着它一起停。
+        /// ★ 判据：RelayClient.FindLiveBySession(sessionId) == null ——
+        ///   IsConnected 为 false，或 Broker 投送的 AgentPid 进程已不存在/会话不符。
+        ///   比旧的 DiscoverLiveAgentSessions（只判「会话里有同名进程」）更准：
+        ///   换文件时旧 agent 已死、新 agent 已起，旧判据会误判「活着」而跳过。
+        /// ★ 检测到死通道 → 清 _deployHandled/_sessionSeen → 下一拍 ScanAndDeployAsync 重投。
+        /// ★ 走 TickHub.RegisterBackground（性能约束：不新建 DispatcherTimer），O(账号数) 纯读。
+        /// </summary>
+        private void StartDeadChannelReaper()
+        {
+            if (_deadChannelTimer != null) return;
+            try
+            {
+                _deadChannelTimer = TickHub.RegisterBackground("ConsoleDeadChannelReaper", 10, () =>
+                {
+                    try
+                    {
+                        // ★ 集合（_deployHandled/_rows/_sessionSeen）都在 UI 线程读写，
+                        //   后台回调不能直接碰，必须 marshal 回 UI 线程。
+                        if (Dispatcher.HasShutdownStarted) return;
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            try { ReapDeadChannels(); }
+                            catch { /* 收割失败不影响下一拍 */ }
+                        }));
+                    }
+                    catch { /* 收割失败不影响下一拍 */ }
+                });
+            }
+            catch (Exception ex) { App.AppendErrorLog("StartDeadChannelReaper", ex); }
+        }
+
+        /// <summary>收割死通道：清掉「已处理但通道已死」的标记，让下轮扫描重投。</summary>
+        private void ReapDeadChannels()
+        {
+            try
+            {
+                if (_deployHandled.Count == 0) return;
+                var dead = new List<string>();
+                foreach (var handledId in _deployHandled)
+                {
+                    // 找到该账号当前会话号
+                    UserRow? hit = null;
+                    foreach (var r0 in _rows)
+                        if (string.Equals(r0.Account.Id, handledId, StringComparison.Ordinal)) { hit = r0; break; }
+                    if (hit == null) continue;
+
+                    int sid = hit.Console?.CurrentSessionId ?? 0;
+                    if (sid <= 0) continue;   // 还没建立会话，交给 ScanAndDeployAsync 处理
+
+                    // 该会话没有「真的活着」的通道（IsConnected + AgentPid 存活）→ 判死
+                    if (RelayClient.FindLiveBySession(sid) == null) dead.Add(handledId);
+                }
+
+                if (dead.Count > 0)
+                {
+                    foreach (var d in dead)
+                    {
+                        _deployHandled.Remove(d);
+                        _sessionSeen.Remove(d);
+                    }
+                    Debug("P0-B 死通道收割：检测到 " + dead.Count + " 个账号的注入代理已失效 → 清除标记，准备重投");
+                    // 已在 UI 线程：直接触发一次扫描（不等下一个 5 秒 tick）。fire-and-forget，不 await。
+                    _ = ScanAndDeployAsync();
+                }
+            }
+            catch { /* 静默 */ }
         }
 
         /// <summary>
@@ -1143,8 +1221,6 @@ namespace SoulLink.Views
         /// <summary>手动模式提示只记一次，避免每轮扫描刷日志。</summary>
         private bool _manualModeNoticeShown;
 
-        /// <summary>上次"死代理检测"的时刻（节流用，避免每 2 秒枚举全进程）。</summary>
-        private DateTime _lastDeadAgentCheck = DateTime.MinValue;
 
         private async Task ScanAndDeployAsync()
         {
@@ -1196,48 +1272,11 @@ namespace SoulLink.Views
                 //   标记只代表"曾经发起过"，不代表"现在还有效"。
                 //   这里每轮扫一遍仍标记为已处理的账号，确认代理还活着；
                 //   死了就把标记清掉，让它重新走投送流程。
-                // ★ 节流：死代理检测最多每 10 秒做一次。
-                //   DiscoverLiveAgentSessions 要枚举全部进程 + 全部命名管道，
-                //   每 2 秒跑一次会明显占用 UI 线程（实测出现过日志停摆）。
-                bool checkDead = _deployHandled.Count > 0
-                    && (DateTime.UtcNow - _lastDeadAgentCheck).TotalSeconds >= 10;
-                if (checkDead)
-                {
-                    _lastDeadAgentCheck = DateTime.UtcNow;
-                    var live = BgiLogWatcher.DiscoverLiveAgentSessions();
-
-                    // ★★ 会话列表只查**一次**。★★
-                    //   原来在 foreach 里对每个已处理账号各调一次 QueryAsync，
-                    //   而 QueryAsync 每次都起一个 query.exe 子进程（~28ms），
-                    //   本方法又每 2 秒被调用一次 → UI 线程被持续占满，
-                    //   表现为日志停摆、界面卡顿（实测：单线程烧了 3 分钟 CPU）。
-                    var sessionsForCheck = await SessionService.QueryAsync().ConfigureAwait(true);
-
-                    var dead = new List<string>();
-                    foreach (var handledId in _deployHandled)
-                    {
-                        // 找到该账号当前会话，判断该会话还有没有活代理
-                        UserRow? hit = null;
-                        foreach (var r0 in _rows)
-                            if (string.Equals(r0.Account.Id, handledId, StringComparison.Ordinal)) { hit = r0; break; }
-                        if (hit == null) continue;
-
-                        var s0 = SessionService.Find(sessionsForCheck, hit.Account.UserName);
-                        // 无会话或 Disc 也算通道不可用：不能保留已处理标记，否则恢复后永久跳过重投。
-                        if (s0 == null || s0.Id <= 0 || string.Equals(s0.State, "Disc", StringComparison.OrdinalIgnoreCase)
-                            || !live.Contains(s0.Id)) dead.Add(handledId);
-                    }
-
-                    if (dead.Count > 0)
-                    {
-                        foreach (var d in dead)
-                        {
-                            _deployHandled.Remove(d);
-                            _sessionSeen.Remove(d);
-                        }
-                        Debug("检测到 " + dead.Count + " 个账号的注入代理已失效 → 清除标记，准备重投");
-                    }
-                }
+                // ★ 2026-11-24 P0-B：死代理检测改由**独立 TickHub 定时器**驱动（ReapDeadChannels），
+                //   不再挂在会话监控里。会话监控在投送完成后可能停摆（本文件 :520 早已承认），
+                //   而「已投送但代理死了 → 重投」是 P0 自愈路径，绝不能跟着它一起停。
+                //   判据也从「会话里有同名进程」（DiscoverLiveAgentSessions）升级为
+                //   「RelayClient.IsConnected + AgentPid 进程存活」（RelayClient.FindLiveBySession）。
 
                 var ids = App.Config.Settings.AutoConnectAccountIds;
                 if (ids == null || ids.Count == 0) return;
@@ -2830,6 +2869,25 @@ namespace SoulLink.Views
             if (row == null) return;
             try { row.Console?.Disconnect(); } catch { }
             await ConnectAsync(row);
+        }
+
+        /// <summary>
+        /// P0-C（2026-11-24）：显式「全部重投」。
+        /// 清空投送记录 + 稳定期计时 + 登录尝试记录，然后立刻重扫一遍。
+        /// 用户此前唯一自救方式是点单行「打开画面」（会触发该行重连），但界面没告诉他这能修复；
+        /// 这里给一个全局按钮，一屏内让所有自动连接账号重新走投送。
+        /// </summary>
+        private async void BtnRedeployAll_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                _deployHandled.Clear();
+                _sessionSeen.Clear();
+                _loginRequested.Clear();
+                Debug("全部重投：已清空投送记录，正在重新扫描");
+                await ScanAndDeployAsync();
+            }
+            catch (Exception ex) { Debug("全部重投异常：" + ex.Message); }
         }
 
         /// <summary>

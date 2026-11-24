@@ -575,6 +575,7 @@ namespace SoulLink.Views
                     EngState.NotInstalled => Color.FromRgb(0xFF, 0xC4, 0x6B),
                     EngState.NotRunning => Color.FromRgb(0xFF, 0xC4, 0x6B),
                     EngState.AgentNeedsUpdate => Color.FromRgb(0xFF, 0x9B, 0x4D),
+                    EngState.ChannelDown => Color.FromRgb(0xFF, 0xC4, 0x6B),   // ★ P0-A：通道断非绿
                     _ => Color.FromRgb(0xFF, 0x6B, 0x6B),
                 };
 
@@ -584,6 +585,7 @@ namespace SoulLink.Views
                     EngState.NotInstalled => "引擎待安装（Broker 未安装）",
                     EngState.NotRunning => "引擎未运行（服务已安装未启动）",
                     EngState.AgentNeedsUpdate => "注入代理待更新",
+                    EngState.ChannelDown => "引擎运行中 · 通道未建立",
                     _ => "引擎异常",
                 };
 
