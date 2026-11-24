@@ -460,16 +460,119 @@ namespace SoulLink
             catch { return false; }
         }
 
-        /// <summary>把未处理异常写进 %LOCALAPPDATA%\SoulLink\error.log，出问题时好排查。</summary>
+        // ── 错误日志的磁盘上限与重复抑制（2026-11-24，t15 问题 B）────────────
+        //
+        // 为什么必须加（审计 AUDIT-20261124-HOTPATH-IO.md §3-B）：
+        //   TickHub 的节拍固定 1 秒（TickHub.cs:136），UI 订阅者抛异常时
+        //   （TickHub.cs:190）会立刻调到这里。某个订阅者一旦**持续**抛异常，
+        //   就变成「每秒写一条完整 ex.ToString()（1~5 KB）」→ 约 3.6~18 MB/小时，
+        //   而这里原先**既没有上限也没有轮转** —— 全仓唯一能把磁盘写满的路径。
+        //   对比：AsyncLog 一直有 5 MB + .old 轮转。
+
+        /// <summary>本进程内已确认「未超限」的文件路径（与 AsyncLog 同一套轮转策略）。</summary>
+        private static readonly System.Collections.Generic.HashSet<string> ErrorLogRotateSeen
+            = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// 相同异常的连续重复抑制：记住上一条的「指纹」，同一指纹在窗口内只写第一条 + 一条计数。
+        ///
+        /// ★ 为什么不能只靠轮转：轮转只是让文件不无限涨，但**每秒一条完全相同的异常**
+        ///   仍然是纯噪声 —— 日志被刷满之后，真正有用的那条第一条反而被埋掉。
+        /// ★ 指纹取 source + 异常类型 + Message（**不含 StackTrace**：
+        ///   同一个调用点的栈是稳定的，纳入 StackTrace 会让"同一个异常"永远判不重）。
+        /// </summary>
+        private static string _errorLogLastFingerprint = "";
+        private static DateTime _errorLogLastAt = DateTime.MinValue;
+        private static int _errorLogSuppressed;   // 上次写盘之后被抑制掉的条数
+
+        /// <summary>同一个指纹在这个窗口内只落一次盘。</summary>
+        internal static readonly TimeSpan ErrorLogDedupWindow = TimeSpan.FromSeconds(60);
+
+        /// <summary>
+        /// 异常「指纹」：source + 异常类型 + Message。
+        ///
+        /// ★ **刻意不含 StackTrace**：同一个调用点的栈是稳定的，纳入 StackTrace 会让
+        ///   「同一个异常」永远判不重，去重直接失效。
+        /// ★ 抽成 internal 纯函数是为了可单测 —— 本类继承 Application，跑测试要拖 WPF，
+        ///   而这段判定逻辑不该被 UI 依赖挡住。
+        /// </summary>
+        internal static string ErrorFingerprint(string source, Exception? ex)
+        {
+            try
+            {
+                if (ex == null) return source + "|unknown";
+                return source + "|" + ex.GetType().FullName + "|" + (ex.Message ?? "");
+            }
+            catch { return source + "|?"; }
+        }
+
+        /// <summary>
+        /// 去重判定（纯函数，可单测）：这次要不要落盘。
+        ///
+        /// 返回 true = 落盘；false = 抑制（同一指纹在窗口内）。
+        /// 调用方负责在 true 分支更新 lastFingerprint / lastAt 并把 suppressed 清零。
+        /// </summary>
+        internal static bool ShouldWriteError(
+            string fingerprint, string lastFingerprint, DateTime lastAtUtc, DateTime nowUtc, TimeSpan window)
+        {
+            if (!string.Equals(fingerprint, lastFingerprint, StringComparison.Ordinal)) return true;
+            return (nowUtc - lastAtUtc) >= window;
+        }
+
+        /// <summary>
+        /// 把未处理异常写进 %LOCALAPPDATA%\SoulLink\error.log，出问题时好排查。
+        ///
+        /// ★ 三条纪律（t15 加）：
+        ///   ① **有上限**：超过 5 MB 轮转为 error.log.old（与 AsyncLog 同一策略）；
+        ///   ② **有降频**：同一 (source+异常类型+Message) 60 秒内只写第一条；
+        ///      被抑制的条数会在下一条落盘时以 "[另有 N 条相同异常被抑制]" 一并写出，
+        ///      **信息不丢，只是不再逐条刷屏**；
+        ///   ③ **绝不抛**：写日志失败最坏是少一条记录，绝不能让异常处理路径本身炸掉。
+        /// </summary>
         public static void AppendErrorLog(string source, Exception? ex)
         {
             try
             {
+                string path = Path.Combine(ConfigStore.ConfigDir, "error.log");
+
+                // ① 上限 + 轮转
+                AsyncLog.RotateIfOversized(path, ErrorLogRotateSeen);
+
+                // ② 相同异常降频
+                string fp = ErrorFingerprint(source, ex);
+                var now = DateTime.UtcNow;
+                if (!ShouldWriteError(fp, _errorLogLastFingerprint, _errorLogLastAt, now, ErrorLogDedupWindow))
+                {
+                    _errorLogSuppressed++;
+                    return;
+                }
+
+                // 换了指纹（新异常）→ 抑制计数归零，避免把上一个异常的计数带过来
+                if (!string.Equals(fp, _errorLogLastFingerprint, StringComparison.Ordinal))
+                    _errorLogSuppressed = 0;
+
                 Directory.CreateDirectory(ConfigStore.ConfigDir);
-                File.AppendAllText(Path.Combine(ConfigStore.ConfigDir, "error.log"),
-                    "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "] [" + source + "] " +
-                    (ex?.ToString() ?? "unknown") + Environment.NewLine + Environment.NewLine,
-                    new UTF8Encoding(false));
+                var sb = new StringBuilder();
+                sb.Append('[').Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"))
+                  .Append("] [").Append(source).Append("] ")
+                  .Append(ex?.ToString() ?? "unknown")
+                  .Append(Environment.NewLine);
+                if (_errorLogSuppressed > 0)
+                {
+                    sb.Append("    （自上次记录以来，另有 ")
+                      .Append(_errorLogSuppressed)
+                      .Append(" 条相同异常被抑制，窗口 ")
+                      .Append((int)ErrorLogDedupWindow.TotalSeconds)
+                      .Append(" 秒）")
+                      .Append(Environment.NewLine);
+                }
+                sb.Append(Environment.NewLine);
+
+                File.AppendAllText(path, sb.ToString(), new UTF8Encoding(false));
+
+                _errorLogLastFingerprint = fp;
+                _errorLogLastAt = now;
+                _errorLogSuppressed = 0;
             }
             catch { }
         }

@@ -42,31 +42,65 @@
 
 ## 二、生产环境红线
 
-### 绝对不可触碰
+> ★ 2026-11-24 用户明确重划边界，以本节为准。
+> 旧的「按 PID 记红线」已作废 —— PID 每次重启都变，按 PID 记本身就是错的记录方式。
+> **一律按「账号 / 目录」判归属，不按 PID。**
+
+### 归属（实测：`query user` + `Win32_Process` 的 GetOwner）
+
+| 会话 | 账号 | 性质 |
+|---|---|---|
+| session 1 | `lummy` | 本机控制台（用户本人），`dist\` 与 `dist\stable\` 都从这里跑 |
+| session 2 | **A1** | **生产，禁动** |
+| session 3 | **A4** | **生产，禁动** |
+| session 4 | **A2** | 测试，可随意启停 |
+| — | **A3** | 测试，未登录，可随意启停 |
+
+### 绝对不可触碰（唯一红线）
+
+| 对象 | 判据 |
+|---|---|
+| **A1 / A4 两个账号** | 进程 owner 为 `A1` 或 `A4`（session 2 / 3）。这两个会话里的一切：进程、窗口、桌面、抓屏、输入，一律不动 |
+| `dist\stable\SoulLink-Stable.exe` | 文件名或路径含 `stable`，无论跑在哪个会话都不动 |
+
+判定方法（唯一标准）：按进程 owner 判，不按文件路径判。
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name LIKE 'SoulLink%'" | ForEach-Object {
+  $o = Invoke-CimMethod -InputObject $_ -MethodName GetOwner
+  # $o.User 为 A1 / A4 -> 禁动；其余按下面规则
+}
+```
+
+若读不到 owner，**按禁动处理**（判不清就不动）。
+
+### 可以自由操作（测试环境）
 
 | 对象 | 说明 |
 |---|---|
-| `dist\stable\SoulLink-Stable.exe` | **挂机测试版（PID 13392）**，运行 A1/A4 挂机业务 |
-| **A1 账号**（session 2） | 挂机测试账号，只读抓屏用 |
-| **A4 账号**（session 3） | 挂机测试账号，只读抓屏用 |
-
-### 可以操作（测试环境）
-
-| 对象 | 说明 |
-|---|---|
-| `dist\SoulLink.exe` | 主程序（测试用，跑 A2/A3） |
-| `SoulLink.Agent.exe` | 测试 agent |
-| session 4 (A2) | 测试会话，可随意重启 |
+| `dist\SoulLink.exe` | 主程序（测试） |
+| `dist\SoulLink.Agent.exe` | 注入代理（测试） |
+| `dist\` 下任何产物 | 构建输出、version 文件、`sl-rescue.exe`、`sl-watchdog.exe` 等 |
+| `C:\Program Files\SoulLinkDev\SoulLink.Agent.exe` | **服务侧 agent，测试用途，可停、可换、可重铺** |
+| `SoulLink.DevBroker` 服务（session 0 的 `SoulLink.exe --broker`） | **可停、可启、可改配置、可重装** |
+| session 4 (A2) / A3 | 测试账户，可随意启停 |
 | 注册表 | **仅限已授权的 DWMFRAMEINTERVAL**，其他项不动 |
 
-### 停进程规则
+> ⚠️ 纠正一个历史误记：`C:\Program Files\SoulLinkDev\SoulLink.Agent.exe` **不是** A1/A4 专用。
+> 它被 A1、A4、A2 三个会话的 agent 进程**共用同一个可执行文件**。
+> 所以判据始终是**进程 owner**，不是文件所在目录：
+> 停「A2 会话里的 agent」可以；停「A1/A4 会话里的 agent」不行。
+> 替换 Program Files 里的 agent **文件**属于安装/修复动作，是允许的 ——
+> 但会 Kill 掉占用它的进程，那一步必须逐个核对 owner，凡被 A1/A4 持有，**先报 Lead，不许直接 Kill**。
+
+### 停进程规则（不变，更严）
 
 - 只能用**精确 PID**（`Stop-Process -Id <pid>`）
 - 禁止按名字批量杀（`taskkill /IM`）
 - 禁止 `Get-Process SoulLink* | Stop-Process` 这种模糊匹配
+- **停之前必须先核 owner**；owner 读不出来按禁动处理
 
 ---
-
 ## 三、用户体验红线
 
 ### 绝对不要弹窗

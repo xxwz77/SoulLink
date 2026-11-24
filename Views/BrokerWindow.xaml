@@ -3,13 +3,20 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ctl="clr-namespace:SoulLink.Controls"
         Title="管理员代理服务" Width="720" Height="540" MinHeight="460"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource WindowBackground}"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
-        FontFamily="{StaticResource UiFont}" ResizeMode="CanResize">
-    <Grid Margin="18">
-        <Grid.Effect><DropShadowEffect BlurRadius="34" ShadowDepth="0" Opacity="0.8" Color="#FF03050D" /></Grid.Effect>
-        <Border CornerRadius="20" Background="{DynamicResource WindowBackground}"
-                BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
+        FontFamily="{StaticResource UiFont}" ResizeMode="CanResizeWithGrip" UseLayoutRounding="True">
+    <!-- ★ T17：原 AllowsTransparency=True + Transparent（分层窗口）是 2.17.47 批量整改时
+         漏网的第 15 个对话框（HANDOFF-2.17.47-BUGFIX-20261121：分层窗口引起焦点丢失、
+         黑边等问题，其余对话框已全部改回 False）。
+         ★ 圆角完全交给 DWM（WindowChrome + GlassFrameThickness=0 + CornerRadius=0），
+         不再画内层边框/阴影——与 MainWindow.xaml 同一做法。 -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" />
+    </WindowChrome.WindowChrome>
+    <Grid Margin="0">
+        <Border CornerRadius="0" Background="{DynamicResource WindowBackground}"
+                BorderThickness="0" ClipToBounds="True">
             <Grid>
                 <ctl:AuroraBackdrop Opacity="0.42" IsHitTestVisible="False" />
                 <Grid Margin="28,24,28,24">

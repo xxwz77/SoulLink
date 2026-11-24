@@ -15,10 +15,55 @@
 7. **发布域名不得出现在任何用户可见的位置**（界面、日志、异常提示）。
    只允许在 `Services/CloudUpdater.cs` 的两个常量里。
 
-## 边界约定
+## 边界约定（2026-11-24 重划，按「账号 / 目录」判归属，不按 PID）
 
-- 未授权不得触碰 `dist/stable/SoulLink-Stable.exe`（挂机测试版）。
-- 未授权不得使用 A1 / A4 账号。
+> 旧规则按 PID 记红线已作废 —— PID 每次重启都变，记录方式本身就是错的。
+> 详细判据与判定脚本见 `docs/research/TEAM-REDLINES.md` 第二节。
+
+### 归属（实测：`query user` + `Win32_Process` 的 GetOwner）
+
+| 会话 | 账号 | 性质 |
+|---|---|---|
+| session 1 | `lummy` | 本机控制台（用户本人） |
+| session 2 | **A1** | **生产，禁动** |
+| session 3 | **A4** | **生产，禁动** |
+| session 4 | **A2** | 测试，可随意启停 |
+| — | **A3** | 测试，未登录，可随意启停 |
+
+### 绝对不可触碰（唯一红线）
+
+| 对象 | 判据 |
+|---|---|
+| **A1 / A4 两个账号**（session 2 / 3） | 进程 owner 为 `A1` 或 `A4`。这两个会话里的一切——进程、窗口、桌面、抓屏、输入——一律不动 |
+| `dist/stable/SoulLink-Stable.exe` | 文件名或路径含 `stable`，无论跑在哪个会话都不动 |
+
+判定标准是**进程 owner**，不是文件路径。owner 读不出来时**按禁动处理**。
+
+### 可以自由操作（测试环境）
+
+| 对象 | 说明 |
+|---|---|
+| `dist/` 下任何产物 | 主程序、`SoulLink.Agent.exe`、`SoulLink.Broker.exe`、version 文件、工具 exe |
+| `dist/stable/` 以外的 `dist/` 子目录 | 可读写、可替换、可删除 |
+| `C:\Program Files\SoulLinkDev\SoulLink.Agent.exe` | **服务侧 agent，测试用途，可停、可换、可重铺** |
+| `C:\Program Files\SoulLinkDev\SoulLink.Broker.exe` | **服务本体（拆分后），可停、可换、可更新** |
+| `SoulLink.DevBroker` 服务 | **可停、可启、可改配置、可重装、可就地改路径** |
+| session 4 (A2) / A3 | 测试账户，可随意启停 |
+| 注册表 | 仅限已授权的 `DWMFRAMEINTERVAL`，其他项不动 |
+
+> ⚠️ `C:\Program Files\SoulLinkDev\SoulLink.Agent.exe` **不是 A1/A4 专用** ——
+> 它被 A1、A4、A2 三个会话的 agent 进程**共用同一个文件**。
+> 所以：停「A2 会话里的 agent」可以；停「A1/A4 会话里的 agent」不行。
+> 替换该文件属于安装/修复动作，允许；但会 Kill 占用它的进程，那一步须逐个核对 owner，
+> 凡被 A1/A4 持有的，先报 Lead，不许直接 Kill。
+
+### 停进程规则
+
+- 只能用**精确 PID**（`Stop-Process -Id <pid>`）
+- 禁止按名字批量杀（`taskkill /IM`）
+- 禁止 `Get-Process SoulLink* | Stop-Process` 这类模糊匹配
+- **停之前必须先核 owner**；owner 读不出来按禁动处理
+- 停服务用 `Stop-Service`，不要 `Stop-Process` 硬杀服务进程
 
 ## 性能约束（必读 docs/RELEASE-RULES.md §10-11）
 
@@ -49,10 +94,20 @@
 
 | 项目 | 目标 |
 |---|---|
-| 工作区总计（不含 `.git`） | **< 1 GB** |
+| 工作区总计（不含 `.git`） | **< 3 GB**（2026-11-24 放宽，见下） |
 | `tools/` | < 50 MB |
 | `backups/` | 只有 1 个 zip |
 | 根目录 `.md` | < 5 个（只留 AGENTS / README） |
 | 任何 `bin/` `obj/` | 0 个 |
 
 > 2026-11-21 清理：**17,781 MB → 583 MB**。
+> **2026-11-24 用户明确放宽**：「不要将 1G 作为硬性标准，可以放宽到 5G 甚至 10G，
+> 明确没用的可以删，有用的别删。」
+> 原因：项目规模变了（多目标框架、Vortice/SDK 依赖、多个工具子项目），1 GB 已不现实。
+>
+> **删之前先问「它是不是明确没用」，不要拿总大小倒推该删什么。**
+> 三条判断：
+> 1. **名字/内容就是一次性的**（hotfix、test、probe、experiment）→ 可删；
+> 2. **历史版本产物**（`artifacts/dist-x.y.z/`）→ **保留**，是版本参照，不按「版本号低」批量删；
+>    2026-11-24 曾因此误删 350 MB（dist-3.1.x~3.3.33），源码已前进无法精确重建。
+> 3. **可重建但重建要花时间的**（`Android/app/build`、`tools/*/bin`）→ 空间不缺就保留。

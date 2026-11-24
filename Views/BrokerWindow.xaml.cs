@@ -16,6 +16,12 @@ namespace SoulLink.Views
             InitializeComponent(); InstallPath.Text = Services.BrokerInstall.Root;
             Diagnostics.Text = "等待检测结果。";
             Loaded += async (_, _) => await DetectAsync();
+            // ★ T17（用户澄清版）：「关闭弹窗 → 主程序掉到最底层」的兜底修复。
+            //   非模态 Show() + 无任务栏（ShowInTaskbar=False）的窗口关闭时，
+            //   Windows 不保证把前台交还 owner（尤其曾经是分层窗口的激活链）。
+            //   Closed 里主动拉回：Activate() → 失败 SetForegroundWindow → 再失败 Topmost 瞬置复位。
+            //   全部静默；主修复（AllowsTransparency=False）在 XAML。
+            Closed += (_, _) => RestoreOwnerForeground(Owner);
         }
         private void DragArea(object sender, MouseButtonEventArgs e) { if (e.LeftButton == MouseButtonState.Pressed) DragMove(); }
         private void Close_Click(object sender, RoutedEventArgs e)
@@ -57,6 +63,12 @@ namespace SoulLink.Views
         private async Task RunAsync(string action)
         {
             if (_busy) return; _busy = true;
+            // ★ T17 修「装完服务主窗口掉到桌面底层像闪退」：
+            //   runas 提权子进程拿走前台 + UAC 安全桌面切换回来后，主窗口 z-order 被降级，
+            //   现有代码装完不拉回来 → 用户以为程序关了。
+            //   busy 期间临时禁用主窗口交互（避免误点），结束（成功/失败/取消都走 finally）恢复 + 拉回前台。
+            Window? owner = Owner;
+            try { if (owner != null) owner.IsEnabled = false; } catch { }
             try
             {
                 string exe = Services.SystemLauncher.ResolveSelfExe();
@@ -121,7 +133,48 @@ namespace SoulLink.Views
                 string text = File.Exists(log) ? File.ReadAllText(log) : "没有本次安装日志。";
                 Show("操作未完成", ex.Message, "日志：" + log + "\n" + text, false);
             }
-            finally { _busy = false; }
+            finally
+            {
+                _busy = false;
+                // ★ T17：恢复主窗口交互 + 拉回前台（成功/失败/取消都会走到这里）。
+                //   手法分级：① Window.Activate()（WPF 正道）
+                //             ② 失败 → Services.Native.SetForegroundWindow(owner 句柄)（user32）
+                //             ③ 再失败 → Topmost 瞬置一拍再复位（最后手段，绝非常驻）
+                //   全部静默：前台锁限制下任何一级都可能失败，不弹窗告知（用户任务里明确要求）。
+                try { if (owner != null) owner.IsEnabled = true; } catch { }
+                try { await Task.Delay(150).ConfigureAwait(true); } catch { }   // 等安全桌面切换回来
+                RestoreOwnerForeground(owner);
+            }
+        }
+
+        /// <summary>
+        /// 把主窗口恢复到前台（T17）。三级递进，失败静默，不使用 Topmost 常驻。
+        /// </summary>
+        private void RestoreOwnerForeground(Window? owner)
+        {
+            if (owner == null) return;
+            try
+            {
+                if (owner.Activate()) return;
+            }
+            catch { }
+            try
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(owner).Handle;
+                if (hwnd != IntPtr.Zero && Services.Native.SetForegroundWindow(hwnd)) return;
+            }
+            catch { }
+            try
+            {
+                // 最后手段：Topmost 瞬置一拍再复位（只在句柄存在时；失败静默）。
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(owner).Handle;
+                if (hwnd != IntPtr.Zero)
+                {
+                    owner.Topmost = true;
+                    owner.Topmost = false;
+                }
+            }
+            catch { }
         }
     }
 }
