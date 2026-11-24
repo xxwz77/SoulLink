@@ -910,6 +910,11 @@ let h264Reader = null;        // /stream 的 ReadableStreamDefaultReader
 let h264Abort = null;         // /stream 的 AbortController（取消 fetch 僵尸连接）
 let h264Active = false;       // /stream 连接是否在跑
 
+// ── P0 传输层（2026-11-24）流协议版本 ──
+let streamVersion = 1;         // 流协议版本（1=裸 Annex-B；2=length-prefix 帧边界，由 /api/info 下发）
+let streamVersionKnown = false;// 是否已从 /api/info 取到（每会话缓存一次）
+let _lastIdrReqMs = 0;         // 客户端按需 IDR 限流：上次请求时刻（500ms 最小间隔）
+
 // 收掉当前流（作废回调 + 断开连接），不动画面
 function abortStream() {
   h264Gen++;                  // 读流循环、decode 回调全部作废
@@ -929,6 +934,7 @@ function stopH264() {
 function stopLive() {
   liveRunning = false;
   stopH264();                  // 也断掉视频流（旧版漏了，流会在后台一直跑）
+  closeWsInput();              // 断开输入 WebSocket（切账号/暂停时释放，下次输入时按新 base 重建）
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 }
 
@@ -992,6 +998,42 @@ function directBase(sess) {
   return location.protocol + '//' + location.hostname + ':' + p;
 }
 
+// ── P0 传输层（2026-11-24）：流协议版本协商 ──
+//   从 /api/info 读 streamVersion（2 = 帧边界 length-prefix），每会话缓存一次。
+//   无直连端口（base 为空，走主程序代理）时不询问，保持旧协议。
+async function resolveStreamVersion() {
+  if (streamVersionKnown) return streamVersion;
+  try {
+    const base = directBase(cur);
+    if (base) {
+      const headers = {};
+      if (directToken()) headers['X-SoulLink-Token'] = directToken();
+      const r = await fetch(base + '/api/info', { headers });
+      const d = await r.json();
+      if (d && typeof d.streamVersion === 'number' && d.streamVersion >= 2) streamVersion = d.streamVersion;
+    }
+  } catch (e) { /* /api/info 失败 → 保持旧协议 */ }
+  streamVersionKnown = true;
+  return streamVersion;
+}
+
+// ── P0 传输层（2026-11-24）：客户端按需 IDR（限流 500ms，与服务端 300ms 双保险）──
+//   解码失败/花屏时先请求关键帧而非断流重连（重连 = 新订阅 + 等 IDR + 首帧，代价极大）。
+async function requestIdr() {
+  const now = Date.now();
+  if (now - _lastIdrReqMs < 500) return false;   // 客户端限流
+  _lastIdrReqMs = now;
+  try {
+    const base = directBase(cur);
+    if (!base) return false;
+    const headers = {};
+    if (directToken()) headers['X-SoulLink-Token'] = directToken();
+    const r = await fetch(base + '/api/idr', { method: 'POST', headers });
+    const d = await r.json();
+    return !!(d && d.ok);
+  } catch (e) { return false; }
+}
+
 // ═════════════ Annex-B → AVCC 的格式选择（2026-11-23，查证规范后定）═════════════
 //
 // 依据 W3C「AVC (H.264) WebCodecs Registration」§2/§3：
@@ -1047,7 +1089,7 @@ function directBase(sess) {
   // 都正确），上一个 NAL 止于 at，下一个 NAL 始于 i+1。
   // 末段（最后一个起始码之后）一律留到下一轮 —— 可能是不完整的 NAL，
   // 下轮新起始码到达时被安全切出，不丢帧也不吐半 NAL。
-  function splitAnnexB(buf) {
+  function splitAnnexB(buf, complete) {
     const units = [];
     const starts = [];      // 每个起始码的位置（at）与长度（len）
     let zeros = 0;
@@ -1074,6 +1116,13 @@ function directBase(sess) {
     // 末段从最后一个起始码起保留（含起始码本身，下轮重新定位）。
     // 末段超过 4MB 说明坏流（单个 NAL 不可能这么大），丢弃防涨。
     const lastStart = starts[starts.length - 1];
+    // ★ P0 传输层（2026-11-24）：framed 模式（complete=true）下帧是完整的
+    //   （length-prefix 保证），最后一个 NAL 也直接切出，不再「末段留到下一轮」。
+    if (complete) {
+      const from = lastStart.at + lastStart.len;
+      if (buf.length > from) units.push(buf.subarray(from));
+      return { units, pending: new Uint8Array(0) };
+    }
     if (buf.length - lastStart.at > 4 * 1048576) {
       return { units, pending: new Uint8Array(0) };
     }
@@ -1171,8 +1220,13 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
     h264Active = true;
     const base = directBase(cur);
     const tok = directToken();
-    const url = (base || '') + '/stream'
-        + (base && tok ? '?token=' + encodeURIComponent(tok) : '');
+    // ★ P0 传输层（2026-11-24）：帧边界协商。agent 支持 streamVersion>=2 时走
+    //   /stream?v=2（4 字节大端长度前缀），网页端按长度切帧、不再扫起始码。
+    await resolveStreamVersion();
+    const framed = !!(base && streamVersion >= 2);
+    let q = (base && tok) ? '?token=' + encodeURIComponent(tok) : '';
+    if (framed) q += (q ? '&' : '?') + 'v=2';
+    const url = (base || '') + '/stream' + q;
 
     let decoder = null;
     let configured = false;
@@ -1180,6 +1234,10 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
     let gotFrame = false;        // 本轮是否已出过画面（区分「连不上」和「断了」）
     let stallTimer = null;       // 画面看门狗 setInterval 句柄（函数级声明，finally 才能安全 clear）
     let lastFrameAt = 0;         // 最近一次解码出帧时间戳（函数级声明，output/finally 共用）
+    let lastCodec = '';          // 最近一次 SPS 解析出的 codec 串（IDR 恢复时 reconfigure 用）
+    let idrRecoveryCount = 0;    // 本轮已尝试按需 IDR 恢复次数（≥2 次失败则断流重连）
+    let auNals = [];             // 当前 AU 的 NAL（纯 NAL 体，无起始码；framed 下 = 一帧的 NAL）
+    let auHasKey = false, auHasData = false;
 
     // 解码帧直接画到 DOM 里的 <canvas id="vframe">，不再经过 <img>。
     // 旧版每帧 canvas.toDataURL('image/jpeg') 等于把省下的带宽又花回去
@@ -1200,6 +1258,54 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
       failStreak++;
       scheduleReconnect();
     };
+
+    // ★ P0 传输层（2026-11-24）：从 SPS 解析 codec 并 configure（framed/裸流共用）。
+    //   解析失败退 Main@L4.0 兜底；优先硬解，老内核不认识 hint 再降级重试。
+    function tryConfigure(nal) {
+      const codec = avcCodecFromSps(nal);
+      if (!codec) console.warn('[H264] SPS 解析失败，用兜底 avc1.4D4028（Main@4.0）');
+      lastCodec = codec || 'avc1.4D4028';
+      const cfg = { codec: lastCodec, optimizeForLatency: true };
+      try {
+        decoder.configure(Object.assign({}, cfg, { hardwareAcceleration: 'prefer-hardware' }));
+        configured = true;
+      } catch (e) {
+        try {
+          decoder.configure(cfg);
+          configured = true;
+        } catch (e2) {
+          fail('[H264] decoder.configure 失败:', e2);
+        }
+      }
+    }
+
+    // ★ P0 传输层（2026-11-24）：解码错误先按需 IDR 恢复，而非直接断流重连。
+    //   请求 IDR（限流）→ reset 解码器 → 用已知 codec reconfigure → firstKey=false 等新 IDR。
+    //   连续 ≥2 次仍失败才 fail()（重连 = 新订阅 + 等 IDR + 首帧，代价大，留作兜底）。
+    async function recoverViaIdr() {
+      if (myGen !== h264Gen) return;
+      console.warn('[H264] 尝试按需 IDR 恢复（第 ' + (idrRecoveryCount + 1) + ' 次）');
+      const ok = await requestIdr();
+      if (myGen !== h264Gen) return;
+      if (!ok) { fail('[H264] IDR 请求失败，断开重连', null); return; }
+      if (decoder && decoder.state !== 'closed') {
+        try { await decoder.reset(); } catch (e) {}
+      }
+      if (myGen !== h264Gen) return;
+      configured = false;
+      firstKey = false;                 // 丢首 key 前的 delta，等新 IDR
+      auNals = []; auHasKey = false; auHasData = false;
+      if (lastCodec && decoder) {
+        try {
+          decoder.configure({ codec: lastCodec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+          configured = true;
+        } catch (e) {
+          try { decoder.configure({ codec: lastCodec, optimizeForLatency: true }); configured = true; }
+          catch (e2) { fail('[H264] IDR 恢复 reconfigure 失败:', e2); return; }
+        }
+      }
+      lastFrameAt = Date.now();         // 给看门狗一个恢复窗口
+    }
 
     try {
       decoder = new VideoDecoder({
@@ -1222,7 +1328,16 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
             }
           } finally { frame.close(); }
         },
-        error: (e) => fail('[H264] 解码错误，断开重连:', e)
+        error: (e) => {
+          // ★ P0 传输层（2026-11-24）：解码错误先按需 IDR 恢复（≤2 次），失败才断流重连。
+          console.warn('[H264] 解码错误:', e);
+          if (idrRecoveryCount < 2) {
+            idrRecoveryCount++;
+            recoverViaIdr();
+          } else {
+            fail('[H264] 解码错误，IDR 恢复失败，断开重连:', e);
+          }
+        }
       });
 
       // ── AbortController：取消僵尸 fetch（2026-11-24 修复）──
@@ -1268,15 +1383,13 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
         }
       }, 1000);
 
-      let pending = new Uint8Array(0);
       // ── AU（access unit）攒批 ──
       // ★ WebCodecs 的 chunk.data 必须是完整 AU（AVC Registration §2/§4）：
       //   annexb 模式的 key chunk 必须同时含 SPS/PPS/IDR。逐 NAL 喂
       //   decode() 是非法的（自测页实测：decode×14 出 0 帧 + "Decoding error"）。
-      //   所以按 Annex-B 惯例把 NAL 攒成 AU 再喂：SPS/PPS/SEI/新 slice
-      //   （type 1-5）出现 = 上一个 AU 结束。
-      let auNals = [];           // 当前 AU 的 NAL（纯 NAL 体，无起始码）
-      let auHasKey = false, auHasData = false;
+      //   裸 Annex-B 模式按「SPS/PPS/SEI/新 slice（type 1-5）出现 = 上一个 AU 结束」攒批；
+      //   framed 模式一帧 = 一完整 AU，读完整帧后立即 flush（见下方分支）。
+      //   auNals / auHasKey / auHasData 已在 startStream 顶部声明（framed/裸流/IDR 恢复共用）。
       let ts = 0;                // AU 时间戳（单调微秒）
 
       // ── P0：落后检测 + 主动跳帧（2026-11-23，用户实测 4.3 秒画面延迟）──
@@ -1366,81 +1479,100 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
         auHasData = false;
       };
 
-      while (myGen === h264Gen) {
-        const { done, value } = await reader.read();
-        if (myGen !== h264Gen) break;      // 换代：立刻退出，不碰已换人的 reader
-        if (done) break;
-
-        const merged = new Uint8Array(pending.length + value.length);
-        merged.set(pending, 0);
-        merged.set(value, pending.length);
-        pending = merged;
-
-        const nals = splitAnnexB(pending);
-        pending = nals.pending;
-        if (!nals.units.length) continue;
-
-        for (const nal of nals.units) {
+      if (framed) {
+        // ── framed 模式（v2）：读 [4B 大端长度][数据]，一帧 = 一完整 AU，立即 flush ──
+        //   帧边界由长度前缀确定，网络块边界 ≠ 帧边界不再切错帧（花屏/卡死根因之一）。
+        let frameBuf = new Uint8Array(0);
+        let wantLen = 4, frameLen = 0;
+        while (myGen === h264Gen) {
+          const { done, value } = await reader.read();
           if (myGen !== h264Gen) break;
-          const type = nal[0] & 0x1f;
-          const isKey = (type === 5);
-          const isSps = (type === 7), isPps = (type === 8);
-          const isVcl = (type >= 1 && type <= 5);   // slice/IDR = 图像数据
-
-          // 首个 SPS 之前绝不能 decode —— 没 configure 的 decoder 会抛
-          // InvalidStateError。SPS 一到就从它解析 codec 字符串再 configure。
-          if (isSps && !configured) {
-            const codec = avcCodecFromSps(nal);
-            if (!codec) {
-              console.warn('[H264] SPS 解析失败，用兜底 avc1.4D4028（Main@4.0）');
+          if (done) break;
+          const merged = new Uint8Array(frameBuf.length + value.length);
+          merged.set(frameBuf, 0);
+          merged.set(value, frameBuf.length);
+          frameBuf = merged;
+          while (true) {
+            if (wantLen === 4) {
+              if (frameBuf.length < 4) break;
+              frameLen = ((frameBuf[0] << 24) | (frameBuf[1] << 16) | (frameBuf[2] << 8) | frameBuf[3]) >>> 0;
+              frameBuf = frameBuf.subarray(4);
+              wantLen = frameLen;
             }
-            // ★ codec 字符串从 SPS 动态生成（profile/constraint/level 与
-            //   服务端实际输出一致）；解析失败才退到 Main@L4.0 兜底并打日志。
-            //   旧版硬编码 'avc1.4D4028'，与服务端 profile/level 不符时
-            //   decoder.configure 直接 NotSupportedError。
-            const cfg = {
-              codec: codec || 'avc1.4D4028',
-              optimizeForLatency: true     // 直播：不攒帧，低延迟优先
-            };
-            try {
-              // 优先硬解：弱设备/远程桌面内也走 GPU，避免软解增加 CPU 与解码延迟
-              decoder.configure(Object.assign({}, cfg, { hardwareAcceleration: 'prefer-hardware' }));
-              configured = true;
-            } catch (e) {
-              // 老内核可能不认识 hardwareAcceleration hint → 不带该 hint 重试
-              try {
-                decoder.configure(cfg);
-                configured = true;
-              } catch (e2) {
-                // 配置不支持（老设备的硬解不支持该 profile）→ 报错并重试
-                fail('[H264] decoder.configure 失败:', e2);
-                return;
-              }
+            if (frameBuf.length < frameLen) break;
+            const one = frameBuf.subarray(0, frameLen);
+            frameBuf = frameBuf.subarray(frameLen);
+            wantLen = 4;
+            // 一完整帧 = 一 AU：切 NAL（complete=true 连末 NAL 一起切出）→ 攒 auNals → 立即 flush
+            const nals = splitAnnexB(one, true).units;
+            if (!nals.length) continue;
+            auNals = []; auHasKey = false; auHasData = false;
+            for (const nal of nals) {
+              const type = nal[0] & 0x1f;
+              const isKey = (type === 5);
+              const isSps = (type === 7), isPps = (type === 8);
+              const isVcl = (type >= 1 && type <= 5);
+              if (isSps && !configured) tryConfigure(nal);
+              if (!configured) continue;
+              if (!firstKey && !isKey && !isSps && !isPps) continue;   // 首 key 前丢 delta
+              if (isKey) firstKey = true;
+              auNals.push(nal);
+              if (isVcl) auHasData = true;
+              if (isKey) auHasKey = true;
             }
+            flushAu();   // 帧边界 = AU 边界，立即解码（消除裸 Annex-B 的「等下一个 VCL」1 帧延迟）
           }
-
-          if (!configured) continue;       // 等 SPS
-
-          // ── AU 边界判定：SPS/PPS/新 VCL = 新 AU 开始 ──
-          if (isVcl && auHasData) flushAu();   // 新图像数据 → 先结上一 AU
-          if (isSps || isPps) {
-            // 参数集挂在「即将开始的 AU」上：若已攒着 AU 尾巴，先结掉
-            if (auHasData) flushAu();
-          }
-
-          // ★ 从 IDR 起播：重连后第一个 key 之前的 delta 一律丢弃 ——
-          //   半个 GOP 的 delta 帧缺参考帧，喂进去只会花屏/报错。
-          if (!firstKey && !isKey && !isSps && !isPps) continue;
-          if (isKey) firstKey = true;
-
-          auNals.push(nal);
-          if (isVcl) auHasData = true;   // ★ 只有 VCL 算「AU 有图像」；SPS/PPS/SEI
-                                        //   是参数，单独不能成 AU（否则会 flush
-                                        //   出没有图像数据的非法 chunk）
-          if (isKey) auHasKey = true;
         }
-        // network chunk 边界不等于 AU 边界，攒批的 AU 留到下一个 VCL 到达
-        // 或流结束时 flush（见下方 done 分支）。
+      } else {
+        // ── 老协议（裸 Annex-B）：扫起始码 + 跨读攒批（兼容旧 agent / 主程序代理）──
+        let pending = new Uint8Array(0);
+        while (myGen === h264Gen) {
+          const { done, value } = await reader.read();
+          if (myGen !== h264Gen) break;      // 换代：立刻退出，不碰已换人的 reader
+          if (done) break;
+
+          const merged = new Uint8Array(pending.length + value.length);
+          merged.set(pending, 0);
+          merged.set(value, pending.length);
+          pending = merged;
+
+          const nals = splitAnnexB(pending);
+          pending = nals.pending;
+          if (!nals.units.length) continue;
+
+          for (const nal of nals.units) {
+            if (myGen !== h264Gen) break;
+            const type = nal[0] & 0x1f;
+            const isKey = (type === 5);
+            const isSps = (type === 7), isPps = (type === 8);
+            const isVcl = (type >= 1 && type <= 5);   // slice/IDR = 图像数据
+
+            // 首个 SPS 之前绝不能 decode —— 没 configure 的 decoder 会抛 InvalidStateError。
+            if (isSps && !configured) tryConfigure(nal);
+
+            if (!configured) continue;       // 等 SPS
+
+            // ── AU 边界判定：SPS/PPS/新 VCL = 新 AU 开始 ──
+            if (isVcl && auHasData) flushAu();   // 新图像数据 → 先结上一 AU
+            if (isSps || isPps) {
+              // 参数集挂在「即将开始的 AU」上：若已攒着 AU 尾巴，先结掉
+              if (auHasData) flushAu();
+            }
+
+            // ★ 从 IDR 起播：重连后第一个 key 之前的 delta 一律丢弃 ——
+            //   半个 GOP 的 delta 帧缺参考帧，喂进去只会花屏/报错。
+            if (!firstKey && !isKey && !isSps && !isPps) continue;
+            if (isKey) firstKey = true;
+
+            auNals.push(nal);
+            if (isVcl) auHasData = true;   // ★ 只有 VCL 算「AU 有图像」；SPS/PPS/SEI
+                                          //   是参数，单独不能成 AU（否则会 flush
+                                          //   出没有图像数据的非法 chunk）
+            if (isKey) auHasKey = true;
+          }
+          // network chunk 边界不等于 AU 边界，攒批的 AU 留到下一个 VCL 到达
+          // 或流结束时 flush（见下方 done 分支）。
+        }
       }
       // 流结束：把攒着的最后一个 AU 喂掉
       if (myGen === h264Gen) {
@@ -1468,14 +1600,92 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
 //   · up/releaseall 传输失败重试 1 次（幂等，重发无害）；down/click 不重试（避免双按/双击）；
 //   · move 走 noWait 不等回包（RTT 不再拖慢拖动，latest-wins 由 movePending 保留）；
 //   · 页面 pagehide/beforeunload/visibilitychange(hidden) → releaseAllInputs 防粘键。
+
+// ── P0 传输层（2026-11-24）：输入 WebSocket 持久通道 ──
+//   move/click/wheel/key 优先走 /ws/input（低延迟 + 天然保序），HTTP POST /api/input 保留为降级。
+//   WS 握手失败 / 连接中断 → wsInputFailed=true，本次会话内永久回退 HTTP。
+let wsInput = null;             // 当前 WebSocket 实例
+let wsInputFailed = false;      // WS 曾失败 → 永久回退 HTTP
+let wsInputBase = '';           // WS 绑定的直连 base（切账号时据此重建）
+let wsInflight = null;          // 当前在途请求的 resolve（WS 单 in-flight 保序）
+let wsQueue = [];               // 排队中的 { body, resolve }
+
+function wsInputUrl() {
+  const base = directBase(cur);
+  if (!base) return '';
+  const wsBase = base.replace(/^http/, 'ws');   // http→ws, https→wss
+  const tok = directToken();
+  return wsBase + '/ws/input' + (tok ? '?token=' + encodeURIComponent(tok) : '');
+}
+
+function closeWsInput() {
+  const ws = wsInput;
+  wsInput = null; wsInputBase = ''; wsInflight = null; wsQueue = [];
+  if (ws) { try { ws.close(); } catch (e) {} }
+}
+
+function failWsQueue() {
+  while (wsQueue.length) {
+    const item = wsQueue.shift();
+    if (item && item.resolve) item.resolve(null);
+  }
+  if (wsInflight) { const r = wsInflight; wsInflight = null; r(null); }
+}
+
+function getWsInput() {
+  if (wsInputFailed || typeof WebSocket === 'undefined') return null;
+  const base = directBase(cur);
+  if (!base) return null;
+  if (wsInput && wsInputBase === base && (wsInput.readyState === WebSocket.CONNECTING || wsInput.readyState === WebSocket.OPEN)) return wsInput;
+  closeWsInput();   // 切账号 / 旧连接已关 → 重建
+  try {
+    const ws = new WebSocket(wsInputUrl());
+    wsInput = ws; wsInputBase = base;
+    ws.onopen = () => { pumpWs(); };
+    ws.onmessage = (ev) => {
+      let d = null;
+      try { d = JSON.parse(ev.data); } catch (e) {}
+      const resolve = wsInflight; wsInflight = null;
+      if (resolve) resolve(d);
+      pumpWs();
+    };
+    ws.onclose = () => { if (wsInput === ws) { wsInput = null; wsInputBase = ''; } failWsQueue(); };
+    ws.onerror = () => { wsInputFailed = true; if (wsInput === ws) { wsInput = null; wsInputBase = ''; } failWsQueue(); try { ws.close(); } catch (e) {} };
+  } catch (e) { wsInputFailed = true; wsInput = null; }
+  return wsInput;
+}
+
+function wsSend(body) {
+  return new Promise(resolve => {
+    wsQueue.push({ body, resolve });
+    pumpWs();
+  });
+}
+
+function pumpWs() {
+  if (wsInflight || wsQueue.length === 0) return;
+  const ws = wsInput;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;   // 未 open：等 onopen 回调再 pump
+  const item = wsQueue.shift();
+  wsInflight = item.resolve;
+  try { ws.send(JSON.stringify(item.body)); }
+  catch (e) { wsInflight = null; item.resolve(null); pumpWs(); }
+}
+
 async function postInputRaw(body) {
   const base = directBase(cur);
+  const fullBody = Object.assign({}, body, base ? { sid: cur.sessionId } : {});
+  // ★ WS 优先（低延迟 + 保序），HTTP 降级
+  const ws = getWsInput();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    return await wsSend(fullBody);
+  }
   const url = base ? (base + '/api/input') : ('/api/input?sid=' + cur.sessionId);
   const headers = { 'Content-Type': 'application/json' };
   if (base && directToken()) headers['X-SoulLink-Token'] = directToken();
   const r = await fetch(url, {
     method: 'POST', headers: headers,
-    body: JSON.stringify(Object.assign({}, body, base ? { sid: cur.sessionId } : {}))
+    body: JSON.stringify(fullBody)
   });
   return r.json();
 }

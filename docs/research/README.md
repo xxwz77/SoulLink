@@ -55,6 +55,7 @@
 - [DDA-TEXTURE-SHARED-HANDLE-20261124.md](DDA-TEXTURE-SHARED-HANDLE-20261124.md) —— **DDA 纹理跨设备共享句柄可行性**（DDA surface 非 SHARED 创建不可直接 GetSharedHandle 跨设备；跨设备须 CopyResource 到 SHARED_NTHANDLE|SHARED_KEYEDMUTEX 纹理再 CreateSharedHandle+OpenSharedResource1+KeyedMutex；正确时序=先 CopyResource 再 ReleaseFrame。**其「Sunshine DDA 同 device」结论已被下条源码深读纠正**）
 - [DEEP-SUNSHINE-SOURCE-20261124.md](DEEP-SUNSHINE-SOURCE-20261124.md) —— **Sunshine GPU 直通与帧节拍源码深读**（纠正「DDA/NVENC 同 device」：实际双 device + NT handle + keyed mutex；PS 两 pass 写 NV12、无 VideoProcessor；像素无 CPU 回读但 bitstream 会复制到 CPU；DDA 光标与 cursor-only 帧、WGC 生产者/消费者、SetMaximumFrameLatency 所在设备、pacing group；末尾给 SoulLink 函数级改动清单与收益边界）
 - [RDP-FRAMERATE-BENCHMARK-20261124.md](RDP-FRAMERATE-BENCHMARK-20261124.md) —— **A2 RDP 真实帧率与 DDA 争用实测**（session 4 输出 Intel 1920×1080 66Hz，无 agent 争用时 60/120fps 视频与默认/软件 WPF 均≈66fps；有 agent 时历史场景≈32fps；当前 60fps CPU 管线长样本 48.59fps。区分 Acquire/AccumulatedFrames/编码 total，明确 RDP 非 14/32fps 硬上限，当前主要瓶颈在 agent 数据路径/调度；含无效样本披露与复现边界）
+- [MULTI-VIEWER-DDA-CONTENTION-20261124.md](MULTI-VIEWER-DDA-CONTENTION-20261124.md) —— **多观看者 DDA 争用诊断（主动停止前的完整阶段报告）**（SoulLink 已共享单 Capture/单编码器；独立 DDA 1/2/3 客户端均约66fps，无客户端数导致腰斩；CPU 转换使 Acquire 降至62.91fps；共享1→2 viewer 仍约60fps且 queueDrops=0；三 viewer 真实光测延迟受并发端口争用未完成，明确标注不得用 queueAge 冒充总延迟）
 
 ## 视频流差距审计（2026-11-23 下午 · 对照成熟项目五线并行审计）
 
