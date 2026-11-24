@@ -24,7 +24,13 @@ param(
     # 系统代理可用时使用（默认直连）
     [switch]$UseProxy,
     # 指定产物目录（默认 dist）。用于测试时推送未覆盖 dist 的构建。
-    [string]$DistDir = ""
+    [string]$DistDir = "",
+    # ★ 发布目标（仓库不含任何真实值）：COS 桶名 / 区域 / CDN 根地址。
+    #   留空则读环境变量 SOULLINK_COS_BUCKET / SOULLINK_COS_REGION / SOULLINK_CDN_BASE；
+    #   两者都没有就直接报错，绝不误发。
+    [string]$Bucket = "",
+    [string]$Region = "",
+    [string]$CdnBase = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,14 +44,19 @@ if (-not $UseProxy) {
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
-# ★ 发布目标配置：真实值放在本地 scripts\publish-release.local.ps1（已被 .gitignore 排除）。
-#   开源仓库里不含任何桶名/域名；缺失时下面的占位值会让发布直接失败，避免误发到别人的桶。
-$localCfg = Join-Path $PSScriptRoot "publish-release.local.ps1"
-if (Test-Path -LiteralPath $localCfg) { . $localCfg }
-if (-not $bucket -or $bucket -eq "CHANGE_ME" -or -not $cdnBase -or $cdnBase -like "*example.invalid*") {
-    throw "未配置发布目标：请在 scripts\publish-release.local.ps1 里填写 $bucket / $region / $cdnBase（该文件不入库）"
+# ★ 发布目标：仓库与磁盘都不保存真实值，每次发布时由参数或环境变量提供。
+#   优先级：-Bucket/-Region/-CdnBase 参数 > SOULLINK_COS_BUCKET / SOULLINK_COS_REGION / SOULLINK_CDN_BASE 环境变量。
+#   两者都没有就直接报错，绝不误发到未预期的桶。
+if (-not $bucket)  { $bucket  = $Bucket }
+if (-not $region)  { $region  = $Region }
+if (-not $cdnBase) { $cdnBase = $CdnBase }
+if (-not $bucket)  { $bucket  = $env:SOULLINK_COS_BUCKET }
+if (-not $region)  { $region  = $env:SOULLINK_COS_REGION }
+if (-not $cdnBase) { $cdnBase = $env:SOULLINK_CDN_BASE }
+if (-not $bucket -or -not $cdnBase) {
+    throw "未提供发布目标。请加 -Bucket / -Region / -CdnBase 参数，或设置 SOULLINK_COS_BUCKET / SOULLINK_COS_REGION / SOULLINK_CDN_BASE 环境变量。"
 }
-$region    = if ($region) { $region } else { "ap-shanghai" }
+if (-not $region) { $region = "ap-shanghai" }
 $cosHost   = "$bucket.cos.$region.myqcloud.com"
 $keyPrefix = "SoulLink"
 
