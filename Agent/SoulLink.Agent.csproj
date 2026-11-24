@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- ★ t7a（2026-11-24）：注入代理拆成独立「无 WPF / 无 WinForms」工程（Lead 路线 A：抽取共享，不造 stub）。
+         服务(Broker)另行拆（t16/T7b）。这里只产 SoulLink.Agent.exe。
+         ★ 无版本 TFM（net11.0-windows）：不定义 WGC，抓屏走 DXGI DDA + BitBlt 降级链，
+           避免拉进 WinRT 投影 Microsoft.Windows.SDK.NET.dll（约 26MB）。
+           这是主程序「无版本 TFM」早已存在的编译形态，非新裁剪。 -->
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <UseWPF>false</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>15.0</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>SoulLink.Agent</RootNamespace>
+    <AssemblyName>SoulLink.Agent</AssemblyName>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RollForward>LatestMajor</RollForward>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>zh-CN;en-US</SatelliteResourceLanguages>
+    <NoWarn>$(NoWarn);CA1416;CS8618;CS1591;CS0649;CS8632</NoWarn>
+    <DefineConstants>$(DefineConstants);SOULLINK_AGENT</DefineConstants>
+    <!-- ★★ agent 独立版本：与主程序 <Version> 解耦，单一来源在这里。
+         主程序升版不触发 agent 重铺；agent 行为变了才 +1。
+         这个版本通过 FileVersion 与同目录 SoulLink.Agent.version 暴露，
+         主程序用自己编译进的 <AgentVersion> 与之比对。 -->
+    <Version>1.0.0</Version>
+    <FileVersion>$(Version).0</FileVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <AssemblyTitle>SoulLink 注入代理</AssemblyTitle>
+    <Product>SoulLink</Product>
+    <Description>无 UI 注入代理：跨会话输入注入 / 抓屏 / 编码 / 录像</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <!-- Relay 源文件（引用，不复制，避免双份维护） -->
+    <Compile Include="../Relay/AgentSecurity.cs" Link="Relay/AgentSecurity.cs" />
+    <Compile Include="../Relay/IScreenCapture.cs" Link="Relay/IScreenCapture.cs" />
+    <Compile Include="../Relay/BitBltCapture.cs" Link="Relay/BitBltCapture.cs" />
+    <Compile Include="../Relay/GpuShaderConverter.cs" Link="Relay/GpuShaderConverter.cs" />
+    <Compile Include="../Relay/DxgiDdaCapture.cs" Link="Relay/DxgiDdaCapture.cs" />
+    <Compile Include="../Relay/GpuAdapter.cs" Link="Relay/GpuAdapter.cs" />
+    <Compile Include="../Relay/WgcCapture.cs" Link="Relay/WgcCapture.cs" />
+    <Compile Include="../Relay/SessionRecorder.cs" Link="Relay/SessionRecorder.cs" />
+    <Compile Include="../Relay/RelayAgent.cs" Link="Relay/RelayAgent.cs" />
+    <Compile Include="../Relay/AgentWebServer.cs" Link="Relay/AgentWebServer.cs" />
+    <!-- Services 依赖闭包（REFACTOR-20261124-AGENT-BROKER-SPLIT.md §1.2 + Lead 路线 A 抽取后） -->
+    <Compile Include="../Services/AppIdentity.cs" Link="Services/AppIdentity.cs" />
+    <Compile Include="../Services/AsyncLog.cs" Link="Services/AsyncLog.cs" />
+    <Compile Include="../Services/EdgeStartupPolicy.cs" Link="Services/EdgeStartupPolicy.cs" />
+    <Compile Include="../Services/RelayHotkeyReceiver.cs" Link="Services/RelayHotkeyReceiver.cs" />
+    <Compile Include="../Services/HotkeySpec.cs" Link="Services/HotkeySpec.cs" />
+    <Compile Include="../Services/LowLevelMouseHook.cs" Link="Services/LowLevelMouseHook.cs" />
+    <Compile Include="../Services/InputActions.cs" Link="Services/InputActions.cs" />
+    <Compile Include="../Services/InputTrace.cs" Link="Services/InputTrace.cs" />
+    <Compile Include="../Services/NvencSdkEncoder.cs" Link="Services/NvencSdkEncoder.cs" />
+    <Compile Include="../Services/MfFrameEncoder.cs" Link="Services/MfFrameEncoder.cs" />
+    <Compile Include="../Services/CodecApi.cs" Link="Services/CodecApi.cs" />
+    <Compile Include="../Services/GpuColorConverter.cs" Link="Services/GpuColorConverter.cs" />
+    <Compile Include="../Services/Mp4Writer.cs" Link="Services/Mp4Writer.cs" />
+    <Compile Include="../Services/BrokerArguments.cs" Link="Services/BrokerArguments.cs" />
+    <Compile Include="../Services/ManualAgent.cs" Link="Services/ManualAgent.cs" />
+    <Compile Include="../Services/ManifestPatcher.cs" Link="Services/ManifestPatcher.cs" />
+    <Compile Include="../Services/WebDirect.cs" Link="Services/WebDirect.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+    <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+
+  <Target Name="WriteAgentVersionToPublish" AfterTargets="Publish">
+    <WriteLinesToFile File="$(PublishDir)SoulLink.Agent.version" Lines="$(Version)" Overwrite="true" Encoding="UTF-8" />
+  </Target>
+  <Target Name="WriteAgentVersionToOutput" AfterTargets="AfterBuild">
+    <WriteLinesToFile File="$(TargetDir)SoulLink.Agent.version" Lines="$(Version)" Overwrite="true" Encoding="UTF-8" />
+  </Target>
+</Project>

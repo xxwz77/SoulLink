@@ -140,6 +140,9 @@ namespace SoulLink.Services
 
                     _ = Task.Run(async () =>
                     {
+                        // ★ T12：任务执行期间跳过工作集回收（但推进静置计时），
+                        //   结束后从当前时刻重新计 10 秒静置再回收。
+                        WorkingSetTrim.BeginTask();
                         try
                         {
                             // 使用状态中心当前快照，不为每个流程再跑一次 query user。
@@ -175,6 +178,7 @@ namespace SoulLink.Services
                         finally
                         {
                             lock (_sync) { _running.Remove(id); }
+                            WorkingSetTrim.EndTask();
                         }
                     });
                 }
@@ -227,6 +231,8 @@ namespace SoulLink.Services
                     var act = action;
                     _ = Task.Run(async () =>
                     {
+                        // ★ T12：任务执行期间跳过工作集回收（同 TickAutomations）。
+                        WorkingSetTrim.BeginTask();
                         try
                         {
                             var result = await ActionService.ExecuteAsync(act, cfg).ConfigureAwait(false);
@@ -241,6 +247,7 @@ namespace SoulLink.Services
                         finally
                         {
                             lock (_sync) { _running.Remove(id); }
+                            WorkingSetTrim.EndTask();
                         }
                     });
                 }

@@ -337,8 +337,13 @@ namespace SoulLink.Views
                     + " anchor=" + ViewportHost.ActualWidth.ToString("0") + "x" + ViewportHost.ActualHeight.ToString("0")
                     + " locked=" + (console?.ShieldLocked == true)
                     + " enforced=" + (console?.ShieldEnforced == true);
-                System.IO.Directory.CreateDirectory(ConfigStore.ConfigDir);
-                System.IO.File.AppendAllText(System.IO.Path.Combine(ConfigStore.ConfigDir, "shield-trace.log"), text + Environment.NewLine);
+                // ★ 写 IO 绝不在 UI 线程（2026-11-24，t15 问题 A）：
+                //   保护层看门狗是 150ms 定时器，本方法虽只在 --verbose-log 下生效，
+                //   但仍必须走队列 —— 诊断开关一开，同步写盘就挂在 UI 线程上。
+                //   行为等价：同一文件、同一行格式；建目录由 AsyncLog 内部代劳。
+                SoulLink.Services.AsyncLog.Append(
+                    System.IO.Path.Combine(ConfigStore.ConfigDir, "shield-trace.log"),
+                    text + Environment.NewLine);
             }
             catch { }
         }
@@ -1789,6 +1794,9 @@ namespace SoulLink.Views
                 }
 
                 var (ok, msg) = await row.Console.ConnectAsync(row.Account, App.Config.Settings, sessionId);
+                // ★ T12：连接成功后请求一次延迟工作集回收（10s 静置后由 TickHub 执行，
+                //   只回收本进程 + Broker/agent 白名单；重复调用幂等，只前移计时）。
+                if (ok) Services.WorkingSetTrim.RequestTrim("会话连接成功");
                 // 先在动画仍关闭不了 RDP 输入时锁定，再由 SetBusyVisible(false)
                 // 在动画结束边界立即把保护层交接到真实视口。
                 if (ok && ReferenceEquals(row, _viewing))
@@ -1853,9 +1861,21 @@ namespace SoulLink.Views
             try
             {
                 if (!RdpConsole.VerboseLog && !IsImportant(msg)) return;
-                System.IO.Directory.CreateDirectory(ConfigStore.ConfigDir);
-                // 按日期分文件，与 RdpConsole 保持一致
-                System.IO.File.AppendAllText(
+                // ★★ 写 IO 绝不在 UI 线程（2026-11-24，t15 问题 A）★★
+                //
+                //   原来这里是 Directory.CreateDirectory + File.AppendAllText 同步写盘。
+                //   ConsolePage 有 52 个 Debug() 调用点，其中若干在 150ms 保护层看门狗里
+                //   （:610/:622/:636 附近）；当前靠「仅状态跃迁才触发」压住，
+                //   但那是**业务逻辑的偶然属性，不是频率保证** ——
+                //   谁给看门狗再加一行 Debug，立刻变成 6.7Hz 的 UI 线程同步写盘。
+                //
+                //   改为走 AsyncLog（有界队列 512 + 后台单线程消费 + 5MB 轮转）。
+                //   行为完全等价：同一个文件名、同样的 "HH:mm:ss.fff  [Console] msg" 格式；
+                //   Directory.CreateDirectory 由 AsyncLog 内部代劳（AsyncLog.cs:23-24）。
+                //
+                //   ★ 与 RouteLedger 的既有标杆一致（RouteLedger.cs:90-92
+                //     「写 IO 绝不在 UI 线程：Feed 只做内存归因，把成品记录丢进队列」）。
+                SoulLink.Services.AsyncLog.Append(
                     ConfigStore.DailyLogPath("rdp-debug"),
                     DateTime.Now.ToString("HH:mm:ss.fff") + "  [Console] " + msg + Environment.NewLine);
             }
