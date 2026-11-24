@@ -1,0 +1,210 @@
+using System;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+
+namespace SoulLink.Relay
+{
+    /// <summary>
+    /// ★ BGRA→NV12 的 SIMD 转换（仅 AVX2；不可用时返回 null 由调用方降级标量 BgraToNv12Scalar）。
+    /// 与 SessionRecorder.BgraToNv12Scalar 逐字节等价（同一整数公式）：
+    /// - Y = (66r+129g+25b+128)>>8                值域 [0,218]
+    /// - U = ((-38r-74g+112b+128)>>8)+128         值域 [16,239]
+    /// - V = ((112r-94g-18b+128)>>8)+128          值域 [16,239]
+    /// - UV 的 2x2 下采样 = 四通道样本求和后 >>2（与标量同语义）
+    /// 数值域证明（u16/s16 无溢出）：
+    /// - Y 水平乘积和 ≤ 25*255+129*255+66*255 = 56100，+128 = 56228 &lt; 65536（u16 精确）；
+    /// - UV 点积范围 [-28457, 28688]，|·| &lt; 32768（s16 精确）；C# int 的 &gt;&gt;8 对负数向负无穷取整
+    ///   与 ShiftRightArithmetic 一致。
+    ///
+    /// 帧内布局（AVX2）：一条 Vector256&lt;byte&gt; = 8 像素。widen 到 u16 后每像素 4 lane [b,g,r,a]。
+    /// 水平归约两步 ShiftLeftLogical128BitLane + Add 把块结果落在 lane 0,4,8,12（步长 4）；
+    /// Pack 后有效字节步长 4，用 Shuffle[0,4,8,12] 压缩，再 dword Unpack 重组为连续 16 字节。
+    /// UV：水平相邻求和（shift 8 字节）→ 垂直求和 → >>2 → 点积归约 → U/V 16bit 交织 → Pack。
+    /// </summary>
+    internal static class SimdBgraToNv12
+    {
+        public static bool IsAvailable => Avx2.IsSupported;
+
+        // Y 系数（u16，作用于 widen 后的 [b,g,r,a] lane）
+        private static readonly Vector256<ushort> YCoeff = CreateYCoeff();
+        // UV 系数（s16 语义：用 u16 位模式做 MultiplyLow，结果按 s16 解释）
+        private static readonly Vector256<ushort> UCoeff = CreateUv(112, (ushort)(short)-74, (ushort)(short)-38);
+        private static readonly Vector256<ushort> VCoeff = CreateUv((ushort)(short)-18, (ushort)(short)-94, 112);
+
+        private static Vector256<ushort> CreateYCoeff() =>
+            Vector256.Create((ushort)25, 129, 66, 0, 25, 129, 66, 0, 25, 129, 66, 0, 25, 129, 66, 0);
+        private static Vector256<ushort> CreateUv(ushort cb, ushort cg, ushort cr) =>
+            Vector256.Create(cb, cg, cr, 0, cb, cg, cr, 0, cb, cg, cr, 0, cb, cg, cr, 0);
+
+        private static readonly Vector256<ushort> U128 = Vector256.Create((ushort)128);
+        private static readonly Vector256<short> S128 = Vector256.Create((short)128);
+
+        private static readonly Vector256<byte> Shuf048 = Vector256.Create(
+            (byte)0, 4, 8, 12, 0, 4, 8, 12, 0, 4, 8, 12, 0, 4, 8, 12,
+            (byte)0, 4, 8, 12, 0, 4, 8, 12, 0, 4, 8, 12, 0, 4, 8, 12);
+
+        /// <summary>转换；输入不满足（奇数尺寸/指令集缺失/数组过小）返回 null（调用方降级标量）。</summary>
+        public static byte[]? Convert(byte[] bgra, int w, int h, int stride)
+        {
+            if (!Avx2.IsSupported) return null;
+            if (bgra == null || w <= 0 || h <= 0 || stride < w * 4) return null;
+            if ((w & 1) != 0 || (h & 1) != 0) return null;   // NV12 需偶数尺寸
+            if (bgra.LongLength < (long)(h - 1) * stride + (long)w * 4) return null;
+            int ySize = w * h;
+            var nv12 = new byte[ySize + ySize / 2];
+            ConvertAvx2(bgra, w, h, stride, nv12, ySize);
+            return nv12;
+        }
+
+        private static void ConvertAvx2(byte[] bgra, int w, int h, int stride, byte[] nv12, int ySize)
+        {
+            // ---------- Y 平面 ----------
+            for (int y = 0; y < h; y++)
+            {
+                int src = y * stride, dst = y * w;
+                int x = 0;
+                // 主循环：一次 16 像素（2×256bit 输入 → 16 字节 Y）
+                for (; x + 16 <= w; x += 16, src += 64)
+                {
+                    var vA = Vector256.LoadUnsafe(ref bgra[0], (nuint)(uint)src);         // 像素 0..7
+                    var vB = Vector256.LoadUnsafe(ref bgra[0], (nuint)(uint)(src + 32));  // 像素 8..15
+                    var out16 = Combine128(YRow(vA), YRow(vB));   // [Y0..Y15 | junk]
+                    Vector128.StoreUnsafe(out16, ref nv12[0], (nuint)(uint)(dst + x));
+                }
+                // 尾部（不足 16 像素）：标量，公式与标量版完全一致
+                for (; x < w; x++, src += 4)
+                {
+                    int b = bgra[src], g = bgra[src + 1], r = bgra[src + 2];
+                    nv12[dst + x] = (byte)((66 * r + 129 * g + 25 * b + 128) >> 8);
+                }
+            }
+
+            // ---------- UV 平面 ----------
+            for (int y = 0; y < h; y += 2)
+            {
+                int top = y * stride, bottom = top + stride, uv = ySize + y / 2 * w;
+                int x = 0;
+                // 主循环：一次 16 像素宽 = 8 个 2x2 块 → 16 字节 UV
+                for (; x + 16 <= w; x += 16, top += 64, bottom += 64, uv += 16)
+                {
+                    var tA = Vector256.LoadUnsafe(ref bgra[0], (nuint)(uint)top);
+                    var tB = Vector256.LoadUnsafe(ref bgra[0], (nuint)(uint)(top + 32));
+                    var bA = Vector256.LoadUnsafe(ref bgra[0], (nuint)(uint)bottom);
+                    var bB = Vector256.LoadUnsafe(ref bgra[0], (nuint)(uint)(bottom + 32));
+                    var out16 = Combine128(UvPair(tA, bA), UvPair(tB, bB));
+                    Vector128.StoreUnsafe(out16, ref nv12[0], (nuint)(uint)uv);
+                }
+                // 尾部
+                for (; x < w; x += 2, top += 8, bottom += 8, uv += 2)
+                {
+                    int b = bgra[top] + bgra[top + 4] + bgra[bottom] + bgra[bottom + 4];
+                    int g = bgra[top + 1] + bgra[top + 5] + bgra[bottom + 1] + bgra[bottom + 5];
+                    int r = bgra[top + 2] + bgra[top + 6] + bgra[bottom + 2] + bgra[bottom + 6];
+                    r >>= 2; g >>= 2; b >>= 2;
+                    nv12[uv] = (byte)(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
+                    nv12[uv + 1] = (byte)(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+                }
+            }
+        }
+
+        /// <summary>8 像素（1×256bit BGRA）→ 16 字节向量，前 8 字节为 Y0..Y7（后 8 字节 junk）。</summary>
+        private static Vector128<byte> YRow(Vector256<byte> v)
+        {
+            var zero = Vector256<byte>.Zero;
+            var wLo = Avx2.UnpackLow(v, zero).AsUInt16();    // 像素0..3：16 lane [b,g,r,a]×4
+            var wHi = Avx2.UnpackHigh(v, zero).AsUInt16();   // 像素4..7
+
+            var mLo = Avx2.MultiplyLow(wLo, YCoeff);         // [25b,129g,66r,0]×4
+            var mHi = Avx2.MultiplyLow(wHi, YCoeff);
+
+            // 水平归约两步：lane0 += lane1（b+g），lane2 += lane3（r+0）；再 lane0 += lane2 → y 在 lane 0,4,8,12
+            var qLo = HReduce(mLo);
+            var qHi = HReduce(mHi);
+
+            var yLo = Avx2.ShiftRightLogical(Avx2.Add(qLo, U128), 8);   // Y 在 lane 0,4,8,12
+            var yHi = Avx2.ShiftRightLogical(Avx2.Add(qHi, U128), 8);
+
+            // Pack(u16→byte 饱和)：低 128 = [Y0,_,Y1,_,Y2,_,Y3,_, Y4,_,Y5,_,Y6,_,Y7,_]（低半=lo 的前 8 lane）
+            //                      高 128 = 同布局（hi 的前 8 lane）
+            var packed = Avx2.PackUnsignedSaturate(yLo.AsInt16(), yHi.AsInt16()).AsByte();
+            // Shuffle[0,4,8,12]：低半 [Y0,Y1,Y2,Y3]，高半 [Y4,Y5,Y6,Y7]（各 128bit）
+            var compacted = Avx2.Shuffle(packed, Shuf048);
+            // dword 交织 → [d(Y0Y1Y2Y3), d(Y4Y5Y6Y7)] = [Y0..Y7 | dup]
+            var lo = Avx2.ExtractVector128(compacted.AsUInt32(), 0);
+            var hi = Avx2.ExtractVector128(compacted.AsUInt32(), 1);
+            return Sse2.UnpackLow(lo, hi).AsByte();
+        }
+
+        /// <summary>水平归约：lane 步长 4 的三系数求和（lane0=b+g 项与 r 项合到 lane0）。</summary>
+        private static Vector256<ushort> HReduce(Vector256<ushort> m)
+        {
+            var p = Avx2.Add(m, Avx2.ShiftLeftLogical128BitLane(m, 2));   // lane0+=lane1, lane2+=lane3
+            return Avx2.Add(p, Avx2.ShiftLeftLogical128BitLane(p, 4));    // lane0+=lane2
+        }
+
+        /// <summary>8 像素宽（4 个 2x2 块）的上下两行 → 16 字节向量，前 8 字节为 U0,V0,U1,V1,...,U3,V3。</summary>
+        private static Vector128<byte> UvPair(Vector256<byte> top, Vector256<byte> bottom)
+        {
+            var zero = Vector256<byte>.Zero;
+            var tLo = Avx2.UnpackLow(top, zero).AsUInt16();     // 像素0..3（上）
+            var tHi = Avx2.UnpackHigh(top, zero).AsUInt16();    // 像素4..7（上）
+            var bLo = Avx2.UnpackLow(bottom, zero).AsUInt16();  // 像素0..3（下）
+            var bHi = Avx2.UnpackHigh(bottom, zero).AsUInt16(); // 像素4..7（下）
+
+            // 水平：像素 x 与 x+1 求和（shift 8 字节 = 4 lane），值 ≤ 510
+            var tPLo = Avx2.Add(tLo, Avx2.ShiftLeftLogical128BitLane(tLo, 8));
+            var tPHi = Avx2.Add(tHi, Avx2.ShiftLeftLogical128BitLane(tHi, 8));
+            var bPLo = Avx2.Add(bLo, Avx2.ShiftLeftLogical128BitLane(bLo, 8));
+            var bPHi = Avx2.Add(bHi, Avx2.ShiftLeftLogical128BitLane(bHi, 8));
+
+            // 垂直：上+下（≤1020）→ >>2 = 2x2 平均（与标量 (a+b+c+d)>>2 同语义）
+            var sLo = Avx2.Add(tPLo, bPLo);
+            var sHi = Avx2.Add(tPHi, bPHi);
+            var avgLo = Avx2.ShiftRightLogical(sLo, 2);
+            var avgHi = Avx2.ShiftRightLogical(sHi, 2);
+
+            // 点积（MultiplyLow 在 u16 域：s16 乘积 mod 2^16 后按 s16 解释 = 精确 s16 乘）
+            var uLo = DotFinal(Avx2.MultiplyLow(avgLo, UCoeff));
+            var uHi = DotFinal(Avx2.MultiplyLow(avgHi, UCoeff));
+            var vLo = DotFinal(Avx2.MultiplyLow(avgLo, VCoeff));
+            var vHi = DotFinal(Avx2.MultiplyLow(avgHi, VCoeff));
+
+            // Pack → Shuffle → dword 交织（与 YRow 同法）：[U0..U7 | junk]、[V0..V7 | junk]
+            var u128 = CompactDots(uLo, uHi);
+            var v128 = CompactDots(vLo, vHi);
+
+            // U/V 16bit 交织 → [U0,V0,U1,V1,...]（取前 8 对；本函数只产出前 8 字节有效）
+            var uv16 = Sse2.UnpackLow(u128.AsUInt16(), v128.AsUInt16());       // 8 lane: U0V0..U3V3
+            var uvBytes = Sse2.PackUnsignedSaturate(uv16.AsInt16(), uv16.AsInt16()).AsByte();   // [U0V0..U3V3 | dup]
+            return uvBytes;
+        }
+
+        private static Vector128<byte> CompactDots(Vector256<short> dLo, Vector256<short> dHi)
+        {
+            var packed = Avx2.PackUnsignedSaturate(dLo, dHi).AsByte();
+            var compacted = Avx2.Shuffle(packed, Shuf048);
+            var lo = Avx2.ExtractVector128(compacted.AsUInt32(), 0);
+            var hi = Avx2.ExtractVector128(compacted.AsUInt32(), 1);
+            return Sse2.UnpackLow(lo, hi).AsByte();
+        }
+
+        /// <summary>UV 点积归约：lane[bA,gA,rA,0]×系数 → 求和 → +128 → 算术 >>8 → +128。
+        /// 输出 lane 0,4,8,12 = 各块 U（或 V）最终值（s16，值域 [16,239]）。</summary>
+        private static Vector256<short> DotFinal(Vector256<ushort> m)
+        {
+            var mi = m.AsInt16();
+            var p = Avx2.Add(mi, Avx2.ShiftLeftLogical128BitLane(mi, 2));   // b+g 项
+            var q = Avx2.Add(p, Avx2.ShiftLeftLogical128BitLane(p, 4));     // +r 项（a 系数=0）
+            var d = Avx2.Add(q, S128);
+            var shifted = Avx2.ShiftRightArithmetic(d, 8);                  // 与 C# int>>8 同（负数向下取整）
+            return Avx2.Add(shifted, S128);
+        }
+
+        /// <summary>把两个「前 8 字节有效」的 128bit 结果（A=组 0..7，B=组 8..15）拼成完整 16 字节。</summary>
+        private static Vector128<byte> Combine128(Vector128<byte> a, Vector128<byte> b)
+        {
+            // qword 交织取低位：[A0..A7, B0..B7]
+            return Sse2.UnpackLow(a.AsUInt64(), b.AsUInt64()).AsByte();
+        }
+    }
+}
