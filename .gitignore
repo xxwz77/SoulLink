@@ -175,3 +175,5 @@ scripts/publish-release.local.ps1
 # ── 团队协作运行态（dsh-team 的 sidecar 状态与信箱，永远不入库；2026-11-24）──
 .agent-teams/
 
+# 误创建的目录（C:\Users\91244\AppData\Local\Temp 未展开）；永远不入库
+undefined/
