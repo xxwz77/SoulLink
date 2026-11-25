@@ -114,6 +114,7 @@
 
 - [SETTINGS-PAGE-LAG-20261123.md](SETTINGS-PAGE-LAG-20261123.md) —— **进入「应用设置」页卡顿根因归因（按贡献度排序）**（`Activate()` UI 线程串行跑 1×powershell `Get-MpPreference` + 6×sc.exe + 2×schtasks + 3×递归扫目录 + 旧目录枚举；P0=Defender 排除查询/服务状态查询，P1=目录占用统计/迁移 Inspect，P2=自启状态假 async；含 file:line 证据 + 量级估算 + 后台化修复建议）
 - [DATA-CENTER-SINGLE-SOURCE-20261123.md](DATA-CENTER-SINGLE-SOURCE-20261123.md) ← **数据中心唯一入口决策 + 数据库化评估**（唯一入口立即生效 / SQLite 暂缓）
+- [DATA-CENTER-RUN-DB-20261125.md](DATA-CENTER-RUN-DB-20261125.md) ← **运行记录数据库 schema 与日志锚点契约（2026-11-25）**：SQLite 落库三表（run/route/err）+ 确定性自然键去重 + 跨天补全 open 行模型（5 分钟连续性阈值/粘性组名/Interrupted 兜底）+ 沿用 RouteLedger 后台写线程 + 7 天留存可配清理；推翻 DATA-CENTER-SINGLE-SOURCE 的「SQLite 暂缓」，/api/bgi/ledger 返回结构不变
 - [DATA-CENTER-AUDIT-20261123.md](DATA-CENTER-AUDIT-20261123.md) —— **数据中心旁路全仓审计**（日志直读 / 进程枚举 / 递归目录 / FileSystemWatcher 全调用点；旁路与独立功能分级，设置页与配置编辑器 UI IO 优先整改）
 - [UI-PERF-IO-TRIAGE-20261123.md](UI-PERF-IO-TRIAGE-20261123.md) —— **UI 线程减负**（TickHub 后台订阅 RegisterBackground + 4 订阅者迁后台；RdpConsole 5 个 DispatcherTimer 全收编/事件驱动；ConfigStore.Save 改后台串行队列保序原子写；94 处同步 IO 分类清单）
 - [AUDIT-20261124-07-DEFECT-LEDGER.md](AUDIT-20261124-07-DEFECT-LEDGER.md) —— **全仓库延迟/卡顿缺陷总账（38 条：P0 4 / P1 12 / P2 14 / P3 8，其中 20 条用户未提及）**（静止桌面探测永久降 BitBlt、WGC 零拷贝陈旧纹理、每帧 5~14 MB LOH 分配、静止去重空转、点击 2 RTT+12 ms、WH_MOUSE_LL 每事件热键 Parse、控制通道单 FIFO 队头阻塞、qwinsta UI 阻塞等；附 P0→P1 开工顺序与验证建议）
