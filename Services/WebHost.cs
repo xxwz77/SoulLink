@@ -106,6 +106,12 @@ namespace SoulLink.Services
                 return;
             }
 
+            // ①b ★ 统一凭据（2026-11-26）：先让主程序把 webAuthToken 落盘，
+            //   再启动 TaskEdit。否则「用户设了口令、但还没登录过一次」的首次安装
+            //   场景下，子进程读到的是空 token，主程序 /api/login 下发的 soullink_sid
+            //   就永远穿不过代理（AuthGate 现在按 webAuthToken 校验 soullink_sid）。
+            try { WebServer.EnsureAuthToken(); } catch { }
+
             // ② 独立服务（对外唯一入口）
             try
             {

@@ -223,7 +223,7 @@ public static partial class WebServer
 		return !string.IsNullOrWhiteSpace(App.Config?.Settings?.WebPassword);
 	}
 
-	private static string EnsureAuthToken()
+	internal static string EnsureAuthToken()
 	{
 		try
 		{

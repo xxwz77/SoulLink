@@ -57,6 +57,31 @@ namespace SoulLink.Services
             public string NewFile = "";
             public long DeadlineMs;            // 90s 兜底
         }
+
+        /// <summary>
+        /// ★ t56：当前是否处于「历史回填」模式。
+        ///
+        /// 回填是历史数据，墙钟判据（如 PendingSplit 的 90s 兜底）会误杀 ——
+        /// 因为几十秒内要跑完几天的日志。回填期间这些判据要放宽。
+        /// 用 AsyncLocal 保证不跨线程污染（回填在采集线程，实时也在采集线程，但分时）。
+        /// </summary>
+        private static readonly AsyncLocal<bool> BackfillMode = new();
+
+        /// <summary>进入/退出回填模式（成对使用；只能用 using 或 try/finally 保证恢复）。</summary>
+        public static IDisposable EnterBackfillMode()
+        {
+            bool prev = BackfillMode.Value;
+            BackfillMode.Value = true;
+            return new BackfillScope(prev);
+        }
+
+        private sealed class BackfillScope : IDisposable
+        {
+            private readonly bool _prev;
+            public BackfillScope(bool prev) { _prev = prev; }
+            public void Dispose() { BackfillMode.Value = _prev; }
+        }
+
         private static readonly Dictionary<string, PendingDaySplit> PendingSplits
             = new(StringComparer.OrdinalIgnoreCase);
 
@@ -547,8 +572,15 @@ namespace SoulLink.Services
                     // 兜底：当日最后事件晚于新文件 0 点（时钟漂移）就夹到 23:59:59.999
                     long dayEnd = fileDayMs - 1;
                     if (segEnd >= fileDayMs) segEnd = dayEnd;
+                    // ★★ t56 修复（src_file_end 错误）：
+                    //   原来用 FindPriorFile(srcFile) 猜「上一份日志」，但那是按目录里日期最大的
+                    //   更早文件猜的，在历史回填（连续跨多份文件）时不可靠 —— 实测把 src_file_end
+                    //   写成了 20261119.log（当时 srcFile 已不是相邻那份）。
+                    //   正确做法：这条 run 本来就有 SrcFileStart（它开始时的文件名），那才是权威来源。
+                    //   只有 SrcFileStart 为空（极端异常）才退回推断。
+                    string endFile = run.SrcFileStart.Length > 0 ? run.SrcFileStart : FindPriorFile(srcFile);
                     CloseRunLocked(run, "Interrupted", "跨天换文件分段(非异常)",
-                        segEnd, run.SrcFileStart.Length > 0 ? FindPriorFile(srcFile) : srcFile,
+                        segEnd, endFile,
                         backfilled: false, daySplit: true);
                     OpenRuns.Remove(userName);
 
@@ -1186,8 +1218,17 @@ namespace SoulLink.Services
             if (!PendingSplits.TryGetValue(user, out var p) || p == null) return;
             PendingSplits.Remove(user);
             if (atMs <= 0) return;
-            // 90s 兜底：事件迟到超过 deadline → 不建（BGI 已停；旧段已 close 不产空窗）
-            if (NowMs() > p.DeadlineMs && atMs < p.OldSegEndMs + DaySegmentFirstEventTimeoutMs)
+            // ★★ t56 修复（历史回填丢 run 的根因）：
+            //   原来的 90s 兜底用「真实墙钟」（NowMs() > p.DeadlineMs）判断「事件是不是来晚了」。
+            //   这个判据只对**实时采集**成立 —— 实时时事件确实在几秒内到达。
+            //   但**历史回填**是几天的数据在几十秒内跑完：
+            //     · p.DeadlineMs 是「切分那一刻的墙钟 + 90s」；
+            //     · 回填一份 37MB 日志要 60~90s，处理到下一份时墙钟早过 deadline；
+            //     · 于是后续每份文件的 PendingSplit 全被判「来晚了」→ **不建 run**。
+            //   实测后果：11-21 及之后的 run 全部缺失，今天的「正在运行」也消失。
+            //   修法：回填/重扫路径显式跳过墙钟检查（只看时间戳关系，不看真实时钟）。
+            if (!BackfillMode.Value && NowMs() > p.DeadlineMs
+                && atMs < p.OldSegEndMs + DaySegmentFirstEventTimeoutMs)
             {
                 // 时间戳早于兜底线：可能是一次全量重扫的旧行，不据此建段（重扫幂等由自然键保证）
                 return;
@@ -1234,7 +1275,11 @@ namespace SoulLink.Services
                 if (!string.Equals(prev.Group, g, StringComparison.OrdinalIgnoreCase))
                 {
                     // 上一窗口是别的组：Interrupted 收尾（不丢 start 事实）
-                    CloseRunLocked(prev, "Interrupted", "后续配置组已开始，未记录正常结束",
+                    // ★ t56：文案改准确 —— 这不是「用户中断」，而是日志里没有上一个组的结束锚点，
+                    //   只能用下一个组的开始来推断边界。BGI 在「程序退出/断电/跨天轮转」时不会
+                    //   写「执行结束」，所以这种情况无法避免，但至少要让用户看懂原因。
+                    CloseRunLocked(prev, "Interrupted",
+                        "日志无结束锚点（推断边界：下一个配置组已开始）",
                         atMs, srcFile, backfilled: false);
                 }
                 // 同组重跑未收尾：旧窗口作废（run_id 不同 → 旧 open 行留给陈旧清理兜底）
@@ -1503,6 +1548,50 @@ namespace SoulLink.Services
 
             CloseRouteLocked(run, route, state, end, dur);
             run.Route = null;
+        }
+
+
+        /// <summary>
+        /// ★ t56：历史回填专用 —— 一份历史日志处理完时，强制收尾它的 open run。
+        ///
+        /// 为什么需要：回填是「按文件推进」的，跨文件时上一个文件里最后一个没有「执行结束」锚点的
+        /// 组会永远停在 Running（实测残留 4 条 end=NULL）。实时采集不会遇到这个问题，
+        /// 因为 BGI 的下一个锚点会自然关闭它。
+        ///
+        /// 收尾语义：
+        ///   · state = Finished（该文件已经结束，组内没报错就是正常跑完）；
+        ///   · end = 该 run 的 LastEventMs（最后一个事件时刻），不伪造更晚的时间；
+        ///   · detail 标注「历史回填收尾（日志文件结束，未见结束锚点）」—— 让用户知道这不是真的中断。
+        /// </summary>
+        public static void CloseOpenForBackfill(string userName, string srcFile, bool isLastFile = false)
+        {
+            if (string.IsNullOrWhiteSpace(userName)) return;
+            lock (StateLock)
+            {
+                // ★★ t56 修复：**必须同时清掉 PendingSplits**。
+                //   跨天拆分会把 run 拆成「前一段(已 close) + 后一段(PendingSplit 待建)」。
+                //   回填处理到下一个文件时，后一段的 PendingSplit 如果没被消费，
+                //   就会永远挂在那里 —— 表现为「今天的组正在跑，但库里没有 Running 记录」
+                //   （实测 11-26 CD采集-全采集 只有 Interrupted 的前半段，后半段凭空消失）。
+                //
+                //   回填语义：历史文件处理完，如果**后面还有文件**，它的 PendingSplit 不该延到未来
+                //   （下一个文件会有自己的 OnFileChanged）。清掉即可（不丢已 close 的前段）。
+                //   ★ 但**最后一份**（今天那份）不能清 —— 那正是「正在运行」的组，要留给实时 Pump 消费。
+                if (!isLastFile) PendingSplits.Remove(userName);
+
+                if (!OpenRuns.TryGetValue(userName, out var run) || run == null) return;
+                long end = run.LastEventMs > 0 ? run.LastEventMs : NowMs();
+                // 先关 route（如有），再关 run
+                if (run.Route != null)
+                {
+                    long rEnd = Math.Max(end, run.Route.StartAtMs);
+                    CloseRouteLocked(run, run.Route, "Finished", rEnd, 0);
+                    run.Route = null;
+                }
+                CloseRunLocked(run, "Finished", "历史回填收尾（日志文件结束，未见结束锚点）",
+                    end, srcFile, backfilled: false);
+                OpenRuns.Remove(userName);
+            }
         }
 
         private static void CloseRouteLocked(OpenRun run, OpenRoute route, string state, long endMs, long durMs)

@@ -7,22 +7,26 @@ using System.Text;
 namespace SoulLink.TaskEdit
 {
     /// <summary>
-    /// 对外访问的鉴权闸门（设计文档 §17.2 定稿）。
+    /// 对外访问的鉴权闸门（设计文档 §17.2 定稿，2026-11-26 统一凭据修订）。
     ///
     /// ── 规则 ───────────────────────────────────────────────────────────
     ///   · **仅回环**（127.0.0.1 / ::1 / localhost）免密 —— 本机用户点开就能用；
     ///   · **非回环一律强制令牌**，没有例外，也没有「口令为空就放行」的短路。
-    ///     主程序里 IsAuthorized 的 <c>PasswordEnabled()==false → return true</c>
-    ///     是既有安全隐患（暴露到局域网就等于裸奔），本服务**不复制该行为**。
-    ///   · 令牌来源优先级：config.json 的 webPassword → 已生成的持久 webAuthToken
-    ///     → 启动时**自动生成**一个新的并打印到控制台（同时尝试写回配置）。
-    ///   · 会话：登录成功下发 1 年有效期的 Cookie（与主程序 IssueSession 同思路）。
+    ///   · 凭据现在**两套等效**：
+    ///       ① 主程序 /api/login 下发的 soullink_sid（值 = config.json 的 webAuthToken）；
+    ///       ② 本服务 /taskedit/login 下发的 soullink_te（值 = Hash(口令) 或 webAuthToken）。
+    ///     两者都能通过本闸门并反代到主程序，客户端零改动。
+    ///   · 会话：登录成功下发 1 年有效期的 Cookie。
     ///   · 防暴力：同一来源 IP 连续失败 ≥5 次 → 锁定 60 秒（LOCK_SECONDS）。
+    ///     ★ 但**成功一次即清零**；?pw= 显式明文口令**不走锁定计数**；
+    ///       锁定期在响应头带 Retry-After，客户端据此退避。
     ///
-    /// ── 为什么按 IP 而不是全局 ────────────────────────────────────────
-    ///   一个攻击者不该把合法用户也一起锁死；按来源 IP 隔离，误伤面最小。
-    ///   NAT 后的多人共享同一出口 IP 时会连坐 —— 在「家用/小团队远程访问」
-    ///   这个真实场景下接受这个取舍（比全局锁好得多）。
+    /// ── 统一凭据（为什么不再区分主程序 / TaskEdit）──────────────────────
+    ///   主程序下发的 soullink_sid 值是 config.json 的 webAuthToken；本服务此前
+    ///   只在「无口令」时保留该 token，一旦用户设了口令就把它丢弃、改用 Hash(口令)，
+    ///   导致主程序登录拿到的 cookie 穿过代理层时永远对不上 —— 安卓 App 恒 401。
+    ///   现在：webAuthToken 始终保留并用于校验 soullink_sid；口令只负责
+    ///   /taskedit/login 与 ?pw= 直传。两套凭据各自独立、同时有效。
     /// </summary>
     internal sealed class AuthGate
     {
@@ -46,7 +50,9 @@ namespace SoulLink.TaskEdit
             _password = (password ?? "").Trim();
             string token = (existingToken ?? "").Trim();
             generated = false;
-            if (!string.IsNullOrWhiteSpace(_password)) token = "";  // 用户设了口令 → 口令即凭据
+            // ★ 统一凭据：webAuthToken 始终保留（主程序 soullink_sid 就是它）。
+            //   用户设了口令时，口令只用于本服务自己的登录与 ?pw= 直传，
+            //   不再清空 token —— 否则主程序 /api/login 下发的 soullink_sid 穿不过代理。
             if (token.Length == 0 && _password.Length == 0)
             {
                 token = Guid.NewGuid().ToString("N");
@@ -58,8 +64,8 @@ namespace SoulLink.TaskEdit
         /// <summary>需要展示给用户的一次性令牌（仅当本次自动生成时非空）。</summary>
         internal string GeneratedToken => _token.Length > 0 && _password.Length == 0 ? _token : "";
 
-        /// <summary>本次会话 Cookie 的值（登录成功后下发）。</summary>
-        internal string SessionValue => _token.Length > 0 ? _token : Hash(_password);
+        /// <summary>本服务登录会话 Cookie 的值（/taskedit/login 成功后下发）。</summary>
+        internal string SessionValue => _password.Length > 0 ? Hash(_password) : _token;
 
         /// <summary>是否处于「强制鉴权」状态（非回环必须过这一关）。</summary>
         internal bool RequireToken => _token.Length > 0 || _password.Length > 0;
@@ -97,32 +103,44 @@ namespace SoulLink.TaskEdit
             if (IsLoopback(ctx)) return true;            // ★ 唯一的免密例外
             if (!RequireToken)
             {
-                // 令牌与口令都为空 = 服务无法判定身份。这种情况**拒绝**，
-                // 绝不复制主程序「没设密码就放行」的短路。
                 rejectReason = "未配置访问口令：请在主程序设置中填写网页口令后重试";
                 return false;
             }
 
             string key = ClientKey(ctx);
+
+            // ── ?pw= 显式明文口令：不走锁定计数（已持有明文口令，不是会话劫持猜测）──
+            string pw = ctx.Request.QueryString["pw"] ?? "";
+            if (_password.Length > 0 && pw.Length > 0)
+            {
+                if (Matches(pw, _password)) { ClearFailures(key); return true; }
+                rejectReason = "口令错误";
+                return false;
+            }
+
+            // ── 锁定检查（只针对会话 / token 猜测；?pw= 已在上方短路）──
+            int retryAfter = 0;
             lock (_gate)
             {
                 if (_buckets.TryGetValue(key, out var b) && b.LockedUntil > DateTime.UtcNow)
                 {
-                    int left = (int)Math.Ceiling((b.LockedUntil - DateTime.UtcNow).TotalSeconds);
-                    rejectReason = "尝试次数过多，已锁定 " + Math.Max(1, left) + " 秒";
-                    return false;
+                    retryAfter = (int)Math.Ceiling((b.LockedUntil - DateTime.UtcNow).TotalSeconds);
+                    rejectReason = "尝试次数过多，已锁定 " + Math.Max(1, retryAfter) + " 秒";
                 }
             }
+            if (retryAfter > 0)
+            {
+                SetRetryAfter(ctx, retryAfter);
+                return false;
+            }
 
-            if (Matches(ctx, SessionValue)) { ClearFailures(key); return true; }
-            // 也接受通过 ?token= 显式传入（curl/脚本场景，避免先登录再回放 cookie）
+            if (MatchesAnyCookie(ctx)) { ClearFailures(key); return true; }
+
             string q = ctx.Request.QueryString["token"] ?? "";
-            if (q.Length > 0 && Matches(q, SessionValue)) { ClearFailures(key); return true; }
-            string pw = ctx.Request.QueryString["pw"] ?? "";
-            if (_password.Length > 0 && pw.Length > 0 && Matches(pw, _password)) { ClearFailures(key); return true; }
+            if (q.Length > 0 && MatchesAnyToken(q)) { ClearFailures(key); return true; }
 
             RecordFailure(key);
-            rejectReason = "未登录：请先访问 /taskedit/login 输入口令";
+            rejectReason = "未登录：请先通过 /api/login?pw=口令 或 /taskedit/login 登录";
             return false;
         }
 
@@ -132,18 +150,24 @@ namespace SoulLink.TaskEdit
             if (IsLoopback(ctx)) return null;
             if (!RequireToken) return "未配置访问口令：请在主程序设置中填写网页口令";
             string key = ClientKey(ctx);
-            lock (_gate)
-            {
-                if (_buckets.TryGetValue(key, out var b) && b.LockedUntil > DateTime.UtcNow)
-                {
-                    int left = (int)Math.Ceiling((b.LockedUntil - DateTime.UtcNow).TotalSeconds);
-                    return "尝试次数过多，已锁定 " + Math.Max(1, left) + " 秒";
-                }
-            }
+
+            // ★ 成功一次即清零，且**正确口令不受锁定拦截**（锁只挡错误猜测）。
             bool ok = _password.Length > 0
                 ? Matches(password, _password)
                 : Matches(password, _token);
             if (ok) { ClearFailures(key); return null; }
+
+            int retryAfter = 0;
+            lock (_gate)
+            {
+                if (_buckets.TryGetValue(key, out var b) && b.LockedUntil > DateTime.UtcNow)
+                    retryAfter = (int)Math.Ceiling((b.LockedUntil - DateTime.UtcNow).TotalSeconds);
+            }
+            if (retryAfter > 0)
+            {
+                SetRetryAfter(ctx, retryAfter);
+                return "尝试次数过多，已锁定 " + Math.Max(1, retryAfter) + " 秒";
+            }
             RecordFailure(key);
             return "口令错误";
         }
@@ -174,18 +198,25 @@ namespace SoulLink.TaskEdit
             }
         }
 
-        /// <summary>是否已经有登录 Cookie。</summary>
-        private static bool Matches(HttpListenerContext ctx, string expected)
+        /// <summary>cookie 凭据匹配：soullink_te（本服务）或 soullink_sid（主程序）。</summary>
+        private bool MatchesAnyCookie(HttpListenerContext ctx)
         {
             try
             {
-                var c = ctx.Request.Cookies[CookieName];
-                if (c != null && Matches(c.Value, expected)) return true;
-                // 也接受主程序原有的 soullink_sid（用户在旧页面登录过）
-                var legacy = ctx.Request.Cookies["soullink_sid"];
-                return legacy != null && Matches(legacy.Value, expected);
+                var te = ctx.Request.Cookies[CookieName];
+                if (te != null && Matches(te.Value, SessionValue)) return true;
+                var sid = ctx.Request.Cookies["soullink_sid"];
+                if (sid != null && _token.Length > 0 && Matches(sid.Value, _token)) return true;
+                return false;
             }
             catch { return false; }
+        }
+
+        /// <summary>?token= 显式凭据：接受本服务会话值或主程序 token。</summary>
+        private bool MatchesAnyToken(string actual)
+        {
+            if (Matches(actual, SessionValue)) return true;
+            return _token.Length > 0 && Matches(actual, _token);
         }
 
         /// <summary>定长比较，避免计时侧信道。</summary>
@@ -195,6 +226,11 @@ namespace SoulLink.TaskEdit
             byte[] a = Encoding.UTF8.GetBytes(actual);
             byte[] b = Encoding.UTF8.GetBytes(expected);
             return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
+        }
+
+        private static void SetRetryAfter(HttpListenerContext ctx, int seconds)
+        {
+            try { ctx.Response.Headers["Retry-After"] = Math.Max(1, seconds).ToString(); } catch { }
         }
 
         /// <summary>设置持久 Cookie（1 年）。</summary>
