@@ -393,9 +393,6 @@ namespace SoulLink
             {
                 ShowMainWindow();
                 Breadcrumb("main window shown: " + (_window?.IsVisible) + " state=" + (_window?.WindowState));
-                App.Breadcrumb("WebServer.EnsureLiveRefresh begin");
-                try { Services.WebServer.EnsureLiveRefresh(); } catch { }
-                App.Breadcrumb("WebServer.EnsureLiveRefresh done");
 
                 // 调试用：--page=xxx 直接跳页
                 string? page = null;
@@ -727,19 +724,26 @@ namespace SoulLink
                 //   · 对外唯一端口 = AppSettings.WebPort（交给独立服务 SoulLink.TaskEdit 独占）；
                 //   · 主程序自己只绑回环 http://127.0.0.1:<内部端口>/，当独立服务的上游；
                 //   · 页面与 API 的内容一行未改，只是搬了入口。
+                // ★ t2 启动优化：WebHost.Apply 内部含 ResolveInternalPort 的 http.sys
+                //   HttpListener 探测（实测约 1.1s）+ 独立服务拉起（约 0.2s），合计约 1.3s。
+                //   它不参与首帧渲染，挪到后台线程，主窗口可以立刻进入 Show() 首帧。
                 App.Breadcrumb("WebHost.Apply begin");
-                try
+                _ = Task.Run(() =>
                 {
-                    Services.WebHost.Apply(
-                        Config?.Settings?.WebPort ?? 0,
-                        Config?.Settings?.WebInternalPort ?? 0,
-                        Config?.Settings?.WebPassword);
-                }
-                catch (Exception ex)
-                {
-                    LogBus.Error("启动网页入口失败：" + ex.Message);
-                }
-                App.Breadcrumb("WebHost.Apply done");
+                    try
+                    {
+                        Services.WebHost.Apply(
+                            Config?.Settings?.WebPort ?? 0,
+                            Config?.Settings?.WebInternalPort ?? 0,
+                            Config?.Settings?.WebPassword);
+                        Services.WebServer.EnsureLiveRefresh();
+                    }
+                    catch (Exception ex)
+                    {
+                        LogBus.Error("启动网页入口失败：" + ex.Message);
+                    }
+                });
+                App.Breadcrumb("WebHost.Apply dispatched");
 
                 // 启动路线更新的定时调度器（与动作调度互不影响）
                 try
