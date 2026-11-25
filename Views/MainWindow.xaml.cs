@@ -99,7 +99,11 @@ namespace SoulLink.Views
                 if (isDev)
                 {
                     Title = "SoulLink - DEV (do not use)";
+                    // ★ t59：开发版的徽章必须写 "DEV"，不能沿用 "挂机版" ——
+                    //   否则窗口里仍然显示「SoulLink [挂机版] v3.3.49」，
+                    //   用户会以为这是挂机版被换成了新版本（实际是开发版）。
                     if (IdentityBadge != null) { IdentityBadge.Visibility = Visibility.Visible; }
+                    if (IdentityBadgeText != null) IdentityBadgeText.Text = "DEV";
                 }
                 else if (!string.Equals(AppIdentity.Name, "SoulLink", StringComparison.OrdinalIgnoreCase))
                 {

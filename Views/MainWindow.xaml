@@ -77,7 +77,7 @@
                                             CornerRadius="5" Padding="6,1" Margin="7,0,0,0"
                                             VerticalAlignment="Center"
                                             Background="#2AFFB020" BorderBrush="#55FFB020" BorderThickness="1">
-                                        <TextBlock Text="挂机版" FontSize="9.5"
+                                        <TextBlock x:Name="IdentityBadgeText" Text="挂机版" FontSize="9.5"
                                                    Foreground="#FFFFC24D" />
                                     </Border>
                                 </StackPanel>

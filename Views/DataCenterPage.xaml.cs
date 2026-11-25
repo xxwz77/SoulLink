@@ -47,6 +47,11 @@ namespace SoulLink.Views
             = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>账号 → 在途读取标记（同一账号同时只允许一次读取）。</summary>
         private readonly HashSet<string> _miyousheLoading = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>t59：每账号的原神角色列表缓存（账号 → 角色 + 默认角色）。</summary>
+        private readonly Dictionary<string, (List<MiyousheRole> Roles, string DefaultRole, string Reason)> _miyousheRoles
+            = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _miyousheRolesLoading = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>账号 → 当前活在视觉树里的状态文本块（异步回来只改它自己）。</summary>
         private readonly Dictionary<string, TextBlock> _miyousheBlocks
             = new(StringComparer.OrdinalIgnoreCase);
@@ -453,12 +458,102 @@ namespace SoulLink.Views
             };
             panel.Children.Add(btnDel);
 
+            // ★★ t59：**原神角色切换**（用户明确要求「绑定多个原神账号应该可以切换、设为默认」）。
+            //   之前只做了网页版（#/miyoushe），主程序这里一行都没有 —— 用户在主程序里完全找不到。
+            //   设计：一个 ComboBox 列出该米游社账号绑定的所有原神角色；
+            //   选中即调 POST /api/miyoushe/roles 设为默认（持久化到 Settings.MiyousheDefaultRole）。
+            var roleBox = new ComboBox
+            {
+                MinWidth = 170,
+                MaxWidth = 240,
+                FontSize = 10.5,
+                Margin = new Thickness(10, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "该米游社账号绑定的原神角色；选中即设为默认（签到/拉取优先用它）",
+                Visibility = Visibility.Collapsed   // 读到角色后再显示
+            };
+            roleBox.SelectionChanged += async (_, __) =>
+            {
+                if (roleBox.SelectedItem is ComboBoxItem item && item.Tag is string uid && uid.Length > 0)
+                {
+                    try
+                    {
+                        await MiyousheService.SetDefaultRoleAsync(st.UserName, uid, default).ConfigureAwait(true);
+                        _miyousheRoles.Remove(st.UserName);       // 作废缓存，下次重读
+                        _ = RefreshMiyousheRolesAsync(st.UserName, roleBox);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("设置默认角色失败：" + ex.Message, "米游社",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                }
+            };
+            panel.Children.Add(roleBox);
+
             border.Child = panel;
+
+            // 角色列表异步填充（有缓存直接填，不闪）
+            if (_miyousheRoles.TryGetValue(st.UserName, out var cachedRoles) && cachedRoles.Roles.Count > 0)
+                FillRoleBox(roleBox, cachedRoles.Roles, cachedRoles.DefaultRole);
+            else
+                _ = RefreshMiyousheRolesAsync(st.UserName, roleBox);
             // ★ t2：只有「还没有缓存」或「强制刷新」时才发起异步读取。
             //   原来无条件 `_ = RefreshMiyousheAsync(status, ...)`：页面每次重建都多发一次
             //   读取，回来又各自改一次 Text —— 闪烁的直接来源。
             if (!cached || !view!.Ready) _ = RefreshMiyousheAsync(st.UserName);
             return border;
+        }
+
+
+        /// <summary>
+        /// t59：把角色列表填进 ComboBox。有多个角色才显示，只有一个角色时隐藏（没什么可切换的）。
+        /// ★ 填充时先解绑事件，避免程序化选中触发「设为默认」请求。
+        /// </summary>
+        private void FillRoleBox(ComboBox box, List<MiyousheRole> roles, string defaultRole)
+        {
+            try
+            {
+                box.Items.Clear();
+                if (roles == null || roles.Count <= 1)
+                {
+                    box.Visibility = Visibility.Collapsed;   // 只有 0~1 个角色，不需要切换
+                    return;
+                }
+
+                ComboBoxItem? pick = null;
+                foreach (var r in roles)
+                {
+                    string label = r.Nickname + "  Lv." + r.Level + "  " + r.Region + "  " + r.GameUid;
+                    var item = new ComboBoxItem { Content = label, Tag = r.GameUid };
+                    box.Items.Add(item);
+                    if (!string.IsNullOrEmpty(defaultRole)
+                        && string.Equals(r.GameUid, defaultRole, StringComparison.OrdinalIgnoreCase))
+                        pick = item;
+                }
+                // 未设默认时选第一个（只是显示，不触发写入）
+                box.SelectedItem = pick ?? box.Items[0];
+                box.Visibility = Visibility.Visible;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// t59：异步读角色并填充。不整页重建（沿用 t2 的不闪烁原则）。
+        /// 同一账号只允许一次在途读取。
+        /// </summary>
+        private async Task RefreshMiyousheRolesAsync(string account, ComboBox box)
+        {
+            if (string.IsNullOrWhiteSpace(account)) return;
+            if (!_miyousheRolesLoading.Add(account)) return;   // 在途去重
+            try
+            {
+                var (roles, reason) = await MiyousheService.GetRolesForUiAsync(account, default).ConfigureAwait(true);
+                _miyousheRoles[account] = (roles, MiyousheService.GetDefaultRole(account), reason);
+                FillRoleBox(box, roles, MiyousheService.GetDefaultRole(account));
+            }
+            catch { }
+            finally { _miyousheRolesLoading.Remove(account); }
         }
 
         /// <summary>

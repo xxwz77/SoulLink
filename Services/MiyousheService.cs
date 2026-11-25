@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using SoulLink.Models;
@@ -68,6 +69,71 @@ namespace SoulLink.Services
 
         internal static Task<MiyousheLoginStatus> LoginStatusAsync(string account,CancellationToken ct)
             => MiyousheCredentialStore.StatusAsync(account,ct);
+
+        // ── t59：角色列表与默认角色（主程序数据中心要用）─────────────────
+        //
+        //  为什么放这里：主程序的 DataCenterPage 直接调，不走 HTTP 回环端口 ——
+        //  避免「TaskEdit 没起来就不可用」的耦合。
+        //  读的是**本地 my_role 表**，不现场请求米游社（避免风控）。
+
+        /// <summary>读该账号绑定的原神角色（本地库，不联网）。无角色时返回空列表 + 原因。</summary>
+        public static async Task<(List<MiyousheRole> Roles, string Reason)> GetRolesForUiAsync(
+            string account, CancellationToken ct = default)
+        {
+            var roles = new List<MiyousheRole>();
+            try
+            {
+                var archive = await MiyousheStore.Shared.QueryAsync(account, 1, ct).ConfigureAwait(false);
+                if (archive?.Roles != null) roles.AddRange(archive.Roles);
+            }
+            catch { }
+            if (roles.Count > 0) return (roles, "");
+
+            string reason;
+            try
+            {
+                var credential = await MiyousheCredentialStore.LoadAsync(account, "", ct).ConfigureAwait(false);
+                reason = credential == null
+                    ? "需要重新登录米游社"
+                    : "已登录，但还没有角色数据（等一次拉取或签到后就有了）";
+            }
+            catch { reason = "需要重新登录米游社"; }
+            return (roles, reason);
+        }
+
+        /// <summary>当前默认角色的 gameUid（没有则空串）。</summary>
+        public static string GetDefaultRole(string account)
+        {
+            try
+            {
+                var map = App.Config?.Settings?.MiyousheDefaultRole;
+                if (map != null && map.TryGetValue(account, out var uid)) return uid ?? "";
+            }
+            catch { }
+            return "";
+        }
+
+        /// <summary>
+        /// 设为默认角色（持久化到 Settings.MiyousheDefaultRole）。
+        /// ★ 写入前校验 UID 确实属于该账号的角色列表 —— 防止前端传错。
+        /// </summary>
+        public static async Task<bool> SetDefaultRoleAsync(string account, string gameUid, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(account) || string.IsNullOrWhiteSpace(gameUid)) return false;
+            var (roles, _) = await GetRolesForUiAsync(account, ct).ConfigureAwait(false);
+            if (!roles.Any(r => string.Equals(r.GameUid, gameUid, StringComparison.OrdinalIgnoreCase)))
+                return false;   // UID 不属于该账号，拒绝
+            try
+            {
+                var settings = App.Config?.Settings;
+                if (settings == null) return false;
+                settings.MiyousheDefaultRole[account] = gameUid;
+                ConfigStore.Save(App.Config);
+                return true;
+            }
+            catch { return false; }
+        }
+
 
         internal static async Task<object> RunForAccountAsync(string account,bool sign,bool ledger,CancellationToken ct)
         {
