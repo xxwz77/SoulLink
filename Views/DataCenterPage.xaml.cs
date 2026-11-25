@@ -28,6 +28,65 @@ namespace SoulLink.Views
         /// <summary>上一轮渲染依据的数据签名；相同就不重建视觉树。</summary>
         private string _lastSignature = "";
 
+        // ══ t2 问题1：米游社摘要「每秒闪一次」═══════════════════════════════
+        //
+        // 根因（实测确认）：
+        //   BuildMiyousheRow 每次都先把 TextBlock 建成「…」，
+        //   然后 _ = RefreshMiyousheAsync(status, ...) 异步回来再改 Text；
+        //   而页面每秒（或每次数据变化）都要 Rebuild() → Children.Clear() → 重建，
+        //   于是每重建一次就重演一遍「… → 已存储 · 12***34」，
+        //   用户看到的就是「一会儿省略号、一会儿 uid，一闪一闪」。
+        //
+        // 修法（三层一起）：
+        //   ① 缓存结果：重建时直接用上次的结果渲染，不再先画占位；
+        //   ② 只在缓存为空时才发起异步读取（原来每重建一次就多一个在途读取）；
+        //   ③ 异步回来后值没变就不碰 UI；值变了也只改那一个 TextBlock，
+        //      不整页 Rebuild —— 整页重建本身就是一次可见的重绘。
+        /// <summary>账号 → 上次读到的米游社摘要（重建时直接按它渲染）。</summary>
+        private readonly Dictionary<string, MiyousheView> _miyoushe
+            = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>账号 → 在途读取标记（同一账号同时只允许一次读取）。</summary>
+        private readonly HashSet<string> _miyousheLoading = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>账号 → 当前活在视觉树里的状态文本块（异步回来只改它自己）。</summary>
+        private readonly Dictionary<string, TextBlock> _miyousheBlocks
+            = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>米游社摘要的渲染快照：文案 + 是否已存储（决定颜色）+ 是否已拿到真值。</summary>
+        private sealed class MiyousheView
+        {
+            public string Text = "…";
+            public bool Stored;
+            /// <summary>false = 还只是占位，没读到过真值。</summary>
+            public bool Ready;
+        }
+
+        // ══ t2 问题2：配置组卡片按组名合并 ═══════════════════════════════════
+        /// <summary>已展开历史的配置组 key（重建后保持展开）。</summary>
+        private readonly HashSet<string> _expandedGroups = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>今日某个配置组的一次运行（SQLite 与实时增量统一成这个形状）。</summary>
+        private sealed class GroupRunView
+        {
+            public string Name = "";
+            public ScriptGroupState State;
+            public DateTime StartedAt = DateTime.MinValue;
+            public DateTime EndedAt = DateTime.MinValue;
+            public int ScriptCount;
+            public int Picks;
+            public string Detail = "";
+            public TimeSpan? Duration
+                => EndedAt > StartedAt && StartedAt != DateTime.MinValue
+                   ? EndedAt - StartedAt : (TimeSpan?)null;
+        }
+
+        /// <summary>同名配置组今日的全部运行（Runs[0] = 最后一次）。</summary>
+        private sealed class GroupAggregate
+        {
+            public string Name = "";
+            public List<GroupRunView> Runs = new();
+            public GroupRunView Last => Runs[0];
+        }
+
         // ── t52：主程序数据中心改用 SQLite 作为「今日配置组」权威数据源 ──
         //   首帧显示 run.db 的今日记录（历史+当前），Tracker 只负责实时增量，
         //   异步加载、幂等合并（同组名+同时刻去重），UI 线程零 IO。
@@ -105,6 +164,9 @@ namespace SoulLink.Views
                 AccountStateCenter.RefreshNow(App.Config);
                 BgiDataCenter.RefreshAll(AccountScope.Accounts(App.Config).Select(a => a.UserName));
                 _sharedSignatures.Clear();
+                // ★ t2：用户点「刷新」= 显式要求重读，连米游社缓存一起作废
+                //   （正常情况下缓存只增不改，否则又回到「每次重建都重读」的闪烁老路）。
+                _miyoushe.Clear();
             } catch { }
             Rebuild();
         }
@@ -137,6 +199,10 @@ namespace SoulLink.Views
                 FootNote.Text = "这里汇总每个账号的运行状态、BGI 路径、配置目录和快捷键。流程编辑器、启动台、更新页使用同一份账号数据。\n"
                     + "更换账号或路径会重新读取对应目录；BGI 的配置文件变更也会自动刷新。";
 
+                // ★ t2：清掉「在树上的米游社状态块」索引 —— 旧块即将被丢弃，
+                //   留着只会让异步结果写到一个已脱离视觉树的 TextBlock（既无效又占内存）。
+                //   缓存 _miyoushe 本身**不清**：它就是用来跨重建保持值稳定的。
+                _miyousheBlocks.Clear();
                 CardList.Children.Clear();
 
                 if (states.Count == 0)
@@ -304,8 +370,11 @@ namespace SoulLink.Views
         }
 
         /// <summary>
-        /// 米游社摘要行（t33 需求1）。只放「一行放得下」的摘要 + 操作入口，
-        /// 详情全部在网页。登录状态异步读取，不阻塞 UI。
+        /// 米游社摘要行（t33 需求1 + t2 修复闪烁）。只放「一行放得下」的摘要 + 操作入口，
+        /// 详情全部在网页。
+        ///
+        /// ★ t2 关键：**先按缓存渲染**，只有缓存为空时才异步读取。
+        ///   旧实现每次都先画「…」再异步改，配合每秒整页重建 = 每秒闪一次。
         /// </summary>
         private UIElement BuildMiyousheRow(AccountState st)
         {
@@ -328,14 +397,20 @@ namespace SoulLink.Views
                 Foreground = (Brush)FindResource("TextPrimary")
             });
 
+            // ★ t2：有缓存就按缓存值渲染（不先画占位，因此没有「…→uid」的跳变）
+            bool cached = _miyoushe.TryGetValue(st.UserName, out var view) && view != null;
             var status = new TextBlock
             {
-                Text = "…",
+                Text = cached ? view!.Text : "…",
                 FontSize = 10.5,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = (Brush)FindResource("TextSecondary")
+                Foreground = cached && view!.Stored
+                    ? new SolidColorBrush(Color.FromRgb(0x6E, 0xF0, 0xC8))
+                    : (Brush)FindResource("TextSecondary")
             };
             panel.Children.Add(status);
+            // 记下「当前活在视觉树里」的那个块：异步回来只改它，不改整页。
+            _miyousheBlocks[st.UserName] = status;
 
             // 操作按钮（扫码登录 / 一键导入 / 删除凭据 / 查看详情→）
             var btnQr = new Button
@@ -368,17 +443,38 @@ namespace SoulLink.Views
                 Margin = new Thickness(0, 0, 6, 0),
                 FontSize = 10.5
             };
-            btnDel.Click += (_, __) => { MiyousheCredentialStore.Delete(st.UserName, "cn"); MiyousheCredentialStore.Delete(st.UserName, "os"); RefreshMiyousheAsync(status, st.UserName); };
+            btnDel.Click += (_, __) =>
+            {
+                MiyousheCredentialStore.Delete(st.UserName, "cn");
+                MiyousheCredentialStore.Delete(st.UserName, "os");
+                // 删除后强制重读一次（缓存作废，但**不**整页重建）
+                _miyoushe.Remove(st.UserName);
+                _ = RefreshMiyousheAsync(st.UserName, force: true);
+            };
             panel.Children.Add(btnDel);
 
             border.Child = panel;
-            // 异步刷新状态（不阻塞 UI 线程）
-            _ = RefreshMiyousheAsync(status, st.UserName);
+            // ★ t2：只有「还没有缓存」或「强制刷新」时才发起异步读取。
+            //   原来无条件 `_ = RefreshMiyousheAsync(status, ...)`：页面每次重建都多发一次
+            //   读取，回来又各自改一次 Text —— 闪烁的直接来源。
+            if (!cached || !view!.Ready) _ = RefreshMiyousheAsync(st.UserName);
             return border;
         }
 
-        private async Task RefreshMiyousheAsync(TextBlock status, string account)
+        /// <summary>
+        /// 读一次米游社登录状态并写进缓存。
+        ///
+        /// ★ t2：签名从 (TextBlock, account) 改成 (account, force)。
+        ///   旧签名把「改哪个控件」当成参数传进来，导致异步结果只能写死到
+        ///   建它时那个 TextBlock —— 页面一重建，那个块已经不在树上了，
+        ///   新块又画回占位，于是每重建一次就闪一次。
+        ///   现在只更新缓存，然后找**当前**在树上的块改文字；值没变就什么都不做。
+        /// </summary>
+        private async Task RefreshMiyousheAsync(string account, bool force = false)
         {
+            if (string.IsNullOrWhiteSpace(account)) return;
+            if (!force && _miyousheLoading.Contains(account)) return;   // 同一账号只允许一次在途读取
+            _miyousheLoading.Add(account);
             try
             {
                 var st = await MiyousheService.LoginStatusAsync(account, default).ConfigureAwait(true);
@@ -388,13 +484,45 @@ namespace SoulLink.Views
                     "needs_login" => "需重扫",
                     _ => "未登录"
                 };
-                string uid = st.AidMasked.Length > 0 ? st.AidMasked : (st.Uid.Length > 0 ? MiyousheCredentialStore.Mask(st.Uid) : "");
-                status.Text = stateText + (uid.Length > 0 ? " · " + uid : "");
-                status.Foreground = st.State == "stored"
+                string uid = st.AidMasked.Length > 0
+                    ? st.AidMasked
+                    : (st.Uid.Length > 0 ? MiyousheCredentialStore.Mask(st.Uid) : "");
+                ApplyMiyousheView(account, stateText + (uid.Length > 0 ? " · " + uid : ""),
+                    st.State == "stored", ready: true);
+            }
+            catch
+            {
+                // ★ 读取失败**不**覆盖已缓存的好值：网络抖动不该把「已存储」变成「读取失败」，
+                //   那同样是一次可见的闪烁。只有从来没读到过才显示失败。
+                if (!_miyoushe.TryGetValue(account, out var cachedView) || cachedView == null || !cachedView.Ready)
+                    ApplyMiyousheView(account, "状态读取失败", false, ready: true);
+            }
+            finally { _miyousheLoading.Remove(account); }
+        }
+
+        /// <summary>
+        /// 把一次读取结果落到缓存，并**只在值变化时**改当前在树上的那个 TextBlock。
+        /// ★ 刻意不调用 Rebuild()：整页重建本身是一次全量重绘，正是闪烁的表现形式。
+        /// </summary>
+        private void ApplyMiyousheView(string account, string text, bool stored, bool ready)
+        {
+            if (_miyoushe.TryGetValue(account, out var prev) && prev != null
+                && prev.Text == text && prev.Stored == stored && prev.Ready == ready)
+                return;                                     // 值没变：连缓存都不动
+
+            _miyoushe[account] = new MiyousheView { Text = text, Stored = stored, Ready = ready };
+
+            TextBlock? live = null;
+            try { _miyousheBlocks.TryGetValue(account, out live); } catch { }
+            if (live == null) return;                       // 卡片不在树上：下次重建自然用缓存
+            live.Text = text;
+            try
+            {
+                live.Foreground = stored
                     ? new SolidColorBrush(Color.FromRgb(0x6E, 0xF0, 0xC8))
                     : (Brush)FindResource("TextSecondary");
             }
-            catch { status.Text = "状态读取失败"; }
+            catch { }
         }
 
         private async Task OpenQrAsync(string account)
@@ -403,6 +531,9 @@ namespace SoulLink.Views
             {
                 var w = new MiyousheQrWindow(account, "cn") { Owner = Window.GetWindow(this) };
                 w.ShowDialog();
+                // 扫码后凭据可能变了：作废缓存并强制重读（一次性用户动作，不进 1 秒循环）
+                _miyoushe.Remove(account);
+                _ = RefreshMiyousheAsync(account, force: true);
                 Rebuild();
             }
             catch (Exception ex)
@@ -428,6 +559,9 @@ namespace SoulLink.Views
                 if (confirm != MessageBoxResult.Yes) return;
                 var outcome = await MiyousheImporter.ImportAsync(account, path, true, default).ConfigureAwait(true);
                 MessageBox.Show("导入完成：" + outcome.OkCount + " 成功 / " + outcome.FailedCount + " 失败\n" + outcome.Detail, "一键导入", MessageBoxButton.OK, MessageBoxImage.Information);
+                // 导入后凭据变了：作废缓存并强制重读
+                _miyoushe.Remove(account);
+                _ = RefreshMiyousheAsync(account, force: true);
                 Rebuild();
             }
             catch (Exception ex)
@@ -480,27 +614,32 @@ namespace SoulLink.Views
         private static long ToMsLocal(DateTime dt)
             => dt == DateTime.MinValue ? 0 : new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Local)).ToUnixTimeMilliseconds();
 
-        /// <summary>t52：把 SQLite 的 RunRecord 映射为 ScriptGroupRun 展示（与 Tracker 同结构）。</summary>
-        private static SoulLink.Services.ScriptGroupRun ToScriptGroupRun(SoulLink.Services.RunRecord r)
+        /// <summary>
+        /// t52/t2：把 SQLite 的 RunRecord 映射成页面用的运行视图。
+        /// ★ t2 起多带 Picks（用户要求卡片显示「拾取」），并保留 Detail 供 tooltip。
+        /// </summary>
+        private static GroupRunView ToGroupRunView(SoulLink.Services.RunRecord r)
         {
             var state = r.State switch
             {
-                "Running" => SoulLink.Services.ScriptGroupState.Running,
-                "Finished" => SoulLink.Services.ScriptGroupState.Finished,
-                "Failed" => SoulLink.Services.ScriptGroupState.Failed,
-                "Cancelled" => SoulLink.Services.ScriptGroupState.Cancelled,
-                "Interrupted" => SoulLink.Services.ScriptGroupState.Interrupted,
-                _ => SoulLink.Services.ScriptGroupState.Never,
+                "Running" => ScriptGroupState.Running,
+                "Finished" => ScriptGroupState.Finished,
+                "Failed" => ScriptGroupState.Failed,
+                "Cancelled" => ScriptGroupState.Cancelled,
+                "Interrupted" => ScriptGroupState.Interrupted,
+                _ => ScriptGroupState.Never,
             };
-            return new SoulLink.Services.ScriptGroupRun
+            return new GroupRunView
             {
-                Name = r.GroupName,
+                Name = r.GroupName ?? "",
                 State = state,
                 StartedAt = DateTimeOffset.FromUnixTimeMilliseconds(r.StartAtMs).LocalDateTime,
-                EndedAt = r.EndAtMs.HasValue ? DateTimeOffset.FromUnixTimeMilliseconds(r.EndAtMs.Value).LocalDateTime : DateTime.MinValue,
+                EndedAt = r.EndAtMs.HasValue
+                    ? DateTimeOffset.FromUnixTimeMilliseconds(r.EndAtMs.Value).LocalDateTime
+                    : DateTime.MinValue,
                 ScriptCount = r.ScriptCount,
+                Picks = r.Picks,
                 Detail = r.Detail ?? "",
-                TimeIsExact = true,
             };
         }
 
@@ -523,21 +662,31 @@ namespace SoulLink.Views
 
             // ★ t52：今日配置组改用 SQLite（run.db）为权威数据源，重启后历史不丢、不扫 36MB 日志。
             //   Tracker 只负责「启动后实时增量」，与 SQLite 历史做幂等合并（同名+同时刻去重）。
-            var merged = new List<SoulLink.Services.ScriptGroupRun>();
+            // ★ t2：合并后再**按组名折叠**，同一组只出一张卡片（见 BuildGroupAggregates）。
+            var merged = new List<GroupRunView>();
             var seen = new HashSet<(string Name, long StartedMs)>();
             if (_sqliteTodayRuns.TryGetValue(st.UserName, out var sqlRuns) && sqlRuns != null)
             {
                 foreach (var r in sqlRuns)
                 {
-                    var sg = ToScriptGroupRun(r);
-                    if (seen.Add((sg.Name, ToMsLocal(sg.StartedAt)))) merged.Add(sg);
+                    var v = ToGroupRunView(r);
+                    if (IsBogusGroupName(v.Name)) continue;           // 误识别的英文异常消息不进卡片
+                    if (seen.Add((v.Name, ToMsLocal(v.StartedAt)))) merged.Add(v);
                 }
             }
             foreach (var tr in st.Groups)
             {
-                if (seen.Add((tr.Name, ToMsLocal(tr.StartedAt)))) merged.Add(tr);
+                if (IsBogusGroupName(tr.Name)) continue;
+                if (seen.Add((tr.Name, ToMsLocal(tr.StartedAt))))
+                    merged.Add(new GroupRunView
+                    {
+                        Name = tr.Name, State = tr.State, StartedAt = tr.StartedAt,
+                        EndedAt = tr.EndedAt, ScriptCount = tr.ScriptCount, Detail = tr.Detail ?? "",
+                    });
             }
             var runs = merged.OrderByDescending(x => x.StartedAt).ToList();
+            var groups = BuildGroupAggregates(runs);
+            string groupsKey = st.UserName;
 
             // 「当前执行组」：优先取 SQLite 的 Running 记录（重启后 Tracker 白纸也能正确显示）；
             //   SQLite 无 Running 时回退 Tracker 的 CurrentGroup。
@@ -548,7 +697,11 @@ namespace SoulLink.Views
                 if (running != null) currentFromSql = running.GroupName;
             }
             string currentGroup = currentFromSql.Length > 0 ? currentFromSql : st.CurrentGroup;
-            string head = "今日配置组（" + runs.Count + " 个）" + (_sqliteTodayRuns.ContainsKey(st.UserName) ? " · SQLite" : "");
+            if (IsBogusGroupName(currentGroup)) currentGroup = "";          // 当前组也可能是误识别值
+            // ★ t2：标题按「按组名合并后的卡片数」报，括号里补今日运行总次数，
+            //   这样「22 个组 / 79 次运行」一眼可见，不再是 79 张看起来一样的卡片。
+            string head = "今日配置组（" + groups.Count + " 个 · " + runs.Count + " 次运行）"
+                + (_sqliteTodayRuns.ContainsKey(st.UserName) ? " · SQLite" : "");
             if (currentGroup.Length > 0)
                 head += " · 当前：" + currentGroup
                      + (st.CurrentGroupAt == DateTime.MinValue ? "" : "（" + st.CurrentGroupAt.ToString("HH:mm:ss") + "）");
@@ -558,33 +711,174 @@ namespace SoulLink.Views
                      + "（" + st.StoppedAt.ToString("HH:mm:ss") + "）";
             panel.Children.Add(new TextBlock { Text=head, FontSize=11, FontWeight=FontWeights.SemiBold, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextPrimary") });
             panel.Children.Add(new TextBlock { Text="来源：run.db（今日运行记录）" + (st.GroupsSource.Length>0 ? " · 实时增量 " + st.GroupsUpdatedAt.ToString("HH:mm:ss") : ""), FontSize=9.5, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextMuted"), Margin=new Thickness(0,3,0,5) });
-            if (runs.Count == 0)
+            if (groups.Count == 0)
             { panel.Children.Add(new TextBlock { Text="今日暂无配置组运行记录", FontSize=10.5, Foreground=(Brush)FindResource("TextMuted") }); return panel; }
             const int columns = 3;
             var grid = new Grid();
             for (int i=0;i<columns;i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width=new GridLength(1,GridUnitType.Star) });
-            for (int i=0;i<(runs.Count+columns-1)/columns;i++) grid.RowDefinitions.Add(new RowDefinition { Height=GridLength.Auto });
-            for (int i=0;i<runs.Count;i++)
+            for (int i=0;i<(groups.Count+columns-1)/columns;i++) grid.RowDefinitions.Add(new RowDefinition { Height=GridLength.Auto });
+            for (int i=0;i<groups.Count;i++)
             {
-                var run = runs[i];
-                string state = run.State switch { ScriptGroupState.Running=>"执行中",ScriptGroupState.Finished=>"已完成",ScriptGroupState.Failed=>"失败",ScriptGroupState.Cancelled=>"已取消",ScriptGroupState.Interrupted=>"已中断",_=>"未运行" };
-                string times = (run.StartedAt==DateTime.MinValue?"":run.StartedAt.ToString("HH:mm:ss")) + (run.EndedAt==DateTime.MinValue?"":" → "+run.EndedAt.ToString("HH:mm:ss"));
-                string detail = state + (times.Length>0?" · "+times:"") + (run.ScriptCount>0?" · "+run.ScriptCount+" 脚本":"") + (run.Duration.HasValue?" · "+run.Duration.Value.ToString(@"hh\:mm\:ss"):"");
-                var (accent, fill) = GroupColors(run.State);
-                var item = new Border { Padding=new Thickness(8,5,8,5), Margin=new Thickness(0,3,7,3), Background=fill, BorderBrush=accent, BorderThickness=new Thickness(1), CornerRadius=new CornerRadius(6), ToolTip=run.Detail.Length>0?run.Detail:null };
-                item.Child = new TextBlock { Text=run.Name+"\n"+detail, FontSize=10, TextWrapping=TextWrapping.Wrap, Foreground=accent };
-                if (run.State == ScriptGroupState.Running)
-                {
-                    item.RenderTransformOrigin = new Point(0.5,0.5);
-                    item.RenderTransform = new ScaleTransform(1,1);
-                    var pulse = new System.Windows.Media.Animation.DoubleAnimation
-                    { From=0.82, To=1, Duration=TimeSpan.FromMilliseconds(900), AutoReverse=true, RepeatBehavior=System.Windows.Media.Animation.RepeatBehavior.Forever };
-                    item.BeginAnimation(OpacityProperty,pulse);
-                }
+                var item = BuildGroupCard(groups[i], groupsKey);
                 Grid.SetRow(item,i/columns); Grid.SetColumn(item,i%columns); grid.Children.Add(item);
             }
             panel.Children.Add(grid); return panel;
         }
+
+        /// <summary>
+        /// 把「今日运行列表」按组名折叠：同名只留一张卡片，Runs 按时间倒序（[0] = 最后一次）。
+        /// ★ t2 用户诉求：「配置组卡片太多了，能不能合并或者展示最后状态？」
+        ///   实测 22 个组 79 次运行（其中一个组跑 44 次），合并后 79 张 → 22 张。
+        /// </summary>
+        private static List<GroupAggregate> BuildGroupAggregates(List<GroupRunView> runsDesc)
+        {
+            var map = new Dictionary<string, GroupAggregate>(StringComparer.OrdinalIgnoreCase);
+            var order = new List<GroupAggregate>();
+            foreach (var run in runsDesc)
+            {
+                if (string.IsNullOrWhiteSpace(run.Name)) continue;
+                if (!map.TryGetValue(run.Name, out var agg))
+                {
+                    agg = new GroupAggregate { Name = run.Name };
+                    map[run.Name] = agg;
+                    order.Add(agg);
+                }
+                agg.Runs.Add(run);
+            }
+            // 卡片顺序：按「最后一次运行时间」倒序（最活跃/最新的组在最上面）
+            order.Sort((a,b) => b.Last.StartedAt.CompareTo(a.Last.StartedAt));
+            return order;
+        }
+
+        /// <summary>
+        /// 过滤被当成配置组名的框架异常消息（**展示层兜底**）。
+        /// ★ 采集层 RunRecordCollector.ValidGroup 已经拦了，这里再拦一次是因为
+        ///   run.db 里**历史已有**这些行（采集不回头删库）；用户看到的界面不能有它们。
+        /// </summary>
+        private static bool IsBogusGroupName(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;   // 空名交给上层处理（不额外吞掉）
+            string n = name.Trim();
+            if (n.Contains("Exception", StringComparison.OrdinalIgnoreCase)) return true;
+            if (n.Contains("was canceled", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("was cancelled", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 单张「按组名合并」的配置组卡片：
+        ///   组名 + 今日 N 次 · 最后一次 <状态> / 起止时刻 / 时长 / 脚本数 / 拾取
+        ///   + 点击展开该组今日全部运行（可选项，用户要求「展开看历史」）。
+        /// </summary>
+        private Border BuildGroupCard(GroupAggregate agg, string accountKey)
+        {
+            var last = agg.Last;
+            var (accent, fill) = GroupColors(last.State);
+            string state = StateText(last.State);
+            string times = TimeText(last);
+            string meta = "今日 " + agg.Runs.Count + " 次 · 最后一次 " + state
+                + (times.Length > 0 ? " · " + times : "")
+                + (last.ScriptCount > 0 ? " · " + last.ScriptCount + " 脚本" : "")
+                + (last.Duration.HasValue ? " · " + FmtDur(last.Duration.Value) : "")
+                + (last.Picks > 0 ? " · 拾取 " + last.Picks : "");
+
+            var stack = new StackPanel();
+            stack.Children.Add(new TextBlock
+            {
+                Text = agg.Name, FontSize = 10.5, FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap, Foreground = accent
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = meta, FontSize = 9.5, TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0,2,0,0), Foreground = (Brush)FindResource("TextSecondary")
+            });
+
+            string key = accountKey + "\u001f" + agg.Name;
+            bool expanded = _expandedGroups.Contains(key);
+            var card = new Border
+            {
+                Padding = new Thickness(8,5,8,5), Margin = new Thickness(0,3,7,3),
+                Background = fill, BorderBrush = accent, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                ToolTip = last.Detail.Length > 0 ? last.Detail : (agg.Runs.Count > 1 ? "点击展开今日全部运行" : null),
+                Child = stack
+            };
+            card.Cursor = System.Windows.Input.Cursors.Hand;
+            card.MouseLeftButtonUp += (_, __) =>
+            {
+                if (!_expandedGroups.Add(key)) _expandedGroups.Remove(key);
+                // 只重建这一页是一致的：展开态与折叠态卡片数量相同（仍按组合并），
+                // 不会因为重建把「79 张」问题带回来。
+                _lastSignature = "";
+                Rebuild();
+            };
+
+            if (expanded && agg.Runs.Count > 1)
+                stack.Children.Add(BuildGroupHistory(agg));
+
+            if (last.State == ScriptGroupState.Running)
+            {
+                card.RenderTransformOrigin = new Point(0.5,0.5);
+                card.RenderTransform = new ScaleTransform(1,1);
+                var pulse = new System.Windows.Media.Animation.DoubleAnimation
+                { From=0.82, To=1, Duration=TimeSpan.FromMilliseconds(900), AutoReverse=true, RepeatBehavior=System.Windows.Media.Animation.RepeatBehavior.Forever };
+                card.BeginAnimation(OpacityProperty,pulse);
+            }
+            return card;
+        }
+
+        /// <summary>展开后的历史列表：该组今日每一次运行一行（新的在上）。</summary>
+        private UIElement BuildGroupHistory(GroupAggregate agg)
+        {
+            var list = new StackPanel { Margin = new Thickness(0,5,0,0) };
+            list.Children.Add(new TextBlock
+            {
+                Text = "今日全部运行（" + agg.Runs.Count + " 次）",
+                FontSize = 9.5, Foreground = (Brush)FindResource("TextMuted"), Margin = new Thickness(0,0,0,2)
+            });
+            int shown = Math.Min(agg.Runs.Count, 40);          // 兜底：单组最多列 40 行
+            for (int i = 0; i < shown; i++)
+            {
+                var r = agg.Runs[i];
+                string line = TimeText(r) + " · " + StateText(r.State)
+                    + (r.Duration.HasValue ? " · " + FmtDur(r.Duration.Value) : "")
+                    + (r.Picks > 0 ? " · 拾取 " + r.Picks : "");
+                list.Children.Add(new TextBlock
+                {
+                    Text = line, FontSize = 9.5, TextWrapping = TextWrapping.Wrap,
+                    Foreground = GroupColors(r.State).accent
+                });
+            }
+            if (agg.Runs.Count > shown)
+                list.Children.Add(new TextBlock
+                {
+                    Text = "… 另有 " + (agg.Runs.Count - shown) + " 次未列出",
+                    FontSize = 9.5, Foreground = (Brush)FindResource("TextMuted")
+                });
+            return list;
+        }
+
+        private static string StateText(ScriptGroupState state) => state switch
+        {
+            ScriptGroupState.Running => "执行中",
+            ScriptGroupState.Finished => "已完成",
+            ScriptGroupState.Failed => "失败",
+            ScriptGroupState.Cancelled => "已取消",
+            ScriptGroupState.Interrupted => "已中断",
+            _ => "未运行",
+        };
+
+        private static string TimeText(GroupRunView run)
+        {
+            string start = run.StartedAt == DateTime.MinValue ? "" : run.StartedAt.ToString("HH:mm:ss");
+            string end = run.EndedAt == DateTime.MinValue ? "" : run.EndedAt.ToString("HH:mm:ss");
+            if (start.Length == 0) return end;
+            return end.Length > 0 ? start + " → " + end : start;
+        }
+
+        private static string FmtDur(TimeSpan d)
+            => d.TotalHours >= 1 ? ((int)d.TotalHours) + ":" + d.ToString(@"mm\:ss") : d.ToString(@"mm\:ss");
 
         private static (Brush accent, Brush fill) GroupColors(ScriptGroupState state)
         {

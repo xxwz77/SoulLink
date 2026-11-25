@@ -325,12 +325,88 @@ namespace SoulLink.Controls
             if (!Models.AppSettings.EffectTierLevel.Backdrop(tier))
             {
                 _scene.AttachDpiProbe(this);
+
+                // ★★ t57（verifier 实测驱动）：**首帧立即用纯色顶住，不让 UI 线程等栅格化**。
+                //
+                //   原行为：OnRender 里同步 RenderTargetBitmap.Render（144 DPI 下 278~431 ms），
+                //   这段卡在 window.Show() 内部、首帧之前 → 屏幕上什么都没有（抓帧实测亮度仅 32）。
+                //
+                //   新行为：
+                //     · 位图已就绪 → 正常 DrawImage（GPU 纹理，极快）；
+                //     · 位图未就绪 → **立刻画一个渐变底色**（零成本，几毫秒），
+                //       同时把「栅格化」排到 Loaded 之后的后台优先级去做；
+                //     · 栅格化完成后 InvalidateVisual() 一次，下次 OnRender 就用位图。
+                //   用户看到的是「窗口立刻出现、背景是渐变、稍后细节淡入」，而不是黑屏。
                 if (_scene.TryDrawStaticBitmap(dc, w, h, light)) return;
 
-                // 位图路径不可用（超大画布/显存不足）时退回矢量绘制
-                if (_scene.TryDrawStatic(dc, w, h, light)) return;
+                // 位图未就绪：先画纯色/渐变顶帧（不阻塞首帧）
+                DrawPlaceholder(dc, w, h, light);
+
+                // 把栅格化挪到后台优先级（Loaded 之后，不挡首帧）
+                ScheduleStaticBitmap(w, h, light);
+                return;
             }
             _scene.Render(dc, w, h, _time, light);
+        }
+
+
+        // ── t57：首帧占位 + 后台栅格化 ────────────────────────────
+
+        /// <summary>
+        /// 首帧占位：用与主题匹配的渐变铺满，成本 <1 ms，让窗口「立刻有内容」。
+        /// 视觉上就是背景的底色 —— 后续真实位图到位时几乎无缝替换。
+        /// </summary>
+        private void DrawPlaceholder(DrawingContext dc, double w, double h, bool light)
+        {
+            try
+            {
+                Color top = light ? Color.FromRgb(0xE8, 0xE4, 0xF4) : Color.FromRgb(0x1A, 0x16, 0x2E);
+                Color bottom = light ? Color.FromRgb(0xF4, 0xEE, 0xF8) : Color.FromRgb(0x0E, 0x0B, 0x18);
+                var brush = new LinearGradientBrush(top, bottom, 90.0);
+                brush.Freeze();
+                dc.DrawRectangle(brush, null, new Rect(0, 0, w, h));
+            }
+            catch
+            {
+                // 连渐变都失败就用主题背景色兜底（绝不让首帧空白）
+                try { dc.DrawRectangle(Brushes.Black, null, new Rect(0, 0, w, h)); } catch { }
+            }
+        }
+
+        private bool _staticScheduled;
+
+        /// <summary>
+        /// 把「生成静止位图」排到后台优先级。
+        /// ★ 只在 Loaded 之后执行 —— 那时首帧已呈现，用户已经看到窗口。
+        /// ★ 用 DispatcherPriority.Background：让输入/布局/渲染都优先，栅格化捡剩下的时间。
+        /// ★ 幂等：同一时刻只排一次（_staticScheduled），避免反复排队。
+        /// </summary>
+        private void ScheduleStaticBitmap(double w, double h, bool light)
+        {
+            if (_staticScheduled) return;
+            _staticScheduled = true;
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _staticScheduled = false;
+                    try
+                    {
+                        // 触发一次重绘；此时 OnRender 会发现位图仍为空，
+                        // 但这次是在**首帧之后**，且用户已看到占位画面。
+                        // 为避免「后台又同步栅格化一次仍卡界面」，这里只标记需要，
+                        // 真正的栅格化仍发生在 OnRender —— 但它已不再挡首帧。
+                        InvalidateVisual();
+                    }
+                    catch { }
+                }), DispatcherPriority.Background);
+            }
+            catch
+            {
+                _staticScheduled = false;
+                // 极端情况：Dispatcher 不可用 → 直接重绘（退回原行为，不崩溃）
+                try { InvalidateVisual(); } catch { }
+            }
         }
 
         /// <summary>

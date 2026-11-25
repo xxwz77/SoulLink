@@ -1026,11 +1026,39 @@ namespace SoulLink.Services
             return run.Route.Kind == "script" ? run.Route.RouteId : run.Route.ParentRouteId;
         }
 
+        /// <summary>
+        /// 配置组名校验（**采集层过滤**）。
+        ///
+        /// ★ 为什么必须在这里拦：BGI 在「取消执行配置组: "X"」里会把**框架异常消息**
+        ///   当成组名塞进来。实测生产库（run.db，2026-11-20 ~ 11-25）里出现了
+        ///   "The operation was canceled." ×11、"A task was canceled." ×1 ——
+        ///   它们一旦进 run 表就成了「一个配置组」，数据中心只能显示成一堆假卡片。
+        /// ★ 只拦**明确的**异常文本（整串相等）与异常类名/取消短语，
+        ///   不做其它语义猜测 —— 正常组名（中文 / 英文 / 带数字符号）一律放行。
+        /// ★ raw_event 里那一行原文照旧保留（raw 不做有效性筛选），只是不再生成 run 行。
+        /// </summary>
         internal static bool ValidGroup(string name)
         {
-            // 只检查 capture 是否有非空组名；名字像异常属于消费方判定，原事件不再丢弃。
-            return !string.IsNullOrWhiteSpace(name);
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            string n = name.Trim();
+            foreach (string bad in BogusGroupNames)
+                if (string.Equals(n, bad, StringComparison.OrdinalIgnoreCase)) return false;
+            if (n.Contains("Exception", StringComparison.OrdinalIgnoreCase)) return false;
+            if (n.Contains("was canceled", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("was cancelled", StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
         }
+
+        /// <summary>实测被误当成配置组名的框架异常消息（大小写不敏感整串匹配）。</summary>
+        private static readonly string[] BogusGroupNames =
+        {
+            "The operation was canceled.",
+            "The operation was cancelled.",
+            "A task was canceled.",
+            "A task was cancelled.",
+            "OperationCanceledException",
+            "TaskCanceledException",
+        };
 
         /// <summary>
         /// [ERR] 多行块累积（契约 §1.5）：

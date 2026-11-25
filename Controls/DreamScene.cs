@@ -468,10 +468,24 @@ public sealed class DreamScene
     {
         if (width < 2 || height < 2) return false;
 
-        if (_staticBitmap == null
-            || Math.Abs(_staticBmpWidth - width) > 0.5
-            || Math.Abs(_staticBmpHeight - height) > 0.5
-            || _staticBmpLight != light)
+        // ★★ t57（verifier 实测驱动）：**位图缓存不再绑尺寸**。
+        //
+        //   原行为：尺寸一变（哪怕 1167×767 → 1180×780，差 13px）就整块重栅格化，
+        //   而 RenderTargetBitmap.Render 在 144 DPI 下要 278~431 ms —— 且布局稳定前
+        //   必然变一次尺寸，所以**每次启动都栅格化两次**，白付一次 300~430 ms。
+        //   实测证据：窗口首次可见时平均亮度仅 32（近全黑），下一帧才 57~81；
+        //   A/B：只栅格化一次可省 300~430 ms（Loaded 1327→1078）。
+        //
+        //   新行为：
+        //     · 只有**主题色变化**或「尺寸变化超过阈值」才重新栅格化；
+        //     · 小尺寸变化（布局微调）直接用旧位图**拉伸**顶帧 —— 背景是柔和渐变，
+        //       拉伸几十像素肉眼不可见，但省下整段栅格化；
+        //     · 大尺寸变化（窗口缩放）仍然重画，保证清晰度。
+        bool themeChanged = _staticBmpLight != light;
+        bool sizeChangedALot = _staticBitmap == null
+            || Math.Abs(_staticBmpWidth - width) > Math.Max(64, width * 0.15)
+            || Math.Abs(_staticBmpHeight - height) > Math.Max(64, height * 0.15);
+        if (_staticBitmap == null || themeChanged || sizeChangedALot)
         {
             try
             {

@@ -94,7 +94,14 @@ namespace SoulLink.Views
             //   避免两个窗口标题完全相同、分不清哪个是哪个。
             try
             {
-                if (!string.Equals(AppIdentity.Name, "SoulLink", StringComparison.OrdinalIgnoreCase))
+                // t56: dev build marker (env SOULLINK_DEV_BUILD=1)
+                bool isDev = Environment.GetEnvironmentVariable("SOULLINK_DEV_BUILD") == "1";
+                if (isDev)
+                {
+                    Title = "SoulLink - DEV (do not use)";
+                    if (IdentityBadge != null) { IdentityBadge.Visibility = Visibility.Visible; }
+                }
+                else if (!string.Equals(AppIdentity.Name, "SoulLink", StringComparison.OrdinalIgnoreCase))
                 {
                     Title = "SoulLink · 挂机验证版";
                     // 左上角同时挂可见标识 —— 标题栏文字在最大化时容易被忽略，
