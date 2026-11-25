@@ -350,7 +350,17 @@ namespace SoulLink.Services
             if (clock.LastRawMs != long.MinValue && raw < clock.LastRawMs - 1_000)
             {
                 long back = clock.LastRawMs - raw;
-                if (back >= 22 * 3600_000 && back <= 26 * 3600_000)
+                // ★★ t54 修复（负时长）：仅凭「回退 22~26h」还不够 —— 增量喂入时，
+                //   上一个基线可能是**后一段**的时间（比如日志被分段喂入，前一块已到次日），
+                //   此时一条 10:01 的行回退 24h，会被误判成跨日 → start 被 +1 天，
+                //   而随后的 end 用原值 → end < start → 负时长（实测 57 条 route / 7 条 run）。
+                //   真跨日的必要条件：**回退前接近一天末尾，回退后接近一天开头**。
+                //   例：23:59 → 00:00（lastHour=23, curHour=0 ✓）；
+                //       反过来 10:01 → 10:01（lastHour=10, curHour=10 ✗，不 +1 天）。
+                int lastHour = (int)(clock.LastRawMs % 86_400_000 / 3_600_000);
+                int curHour  = (int)(raw % 86_400_000 / 3_600_000);
+                bool looksLikeMidnightCross = lastHour >= 20 && curHour <= 4;
+                if (back >= 22 * 3600_000 && back <= 26 * 3600_000 && looksLikeMidnightCross)
                 {
                     raw += 86_400_000;   // 23:59 → 00:00 真跨日
                     clock.LastRawMs = raw;

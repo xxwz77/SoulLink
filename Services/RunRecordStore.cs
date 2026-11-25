@@ -1231,8 +1231,53 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             cmd.ExecuteNonQuery();
         }
 
+        // ── t54：负时长防线（去重限流，同一 id 只报一次，避免刷屏）──
+        private static readonly ConcurrentDictionary<string, byte> NegativeDurationWarned =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// 记录一次「end &lt; start」的数据错误。只记一次（按 id 去重），
+        /// 写进 App 错误日志（用户在设置里能看到），绝不静默。
+        /// </summary>
+        private static void WarnNegativeDurationOnce(string id, string kind, long startMs, long endMs, string srcFile)
+        {
+            if (string.IsNullOrEmpty(id) || !NegativeDurationWarned.TryAdd(id, 0)) return;
+            try
+            {
+                long diff = endMs - startMs;
+                string msg = "[" + kind + "] 负时长数据错误（已夹到0，请反馈）：id=" + id
+                    + " start=" + DateTimeOffset.FromUnixTimeMilliseconds(startMs).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
+                    + " end=" + DateTimeOffset.FromUnixTimeMilliseconds(endMs).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
+                    + " diff=" + (diff / 1000) + "s"
+                    + (srcFile.Length > 0 ? " src=" + srcFile : "");
+                try { App.AppendErrorLog("RunRecordStore.NegativeDuration", new InvalidOperationException(msg)); } catch { }
+                try { DiagnosticSink?.Invoke(msg, null); } catch { }
+            }
+            catch { }
+        }
+
         private static void WriteRouteClose(SqliteConnection db, RouteClose close)
         {
+            // ★★ t54 防线：end < start 是数据错误（曾因跨日误判产生 57 条 route 负时长）。
+            //   不静默写库 —— 记警告（按 route_id 去重，避免同一 run 刷屏），
+            //   同时把 end 夹到 start（dur=0），保证库里不再出现 end<start 的脏数据。
+            //   ★ 警告只是「兜底」：根因已在 RunRecordCollector.ResolveTs 修掉（跨日需 lastHour>=20 && curHour<=4）。
+            if (close.EndAtMs > 0)
+            {
+                long startAt;
+                using (var q = db.CreateCommand())
+                {
+                    q.CommandText = "SELECT start_at_ms FROM route WHERE route_id=$id;";
+                    Add(q, "$id", close.RouteId);
+                    object? v = q.ExecuteScalar();
+                    startAt = v == null || v == DBNull.Value ? 0 : Convert.ToInt64(v, CultureInfo.InvariantCulture);
+                }
+                if (startAt > 0 && close.EndAtMs < startAt)
+                {
+                    WarnNegativeDurationOnce(close.RouteId, "route", startAt, close.EndAtMs, "");
+                    close = close with { EndAtMs = startAt, DurMs = 0 };
+                }
+            }
             using var cmd = db.CreateCommand();
             cmd.CommandText = @"UPDATE route SET end_at_ms=$end,
                 dur_ms=CASE WHEN $dur>0 THEN $dur ELSE MAX(0,$end-start_at_ms) END,
