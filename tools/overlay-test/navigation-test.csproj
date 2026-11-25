@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <AssemblyName>SoulLinkNavigationTest</AssemblyName>
+    <RootNamespace>SoulLink</RootNamespace>
+    <NoWarn>$(NoWarn);CS8618;CS8602;CS8603;CS0649;CS0414;CS0067;CS0169</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="NavigationTest.cs" />
+    <Compile Include="NavigationStubs.cs" />
+    <Compile Include="..\..\Views\MainWindow.xaml.cs" Link="Views\MainWindow.xaml.cs" />
+    <Compile Include="..\..\Services\OwnedOverlayWindow.cs" Link="Services\OwnedOverlayWindow.cs" />
+    <Compile Include="..\..\Services\WindowCorners.cs" Link="Services\WindowCorners.cs" />
+    <Compile Include="..\..\Services\ThemeManager.cs" Link="Services\ThemeManager.cs" />
+    <Compile Include="..\..\Services\ConfigStore.cs" Link="Services\ConfigStore.cs" />
+    <Compile Include="..\..\Models\Models.cs" Link="Models\Models.cs" />
+    <Compile Include="..\..\Models\FlowModels.cs" Link="Models\FlowModels.cs" />
+    <Compile Include="..\..\Models\FlowNodeCatalog.cs" Link="Models\FlowNodeCatalog.cs" />
+    <Compile Include="..\..\Services\AppIdentity.cs" Link="Services\AppIdentity.cs" />
+    <Page Include="..\..\Views\MainWindow.xaml" Link="Views\MainWindow.xaml" />
+    <Page Include="..\..\Theme\Styles.xaml" Link="Theme\Styles.xaml" />
+    <Resource Include="..\..\Assets\soullink.ico" Link="Assets\soullink.ico" Condition="Exists('..\..\Assets\soullink.ico')" />
+  </ItemGroup>
+</Project>

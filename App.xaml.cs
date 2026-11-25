@@ -175,7 +175,11 @@ namespace SoulLink
                 try { Services.AccountStateCenter.Stop(); } catch { }
                 try { Services.ScheduleRunnerHost.Shutdown(); } catch { }
                 try { Services.RouteUpdateSchedulerHost.Shutdown(); } catch { }
-                try { Services.WebServer.Stop(); } catch { }
+                // ★ 3.3.45：WebHost.Stop 会一并停掉回环 WebServer 与独立服务子进程，
+                //   不留孤儿进程占着对外端口。
+                try { Services.WebHost.Stop(); } catch { }
+                // ★ 3.3.41 排空运行记录写队列（有界 2 秒），保证最后一次入队不丢。
+                try { Services.RunRecordHost.Shutdown(); } catch { }
             };
 
             DispatcherUnhandledException += (_, args) =>
@@ -686,6 +690,22 @@ namespace SoulLink
                     LogBus.Error("启动账号状态中心失败：" + ex.Message);
                 }
 
+                // ★ 3.3.41 数据中心运行记录（SQLite）：重建 open 窗口 + 首次留存清理 + 注册小时级清理拍。
+                //   ★ 必须在 BgiLogCenter 开始喂日志之前启动，否则「重启后跨天续跑」会先看到
+                //     新文件而没有 DB open 行可继承（start 时刻丢失）。
+                //   ★ Start() 内部全在后台线程（EnsureBootedAsync + PurgeOlderThan）且幂等，
+                //     不挡界面、不扫日志、不枚举进程、不新建 DispatcherTimer。
+                try
+                {
+                    Services.RunRecordHost.Start();
+                    Breadcrumb("RunRecordHost started: retention=" + Services.RunRecordHost.RetentionDays + "d");
+                }
+                catch (Exception ex) { LogBus.Error("启动运行记录宿主失败：" + ex.Message); }
+
+                // 米游社：TickHub 每 60 拍检查开关/到点；默认关闭，Start 本身不做 IO/网络。
+                try { Services.MiyousheHost.Start(); }
+                catch (Exception ex) { LogBus.Error("启动米游社宿主失败：" + ex.Message); }
+
                 // 启动进程内定时调度器（只处理"仅运行时"的计划）
                 try
                 {
@@ -696,15 +716,21 @@ namespace SoulLink
                     LogBus.Error("启动定时调度失败：" + ex.Message);
                 }
 
-                // 启动局域网网页服务（端口来自设置，0 = 不启动）
+                // ★ 3.3.45 / t24：网页入口改由 WebHost 统一编排。
+                //   · 对外唯一端口 = AppSettings.WebPort（交给独立服务 SoulLink.TaskEdit 独占）；
+                //   · 主程序自己只绑回环 http://127.0.0.1:<内部端口>/，当独立服务的上游；
+                //   · 页面与 API 的内容一行未改，只是搬了入口。
                 try
                 {
-                    Services.WebServer.Apply(Config?.Settings?.WebPort ?? 0);
+                    Services.WebHost.Apply(
+                        Config?.Settings?.WebPort ?? 0,
+                        Config?.Settings?.WebInternalPort ?? 0,
+                        Config?.Settings?.WebPassword);
                     Services.WebServer.EnsureLiveRefresh();
                 }
                 catch (Exception ex)
                 {
-                    LogBus.Error("启动网页服务失败：" + ex.Message);
+                    LogBus.Error("启动网页入口失败：" + ex.Message);
                 }
 
                 // 启动路线更新的定时调度器（与动作调度互不影响）

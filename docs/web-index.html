@@ -220,7 +220,7 @@
                 color:var(--txt);background:var(--card);border:1px solid var(--border);
                 border-radius:8px;cursor:pointer}
 
-  /* ══════════ 功能页（hash 路由：配置组分析 / 摩拉收益）══════════ */
+  /* ══════════ 功能页（hash 路由：运行分析 / 摩拉收益）══════════ */
   body.page-func main>.stat,
   body.page-func main>.sect-t,
   body.page-func main>#users,
@@ -503,6 +503,87 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
   /* 内容层（背景渐变已画在 body 上，无需额外层级处理） */
   video,header,main,.stat,.urow{position:relative}
 
+
+/* ══ 运行分析（t13 / 3.3.47）══ */
+.ra-toolbar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;
+  padding:10px 12px;background:var(--card2);border:1px solid var(--border);
+  border-radius:8px;margin:12px 0 10px}
+.ra-f{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--txt3)}
+.ra-f>span{font-size:10.5px;opacity:.85}
+.ra-f select,.ra-f input{background:var(--card);color:var(--txt);
+  border:1px solid var(--border);border-radius:5px;padding:3px 6px;font-size:11.5px;
+  font-family:inherit;min-width:86px;outline:none}
+.ra-f select:focus,.ra-f input:focus{border-color:var(--accent)}
+.ra-f-kw input{min-width:190px}
+.ra-toolbar .uact-btn{margin-left:auto}
+.ra-filterbar{font-size:11px;color:var(--accent);margin:-4px 0 10px;padding-left:2px}
+.ra-metrics{flex-wrap:wrap}
+.ra-metrics .metric{min-width:112px}
+.ra-sec{margin-bottom:10px}
+.ra-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.ra-table{min-width:640px}
+.ra-table th{white-space:nowrap}
+.ra-mono{font-variant-numeric:tabular-nums;font-size:11px;white-space:nowrap}
+.ra-name{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ra-pickd{max-width:320px;font-size:11px}
+.ra-pickitems{line-height:1.6}
+.ra-runrow{cursor:pointer}
+.ra-runrow:hover{background:var(--card2)}
+.ra-runrow.ra-open{background:var(--card2)}
+.ra-exp{color:var(--txt4);font-size:10px;text-align:center;user-select:none}
+.ra-detailrow>td{background:var(--card2);padding:0!important}
+.ra-detail{padding:12px 14px;border-left:2px solid var(--accent)}
+.ra-detail-loading{padding:14px;color:var(--txt4);font-size:11.5px}
+.ra-dsum{display:flex;flex-wrap:wrap;gap:14px;font-size:11.5px;color:var(--txt2);
+  padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--border)}
+.ra-sub{font-size:11.5px;color:var(--txt3);margin:12px 0 6px;font-weight:600}
+.ra-badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10.5px;
+  line-height:1.7;white-space:nowrap;background:var(--card);border:1px solid var(--border)}
+.ra-badge.badge-ok{color:var(--mint);border-color:var(--mint)}
+.ra-badge.badge-fail{color:var(--rose);border-color:var(--rose)}
+.ra-badge.badge-warn{color:#e0a33e;border-color:#e0a33e}
+.ra-badge.badge-run{color:var(--accent);border-color:var(--accent)}
+.ra-badge.badge-js{color:#8fb8ff;border-color:#8fb8ff}
+.ra-badge.badge-path{color:#9fd89f;border-color:#9fd89f}
+.ra-err{margin:6px 0;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.ra-err>summary{cursor:pointer;padding:7px 10px;font-size:11.5px;
+  display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;background:var(--card)}
+.ra-err>summary:hover{background:var(--card2)}
+.ra-errmsg{flex:1;min-width:200px;color:var(--txt2);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ra-errmeta{font-size:10.5px;color:var(--txt4);white-space:nowrap}
+.ra-stack{margin:0;padding:10px 12px;background:var(--bg);color:var(--txt2);
+  font-size:11px;line-height:1.55;overflow-x:auto;max-height:340px;
+  overflow-y:auto;white-space:pre;font-family:Consolas,Menlo,monospace}
+.ra-pager{display:flex;gap:10px;align-items:center;justify-content:center;
+  padding:10px 0 2px;font-size:11.5px}
+.ra-pg{background:var(--card2);color:var(--txt2);border:1px solid var(--border);
+  border-radius:5px;padding:4px 11px;cursor:pointer;font-size:11.5px;font-family:inherit}
+.ra-pg:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.ra-pg:disabled{opacity:.35;cursor:not-allowed}
+.ra-pg-info{color:var(--txt4);font-size:11px}
+.ra-pickcounts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.ra-pc{padding:5px 12px;border-radius:6px;font-size:11.5px;
+  background:var(--card2);border:1px solid var(--border)}
+.ra-pc b{font-size:15px;margin-right:4px;font-variant-numeric:tabular-nums}
+.ra-pc-picked b{color:var(--mint)}
+.ra-pc-notarget b{color:#e0a33e}
+.ra-pc-skipped b{color:var(--rose)}
+.ra-source{margin-top:10px;padding:8px 11px;font-size:11px;line-height:1.7;
+  color:var(--txt3);background:var(--card2);border-left:2px solid var(--accent);
+  border-radius:0 5px 5px 0}
+.ra-skel{display:flex;flex-direction:column;gap:8px;padding:12px 0}
+.ra-skel-row{height:34px;border-radius:6px;background:var(--card2);
+  animation:raPulse 1.3s ease-in-out infinite}
+.ra-skel-row:nth-child(2){animation-delay:.16s}
+.ra-skel-row:nth-child(3){animation-delay:.32s}
+@keyframes raPulse{0%,100%{opacity:.45}50%{opacity:.85}}
+@media(max-width:620px){
+  .ra-toolbar{flex-direction:column;align-items:stretch}
+  .ra-toolbar .uact-btn{margin-left:0}
+  .ra-f-kw input{min-width:0;width:100%}
+  .ra-metrics .metric{min-width:calc(50% - 5px)}
+}
 </style>
 </head>
 <body>
@@ -663,10 +744,10 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
    </div>
   </div>
 
-  <!-- ══ 配置组分析页（#/ledger/:id，2026-11-23 网页改版）══ -->
+  <!-- ══ 运行分析页（#/ledger/:id；t13 改名不改路由，旧书签仍可用）══ -->
   <div id="ledgerPage" style="display:none">
     <button class="page-back" id="ledgerBack" type="button">‹ 返回总览</button>
-    <div class="sect-t">配置组分析</div>
+    <div class="sect-t" id="ledgerTitle">运行分析</div>
     <div class="userswitch" id="ledgerSwitch" style="display:none"></div>
     <div id="ledgerBody"></div>
   </div>
@@ -875,7 +956,7 @@ function renderUsers() {
   $('empty').style.display = 'none';
 
   // ★ 2026-11-23 网页改版：每账号一张可折叠卡片（默认收起），
-  //   点卡片头部展开该账号的功能按钮（查看画面 / 配置组分析 / 摩拉收益）。
+  //   点卡片头部展开该账号的功能按钮（查看画面 / 运行分析 / 摩拉收益）。
   for (const u of users) {
     const card = document.createElement('div');
     card.className = 'ucard';
@@ -929,7 +1010,7 @@ function renderUsers() {
       + detail
       + '<div class="ucard-actions">'
       + '<button class="uact-btn" data-act="remote">查看画面</button>'
-      + '<button class="uact-btn" data-act="ledger">配置组分析</button>'
+      + '<button class="uact-btn" data-act="ledger">运行分析</button>'
       + '<button class="uact-btn" data-act="earnings">摩拉收益</button>'
       + '</div>'
       + '</div>'
@@ -3321,7 +3402,7 @@ function esc(s) {
 // ── hash 路由（2026-11-23 网页改版）────────────────────────────
 //   #/                总览（每账号一张折叠卡片）
 //   #/remote/:id      查看画面（同页跳转，取代旧 ?view= 独立窗口）
-//   #/ledger/:id      配置组分析（顶部用户切换器）
+//   #/ledger/:id      运行分析（顶部用户切换器；t13 改名不改路由）
 //   #/earnings/:id    摩拉收益（顶部用户切换器）
 //   三个功能页顶部都有「用户切换器」，页内直接切账号看对应数据，无需退回首页。
 let curId = '';   // 功能页当前选中的账号 id（用户切换器回显用）
@@ -3397,8 +3478,765 @@ function applyRemoteUser(u) {
   startLive();      // startLive 内部先 stopLive()，切账号时旧流会被收掉
 }
 
-// ── 配置组分析（#/ledger/:id）────────────────────────────────
-async function showLedger(id) {
+// ══════════════════════════════════════════════════════════════════════
+// 运行分析（#/ledger/:id）— 3.3.47 / t13 重写
+// ══════════════════════════════════════════════════════════════════════
+//
+// ★ 为什么重写：t4 交付的 /api/bgi/runs 三个接口**页面一个都没用**，
+//   老 renderLedger 只渲染 /api/bgi/ledger 的 groups，连 records 都读了没渲染 ——
+//   用户看不到「每次运行的时间 / 时长 / 状态」。
+//
+// ★ 数据源（全部已存在，本次不新增后端查询逻辑，只加一个 picks 列表接口）：
+//   /api/bgi/runs         逐次运行（开始/结束/时长/状态/脚本数/跨天/收益/拾取）
+//   /api/bgi/runs/detail  单次运行 → 路线明细 + 报错完整栈（点开才拉，按需）
+//   /api/bgi/runs/groups  按配置组聚合
+//   /api/bgi/picks        三类拾取事实（picked/no_target/skipped），分页
+//   /api/bgi/ledger       老台账（保留：用户熟悉的「问题组」视图）
+//   /api/miyoushe/mora/*  米游社账目侧（分区展示，绝不与 BGI 侧混算）
+//
+// ★ 筛选分层（关键，容易做错）：
+//   · days 是**后端**参数（查询时按 cutoff 过滤）→ 改它必须重新请求；
+//   · 配置组 / 状态 / 排序 / 关键字 / 时长阈值 / kind 是**前端**内存过滤 → 不重请。
+//
+// ★ 分页：单页 50 条（§17.5 单次响应 < 1MB）。
+
+const RA = {
+  user: null,
+  days: 7,
+  runs: [],
+  groups: [],
+  picks: [],
+  pickCounts: { picked: 0, noTarget: 0, skipped: 0 },
+  ledger: null,
+  loading: false,
+  err: '',
+  // 前端筛选状态
+  f: { group: '', state: '', kw: '', minDurMin: '', sort: 'start-desc' },
+  // 分页（三个表各一份）
+  page: { runs: 1, groups: 1, picks: 1 },
+  pageSize: 50,
+  // 展开的运行（runId → detail JSON 或 'loading'）
+  details: {},
+  // 按需展开的分区
+  open: { runs: true, groups: true, picks: false, problems: false, miyoushe: false },
+};
+
+// ── 人类可读时长（秒 → 中文，不显示裸毫秒）──────────────────────────
+function raDur(sec) {
+  if (sec == null || isNaN(sec) || sec < 0) return '—';
+  const t = Math.round(sec);
+  if (t < 60) return t + '秒';
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  let out = '';
+  if (h > 0) out += h + '小时';
+  if (m > 0) out += m + '分';
+  if (s > 0 || out === '') out += s + '秒';
+  return out;
+}
+
+// ── 时刻：ISO → HH:MM:SS（跨天补上日期）────────────────────────────
+function raTime(iso, withDay) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return esc(iso);
+  const p2 = n => String(n).padStart(2, '0');
+  const hm = p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds());
+  return withDay
+    ? (p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + hm)
+    : hm;
+}
+
+// ── 状态 → 徽标（颜色 + 中文）───────────────────────────────────────
+function raState(st) {
+  const s = String(st == null ? '' : st);
+  const map = {
+    'Finished': ['成功', 'badge-ok'],
+    'Failed': ['失败', 'badge-fail'],
+    'Cancelled': ['取消', 'badge-warn'],
+    'Interrupted': ['中断', 'badge-warn'],
+    'Running': ['进行中', 'badge-run'],
+  };
+  const it = map[s] || [s || '未知', ''];
+  return '<span class="ra-badge ' + it[1] + '">' + esc(it[0]) + '</span>';
+}
+
+// ── 数字格式化（大数字加千分位，便于读）─────────────────────────────
+function raNum(n) {
+  if (n == null || n === '' || isNaN(n)) return '0';
+  return Number(n).toLocaleString('en-US');
+}
+
+// ── 每秒摩拉（对齐参考实现的排序维度）───────────────────────────────
+function raMoraPerMin(run) {
+  const sec = Number(run.durSec) || 0;
+  const mora = Number(run.mora) || 0;
+  if (sec <= 0) return 0;
+  return (mora / sec) * 60;
+}
+
+// ── 拉数据（days 变了才重请；其余筛选不重请）────────────────────────
+async function raLoad(u) {
+  RA.user = u;
+  RA.loading = true; RA.err = '';
+  RA.details = {}; RA.page = { runs: 1, groups: 1, picks: 1 };
+  const body = $('ledgerBody');
+  if (body) body.innerHTML = raLoadingHtml();
+
+  const q = 'user=' + encodeURIComponent(u.user) + '&days=' + RA.days;
+  const [runsR, groupsR, picksR, ledgerR] = await Promise.allSettled([
+    fetch('/api/bgi/runs?' + q).then(r => r.json()),
+    fetch('/api/bgi/runs/groups?' + q).then(r => r.json()),
+    fetch('/api/bgi/picks?' + q + '&limit=500').then(r => r.json()),
+    fetch('/api/bgi/ledger?' + q).then(r => r.json()),
+  ]);
+
+  RA.runs = (runsR.status === 'fulfilled' && runsR.value && runsR.value.ok) ? (runsR.value.items || []) : [];
+  RA.groups = (groupsR.status === 'fulfilled' && groupsR.value && groupsR.value.ok) ? (groupsR.value.items || []) : [];
+  const pk = (picksR.status === 'fulfilled') ? picksR.value : null;
+  RA.picks = (pk && pk.ok) ? (pk.items || []) : [];
+  RA.pickCounts = (pk && pk.counts) ? pk.counts : { picked: 0, noTarget: 0, skipped: 0 };
+  RA.ledger = (ledgerR.status === 'fulfilled') ? ledgerR.value : null;
+
+  // 全部失败才算错；部分失败降级显示（不整页白屏）
+  if (runsR.status === 'rejected' && groupsR.status === 'rejected' && picksR.status === 'rejected')
+    RA.err = (runsR.reason && runsR.reason.message) || '网络错误';
+
+  RA.loading = false;
+  raRender();
+}
+
+// ── 加载中骨架 ───────────────────────────────────────────────────────
+function raLoadingHtml() {
+  return '<div class="ra-skel">'
+    + '<div class="ra-skel-row"></div><div class="ra-skel-row"></div><div class="ra-skel-row"></div>'
+    + '</div><div class="pageempty" style="text-align:center">正在读取运行记录…</div>';
+}
+
+// ── 主渲染 ───────────────────────────────────────────────────────────
+function raRender() {
+  const body = $('ledgerBody');
+  if (!body) return;
+
+  if (RA.err) {
+    body.innerHTML = '<div class="pageempty">加载失败：' + esc(RA.err) + '</div>'
+      + '<div style="text-align:center;margin-top:10px">'
+      + '<button class="uact-btn" onclick="raReload()">重试</button></div>';
+    return;
+  }
+
+  const all = RA.runs || [];
+  const empty = all.length === 0 && (RA.groups || []).length === 0;
+
+  let html = raToolbarHtml();
+  html += raMetricsHtml();
+
+  if (empty) {
+    // ── 空态 ②：确实没有记录 ──
+    html += '<div class="pageempty" style="text-align:center;padding:34px 16px">'
+      + '近 ' + RA.days + ' 天没有配置组运行记录。'
+      + '<div style="margin-top:8px;font-size:11.5px;color:var(--txt4)">'
+      + '运行记录由 BGI 日志采集而来；确认主程序已开启、账号目录下有当天的日志文件。</div></div>';
+    body.innerHTML = html;
+    return;
+  }
+
+  html += raRunsSectionHtml();
+  html += raGroupsSectionHtml();
+  html += raPicksSectionHtml();
+  html += raProblemsSectionHtml();
+  html += raMiyousheSectionHtml();
+
+  body.innerHTML = html;
+  raWire();
+}
+
+// ── 顶部工具条：时间范围 + 筛选 + 排序 ───────────────────────────────
+function raToolbarHtml() {
+  const f = RA.f;
+  const groups = [...new Set((RA.runs || []).map(r => r.group).filter(Boolean))].sort();
+  const states = [...new Set((RA.runs || []).map(r => r.state).filter(Boolean))];
+
+  let h = '<div class="ra-toolbar">';
+  // 时间范围（★ 后端参数：改了要重请）
+  h += '<label class="ra-f"><span>时间范围</span><select id="raDays">';
+  [['1', '今天'], ['3', '近 3 天'], ['7', '近 7 天'], ['14', '近 14 天'], ['30', '近 30 天']]
+    .forEach(([v, t]) => { h += '<option value="' + v + '"' + (String(RA.days) === v ? ' selected' : '') + '>' + t + '</option>'; });
+  h += '</select></label>';
+
+  // 配置组（前端）
+  h += '<label class="ra-f"><span>配置组</span><select id="raGroup"><option value="">全部</option>';
+  groups.forEach(g => { h += '<option value="' + esc(g) + '"' + (f.group === g ? ' selected' : '') + '>' + esc(g) + '</option>'; });
+  h += '</select></label>';
+
+  // 状态（前端）
+  h += '<label class="ra-f"><span>状态</span><select id="raState"><option value="">全部</option>';
+  states.forEach(s => {
+    const label = { Finished: '成功', Failed: '失败', Cancelled: '取消', Interrupted: '中断', Running: '进行中' }[s] || s;
+    h += '<option value="' + esc(s) + '"' + (f.state === s ? ' selected' : '') + '>' + esc(label) + '</option>';
+  });
+  h += '</select></label>';
+
+  // 时长阈值（前端）
+  h += '<label class="ra-f"><span>时长 ≥</span><select id="raDur">';
+  [['', '不限'], ['1', '1 分钟'], ['5', '5 分钟'], ['15', '15 分钟'], ['30', '30 分钟'], ['60', '1 小时']]
+    .forEach(([v, t]) => { h += '<option value="' + v + '"' + (f.minDurMin === v ? ' selected' : '') + '>' + t + '</option>'; });
+  h += '</select></label>';
+
+  // 排序（前端）
+  h += '<label class="ra-f"><span>排序</span><select id="raSort">';
+  [['start-desc', '开始时间 ↓'], ['start-asc', '开始时间 ↑'],
+   ['dur-desc', '时长 ↓'], ['dur-asc', '时长 ↑'],
+   ['mpm-desc', '每分钟摩拉 ↓'], ['picks-desc', '拾取数 ↓']]
+    .forEach(([v, t]) => { h += '<option value="' + v + '"' + (f.sort === v ? ' selected' : '') + '>' + t + '</option>'; });
+  h += '</select></label>';
+
+  // 关键字（前端，跨块）
+  h += '<label class="ra-f ra-f-kw"><span>搜索</span>'
+    + '<input id="raKw" type="search" placeholder="配置组 / 路线 / 物品 / 报错" value="' + esc(f.kw) + '"></label>';
+
+  h += '<button class="uact-btn" id="raReset">重置</button>';
+  h += '</div>';
+
+  // 生效中的筛选提示
+  const bits = [];
+  if (f.group) bits.push('配置组=' + f.group);
+  if (f.state) bits.push('状态=' + f.state);
+  if (f.minDurMin) bits.push('时长≥' + f.minDurMin + '分');
+  if (f.kw) bits.push('搜索「' + f.kw + '」');
+  if (bits.length) {
+    h += '<div class="ra-filterbar">已筛选：' + esc(bits.join(' · ')) + '</div>';
+  }
+  return h;
+}
+
+// ── 顶部指标卡 ───────────────────────────────────────────────────────
+function raMetricsHtml() {
+  const runs = raFilteredRuns();
+  const total = runs.length;
+  const failed = runs.filter(r => r.state === 'Failed').length;
+  const ok = runs.filter(r => r.state === 'Finished').length;
+  const durSum = runs.reduce((a, r) => a + (Number(r.durSec) || 0), 0);
+  const moraSum = runs.reduce((a, r) => a + (Number(r.mora) || 0), 0);
+  const picksSum = runs.reduce((a, r) => a + (Number(r.picks) || 0), 0);
+  const rate = total > 0 ? Math.round((ok / total) * 100) : 0;
+  return '<div class="metrics ra-metrics">'
+    + '<div class="metric"><div class="v num">' + total + '</div><div class="k">运行次数</div></div>'
+    + '<div class="metric"><div class="v num">' + rate + '%</div><div class="k">成功率</div></div>'
+    + '<div class="metric"><div class="v num ' + (failed > 0 ? 'badge-fail' : '') + '">' + failed + '</div><div class="k">失败次数</div></div>'
+    + '<div class="metric"><div class="v">' + raDur(durSum) + '</div><div class="k">总时长</div></div>'
+    + '<div class="metric"><div class="v num">' + raNum(picksSum) + '</div><div class="k">总拾取</div></div>'
+    + '<div class="metric"><div class="v num">' + raNum(moraSum) + '</div><div class="k">总摩拉</div></div>'
+    + '</div>';
+}
+
+// ── 前端筛选（全部内存操作，不重新请求）──────────────────────────────
+function raFilteredRuns() {
+  const f = RA.f;
+  let list = (RA.runs || []).slice();
+
+  if (f.group) list = list.filter(r => r.group === f.group);
+  if (f.state) list = list.filter(r => r.state === f.state);
+
+  if (f.minDurMin) {
+    const min = Number(f.minDurMin) * 60;
+    list = list.filter(r => (Number(r.durSec) || 0) >= min);
+  }
+
+  if (f.kw) {
+    const k = f.kw.toLowerCase();
+    list = list.filter(r =>
+      String(r.group || '').toLowerCase().includes(k)
+      || String(r.detail || '').toLowerCase().includes(k)
+      || String(r.state || '').toLowerCase().includes(k));
+  }
+
+  const s = f.sort || 'start-desc';
+  list.sort((a, b) => {
+    if (s === 'start-asc') return (a.startAtMs || 0) - (b.startAtMs || 0);
+    if (s === 'dur-desc') return (b.durSec || 0) - (a.durSec || 0);
+    if (s === 'dur-asc') return (a.durSec || 0) - (b.durSec || 0);
+    if (s === 'mpm-desc') return raMoraPerMin(b) - raMoraPerMin(a);
+    if (s === 'picks-desc') return (b.picks || 0) - (a.picks || 0);
+    return (b.startAtMs || 0) - (a.startAtMs || 0);
+  });
+  return list;
+}
+
+// ── 通用分页条 ───────────────────────────────────────────────────────
+function raPagerHtml(kind, total) {
+  const pages = Math.max(1, Math.ceil(total / RA.pageSize));
+  const cur = Math.min(RA.page[kind] || 1, pages);
+  RA.page[kind] = cur;
+  if (pages <= 1) return '<div class="ra-pager"><span class="ra-pg-info">共 ' + total + ' 条</span></div>';
+  return '<div class="ra-pager" data-pager="' + kind + '">'
+    + '<button class="ra-pg" data-pg="' + kind + '" data-to="' + (cur - 1) + '"' + (cur <= 1 ? ' disabled' : '') + '>‹ 上一页</button>'
+    + '<span class="ra-pg-info">第 ' + cur + ' / ' + pages + ' 页 · 共 ' + total + ' 条</span>'
+    + '<button class="ra-pg" data-pg="' + kind + '" data-to="' + (cur + 1) + '"' + (cur >= pages ? ' disabled' : '') + '>下一页 ›</button>'
+    + '</div>';
+}
+
+function raSlice(kind, list) {
+  const pages = Math.max(1, Math.ceil(list.length / RA.pageSize));
+  let cur = RA.page[kind] || 1;
+  if (cur > pages) cur = pages;
+  RA.page[kind] = cur;
+  const from = (cur - 1) * RA.pageSize;
+  return list.slice(from, from + RA.pageSize);
+}
+
+// ── 分区外壳（可折叠，按需加载）──────────────────────────────────────
+function raSection(id, title, badge, inner, opened) {
+  const on = opened ? ' open' : '';
+  return '<details class="card ra-sec" id="ra-sec-' + id + '"' + on + '>'
+    + '<summary>' + esc(title)
+    + (badge != null ? ' <span class="badge tag">' + esc(String(badge)) + '</span>' : '')
+    + '</summary><div class="body">' + inner + '</div></details>';
+}
+
+// ── ① 运行记录（核心）───────────────────────────────────────────────
+function raRunsSectionHtml() {
+  const list = raFilteredRuns();
+  const rawTotal = (RA.runs || []).length;
+
+  if (!list.length) {
+    // ── 空态 ③：筛出来是空 ──
+    return raSection('runs', '运行记录', '0 / ' + rawTotal,
+      '<div class="pageempty" style="text-align:center;padding:26px 12px">'
+      + '当前筛选条件没有匹配记录。'
+      + '<div style="margin-top:8px;font-size:11.5px;color:var(--txt4)">'
+      + '共 ' + rawTotal + ' 条运行记录被筛选条件排除 · <a href="javascript:raResetFilter()" style="color:var(--accent)">重置筛选</a></div>'
+      + '</div>', true);
+  }
+
+  const page = raSlice('runs', list);
+  let h = '<div class="ra-scroll"><table class="ldtable ra-table"><thead><tr>'
+    + '<th style="width:26px"></th><th>配置组</th><th>开始</th><th>结束</th>'
+    + '<th class="num">时长</th><th>状态</th><th class="num">脚本</th>'
+    + '<th class="num">拾取</th><th class="num">摩拉/分</th><th>跨天</th>'
+    + '</tr></thead><tbody>';
+
+  for (const r of page) {
+    const open = !!RA.open['run:' + r.runId];
+    const crossTag = r.crossDay
+      ? '<span class="ra-badge badge-warn" title="该次运行跨 0 点，分属两个日志文件">跨天</span>'
+      : '';
+    h += '<tr class="ra-runrow' + (open ? ' ra-open' : '') + '" data-run="' + esc(r.runId) + '">'
+      + '<td class="ra-exp">' + (open ? '▾' : '▸') + '</td>'
+      + '<td>' + esc(r.group || '(未识别组名)') + '</td>'
+      + '<td class="ra-mono">' + raTime(r.startAt, true) + '</td>'
+      + '<td class="ra-mono">' + (r.endAt ? raTime(r.endAt, true) : '<span style="opacity:.5">进行中</span>') + '</td>'
+      + '<td class="num">' + raDur(r.durSec) + '</td>'
+      + '<td>' + raState(r.state) + '</td>'
+      + '<td class="num">' + (r.scriptCount || 0) + '</td>'
+      + '<td class="num">' + raNum(r.picks) + '</td>'
+      + '<td class="num">' + Math.round(raMoraPerMin(r)) + '</td>'
+      + '<td>' + crossTag + '</td>'
+      + '</tr>';
+    if (open) {
+      h += '<tr class="ra-detailrow"><td colspan="10">' + raDetailHtml(r) + '</td></tr>';
+    }
+  }
+  h += '</tbody></table></div>';
+  h += raPagerHtml('runs', list.length);
+  return raSection('runs', '运行记录', page.length + ' / ' + list.length, h, RA.open.runs);
+}
+
+// ── 展开的详情：路线明细 + 报错完整栈 ────────────────────────────────
+function raDetailHtml(r) {
+  const d = RA.details[r.runId];
+  if (d === 'loading' || d === undefined)
+    return '<div class="ra-detail-loading">正在读取路线与报错…</div>';
+  if (d === 'error')
+    return '<div class="ra-detail-loading badge-fail">明细加载失败</div>';
+  if (!d || d.ok === false || d.found === false)
+    return '<div class="ra-detail-loading">' + esc((d && d.error) || '没有明细数据（可能已被留存清理）') + '</div>';
+
+  const routes = d.routes || [];
+  const errors = d.errors || [];
+  let h = '<div class="ra-detail">';
+
+  // 概要行
+  h += '<div class="ra-dsum">'
+    + '<span>收益 <b class="num">' + raNum(d.run && d.run.exp) + '</b> 经验 · '
+    + '<b class="num">' + raNum(d.run && d.run.mora) + '</b> 摩拉</span>'
+    + '<span>拾取 <b class="num">' + raNum(d.run && d.run.picks) + '</b></span>'
+    + '<span>路线 ' + routes.length + ' 条 · 报错 ' + errors.length + ' 条</span>'
+    + (d.run && d.run.srcFileStart ? '<span class="ra-mono" style="color:var(--txt4)">' + esc(d.run.srcFileStart) + '</span>' : '')
+    + '</div>';
+
+  // 路线表
+  if (routes.length) {
+    h += '<div class="ra-sub">路线 / 脚本明细</div><div class="ra-scroll"><table class="ldtable ra-table"><thead><tr>'
+      + '<th>类型</th><th>名称</th><th>开始</th><th class="num">时长</th><th>状态</th><th class="num">拾取</th><th>拾取明细</th>'
+      + '</tr></thead><tbody>';
+    for (const rt of routes) {
+      const isScript = rt.kind === 'script';
+      h += '<tr>'
+        + '<td><span class="ra-badge ' + (isScript ? 'badge-js' : 'badge-path') + '">'
+          + (isScript ? '脚本' : '路线') + '</span></td>'
+        + '<td class="ra-name" title="' + esc(rt.name || '') + '">' + esc(rt.name || '—') + '</td>'
+        + '<td class="ra-mono">' + raTime(rt.startAt) + '</td>'
+        + '<td class="num">' + raDur(rt.durSec) + '</td>'
+        + '<td>' + raState(rt.state) + '</td>'
+        + '<td class="num">' + (rt.pickCount || 0) + '</td>'
+        + '<td class="ra-pickd">' + raPickDetailHtml(rt.pickDetail) + '</td>'
+        + '</tr>';
+    }
+    h += '</tbody></table></div>';
+  } else {
+    h += '<div class="ra-sub">路线 / 脚本明细</div><div class="pageempty">该次运行没有路线记录。</div>';
+  }
+
+  // 报错（完整栈，可展开）
+  if (errors.length) {
+    h += '<div class="ra-sub">报错详情 <span class="badge tag">' + errors.length + '</span></div>';
+    for (let i = 0; i < errors.length; i++) {
+      const er = errors[i];
+      const routeName = (routes.find(x => x.routeId === er.routeId) || {}).name || '(未归属路线)';
+      h += '<details class="ra-err">'
+        + '<summary><span class="ra-badge badge-fail">' + esc(er.type || er.level || '错误') + '</span> '
+        + '<span class="ra-errmsg">' + esc(er.message || '') + '</span>'
+        + '<span class="ra-errmeta">' + raTime(er.ts) + ' · ' + esc(routeName) + '</span></summary>';
+      h += '<pre class="ra-stack">' + esc(er.detail || er.message || '(无堆栈)') + '</pre>';
+      h += '</details>';
+    }
+  } else {
+    h += '<div class="ra-sub">报错详情</div><div class="pageempty">该次运行没有报错。</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+// ── 拾取明细（JSON 对象 → 「物品 ×N」可读串）─────────────────────────
+function raPickDetailHtml(pd) {
+  if (!pd) return '<span style="opacity:.4">—</span>';
+  let obj = pd;
+  if (typeof pd === 'string') {
+    try { obj = JSON.parse(pd); } catch (e) { return esc(pd); }
+  }
+  if (!obj || typeof obj !== 'object') return esc(String(pd));
+  const keys = Object.keys(obj);
+  if (!keys.length) return '<span style="opacity:.4">—</span>';
+  // 按数量降序，最多显示 6 项，其余折叠成 +N
+  const sorted = keys.map(k => [k, Number(obj[k]) || 0]).sort((a, b) => b[1] - a[1]);
+  const head = sorted.slice(0, 6).map(([k, v]) => esc(k) + '×' + v).join('、');
+  const more = sorted.length > 6
+    ? '<span title="' + esc(sorted.slice(6).map(([k, v]) => k + '×' + v).join('、')) + '" style="opacity:.6"> 等 ' + sorted.length + ' 种</span>'
+    : '';
+  return '<span class="ra-pickitems">' + head + more + '</span>';
+}
+
+// ── ② 按配置组汇总 ──────────────────────────────────────────────────
+function raGroupsSectionHtml() {
+  const f = RA.f;
+  let list = (RA.groups || []).slice();
+  if (f.group) list = list.filter(g => g.group === f.group);
+  if (f.kw) {
+    const k = f.kw.toLowerCase();
+    list = list.filter(g => String(g.group || '').toLowerCase().includes(k));
+  }
+  list.sort((a, b) => (b.runs || 0) - (a.runs || 0));
+
+  if (!list.length) {
+    return raSection('groups', '按配置组汇总', '0',
+      '<div class="pageempty" style="text-align:center;padding:22px 12px">'
+      + (RA.groups.length ? '当前筛选条件没有匹配的配置组。' : '暂无汇总数据。')
+      + '</div>', RA.open.groups);
+  }
+
+  const page = raSlice('groups', list);
+  let h = '<div class="ra-scroll"><table class="ldtable ra-table"><thead><tr>'
+    + '<th>配置组</th><th class="num">次数</th><th class="num">失败</th>'
+    + '<th class="num">总时长</th><th class="num">均经验</th><th class="num">均摩拉</th>'
+    + '<th class="num">总拾取</th><th>最后结束</th>'
+    + '</tr></thead><tbody>';
+  for (const g of page) {
+    const failCls = (g.failures || 0) > 0 ? 'badge-fail' : 'badge-ok';
+    h += '<tr>'
+      + '<td>' + esc(g.group || '(未识别)') + '</td>'
+      + '<td class="num">' + (g.runs || 0) + '</td>'
+      + '<td class="num ' + failCls + '">' + (g.failures || 0) + '</td>'
+      + '<td class="num">' + raDur(g.totalDurSec) + '</td>'
+      + '<td class="num">' + raNum(g.avgExp) + '</td>'
+      + '<td class="num">' + raNum(g.avgMora) + '</td>'
+      + '<td class="num">' + raNum(g.totalPicks) + '</td>'
+      + '<td class="ra-mono">' + raTime(g.lastEndAt, true) + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div>' + raPagerHtml('groups', list.length);
+  return raSection('groups', '按配置组汇总', page.length + ' / ' + list.length, h, RA.open.groups);
+}
+
+// ── ③ 拾取事实（三类）───────────────────────────────────────────────
+function raPicksSectionHtml() {
+  const c = RA.pickCounts || {};
+  const total = (c.picked || 0) + (c.noTarget || 0) + (c.skipped || 0);
+  const badge = total + ' 条';
+
+  if (!total) {
+    return raSection('picks', '拾取明细', '0',
+      '<div class="pageempty" style="text-align:center;padding:22px 12px">'
+      + '近 ' + RA.days + ' 天没有拾取事件记录。</div>', RA.open.picks);
+  }
+
+  // 三类计数条
+  let h = '<div class="ra-pickcounts">'
+    + '<span class="ra-pc ra-pc-picked"><b>' + raNum(c.picked) + '</b> 显式拾取</span>'
+    + '<span class="ra-pc ra-pc-notarget"><b>' + raNum(c.noTarget) + '</b> 无目标</span>'
+    + '<span class="ra-pc ra-pc-skipped"><b>' + raNum(c.skipped) + '</b> 跳过</span>'
+    + '</div>';
+
+  // kind 过滤
+  h += '<div class="ra-toolbar" style="margin:10px 0 6px">'
+    + '<label class="ra-f"><span>类型</span><select id="raKind">'
+    + '<option value="">全部</option>'
+    + '<option value="picked"' + (RA.f.kind === 'picked' ? ' selected' : '') + '>显式拾取</option>'
+    + '<option value="no_target"' + (RA.f.kind === 'no_target' ? ' selected' : '') + '>无目标</option>'
+    + '<option value="skipped"' + (RA.f.kind === 'skipped' ? ' selected' : '') + '>跳过</option>'
+    + '</select></label></div>';
+
+  let list = (RA.picks || []).slice();
+  if (RA.f.kind) list = list.filter(p => p.kind === RA.f.kind);
+  if (RA.f.kw) {
+    const k = RA.f.kw.toLowerCase();
+    list = list.filter(p => String(p.item || '').toLowerCase().includes(k));
+  }
+
+  if (!list.length) {
+    h += '<div class="pageempty" style="text-align:center;padding:18px 12px">'
+      + '当前类型/搜索条件下没有拾取事件。</div>';
+    return raSection('picks', '拾取明细', badge, h, RA.open.picks);
+  }
+
+  const page = raSlice('picks', list);
+  h += '<div class="ra-scroll"><table class="ldtable ra-table"><thead><tr>'
+    + '<th>时刻</th><th>类型</th><th>物品 / 原因（原话）</th><th>所属运行</th>'
+    + '</tr></thead><tbody>';
+  for (const p of page) {
+    const kindLabel = { picked: '拾取', no_target: '无目标', skipped: '跳过' }[p.kind] || p.kind;
+    const kindCls = { picked: 'badge-ok', no_target: 'badge-warn', skipped: 'badge-fail' }[p.kind] || '';
+    h += '<tr>'
+      + '<td class="ra-mono">' + raTime(p.ts, true) + '</td>'
+      + '<td><span class="ra-badge ' + kindCls + '">' + esc(kindLabel) + '</span></td>'
+      + '<td class="ra-name" title="' + esc(p.item || '') + '">' + esc(p.item || '—') + '</td>'
+      + '<td class="ra-mono" style="font-size:10.5px;opacity:.65">' + esc(String(p.runId || '').slice(0, 8)) + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div>';
+  if ((RA.picks || []).length >= 500) {
+    h += '<div class="desc" style="margin-top:6px;color:var(--txt4)">'
+      + '已显示最近 500 条（服务端分页上限）。可用类型/搜索缩小范围。</div>';
+  }
+  h += raPagerHtml('picks', list.length);
+  return raSection('picks', '拾取明细', badge, h, RA.open.picks);
+}
+
+// ── ④ 问题组（沿用老台账视图，用户熟悉）─────────────────────────────
+function raProblemsSectionHtml() {
+  const d = RA.ledger || {};
+  const problems = (d.zeroReward || []).concat(d.failed || []);
+  if (!problems.length) return '';
+  let h = '';
+  for (const rec of problems) {
+    h += '<div class="dline"><span class="dk">' + esc(rec.group || '') + '</span>'
+      + '<span class="dv">' + esc(rec.state || '') + ' · ' + esc(rec.day || '') + ' ' + esc(rec.start || '')
+      + (rec.detail ? ' · ' + esc(rec.detail) : '') + '</span></div>';
+  }
+  return raSection('problems', '问题组（0 收益 / 失败）', problems.length, h, RA.open.problems);
+}
+
+// ── ⑤ 米游社摩拉（分区展示，与 BGI 侧不混算）────────────────────────
+function raMiyousheSectionHtml() {
+  let h = '<div id="raMiyousheBody">'
+    + '<div class="pageempty">展开本区后自动加载米游社账目数据…</div></div>';
+  h += '<div class="ra-source">'
+    + '<b>口径说明</b>：本区为<b>米游社札记账目流水</b>（官方数据，延迟约 1 小时，无路线归属）；'
+    + '上方各区的摩拉来自 <b>BGI 日志侧</b>（该次挂机时段实际收益，含路线上下文）。'
+    + '<b>两者口径不同，分区展示，绝不混算。</b>'
+    + '</div>';
+  return raSection('miyoushe', '米游社摩拉（账目侧）', null, h, RA.open.miyoushe);
+}
+
+// ── 米游社数据加载（分区展开时才拉）─────────────────────────────────
+async function raLoadMiyoushe() {
+  const host = $('raMiyousheBody');
+  if (!host || !RA.user) return;
+  host.innerHTML = '<div class="pageempty">加载中…</div>';
+  try {
+    const u = encodeURIComponent(RA.user.user);
+    const [sumR, verR] = await Promise.allSettled([
+      fetch('/api/miyoushe/mora/summary?user=' + u + '&days=' + RA.days).then(r => r.json()),
+      fetch('/api/miyoushe/mora/versions?user=' + u).then(r => r.json()),
+    ]);
+    const sum = (sumR.status === 'fulfilled') ? sumR.value : null;
+    const ver = (verR.status === 'fulfilled') ? verR.value : null;
+
+    if (!sum || sum.ok === false) {
+      host.innerHTML = '<div class="pageempty">米游社数据不可用：'
+        + esc((sum && sum.error) || '未登录或未采集') + '</div>';
+      return;
+    }
+    const items = sum.items || [];
+    if (!items.length) {
+      host.innerHTML = '<div class="pageempty">近 ' + RA.days + ' 天没有米游社账目记录。'
+        + '<div style="margin-top:6px;font-size:11.5px;color:var(--txt4)">'
+        + '米游社数据需在「米游社」页完成登录并等待采集。</div></div>';
+      return;
+    }
+    let h = '<div class="ra-scroll"><table class="ldtable ra-table"><thead><tr>'
+      + '<th>日期</th><th>配置组/来源</th><th class="num">摩拉</th></tr></thead><tbody>';
+    for (const it of items.slice(0, 50)) {
+      h += '<tr><td class="ra-mono">' + esc(it.day || '') + '</td>'
+        + '<td>' + esc(it.groupName || '-') + '</td>'
+        + '<td class="num">' + raNum(it.totalMorale || it.totalMora || 0) + '</td></tr>';
+    }
+    h += '</tbody></table></div>';
+    const verName = (ver && ver.current) ? String(ver.current) : '';
+    if (verName) h += '<div class="ra-source" style="margin-top:6px">分类规则版本：' + esc(verName) + '</div>';
+    host.innerHTML = h;
+  } catch (e) {
+    host.innerHTML = '<div class="pageempty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+// ── 事件绑定 ─────────────────────────────────────────────────────────
+function raWire() {
+  // 时间范围（后端参数 → 重请）
+  const days = $('raDays');
+  if (days) days.onchange = () => { RA.days = Number(days.value) || 7; raSaveFilter(); raLoad(RA.user); };
+
+  // 以下全部前端过滤（不重请）
+  const bind = (id, key, isNum) => {
+    const el = $(id);
+    if (!el) return;
+    el.onchange = () => {
+      RA.f[key] = isNum ? (el.value || '') : el.value;
+      RA.page = { runs: 1, groups: 1, picks: 1 };
+      raSaveFilter();
+      raRender();
+    };
+  };
+  bind('raGroup', 'group');
+  bind('raState', 'state');
+  bind('raDur', 'minDurMin');
+  bind('raSort', 'sort');
+  bind('raKind', 'kind');
+
+  // 关键字：输入防抖 260ms
+  const kw = $('raKw');
+  if (kw) {
+    let t = null;
+    kw.oninput = () => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        RA.f.kw = kw.value.trim();
+        RA.page = { runs: 1, groups: 1, picks: 1 };
+        raSaveFilter();
+        raRender();
+      }, 260);
+    };
+  }
+
+  const reset = $('raReset');
+  if (reset) reset.onclick = () => raResetFilter();
+
+  // 展开某次运行 → 拉详情
+  document.querySelectorAll('tr.ra-runrow').forEach(tr => {
+    tr.onclick = (ev) => {
+      if (ev.target.closest('a')) return;
+      const id = tr.getAttribute('data-run');
+      if (!id) return;
+      const key = 'run:' + id;
+      if (RA.open[key]) { delete RA.open[key]; raRender(); return; }
+      RA.open[key] = true;
+      RA.details[id] = 'loading';
+      raRender();
+      raFetchDetail(id);
+    };
+  });
+
+  // 分页
+  document.querySelectorAll('button.ra-pg').forEach(b => {
+    b.onclick = () => {
+      const kind = b.getAttribute('data-pg');
+      const to = Number(b.getAttribute('data-to'));
+      if (!kind || !to || to < 1) return;
+      RA.page[kind] = to;
+      raRender();
+      const sec = $('ra-sec-' + kind);
+      if (sec && sec.scrollIntoView) sec.scrollIntoView({ block: 'nearest' });
+    };
+  });
+
+  // 分区折叠状态记忆 + 米游社懒加载
+  document.querySelectorAll('details.ra-sec').forEach(det => {
+    const id = (det.id || '').replace('ra-sec-', '');
+    det.ontoggle = () => {
+      RA.open[id] = det.open;
+      if (id === 'miyoushe' && det.open) raLoadMiyoushe();
+    };
+  });
+}
+
+// 拉单次运行明细
+async function raFetchDetail(runId) {
+  try {
+    const r = await fetch('/api/bgi/runs/detail?id=' + encodeURIComponent(runId));
+    RA.details[runId] = await r.json();
+  } catch (e) {
+    RA.details[runId] = 'error';
+  }
+  raRender();
+}
+
+// 重置筛选（保留时间范围）
+function raResetFilter() {
+  RA.f = { group: '', state: '', kw: '', minDurMin: '', sort: 'start-desc' };
+  RA.page = { runs: 1, groups: 1, picks: 1 };
+  raSaveFilter();
+  raRender();
+}
+
+function raReload() { if (RA.user) raLoad(RA.user); }
+
+// ── 筛选条件写进 URL hash（刷新 / 分享不丢）──────────────────────────
+//   #/ledger/:id?days=7&group=xxx&state=Failed&sort=dur-desc&kw=abc
+function raSaveFilter() {
+  try {
+    const p = new URLSearchParams();
+    p.set('days', String(RA.days));
+    if (RA.f.group) p.set('group', RA.f.group);
+    if (RA.f.state) p.set('state', RA.f.state);
+    if (RA.f.sort && RA.f.sort !== 'start-desc') p.set('sort', RA.f.sort);
+    if (RA.f.kw) p.set('kw', RA.f.kw);
+    if (RA.f.minDurMin) p.set('minDur', RA.f.minDurMin);
+    if (RA.f.kind) p.set('kind', RA.f.kind);
+    const base = location.hash.split('?')[0];
+    const qs = p.toString();
+    const next = base + (qs ? '?' + qs : '');
+    if (location.hash !== next) history.replaceState(null, '', next);
+  } catch (e) { /* 不支持 history 时忽略 */ }
+}
+
+function raLoadFilterFromHash() {
+  try {
+    const q = location.hash.split('?')[1] || '';
+    const p = new URLSearchParams(q);
+    RA.days = Number(p.get('days')) || 7;
+    RA.f = {
+      group: p.get('group') || '',
+      state: p.get('state') || '',
+      kw: p.get('kw') || '',
+      minDurMin: p.get('minDur') || '',
+      sort: p.get('sort') || 'start-desc',
+      kind: p.get('kind') || '',
+    };
+  } catch (e) { /* 解析失败用默认值 */ }
+}
+
+// ── 新入口：showLedger 的替代实现 ────────────────────────────────────
+async function showRunAnalysis(id) {
   await ensureSessions();
   const u = users.find(x => x.id === id) || users[0];
   if (!u) { showOverview(); return; }
@@ -3406,62 +4244,22 @@ async function showLedger(id) {
   hideRemoteUi();
   const lp = $('ledgerPage'); if (lp) lp.style.display = 'block';
   const ep = $('earningsPage'); if (ep) ep.style.display = 'none';
-  applyLedgerUser(u);
-}
-function applyLedgerUser(u) {
+  const mp = $('miyoushePage'); if (mp) mp.style.display = 'none';
+  raLoadFilterFromHash();
+  RA.user = u;
   curId = u.id;
-  document.title = '配置组分析 · ' + (u.label || u.user);
-  buildUserSwitch('ledgerSwitch', u.id, applyLedgerUser);
-  loadLedger(u);
+  document.title = '运行分析 · ' + (u.label || u.user);
+  const t = $('ledgerTitle'); if (t) t.textContent = '运行分析';
+  buildUserSwitch('ledgerSwitch', u.id, (nu) => {
+    RA.user = nu; curId = nu.id;
+    document.title = '运行分析 · ' + (nu.label || nu.user);
+    buildUserSwitch('ledgerSwitch', nu.id, arguments.callee);
+    raLoad(nu);
+  });
+  raLoad(u);
 }
-async function loadLedger(u) {
-  const body = $('ledgerBody');
-  body.innerHTML = '<div class="pageempty">加载中…</div>';
-  try {
-    const r = await fetch('/api/bgi/ledger?user=' + encodeURIComponent(u.user) + '&days=7');
-    const d = await r.json();
-    body.innerHTML = renderLedger(d);
-  } catch (e) {
-    body.innerHTML = '<div class="pageempty">加载失败：' + esc(e.message) + '</div>';
-  }
-}
-function renderLedger(d) {
-  if (!d) return '<div class="pageempty">暂无台账数据。</div>';
-  const groups = d.groups || [];
-  const records = d.records || [];
-  const problems = (d.zeroReward || []).concat(d.failed || []);
-  if (!groups.length && !records.length && !problems.length)
-    return '<div class="pageempty">暂无台账数据（近 ' + (d.days || 7) + ' 天没有配置组运行记录）。</div>';
-  let html = '';
-  if (groups.length) {
-    html += '<div class="sect-t">按配置组汇总 · 近 ' + (d.days || 7) + ' 天</div>'
-      + '<table class="ldtable"><thead><tr>'
-      + '<th>配置组</th><th>次数</th><th>失败</th><th>均经验</th><th>均摩拉</th><th>总经验</th><th>总摩拉</th>'
-      + '</tr></thead><tbody>';
-    for (const g of groups) {
-      html += '<tr>'
-        + '<td>' + esc(g.group) + '</td>'
-        + '<td class="num">' + (g.runs || 0) + '</td>'
-        + '<td class="num ' + ((g.failures || 0) > 0 ? 'badge-fail' : 'badge-ok') + '">' + (g.failures || 0) + '</td>'
-        + '<td class="num">' + (g.avgExp || 0) + '</td>'
-        + '<td class="num">' + (g.avgMora || 0) + '</td>'
-        + '<td class="num">' + (g.totalExp || 0) + '</td>'
-        + '<td class="num">' + (g.totalMora || 0) + '</td>'
-        + '</tr>';
-    }
-    html += '</tbody></table>';
-  }
-  if (problems.length) {
-    html += '<div class="sect-t">问题组（0 收益 / 失败）</div>';
-    for (const rec of problems) {
-      html += '<div class="dline"><span class="dk">' + esc(rec.group || '') + '</span>'
-        + '<span class="dv">' + esc(rec.state || '') + ' · ' + esc(rec.day || '') + ' ' + esc(rec.start || '')
-        + (rec.detail ? ' · ' + esc(rec.detail) : '') + '</span></div>';
-    }
-  }
-  return html;
-}
-
+// 兼容旧调用点：原 showLedger 语义已由 showRunAnalysis 承担（t13 改名不改路由）
+function showLedger(id) { return showRunAnalysis(id); }
 // ── 摩拉收益（#/earnings/:id）────────────────────────────────
 async function showEarnings(id) {
   await ensureSessions();

@@ -1,0 +1,340 @@
+{
+  "Version": 1,
+  "Settings": {
+    "AllowCurrentSessionFallback": true,
+    "OnlyAutomationAccounts": true,
+    "AllowRemoteInvoke": true,
+    "MinimizeToTray": true,
+    "LastExportPath": "",
+    "ShowFlowGuide": false,
+    "UseBrokerChannel": true,
+    "ManualAgentMode": false,
+    "AutoStartUser": "",
+    "AutoConnectAccountIds": [],
+    "BgiPaths": {
+      "A2": "D:\\AAA挂机专区\\A2\\BetterGI\\BetterGI.exe",
+      "A3": "D:\\AAA挂机专区\\A3\\BetterGI\\BetterGI.exe",
+      "A1": "D:\\AAA挂机专区\\A1\\BetterGI\\BetterGI.exe",
+      "A4": "D:\\AAA挂机专区\\A4\\BetterGI\\BetterGI.exe"
+    },
+    "BgiKnownPaths": {
+      "A2": [
+        "D:\\AAA挂机专区\\A2\\BetterGI\\BetterGI.exe"
+      ],
+      "A3": [
+        "D:\\AAA挂机专区\\A3\\BetterGI\\BetterGI.exe"
+      ],
+      "A1": [
+        "D:\\AAA挂机专区\\A1\\BetterGI\\BetterGI.exe"
+      ],
+      "A4": [
+        "D:\\AAA挂机专区\\A4\\BetterGI\\BetterGI.exe"
+      ]
+    },
+    "BgiPinnedUsers": [],
+    "LobbyServerUrl": "",
+    "DepartCloseGenshin": {},
+    "RdpWidth": 1280,
+    "RdpHeight": 720,
+    "RdpColorDepth": 32,
+    "RdpAutoDisconnectFirst": true,
+    "RdpScaleMode": 1,
+    "RdpLowBandwidth": false,
+    "LookSensitivity": 3.5,
+    "LockHotkey": "鼠标侧键4",
+    "ThemeMode": 2,
+    "RdpCaptureOnClick": true,
+    "EffectTier": 1,
+    "AnimateBackdrop": null,
+    "ShieldBorderColor": "",
+    "ShieldBorderThickness": 2,
+    "RdpLayoutMode": 0,
+    "RdpViewOrder": [
+      "acc_a2",
+      "bcb249671b4f4a31b86aa9098bb94e1b"
+    ],
+    "RouteUpdatePath": "D:\\AAA挂机专区\\A1\\BetterGI\\User\\AutoPathing\\CD采集路线",
+    "RouteUpdate": {
+      "Targets": [
+        {
+          "Path": "D:\\AAA挂机专区\\A1\\BetterGI\\User\\AutoPathing\\CD采集路线",
+          "Enabled": true
+        }
+      ],
+      "CloudVersion": "v1-3966720-639306287660000000",
+      "LastAppliedVersion": "v1-3966720-639306287660000000",
+      "KeepArchives": 3,
+      "LocalArchive": "",
+      "BackupBeforeReplace": false,
+      "Schedule": {
+        "Enabled": false,
+        "UseWindowsTask": false,
+        "Kind": "Daily",
+        "Hour": 4,
+        "Minute": 0,
+        "Second": 0,
+        "WeekDays": [],
+        "DayOfMonth": 1,
+        "Month": 1,
+        "IntervalSeconds": 3600,
+        "OnceAt": "2026-11-20T00:29:15.5036975+08:00",
+        "PostRunDelaySeconds": 0,
+        "LastRunAt": null,
+        "RunCount": 0,
+        "Paused": false,
+        "PauseReason": "",
+        "PostRunDelayUnit": 1
+      },
+      "LastRunAt": "2026-11-19T23:43:19.2778852+08:00",
+      "LastResult": "全部完成：1 个目标"
+    }
+  },
+  "Accounts": [
+    {
+      "Id": "acc_a2",
+      "UserName": "A2",
+      "PasswordCipher": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAmJAE2gI+3Um9I3ClOtFS1gAAAAACAAAAAAAQZgAAAAEAACAAAADPTQ51bflRZNEESX/7oIfp+JC+bBftZl5ZdAwuoq29OQAAAAAOgAAAAAIAACAAAADppMOYKzf+D7sEtUWZAZxArqA5ZuGx+aLvObuGpAyoEhAAAAA0kn+zD1gLrIaGa1DuQlw4QAAAAORC/ZOWLhf+tc+leiUD3NJHPrV69hpN5BQ4rLvOpk9pLV8DssurW35ZY/ylx9zcaUK7KObrJgQvI78N58MSrPY=",
+      "SessionId": 0,
+      "Note": "",
+      "SortOrder": 1,
+      "RdpHost": "127.0.0.3",
+      "RdpPort": 3389,
+      "RdpUserName": "A2",
+      "DisplayName": "山客",
+      "IconBase64": "",
+      "RdpWidth": 1920,
+      "RdpHeight": 1080,
+      "RdpScaleMode": 1,
+      "RdpColorDepth": 16,
+      "RdpAutoDisconnect": true,
+      "RdpLowBandwidth": false,
+      "RdpAudioMode": 0,
+      "RdpAudioCapture": false,
+      "RdpNetworkConnectionType": 6,
+      "RdpPerformanceMode": 3,
+      "RdpKeyboardHookMode": 1,
+      "RdpRedirectPrinters": false,
+      "RdpRedirectClipboard": false,
+      "RdpRedirectSmartCards": false,
+      "RdpRedirectPorts": false,
+      "RdpRedirectDrives": false
+    },
+    {
+      "Id": "bcb249671b4f4a31b86aa9098bb94e1b",
+      "UserName": "A3",
+      "PasswordCipher": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAmJAE2gI+3Um9I3ClOtFS1gAAAAASAAAAUwBvAHUAbABMAGkAbgBrAAAAEGYAAAABAAAgAAAA1GGz5/YPFqmaxI/n/ip/QMpVoMD2wLMAg0vb3U59yioAAAAADoAAAAACAAAgAAAAm15KI2u/qLgv6WMpsIDzrvAoAD4+8dLL+tm9GxtzC7IQAAAALfi2bEHLUCrNlJLCttkw6kAAAAAbaKhzCIM/35gXjfHVq8VLCSqcmoYZIoORRwd2xUrAy7N4zAJo9cgNIK06lppyAAbfBuRDCZJqFmw6ZdCP2MrR",
+      "SessionId": 0,
+      "Note": "",
+      "SortOrder": 2,
+      "RdpHost": "127.0.0.4",
+      "RdpPort": 3389,
+      "RdpUserName": "A3",
+      "DisplayName": "玄月",
+      "IconBase64": "",
+      "RdpWidth": 1920,
+      "RdpHeight": 1080,
+      "RdpScaleMode": 1,
+      "RdpColorDepth": 16,
+      "RdpAutoDisconnect": true,
+      "RdpLowBandwidth": false,
+      "RdpAudioMode": 0,
+      "RdpAudioCapture": false,
+      "RdpNetworkConnectionType": 6,
+      "RdpPerformanceMode": 3,
+      "RdpKeyboardHookMode": 1,
+      "RdpRedirectPrinters": false,
+      "RdpRedirectClipboard": false,
+      "RdpRedirectSmartCards": false,
+      "RdpRedirectPorts": false,
+      "RdpRedirectDrives": false
+    },
+    {
+      "Id": "41a803bde5a84227afcea822f8d598d6",
+      "UserName": "lummy",
+      "PasswordCipher": "",
+      "SessionId": 0,
+      "Note": "",
+      "SortOrder": 0,
+      "RdpHost": "",
+      "RdpPort": 3389,
+      "RdpUserName": "",
+      "DisplayName": "",
+      "IconBase64": "",
+      "RdpWidth": 1920,
+      "RdpHeight": 1080,
+      "RdpScaleMode": 1,
+      "RdpColorDepth": 16,
+      "RdpAutoDisconnect": true,
+      "RdpLowBandwidth": false,
+      "RdpAudioMode": 0,
+      "RdpAudioCapture": false,
+      "RdpNetworkConnectionType": 6,
+      "RdpPerformanceMode": 3,
+      "RdpKeyboardHookMode": 1,
+      "RdpRedirectPrinters": false,
+      "RdpRedirectClipboard": false,
+      "RdpRedirectSmartCards": false,
+      "RdpRedirectPorts": false,
+      "RdpRedirectDrives": false
+    }
+  ],
+  "Actions": [
+    {
+      "Id": "4b58e22e2a1c4dfda26e1f5627b7f0b7",
+      "Name": "A2 一条龙 启动",
+      "AccountId": "acc_a2",
+      "ExePath": "D:\\AAA挂机专区\\A3\\BetterGI\\BetterGI.exe",
+      "Arguments": "--startOneDragon 启动",
+      "Kind": "Launch",
+      "DelaySeconds": 0,
+      "StopBgiFirst": true,
+      "CloseGenshin": false,
+      "StopWaitSeconds": 2,
+      "Schedule": {
+        "Enabled": true,
+        "UseWindowsTask": false,
+        "Kind": "Daily",
+        "Hour": 5,
+        "Minute": 0,
+        "Second": 0,
+        "WeekDays": [],
+        "DayOfMonth": 1,
+        "Month": 1,
+        "IntervalSeconds": 155520000,
+        "OnceAt": "2026-01-01T04:00:00",
+        "PostRunDelaySeconds": 60,
+        "LastRunAt": null,
+        "RunCount": 0,
+        "Paused": true,
+        "PauseReason": "手动暂停",
+        "PostRunDelayUnit": 1
+      }
+    },
+    {
+      "Id": "c7a0a8f66b9747a0a2ee0666238004f2",
+      "Name": "A3 打开 BetterGI",
+      "AccountId": "bcb249671b4f4a31b86aa9098bb94e1b",
+      "ExePath": "D:\\AAA挂机专区\\A3\\BetterGI\\BetterGI.exe",
+      "Arguments": "",
+      "Kind": "Launch",
+      "DelaySeconds": 0,
+      "StopBgiFirst": true,
+      "CloseGenshin": false,
+      "StopWaitSeconds": 2,
+      "Schedule": {
+        "Enabled": false,
+        "UseWindowsTask": false,
+        "Kind": "Daily",
+        "Hour": 4,
+        "Minute": 0,
+        "Second": 0,
+        "WeekDays": [],
+        "DayOfMonth": 1,
+        "Month": 1,
+        "IntervalSeconds": 3600,
+        "OnceAt": "2026-01-01T04:00:00",
+        "PostRunDelaySeconds": 0,
+        "LastRunAt": null,
+        "RunCount": 0,
+        "Paused": false,
+        "PauseReason": "",
+        "PostRunDelayUnit": 1
+      }
+    }
+  ],
+  "AutomationProfiles": [
+    {
+      "Id": "d6bbd2651fa54564838ceb5106692530",
+      "Name": "新建配置组",
+      "AccountIds": [],
+      "ActionIds": [],
+      "Enabled": false,
+      "DailyTime": "08:00",
+      "LastRun": ""
+    }
+  ],
+  "Automations": [
+    {
+      "Id": "db9328b9dd83419a889f4bd1303daac8",
+      "Name": "lummy 自动化",
+      "AccountId": "41a803bde5a84227afcea822f8d598d6",
+      "Enabled": true,
+      "Paused": false,
+      "PauseReason": "",
+      "Nodes": [
+        {
+          "Id": "bbfc4f88c50f48a4bb87ac38f4a20831",
+          "Kind": "Condition",
+          "Type": "TrigManual",
+          "X": 174.33333333333337,
+          "Y": 158.99499999999998,
+          "Params": {},
+          "Logic": "LD",
+          "DayBoundaryHour": 4,
+          "Negated": false,
+          "BranchMode": "Parallel"
+        },
+        {
+          "Id": "f6df7ceab96744c885a41809584a6c71",
+          "Kind": "Action",
+          "Type": "ActKeyPress",
+          "X": 213,
+          "Y": 310.3283333333333,
+          "Params": {
+            "user": "A2",
+            "keys": "1",
+            "times": "1"
+          },
+          "Logic": "AND",
+          "DayBoundaryHour": 4,
+          "Negated": false,
+          "BranchMode": "Parallel"
+        }
+      ],
+      "Edges": [
+        {
+          "From": "bbfc4f88c50f48a4bb87ac38f4a20831",
+          "To": "f6df7ceab96744c885a41809584a6c71",
+          "Branch": ""
+        }
+      ],
+      "CreatedAt": "2026-11-20T02:27:43.853997+08:00",
+      "LastRunAt": null,
+      "RunCount": 0,
+      "EngineVersion": 2,
+      "LifecycleVersion": 1,
+      "DayBoundaryHour": 0,
+      "RunComplete": false,
+      "RunDayKey": "2026-11-20",
+      "RunResetRequested": false,
+      "ToggleTodayRequested": null,
+      "RunningActions": {},
+      "WaitingActions": [
+        "f6df7ceab96744c885a41809584a6c71"
+      ],
+      "DailyLatchKey": "",
+      "PlcPower": {
+        "f6df7ceab96744c885a41809584a6c71": true
+      },
+      "ActionResults": {
+        "f6df7ceab96744c885a41809584a6c71": {
+          "Ok": false,
+          "ElapsedSeconds": 0,
+          "Message": "该会话没有已连接的注入通道（请先投送）",
+          "At": "2026-11-20T02:28:34.1623514+08:00"
+        }
+      },
+      "ContactPulseAt": {},
+      "DelayUntil": {},
+      "SatisfiedContacts": [
+        "bbfc4f88c50f48a4bb87ac38f4a20831"
+      ],
+      "Active": false,
+      "ArmedAt": null,
+      "ArmTimeoutMinutes": 60,
+      "Latched": [],
+      "PersistLatched": true,
+      "ConditionMode": "All"
+    }
+  ]
+}

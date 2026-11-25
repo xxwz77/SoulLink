@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup>
+<OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+<UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings>
+<RootNamespace>SoulLink</RootNamespace><AssemblyName>SoulLink-Layout-Test</AssemblyName>
+<ApplicationManifest>..\..\app.manifest</ApplicationManifest><EnableDefaultItems>false</EnableDefaultItems>
+<EnableDefaultApplicationDefinition>true</EnableDefaultApplicationDefinition><ApplicationIcon>..\..\Assets\soullink.ico</ApplicationIcon>
+<Version>1.13.2</Version><NoWarn>$(NoWarn);CS8618;CA1416;WPF0001</NoWarn>
+</PropertyGroup>
+<ItemGroup>
+<ApplicationDefinition Include="..\..\App.xaml" Link="App.xaml" />
+<Compile Include="..\..\**\*.cs" Exclude="..\..\bin\**;..\..\obj\**;..\..\tools\**;..\..\releases\**;..\..\Server\**" />
+<Page Include="..\..\**\*.xaml" Exclude="..\..\bin\**;..\..\obj\**;..\..\tools\**;..\..\releases\**;..\..\Server\**;..\..\App.xaml" />
+<Resource Include="..\..\Assets\soullink.ico" Link="Assets\soullink.ico" />
+</ItemGroup></Project>

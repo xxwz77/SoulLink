@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>15.0</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>SoulLink.RunCollectVerify</RootNamespace>
+    <AssemblyName>SoulLink.RunCollectVerify</AssemblyName>
+    <DefineConstants>$(DefineConstants);RUN_DB_TEST</DefineConstants>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Services\RunRecordStore.cs" Link="Services\RunRecordStore.cs" />
+    <Compile Include="..\..\Services\RunRecordCollector.cs" Link="Services\RunRecordCollector.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="T6Scenarios.cs" />
+    <Compile Include="T10Scenarios.cs" />
+    <Compile Include="T35Scenarios.cs" />
+    <Compile Include="T44Bench.cs" />
+    <Compile Include="AppIdentityShim.cs" />
+    <Compile Include="BgiPathResolverShim.cs" />
+    <Compile Include="AppShim.cs" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
+  </ItemGroup>
+</Project>

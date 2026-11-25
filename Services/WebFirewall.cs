@@ -30,7 +30,32 @@ namespace SoulLink.Services
         /// 确保放行 [basePort+1, basePort+RangeSpan] 范围。
         /// 返回 true 表示规则已就绪（或本来就允许，无需规则）。
         /// </summary>
-        internal static bool EnsureAllowed(int basePort)
+        /// <summary>
+        /// 只放行**单个端口**（3.3.45 / t24 单端口架构）。
+        ///
+        /// ★ 为什么改：用户只转发一个端口（设计文档 §17.1 / §17.9）。
+        ///   独立服务独占 <c>AppSettings.WebPort</c> 后，唯一需要放行的就是它。
+        /// ★ 旧的范围逻辑保留在 <see cref="EnsureRangeAllowed"/>，供 <c>WebDirectToAgent</c>
+        ///   时代理各自开的端口继续使用（那条路径没有变）。
+        /// </summary>
+        internal static bool EnsureAllowed(int port)
+        {
+            if (port <= 0) return false;
+            try
+            {
+                if (!AnyProfileEnabled()) return true;
+                string args = "advfirewall firewall add rule " +
+                              "name=\"" + RuleName + "\" " +
+                              "dir=in action=allow protocol=TCP " +
+                              "localport=" + port;
+                var (ok, _) = Run("netsh.exe", args);
+                return ok;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>放行 [basePort+1, basePort+RangeSpan] 范围（WebDirectToAgent 时代的旧逻辑）。</summary>
+        internal static bool EnsureRangeAllowed(int basePort)
         {
             if (basePort <= 0) return false;
             try

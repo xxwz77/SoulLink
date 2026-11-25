@@ -1,0 +1,34 @@
+13:51:39.376  automation-ui: chinese-v2 modules=39 conditions=22 actions=14 daily-finish=1
+13:51:39.389    C TrigSchedule 定时·时刻
+13:51:39.390    C TrigSessionOnline 会话在线
+13:51:39.390    C TrigBgiIdle BGI 空闲
+13:51:39.390    C TrigManual 手动
+13:51:39.390    C TrigLogMatch 日志匹配
+13:51:39.390    C TrigInterval 定时·间隔
+13:51:39.391    C CondBgiRunning BGI 是否运行
+13:51:39.391    C CondBgiActive BGI 日志活跃
+13:51:39.391    C CondGenshinRunning 原神是否运行
+13:51:39.391    C CondTimeRange 时间段
+13:51:39.391    C CondLogContains 日志包含
+13:51:39.391    C CondLogMissing 日志缺失
+13:51:39.391    C CondLogHasError 日志有报错
+13:51:39.391    C CondCompare 数值比较
+13:51:39.391    C CondLastResult 上一步结果
+13:51:39.391    C CondProcessExists 进程检查
+13:51:39.392    C CondChoice 选择分支
+13:51:39.392    C CondScriptGroupState 配置组状态
+13:51:39.392    C CondDogfoodRoute 狗粮收尾路线
+13:51:39.392    C CondBgiLiveState BGI 活跃状态
+13:51:39.392    C CondSessionState 会话连接状态
+13:51:39.392    C CondWindowForeground 窗口在前台
+13:51:39.393  automation-ports: input-top output-bottom; explicit-hint=full-reason click-to-select
+13:51:39.546  config loaded: C:\Users\91244\AppData\Local\SoulLink\config.json
+13:51:40.872  single instance acquired
+13:51:41.008  tray created
+13:51:41.019  showing main window
+13:51:41.735  AccountStateCenter started
+13:51:41.963  边框色 固定系统强调色 accent=#F091C1 ok=True
+13:51:41.964  DWM 圆角: 已应用
+13:51:42.106  MainWindow.Loaded
+13:51:42.130  LaunchView activated
+13:51:42.643  main window shown: True state=Normal

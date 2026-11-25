@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Threading.Tasks;
 using SoulLink.Services;
 
 namespace SoulLink.Views
@@ -199,6 +200,7 @@ namespace SoulLink.Views
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             // ── 标题行：昵称 + 用户名 + 状态灯 ──
             var head = new StackPanel { Orientation = Orientation.Horizontal };
@@ -284,8 +286,144 @@ namespace SoulLink.Views
             var automation = BuildAutomationData(st);
             Grid.SetRow(automation,2);
             root.Children.Add(automation);
+            var miyoushe = BuildMiyousheRow(st);
+            Grid.SetRow(miyoushe,3);
+            root.Children.Add(miyoushe);
             card.Child = root;
             return card;
+        }
+
+        /// <summary>
+        /// 米游社摘要行（t33 需求1）。只放「一行放得下」的摘要 + 操作入口，
+        /// 详情全部在网页。登录状态异步读取，不阻塞 UI。
+        /// </summary>
+        private UIElement BuildMiyousheRow(AccountState st)
+        {
+            var border = new Border
+            {
+                Margin = new Thickness(0, 12, 0, 0),
+                Padding = new Thickness(0, 8, 0, 0),
+                BorderThickness = new Thickness(0, 1, 0, 0),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0x20, 0xFF, 0xFF, 0xFF))
+            };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = "米游社",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0),
+                Foreground = (Brush)FindResource("TextPrimary")
+            });
+
+            var status = new TextBlock
+            {
+                Text = "…",
+                FontSize = 10.5,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)FindResource("TextSecondary")
+            };
+            panel.Children.Add(status);
+
+            // 操作按钮（扫码登录 / 一键导入 / 删除凭据 / 查看详情→）
+            var btnQr = new Button
+            {
+                Content = "扫码登录",
+                Style = (Style)FindResource("GhostButton"),
+                Padding = new Thickness(10, 4, 10, 4),
+                Margin = new Thickness(10, 0, 6, 0),
+                FontSize = 10.5
+            };
+            btnQr.Click += async (_, __) => await OpenQrAsync(st.UserName);
+            panel.Children.Add(btnQr);
+
+            var btnImport = new Button
+            {
+                Content = "一键导入",
+                Style = (Style)FindResource("GhostButton"),
+                Padding = new Thickness(10, 4, 10, 4),
+                Margin = new Thickness(0, 0, 6, 0),
+                FontSize = 10.5
+            };
+            btnImport.Click += async (_, __) => await ImportAsync(st.UserName);
+            panel.Children.Add(btnImport);
+
+            var btnDel = new Button
+            {
+                Content = "删除凭据",
+                Style = (Style)FindResource("GhostButton"),
+                Padding = new Thickness(10, 4, 10, 4),
+                Margin = new Thickness(0, 0, 6, 0),
+                FontSize = 10.5
+            };
+            btnDel.Click += (_, __) => { MiyousheCredentialStore.Delete(st.UserName, "cn"); MiyousheCredentialStore.Delete(st.UserName, "os"); RefreshMiyousheAsync(status, st.UserName); };
+            panel.Children.Add(btnDel);
+
+            border.Child = panel;
+            // 异步刷新状态（不阻塞 UI 线程）
+            _ = RefreshMiyousheAsync(status, st.UserName);
+            return border;
+        }
+
+        private async Task RefreshMiyousheAsync(TextBlock status, string account)
+        {
+            try
+            {
+                var st = await MiyousheService.LoginStatusAsync(account, default).ConfigureAwait(true);
+                string stateText = st.State switch
+                {
+                    "stored" => "已存储",
+                    "needs_login" => "需重扫",
+                    _ => "未登录"
+                };
+                string uid = st.AidMasked.Length > 0 ? st.AidMasked : (st.Uid.Length > 0 ? MiyousheCredentialStore.Mask(st.Uid) : "");
+                status.Text = stateText + (uid.Length > 0 ? " · " + uid : "");
+                status.Foreground = st.State == "stored"
+                    ? new SolidColorBrush(Color.FromRgb(0x6E, 0xF0, 0xC8))
+                    : (Brush)FindResource("TextSecondary");
+            }
+            catch { status.Text = "状态读取失败"; }
+        }
+
+        private async Task OpenQrAsync(string account)
+        {
+            try
+            {
+                var w = new MiyousheQrWindow(account, "cn") { Owner = Window.GetWindow(this) };
+                w.ShowDialog();
+                Rebuild();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("扫码窗口打开失败：" + ex.Message, "米游社", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private async Task ImportAsync(string account)
+        {
+            try
+            {
+                var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "选择 BetterGI 或 ABGI 目录（只读探测）" };
+                if (dlg.ShowDialog() != true) return;
+                string path = dlg.FolderName;
+                var probe = MiyousheImporter.Probe(account, path);
+                if (!probe.Ok)
+                {
+                    MessageBox.Show("未识别到有效凭据：\n" + probe.Detail, "一键导入", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                var confirm = MessageBox.Show("探测到 " + probe.OkCount + " 项凭据，是否导入？\n（不会显示 cookie 内容）", "一键导入", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (confirm != MessageBoxResult.Yes) return;
+                var outcome = await MiyousheImporter.ImportAsync(account, path, true, default).ConfigureAwait(true);
+                MessageBox.Show("导入完成：" + outcome.OkCount + " 成功 / " + outcome.FailedCount + " 失败\n" + outcome.Detail, "一键导入", MessageBoxButton.OK, MessageBoxImage.Information);
+                Rebuild();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("导入失败：" + ex.Message, "一键导入", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         private UIElement BuildAutomationData(AccountState st)

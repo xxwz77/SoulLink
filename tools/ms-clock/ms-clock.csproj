@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>ms-clock</AssemblyName>
+    <RootNamespace>MsClock</RootNamespace>
+    <AssemblyTitle>SoulLink millisecond clock</AssemblyTitle>
+    <Product>SoulLink ms-clock</Product>
+    <Platforms>AnyCPU</Platforms>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+</Project>

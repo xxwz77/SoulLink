@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultItems>false</EnableDefaultItems><AssemblyName>SplitLayoutTest</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="SplitLayoutTest.cs" />
+    <Compile Include="..\..\Views\RdpSplitLayout.cs" Link="RdpSplitLayout.cs" />
+    <Compile Include="..\..\Services\OwnedOverlayWindow.cs" Link="OwnedOverlayWindow.cs" />
+    <Compile Include="..\..\Controls\IRdpViewport.cs" Link="IRdpViewport.cs" />
+  </ItemGroup>
+</Project>

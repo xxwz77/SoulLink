@@ -81,10 +81,16 @@ $ErrorActionPreference = "Continue"
 $ProgressPreference    = "SilentlyContinue"
 
 $root = Split-Path -Parent $PSScriptRoot
-$checkRoot = Join-Path $root "tools\layout-check"
-if (-not (Test-Path -LiteralPath $checkRoot)) {
-    Write-Host "找不到断言工程目录：$checkRoot" -ForegroundColor Red
-    exit 2
+# ★ t41：断言工程分布在两个目录 —— tools\layout-check（既有）与 tools\portguard-check（端口守卫回归）。
+$checkRoots = @(
+    (Join-Path $root "tools\layout-check"),
+    (Join-Path $root "tools\portguard-check")
+)
+foreach ($cr in $checkRoots) {
+    if (-not (Test-Path -LiteralPath $cr)) {
+        Write-Host "找不到断言工程目录：$cr" -ForegroundColor Red
+        exit 2
+    }
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -168,7 +174,11 @@ if ($NoBuiltInSkip) {
 # ══════════════════════════════════════════════════════════════════════════
 #  收集工程
 # ══════════════════════════════════════════════════════════════════════════
-$allProjs = Get-ChildItem -LiteralPath $checkRoot -Filter *.csproj -File | Sort-Object Name
+$allProjs = @()
+foreach ($cr in $checkRoots) {
+    $allProjs += Get-ChildItem -LiteralPath $cr -Filter *.csproj -File
+}
+$allProjs = $allProjs | Sort-Object Name
 
 $plan = @()
 foreach ($p in $allProjs) {
@@ -406,8 +416,10 @@ if (-not $NoCleanup) {
                 if ($path) {
                     # 断言 exe 都在 tools\layout-check\bin* 下
                     if ($path -like "*\tools\layout-check\bin*") { $isTestArtifact = $true }
+                    elseif ($path -like "*\tools\portguard-check\bin*") { $isTestArtifact = $true }
                     # 或本仓库下被复制出来做测试的 SoulLink 副本（非 Program Files 里那个服务用的）
                     elseif ($path -like "*\layout-check\*") { $isTestArtifact = $true }
+                    elseif ($path -like "*\portguard-check\*") { $isTestArtifact = $true }
                 }
             } catch { }
 

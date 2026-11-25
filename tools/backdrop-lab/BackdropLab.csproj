@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>BackdropLab</AssemblyName>
+    <RootNamespace>BackdropLab</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>$(NoWarn);CS8618</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Fx.cs" />
+    <Compile Include="Designs.cs" />
+    <Compile Include="GifWriter.cs" />
+    <Compile Include="Host.cs" />
+    <Compile Include="PetalProbe.cs" />
+    <Compile Include="LiveWindow.cs" />
+  </ItemGroup>
+</Project>

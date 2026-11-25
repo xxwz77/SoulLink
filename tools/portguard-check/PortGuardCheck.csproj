@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\SoulLink.csproj" />
+    <Compile Include="PortGuardCheck.cs" />
+  </ItemGroup>
+</Project>

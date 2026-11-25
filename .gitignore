@@ -6,7 +6,13 @@ dist-test/
 out/
 publish/
 
-tools/*
+# tools/: 只忽略构建产物与二进制，源码要进库
+tools/*/bin/
+tools/*/obj/
+tools/*/*.exe
+tools/*/*.dll
+tools/7za/
+tools/ssh-run/
 rdptest/
 relaytest/
 sysdiag/
@@ -65,7 +71,13 @@ tools/*/bin/
 tools/*/obj/
 
 # Test tools, experiments and screenshots（7za 是构建依赖，例外保留）
-tools/*
+# tools/: 只忽略构建产物与二进制，源码要进库
+tools/*/bin/
+tools/*/obj/
+tools/*/*.exe
+tools/*/*.dll
+tools/7za/
+tools/ssh-run/
 !tools/7za
 # 多画面样张与布局验证工具（源码入库，构建产物忽略）
 !tools/view-demo
@@ -93,6 +105,31 @@ tools/*
 !tools/rescue
 !tools/rescue/Program.cs
 !tools/rescue/Rescue.csproj
+
+# ★★ 任务编辑独立服务（t24，2026-11-25）：对外网页入口，随包分发，源码必须入库。
+#    它由主程序启动、与主程序同生命周期，属于产品组件而非实验工具。
+#    构建产物（bin/obj）仍由下面的 tools/**/bin* 、tools/**/obj* 规则忽略。
+!tools/taskedit
+!tools/taskedit/Program.cs
+!tools/taskedit/ServiceConfig.cs
+!tools/taskedit/AuthGate.cs
+!tools/taskedit/Compression.cs
+!tools/taskedit/Pages.cs
+!tools/taskedit/ReverseProxy.cs
+!tools/taskedit/TaskEditServer.cs
+!tools/taskedit/TaskEditLogin.cs
+!tools/taskedit/TaskEditProbe.cs
+!tools/taskedit/TaskEditStatic.cs
+!tools/taskedit/TaskEditApi.cs
+!tools/taskedit/ServiceKey.cs
+!tools/taskedit/BgiBackup.cs
+!tools/taskedit/BgiIdentity.cs
+!tools/taskedit/BgiJson.cs
+!tools/taskedit/BgiPickList.cs
+!tools/taskedit/BgiStore.cs
+!tools/taskedit/BgiValidator.cs
+!tools/taskedit/Static/
+!tools/taskedit/SoulLink.TaskEdit.csproj
 
 # ★★ 注入代理 + Broker 服务独立工程（t7a/t16，2026-11-24）：源码入库，构建产物忽略。
 !Agent

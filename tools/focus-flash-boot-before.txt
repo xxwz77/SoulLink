@@ -1,0 +1,109 @@
+13:34:37.975  automation-ui: chinese-v2 modules=39 conditions=22 actions=14 daily-finish=1
+13:34:37.986    C TrigSchedule 定时·时刻
+13:34:37.987    C TrigSessionOnline 会话在线
+13:34:37.987    C TrigBgiIdle BGI 空闲
+13:34:37.987    C TrigManual 手动
+13:34:37.987    C TrigLogMatch 日志匹配
+13:34:37.988    C TrigInterval 定时·间隔
+13:34:37.988    C CondBgiRunning BGI 是否运行
+13:34:37.988    C CondBgiActive BGI 日志活跃
+13:34:37.988    C CondGenshinRunning 原神是否运行
+13:34:37.989    C CondTimeRange 时间段
+13:34:37.989    C CondLogContains 日志包含
+13:34:37.989    C CondLogMissing 日志缺失
+13:34:37.989    C CondLogHasError 日志有报错
+13:34:37.989    C CondCompare 数值比较
+13:34:37.990    C CondLastResult 上一步结果
+13:34:37.990    C CondProcessExists 进程检查
+13:34:37.990    C CondChoice 选择分支
+13:34:37.990    C CondScriptGroupState 配置组状态
+13:34:37.990    C CondDogfoodRoute 狗粮收尾路线
+13:34:37.990    C CondBgiLiveState BGI 活跃状态
+13:34:37.990    C CondSessionState 会话连接状态
+13:34:37.991    C CondWindowForeground 窗口在前台
+13:34:37.991  automation-ports: input-top output-bottom; explicit-hint=full-reason click-to-select
+13:34:38.110  config loaded: C:\Users\91244\AppData\Local\SoulLink\config.json
+13:34:39.323  single instance acquired
+13:34:39.443  tray created
+13:34:39.452  showing main window
+13:34:40.006  AccountStateCenter started
+13:34:40.199  边框色 失活→系统默认 ok=True
+13:34:40.199  DWM 圆角: 已应用
+13:34:40.206  边框色 激活 accent=#F091C1 ok=True
+13:34:40.363  MainWindow.Loaded
+13:34:40.382  LaunchView activated
+13:34:40.827  main window shown: True state=Normal
+13:34:42.281  边框色 激活 accent=#F091C1 ok=True
+13:34:42.282  边框色 激活 accent=#F091C1 ok=True
+13:34:47.881  边框色 激活 accent=#F091C1 ok=True
+13:34:47.883  边框色 激活 accent=#F091C1 ok=True
+13:34:49.113  边框色 失活→系统默认 ok=True
+13:34:50.579  边框色 激活 accent=#F091C1 ok=True
+13:34:53.436  边框色 失活→系统默认 ok=True
+13:34:54.476  边框色 激活 accent=#F091C1 ok=True
+13:34:56.558  边框色 失活→系统默认 ok=True
+13:34:57.548  边框色 激活 accent=#F091C1 ok=True
+13:35:08.282  边框色 失活→系统默认 ok=True
+13:35:09.199  边框色 激活 accent=#F091C1 ok=True
+13:37:10.996  边框色 失活→系统默认 ok=True
+13:37:12.092  边框色 激活 accent=#F091C1 ok=True
+13:37:13.971  边框色 失活→系统默认 ok=True
+13:37:15.188  边框色 激活 accent=#F091C1 ok=True
+13:37:17.714  边框色 失活→系统默认 ok=True
+13:37:18.835  边框色 激活 accent=#F091C1 ok=True
+13:37:20.162  边框色 失活→系统默认 ok=True
+13:37:21.064  边框色 激活 accent=#F091C1 ok=True
+13:37:22.358  边框色 失活→系统默认 ok=True
+13:43:04.659  边框色 激活 accent=#F091C1 ok=True
+13:43:07.497  边框色 失活→系统默认 ok=True
+13:43:08.686  边框色 激活 accent=#F091C1 ok=True
+13:43:09.857  边框色 失活→系统默认 ok=True
+13:43:10.920  边框色 激活 accent=#F091C1 ok=True
+13:43:12.163  边框色 失活→系统默认 ok=True
+13:43:13.124  边框色 激活 accent=#F091C1 ok=True
+13:43:17.414  边框色 激活 accent=#F091C1 ok=True
+13:43:17.415  边框色 激活 accent=#F091C1 ok=True
+13:43:19.388  边框色 失活→系统默认 ok=True
+13:43:20.437  边框色 激活 accent=#F091C1 ok=True
+13:43:22.011  边框色 失活→系统默认 ok=True
+13:43:23.075  边框色 激活 accent=#F091C1 ok=True
+13:43:24.684  边框色 失活→系统默认 ok=True
+13:43:26.016  边框色 激活 accent=#F091C1 ok=True
+13:43:27.338  边框色 失活→系统默认 ok=True
+13:43:28.434  边框色 激活 accent=#F091C1 ok=True
+13:43:29.875  边框色 失活→系统默认 ok=True
+13:43:31.405  边框色 激活 accent=#F091C1 ok=True
+13:43:32.829  边框色 失活→系统默认 ok=True
+13:43:33.971  边框色 激活 accent=#F091C1 ok=True
+13:43:35.417  边框色 失活→系统默认 ok=True
+13:43:36.656  边框色 激活 accent=#F091C1 ok=True
+13:43:38.964  边框色 激活 accent=#F091C1 ok=True
+13:43:38.965  边框色 激活 accent=#F091C1 ok=True
+13:43:40.691  边框色 失活→系统默认 ok=True
+13:43:41.721  边框色 激活 accent=#F091C1 ok=True
+13:43:42.888  边框色 失活→系统默认 ok=True
+13:43:43.895  边框色 激活 accent=#F091C1 ok=True
+13:43:45.359  边框色 失活→系统默认 ok=True
+13:45:40.500  边框色 激活 accent=#F091C1 ok=True
+13:46:24.479  边框色 失活→系统默认 ok=True
+13:46:29.981  边框色 激活 accent=#F091C1 ok=True
+13:46:31.336  边框色 失活→系统默认 ok=True
+13:46:32.911  边框色 激活 accent=#F091C1 ok=True
+13:47:28.574  边框色 失活→系统默认 ok=True
+13:48:03.038  边框色 激活 accent=#F091C1 ok=True
+13:48:04.273  边框色 失活→系统默认 ok=True
+13:48:04.817  边框色 激活 accent=#F091C1 ok=True
+13:48:05.323  边框色 失活→系统默认 ok=True
+13:48:05.805  边框色 激活 accent=#F091C1 ok=True
+13:48:06.314  边框色 失活→系统默认 ok=True
+13:48:06.808  边框色 激活 accent=#F091C1 ok=True
+13:48:07.304  边框色 失活→系统默认 ok=True
+13:48:07.814  边框色 激活 accent=#F091C1 ok=True
+13:48:08.269  边框色 失活→系统默认 ok=True
+13:48:08.766  边框色 激活 accent=#F091C1 ok=True
+13:48:09.221  边框色 失活→系统默认 ok=True
+13:48:09.695  边框色 激活 accent=#F091C1 ok=True
+13:48:10.164  边框色 失活→系统默认 ok=True
+13:48:10.649  边框色 激活 accent=#F091C1 ok=True
+13:48:11.107  边框色 失活→系统默认 ok=True
+13:48:11.547  边框色 激活 accent=#F091C1 ok=True

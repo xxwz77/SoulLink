@@ -61,7 +61,9 @@ namespace SoulLink.Views
                 {
                     App.Config.Settings.WebPort = 0;
                     ConfigStore.Save(App.Config);
-                    Services.WebServer.Apply(0);
+                    // ★ 3.3.45：改设置即时生效 —— 由 WebHost 统一停/起
+                    //   （它会同时处理回环端口与独立服务子进程）。
+                    Services.WebHost.Apply(0, App.Config.Settings.WebInternalPort, App.Config.Settings.WebPassword);
                     UpdateWebStatus();
                     return;
                 }
@@ -74,7 +76,8 @@ namespace SoulLink.Views
                 }
                 App.Config.Settings.WebPort = port;
                 ConfigStore.Save(App.Config);
-                Services.WebServer.Apply(port);
+                // ★ 3.3.45：端口变更 → 重新分配回环内部端口并重启独立服务。
+                Services.WebHost.Apply(port, App.Config.Settings.WebInternalPort, App.Config.Settings.WebPassword);
                 UpdateWebStatus();
             }
             catch (Exception ex) { App.AppendErrorLog("WebPortBox_TextChanged", ex); }
@@ -92,6 +95,11 @@ namespace SoulLink.Views
                 if (!string.Equals(newPw, oldPw, StringComparison.Ordinal))
                     App.Config.Settings.WebAuthToken = Guid.NewGuid().ToString("N");
                 ConfigStore.Save(App.Config);
+                // ★ 3.3.45：口令变更要让独立服务重新读取（它按口令校验远程访问）
+                if (!string.Equals(newPw, oldPw, StringComparison.Ordinal)
+                    && App.Config.Settings.WebPort > 0)
+                    Services.WebHost.Apply(App.Config.Settings.WebPort,
+                        App.Config.Settings.WebInternalPort, newPw);
                 UpdateWebStatus();
             }
             catch (Exception ex) { App.AppendErrorLog("WebPasswordBox_TextChanged", ex); }
@@ -120,18 +128,22 @@ namespace SoulLink.Views
             {
                 if (WebStatus == null) return;
                 int port = App.Config.Settings.WebPort;
-                int running = Services.WebServer.RunningPort;
+                // ★ 3.3.45：对外端口由独立服务监听，回环端口是主程序自己的
+                int loopback = Services.WebHost.InternalPort;
                 if (port <= 0)
                 {
                     WebStatus.Text = "未开启。填一个端口号（如 8080），然后用 http://本机IP:端口 访问。";
                     return;
                 }
-                if (running > 0)
+                if (loopback > 0)
                 {
+                    // ★ 3.3.45：不再提示「未设口令 = 任何人可访问」——
+                    //   独立服务对非回环访问**强制口令**，没设口令时会自动生成令牌。
                     string auth = string.IsNullOrWhiteSpace(App.Config.Settings.WebPassword)
-                        ? "　⚠ 未设口令，局域网内任何人可访问并操作"
+                        ? "　远程访问需输入启动时生成的令牌（或在此设口令）"
                         : "　已启用口令";
-                    WebStatus.Text = "已开启：" + Services.WebServer.LanUrl(port) + auth;
+                    string svc = Services.WebHost.ServiceRunning ? "" : "　⚠ 独立服务未运行（仅本机可访问）";
+                    WebStatus.Text = "已开启：" + Services.WebServer.LanUrl(port) + auth + svc;
                 }
                 else
                 {

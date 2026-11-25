@@ -401,6 +401,75 @@ namespace SoulLink.Models
         ///   但给一个较长的默认值（30 天），避免用户想回档时包没了。
         /// </summary>
         public int RouteCacheKeepDays { get; set; } = 30;
+
+        /// <summary>
+        /// 数据中心「配置组运行记录」（SQLite）的留存天数 —— <b>用户可自行设置留存时间</b>。
+        ///
+        /// ★ 3.3.41：运行记录落 SQLite（数据目录下的 run-db/run.db），超过本天数的行由
+        ///   <see cref="Services.RunRecordHost"/> 自动清理（启动一次 + 跨天一次，走 TickHub）。
+        /// ★ 默认 7 天。合法范围 <b>[1, 365]</b>：
+        ///   缺失 / ≤0 / 非数字 → 7（老配置没有这个字段时自然取默认值，见 ConfigStore.Load）；
+        ///   &gt;365 → 365。
+        /// ★ 与 <see cref="BgiBackupKeep"/>（0 = 不限制）语义不同：本字段 <b>0 不表示「无限」</b>，
+        ///   否则库会无界增长（7 天 × 20 账号约 2~7 MB，无限留存没有意义）。
+        /// ★ 刻意<b>不做界面</b>（用户明确要求不展示）：要改就手改 config.json。
+        /// </summary>
+        public int RunDbRetentionDays { get; set; } = 7;
+
+        /// <summary>米游社自动签到总开关；默认开启（用户 2026-11-25 明确要签到，仍可手动关闭）。</summary>
+        public bool MiyousheSignEnabled { get; set; } = true;
+        /// <summary>每日签到小时（0-23，本地时间）；兼容字段，新配置优先用 MiyousheSignTime。</summary>
+        public int MiyousheSignHour { get; set; } = 8;
+        /// <summary>每日签到时刻（"HH:mm"，本地时间）；默认 00:10（用户 2026-11-25 定稿）。</summary>
+        public string MiyousheSignTime { get; set; } = "00:10";
+        /// <summary>摩拉数据每小时拉取开关；默认开启。</summary>
+        public bool MiyousheLedgerEnabled { get; set; } = true;
+        /// <summary>摩拉拉取间隔分钟数；默认 60（米游社数据约 1 小时延迟，再频繁无意义）。</summary>
+        public int MiyousheLedgerIntervalMinutes { get; set; } = 60;
+        /// <summary>国服 x4 DS salt（t20 解包双源确认，公开社区值）。若服务端改协议/作废，可在设置中覆盖。</summary>
+        public string MiyousheDsSalt { get; set; } = "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs";
+        /// <summary>每账号自动签到独立开关；缺省跟随全局开关。</summary>
+        public Dictionary<string, bool> MiyousheSignAccounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>米游社拉取状态配置（鉴权失败/风控退避分钟数，默认 60）。</summary>
+        public int MiyousheRetryMinutes { get; set; } = 60;
+        /// <summary>国际服 DS salt 独立配置。t20 仅确认其极简请求不需 DS，未找到独立 x4 值，故不伪造默认 salt；需要时可覆盖。</summary>
+        public string MiyousheOsDsSalt { get; set; } = "";
+        /// <summary>每账号默认区域（cn/os），不改变一 Windows 账号一套凭据主体的边界。</summary>
+        public Dictionary<string,string> MiyousheAccountRegions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>游戏/社区子任务开关，键为 task@region；缺省为关闭（未核实项目强制关闭）。</summary>
+        public Dictionary<string,bool> MiyousheTaskEnabled { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>不参与列表，键为 account|task@region；命中记 skipped 而非 failed。</summary>
+        public HashSet<string> MiyousheExcludedTasks { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>讨论区 ID 列表；至少选一个才能执行 forum 子任务。</summary>
+        public List<string> MiyousheForumIds { get; set; } = new();
+        /// <summary>社区请求间隔，来源为参考项目 3-8s 经验的保守下限，可配置为 8-120s。</summary>
+        public int MiyousheCommunityDelaySeconds { get; set; } = 12;
+        /// <summary>社区失败重试上限（不含首次），默认 2；指数退避 30/60/120... 秒，最大 1800s。</summary>
+        public int MiyousheCommunityMaxRetries { get; set; } = 2;
+        public int MiyousheCommunityBackoffBaseSeconds { get; set; } = 30;
+
+        /// <summary>
+        /// 上次用过的**米游社凭据导入路径**（ABGI 主文件夹 / BetterGI 根 / 具体文件）。
+        ///
+        /// ★ 用途：用户下次点「一键导入」时不用再选一遍路径（`path` 留空即用它）。
+        /// ★ 只存路径字符串，**不存任何 cookie/stoken**；凭据本体只在
+        ///   `&lt;DataDir&gt;\miyoushe\&lt;账号&gt;.cn.json` 以 DPAPI 密文保存。
+        /// </summary>
+        public string MiyousheImportPath { get; set; } = "";
+
+        /// <summary>
+        /// 米游社**默认原神角色**（t50）：账号名 → GameUid。
+        ///
+        /// ★ 用户需求原文：「如果有绑定多个原神账号，应该要可以切换，设为默认，
+        ///   不然要取哪个数据呢？」
+        /// ★ 一个米游社账号可以绑多个原神角色（不同区服/不同小号）。拉取与签到时
+        ///   **全部角色都会处理**（不跳过任何一个，见 MiyousheService），
+        ///   本配置只决定「界面默认展示/高亮哪一个」，以及**数据归属的默认视角**。
+        /// ★ 缺省（没有该账号的键）= 未设默认 → 界面取角色列表第一项并标注「未设默认」。
+        /// ★ 只存 GameUid 字符串，**不存任何凭据**。
+        /// </summary>
+        public Dictionary<string, string> MiyousheDefaultRole { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
         public string LastExportPath { get; set; } = "";
         /// <summary>自动化编辑器首次打开时显示引导动画；用户勾选“不再弹出”后置为 false。</summary>
         public bool ShowFlowGuide { get; set; } = true;
@@ -628,6 +697,19 @@ namespace SoulLink.Models
         /// 两个进程绑同一端口时第二个会静默失效（收不到任何连接）。
         /// </summary>
         public bool WebDirectToAgent { get; set; } = true;
+
+        /// <summary>
+        /// 主程序**回环内部端口**（3.3.45 / t24）。
+        ///
+        /// ★ 架构变更（设计文档 §11.4 / §17.1）：
+        ///   · 对外入口 = 独立服务 <c>SoulLink.TaskEdit.exe</c> 独占 <see cref="WebPort"/>；
+        ///   · 主程序改为只绑 <c>http://127.0.0.1:&lt;本端口&gt;/</c>，外部不可直达；
+        ///   · 独立服务把非 <c>/taskedit/*</c> 的请求反代到这个端口。
+        /// ★ 默认 0 = 自动：取 <c>WebPort + 1</c>（被占用则顺延，见 WebHost.ResolveInternalPort）。
+        ///   写死一个值也能用，但同时改 WebPort 时会不一致，所以默认交给自动推导。
+        /// ★ 本端口**不需要**防火墙放行（回环流量不经过防火墙）。
+        /// </summary>
+        public int WebInternalPort { get; set; } = 0;
 
         /// <summary>网页访问是否需要口令（空 = 不需要）。局域网内可选。</summary>
         public string WebPassword { get; set; } = "";

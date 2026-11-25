@@ -132,7 +132,10 @@ namespace SoulLink.Services
             {
                 Version++;
                 LogFile = file;
-                Cursor = 0;
+                // ★ t45 断点续传：换文件/新文件时从持久化游标继续，而不是从 0 重扫。
+                //   首次见到该文件（无持久化记录）LoadCursor 返回 -1 → 落回 0。
+                long persisted = IngestCursorStore.LoadCursor(AccountId, file);
+                Cursor = persisted >= 0 ? persisted : 0;
                 FileLength = 0;
                 PendingLen = 0;
                 // ★ 注意：CurrentGroup / OneDragon **不清空**。
@@ -361,6 +364,15 @@ namespace SoulLink.Services
                     //   活着 → 什么都不做；死了 → 标记脏，让 Step 更新状态。
                     if (dirty == 0)
                     {
+                        // ★ t10：判活节流 ≥30s（用既有 LastAliveCheck 字段，避免每秒查）。
+                        //   判活结果同时喂给运行记录采集器（BGI 状态时段：idle/not_running），
+                        //   只在空闲拍（dirty==0）做，本身已是低频，无新进程枚举。
+                        if (e.BgiPid > 0 && (DateTime.Now - e.LastAliveCheck).TotalSeconds >= 30)
+                        {
+                            e.LastAliveCheck = DateTime.Now;
+                            bool alive = IsAlive(e.BgiPid);
+                            try { RunRecordCollector.ObserveBgiState(e.UserName, 0, alive, e.LogFile); } catch { }
+                        }
                         if (e.BgiPid > 0 && IsAlive(e.BgiPid))
                         {
                             // 正常挂机：BGI 活着但没写日志，不需要任何动作
@@ -451,6 +463,7 @@ namespace SoulLink.Services
             {
                 try
                 {
+                    MissCheck(acc);   // ★ t45 遗漏检查（读游标+文件长度，无 IO 放大）
                     if (Step(acc)) any = true;
                 }
                 catch (Exception ex)
@@ -473,6 +486,41 @@ namespace SoulLink.Services
             }
 
             if (any) { try { Changed?.Invoke(); } catch { } }
+        }
+
+        /// <summary>
+        /// t45 启动/每轮遗漏检查：对比持久化 cursor 与当前文件长度，计算未读区间。
+        /// 结果写入 LogBus（可观测）；补采由 Pump 按 MaxBytesPerTick 预算分批消化，不阻塞启动。
+        /// </summary>
+        private static void MissCheck(Account acc)
+        {
+            if (!BgiPathResolver.IsPinned(acc.UserName ?? "")) return;
+            string exe = BgiPathResolver.GetBoundPath(acc.UserName ?? "");
+            if (string.IsNullOrWhiteSpace(exe)) return;
+            string logFile = BgiLogWatcher.FindTodayLog(exe) ?? "";
+            if (logFile.Length == 0)
+            {
+                // 日志文件不存在（被删/移走）→ 记「缺失」
+                if (acc.UserName != null)
+                    LogBus.Warn("采集·缺失", acc.UserName + " 今日日志文件不存在（未绑定或已被移走）");
+                return;
+            }
+            try
+            {
+                long len = new FileInfo(logFile).Length;
+                long persisted = IngestCursorStore.LoadCursor(acc.Id, logFile);
+                long pending = persisted < 0 ? len : Math.Max(0, len - persisted);
+                if (pending > 8 * 1024 * 1024)
+                {
+                    // 未读区间过大 → 记「补采中」，分多个 tick 消化
+                    LogBus.Info("采集·补采中", acc.UserName + " 未读 " + (pending / 1024 / 1024) + " MB，分批补采（不阻塞启动）");
+                }
+                else if (pending > 0)
+                {
+                    LogBus.Ok("采集·断点续传", acc.UserName + " 从断点续读，待补 " + pending + " 字节");
+                }
+            }
+            catch { }
         }
 
         /// <summary>返回 true 表示该账号的可见数据发生了变化。</summary>
@@ -562,6 +610,13 @@ namespace SoulLink.Services
                 {
                     e.ResetForNewFile(logFile);
                     e.Version++;
+
+                    // ★ 3.3.41 跨天补全入口（契约 §4.4）：文件滚动 / 新一天日志开始文件时，
+                    //   让运行记录采集器判断「内存里的 open 窗口还算不算同一次运行」——
+                    //   gap ≤ 5 分钟 = 续跑（保留 start 时刻，跨天仍旧 1 条）；
+                    //   gap > 5 分钟 = close(Interrupted) 兜底，绝不虚构成跨天完成。
+                    //   纯内存判定（无 IO、无锁竞争、不碰文件），异常吞掉不影响日志解析。
+                    try { RunRecordCollector.OnFileChanged(e.UserName, logFile); } catch { }
                 }
             }
 
@@ -590,6 +645,9 @@ namespace SoulLink.Services
             if (len < e.Cursor)
             {
                 lock (Sync) { e.Cursor = 0; e.PendingLen = 0; }
+                // ★ t45 轮转处理：重置持久化游标并记录一次轮转事件（可观测）。
+                IngestCursorStore.Reset(e.AccountId, e.LogFile);
+                LogBus.Warn("采集·轮转", e.UserName + " 日志被轮转/变小，游标已重置从头补采");
             }
             if (len == e.Cursor && write == e.LastWrite) return false;
 
@@ -646,13 +704,15 @@ namespace SoulLink.Services
                     else e.PendingLen = 0;
 
                     string chunk = Encoding.UTF8.GetString(work, start, completeLen);
-                    ProcessChunk(e, chunk);
+                    ProcessChunk(e, chunk, len, write.Ticks);
                     changed = true;
 
                     pos += got;
                     _ = carry;
                 }
                 lock (Sync) { e.Cursor = end; e.FileLength = len; e.LastWrite = write; }
+                // ★ t45 断点续传：推进后节流写回游标（≥1MB 或 ≥30s 才真正落盘）。
+                IngestCursorStore.Advance(e.AccountId, e.LogFile, end, len, write.Ticks);
                 bool wasPrimed = e.Primed;
                 e.Primed = true;
 
@@ -678,7 +738,7 @@ namespace SoulLink.Services
         }
 
         /// <summary>解析一段完整的日志文本（行尾已闭合）。</summary>
-        private static void ProcessChunk(Entry e, string chunk)
+        private static void ProcessChunk(Entry e, string chunk, long fileLen, long writeTicks)
         {
             if (chunk.Length == 0) return;
             e.Version++;
@@ -693,6 +753,13 @@ namespace SoulLink.Services
             //   只做内存归因，文件写 IO 由 RouteLedger 后台线程承担（不在 UI 线程）。
             //   挂在这里 = 挂在现有增量解析路径上，不新增定时器。
             try { RouteLedger.Feed(e.UserName, chunk); } catch { }
+
+            // ★★ 3.3.41 运行记录（SQLite）：紧邻 RouteLedger 的第二个归因订阅者。
+            //   同一条增量 chunk、同一份字节游标 —— **不新增日志扫描链**，
+            //   只多跑若干已编译正则 + 内存状态机 + 入队（写盘全在 RunRecordStore 后台线程）。
+            //   异常绝不能影响日志解析主流程（Feed 内部已 try/catch，这里再兜一层）。
+            //   srcFile 用于取文件名日期（跨天时间轴）与来源留痕，不做任何文件 IO。
+            try { RunRecordCollector.Feed(e.UserName, chunk, e.LogFile, fileLen, writeTicks); } catch { }
 
             // ② 逐行处理：粘性配置组 / 拾取分组 / 报错计数 / 尾窗。
             var lines = chunk.Split('\n');
@@ -904,6 +971,13 @@ namespace SoulLink.Services
             // ★ 必须先释放 watcher：Entries.Clear() 只是丢引用，
             //   FileSystemWatcher 内部持有系统句柄，不 Dispose 会泄漏。
             StopAllWatchers();
+            // ★ t45 退出前强制落盘游标，保证下次启动从断点继续。
+            lock (Sync)
+            {
+                foreach (var e in Entries.Values)
+                    if (e.LogFile.Length > 0)
+                        IngestCursorStore.Flush(e.AccountId, e.LogFile, e.Cursor, e.FileLength, e.LastWrite.Ticks);
+            }
             lock (Sync) Entries.Clear();
         }
     }

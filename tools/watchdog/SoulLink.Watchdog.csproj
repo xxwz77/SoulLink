@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- ★ 外置看门狗（2026-11-24，对标 Yomori.Watchdog）：
+         独立进程探测主程序整窗假死——进程内看门狗在「全部线程一起卡死」时
+         自己也被调度饿死（Yomori 三次漏报实证），必须进程外。
+         为什么独立工程而不是「主程序加个 watchdog 参数」入口：
+         常驻无人值守 + 不能被主程序的崩溃牵连。 -->
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <RootNamespace>SoulLink.Watchdog</RootNamespace>
+    <AssemblyName>sl-watchdog</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>15.0</LangVersion>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- 框架依赖（非自包含）：部署机必装 .NET 11（主程序运行时要求一致）；
+         产物 ~100KB 级，与 sl-rescue 同形态。 -->
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>zh-CN;en-US</SatelliteResourceLanguages>
+    <NoWarn>$(NoWarn);CA1416;CS8618</NoWarn>
+  </PropertyGroup>
+</Project>

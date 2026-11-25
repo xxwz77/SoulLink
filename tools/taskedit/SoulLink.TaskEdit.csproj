@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- ★ t24（2026-11-25）：任务编辑独立服务，独占对外 WebPort，反代主程序回环端口。
+         TFM 选 net11.0-windows（**不带版本号**）的理由：
+           ① 本服务只用 HttpListener + System.Text.Json + gzip，不需要任何 WinRT 投影；
+           ② 带版本号的 TFM（net11.0-windows10.0.26100.0）会拉进
+              Microsoft.Windows.SDK.NET.dll（约 26 MB）与 WinRT.Runtime.dll，单文件包直接翻倍；
+           ③ 与 Agent/SoulLink.Agent.csproj 保持一致，便于维护同一套发布模式。
+         与主程序（多目标）解耦：主程序在自己的两个 TFM 里都编，本服务只需一个能跑的。 -->
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <UseWPF>false</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>15.0</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>SoulLink.TaskEdit</RootNamespace>
+    <AssemblyName>SoulLink.TaskEdit</AssemblyName>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RollForward>LatestMajor</RollForward>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>zh-CN;en-US</SatelliteResourceLanguages>
+    <NoWarn>$(NoWarn);CA1416;CS8618;CS1591;CS0649;CS8632</NoWarn>
+    <Version>1.0.0</Version>
+    <FileVersion>$(Version).0</FileVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <AssemblyTitle>SoulLink 任务编辑服务</AssemblyTitle>
+    <Product>SoulLink</Product>
+    <Description>独立本地服务：独占网页端口、反代主程序、强制鉴权、gzip</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="ServiceConfig.cs" />
+    <Compile Include="AuthGate.cs" />
+    <Compile Include="ServiceKey.cs" />
+    <Compile Include="Compression.cs" />
+    <Compile Include="Pages.cs" />
+    <Compile Include="ReverseProxy.cs" />
+    
+    <Compile Include="TaskEditServer.cs" />
+    <Compile Include="TaskEditLogin.cs" />
+    <Compile Include="TaskEditProbe.cs" />
+    <Compile Include="BgiPickList.cs" />
+    <Compile Include="BgiBackup.cs" />
+    <!-- 任务编辑页前端（CSS/JS 以 C# 原始字符串编译进程序集，单文件发布下最稳） -->
+    <Compile Include="TaskEditStatic.cs" />
+    <Compile Include="Static/ShellCss.cs" />
+    <Compile Include="Static/PageHtml.cs" />
+    <Compile Include="Static/CoreJs.cs" />
+    <Compile Include="Static/TreeJs.cs" />
+    <Compile Include="Static/GroupJs.cs" />
+    <Compile Include="Static/GroupTableJs.cs" />
+    <Compile Include="Static/GroupSchemaJs.cs" />
+    <Compile Include="Static/GroupSettingsJs.cs" />
+    <Compile Include="Static/GroupOpsJs.cs" />
+    <Compile Include="Static/DragonJs.cs" />
+    <Compile Include="Static/DragonSectionsJs.cs" />
+    <Compile Include="Static/DragonWeekJs.cs" />
+    <Compile Include="Static/DragonBindJs.cs" />
+    <Compile Include="Static/JsSettingsJs.cs" />
+    <Compile Include="Static/PickJs.cs" />
+    <Compile Include="Static/AppJs.cs" />
+    <Compile Include="BgiIdentity.cs" />
+    <Compile Include="BgiJson.cs" />
+    <Compile Include="BgiStore.cs" />
+    <Compile Include="BgiValidator.cs" />
+    <Compile Include="TaskEditApi.cs" />
+    <!-- 只引用「纯逻辑、零 WPF 依赖」的两个既有文件（不复制，避免双份维护）：
+         · AppIdentity：数据目录/exe 目录/互斥体名的**单一来源**，保证与主程序同一套路径规则；
+         · WebFirewall：单端口防火墙放行（主程序侧同名规则，删的时候能一起清干净）。 -->
+    <Compile Include="../../Services/AppIdentity.cs" Link="Shared/AppIdentity.cs" />
+    <Compile Include="../../Services/WebFirewall.cs" Link="Shared/WebFirewall.cs" />
+  </ItemGroup>
+
+  <Target Name="WriteTaskEditVersionToOutput" AfterTargets="AfterBuild">
+    <WriteLinesToFile File="$(TargetDir)SoulLink.TaskEdit.version" Lines="$(Version)" Overwrite="true" Encoding="UTF-8" />
+  </Target>
+  <Target Name="WriteTaskEditVersionToPublish" AfterTargets="Publish">
+    <WriteLinesToFile File="$(PublishDir)SoulLink.TaskEdit.version" Lines="$(Version)" Overwrite="true" Encoding="UTF-8" />
+  </Target>
+</Project>
