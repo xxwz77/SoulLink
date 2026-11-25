@@ -324,7 +324,7 @@ namespace SoulLink.Views
             Grid.SetColumn(grid,0);
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            for (int i = 0; i < 11; i++)
+            for (int i = 0; i < 8; i++)   // t60：字段从 11 减到 8（去掉 3 个调试字段）
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             int row = 0;
@@ -337,27 +337,21 @@ namespace SoulLink.Views
             var shared = BgiDataCenter.Get(st.UserName);
             AddRow(grid, row++, "BGI 路径", shared.ExePath.Length == 0 ? "未设置" : shared.ExePath, mono: true);
             AddRow(grid, row++, "配置目录", shared.RootPath.Length == 0 ? "—" : shared.DirectoryOf("User"), mono: true);
-            AddRow(grid, row++, "配置组", shared.ScriptGroups.Count + " 个：" + (shared.ScriptGroups.Count == 0 ? "未发现" : string.Join("、", shared.ScriptGroups)));
-            AddRow(grid, row++, "一条龙", shared.OneDragonConfigs.Count + " 个：" + (shared.OneDragonConfigs.Count == 0 ? "未发现" : string.Join("、", shared.OneDragonConfigs)));
+            // ★★ t60：配置组/一条龙**只显示数量**，不再拼接完整名单。
+            //   原来 39 个组名铺满 3~4 行，把真正有用的信息（会话/BGI/日志）挤到看不见。
+            //   要看完整名单 → 点「配置管理」页，那里是专门的地方。
+            AddRow(grid, row++, "配置组", shared.ScriptGroups.Count + " 个" + (shared.ScriptGroups.Count == 0 ? "（未发现）" : ""));
+            AddRow(grid, row++, "一条龙", shared.OneDragonConfigs.Count + " 个" + (shared.OneDragonConfigs.Count == 0 ? "（未发现）" : ""));
             AddRow(grid, row++, "停止快捷键", shared.HotkeyText);
-            AddRow(grid, row++, "配置读取", shared.Error.Length > 0 ? shared.Error : (shared.ConfigExists ? "正常" : "尚未读取") + " · " + shared.ReadAt.ToString("HH:mm:ss"));
             AddRow(grid, row++, "日志文件", string.IsNullOrWhiteSpace(st.BgiLogFile) ? "—"
                 : (System.IO.Path.GetFileName(st.BgiLogFile) + "  " + st.BgiLogWrite.ToString("HH:mm:ss")), mono: true);
-            AddRow(grid, row++, "任务原文", ExtractTaskLine(st), mono: true);
 
-            // ── 数据中心占用（回归哨兵：改造后应稳定在百 KB 级）──
-            //   ★ 2.17.45 起不再保留日志原文，这里改成数据中心常驻量；
-            //     如果这个数字开始涨到 MB 级，说明尾窗预算失守。
-            long centerChars = BgiLogCenter.ResidentChars();
-            long centerBytes = centerChars * 2L;
-            AddRow(grid, row++, "数据中心占用",
-                (st.Bound ? "已绑定" : "未绑定（不读日志）")
-                + "  ·  " + FormatSize(centerBytes) + "（全部账号）"
-                + "  ·  尾窗 " + CountLines(st.RecentLog) + " 行"
-                + "  ·  " + (st.RecentLogAt == DateTime.MinValue
-                    ? "未采集"
-                    : st.RecentLogAt.ToString("HH:mm:ss") + " 更新"),
-                mono: true);
+            // ★★ t60：移除三个**纯调试字段**（用户反馈「多余无用字段」）：
+            //   · 「配置读取」（正常 · 02:13:50）—— 只有排查配置读不出时才需要；
+            //   · 「任务原文」（截断的日志行）—— 界面看这个没意义，日志里有完整的；
+            //   · 「数据中心占用」（70.7 KB / 尾窗 353 行）—— 这是给开发看的内存哨兵，
+            //     用户完全看不懂，而且它和「这个账号在干什么」毫无关系。
+            //   需要排查时看 设置 → 诊断日志，那里有完整信息。
 
             columns.Children.Add(grid);
             var hotkeys = BuildHotkeyTable(shared);
@@ -865,10 +859,17 @@ namespace SoulLink.Views
         ///   组名 + 今日 N 次 · 最后一次 <状态> / 起止时刻 / 时长 / 脚本数 / 拾取
         ///   + 点击展开该组今日全部运行（可选项，用户要求「展开看历史」）。
         /// </summary>
-        private Border BuildGroupCard(GroupAggregate agg, string accountKey)
+
+        /// <summary>
+        /// t60：构建「分组卡片的内容」（组名 + 摘要 + 可选的历史列表）。
+        /// ★ 单独提出来是为了**只重建这一张卡片**，而不是整页 Rebuild ——
+        ///   旧实现点展开时整页 Children.Clear()，把米游社的 ComboBox 也销毁了，
+        ///   导致下拉框选不中、视觉上「展开又收回」。
+        /// </summary>
+        private List<UIElement> BuildGroupCardChildren(GroupAggregate agg, string accountKey)
         {
             var last = agg.Last;
-            var (accent, fill) = GroupColors(last.State);
+            var (accent, _) = GroupColors(last.State);
             string state = StateText(last.State);
             string times = TimeText(last);
             string meta = "今日 " + agg.Runs.Count + " 次 · 最后一次 " + state
@@ -877,17 +878,30 @@ namespace SoulLink.Views
                 + (last.Duration.HasValue ? " · " + FmtDur(last.Duration.Value) : "")
                 + (last.Picks > 0 ? " · 拾取 " + last.Picks : "");
 
-            var stack = new StackPanel();
-            stack.Children.Add(new TextBlock
+            var list = new List<UIElement>();
+            list.Add(new TextBlock
             {
                 Text = agg.Name, FontSize = 10.5, FontWeight = FontWeights.SemiBold,
                 TextWrapping = TextWrapping.Wrap, Foreground = accent
             });
-            stack.Children.Add(new TextBlock
+            list.Add(new TextBlock
             {
                 Text = meta, FontSize = 9.5, TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0,2,0,0), Foreground = (Brush)FindResource("TextSecondary")
+                Margin = new Thickness(0, 2, 0, 0), Foreground = (Brush)FindResource("TextSecondary")
             });
+            string key = accountKey + "\u001f" + agg.Name;
+            if (_expandedGroups.Contains(key) && agg.Runs.Count > 1)
+                list.Add(BuildGroupHistory(agg));
+            return list;
+        }
+
+        private Border BuildGroupCard(GroupAggregate agg, string accountKey)
+        {
+            var last = agg.Last;
+            var (accent, fill) = GroupColors(last.State);
+
+            var stack = new StackPanel();
+            foreach (UIElement child in BuildGroupCardChildren(agg, accountKey)) stack.Children.Add(child);
 
             string key = accountKey + "\u001f" + agg.Name;
             bool expanded = _expandedGroups.Contains(key);
@@ -900,13 +914,37 @@ namespace SoulLink.Views
                 Child = stack
             };
             card.Cursor = System.Windows.Input.Cursors.Hand;
-            card.MouseLeftButtonUp += (_, __) =>
+            // ★★ t60 修复（展开后自动收起 + 无法操作下拉框）：
+            //
+            //   旧实现：点击 → `_lastSignature = ""` + `Rebuild()`（整页 Children.Clear + 重建）。
+            //   后果有两个：
+            //     ① 整页重建会销毁**所有**卡片（包括米游社那行的 ComboBox），
+            //        所以下拉框刚选完就被销毁重建 → 选不中、闪一下、看似「自动收起」；
+            //     ② 重建期间滚动位置/鼠标捕获全部丢失，视觉上就是「点开又收回去了」。
+            //
+            //   新实现：**只更新这一张卡片自己的 Child**，不碰整页。
+            //   展开态仍记在 _expandedGroups 里（跨 Rebuild 保持），但展开动作本身不触发 Rebuild。
+            card.MouseLeftButtonUp += (_, e) =>
             {
-                if (!_expandedGroups.Add(key)) _expandedGroups.Remove(key);
-                // 只重建这一页是一致的：展开态与折叠态卡片数量相同（仍按组合并），
-                // 不会因为重建把「79 张」问题带回来。
-                _lastSignature = "";
-                Rebuild();
+                e.Handled = true;   // 阻止冒泡到上层（原来可能被父级再处理一次 = 立刻又折回去）
+                bool nowExpanded = _expandedGroups.Add(key);
+                if (!nowExpanded) _expandedGroups.Remove(key);
+                try
+                {
+                    // 重建这张卡片的内容，而不是整页
+                    var fresh = BuildGroupCardChildren(agg, accountKey);
+                    if (card.Child is Panel oldPanel)
+                    {
+                        oldPanel.Children.Clear();
+                        foreach (UIElement child in fresh) oldPanel.Children.Add(child);
+                    }
+                }
+                catch
+                {
+                    // 万一卡片结构异常，退回整页重建（保证至少能用）
+                    _lastSignature = "";
+                    Rebuild();
+                }
             };
 
             if (expanded && agg.Runs.Count > 1)
