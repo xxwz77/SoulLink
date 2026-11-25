@@ -113,6 +113,10 @@ namespace SoulLink.Services
 
             /// <summary>是否已经做过首次全量扫描。</summary>
             public bool Primed;
+            /// <summary>t52：本次启动是否因持久化游标跳过了全量重扫（可观测）。</summary>
+            public bool SkippedRescan;
+            /// <summary>t52：跳过重扫时起跳的游标字节数（本次启动零读取的历史字节）。</summary>
+            public long SkippedRescanBytes;
 
             /// <summary>
             /// 数据版本：任何可见变化都 +1。
@@ -136,6 +140,16 @@ namespace SoulLink.Services
                 //   首次见到该文件（无持久化记录）LoadCursor 返回 -1 → 落回 0。
                 long persisted = IngestCursorStore.LoadCursor(AccountId, file);
                 Cursor = persisted >= 0 ? persisted : 0;
+                // ★ t52：持久化游标 > 0 意味着「本次启动不会全量重扫」，标记并计数（可观测）。
+                //   注意：Primed 仍置 false，因为 Tracker 内存状态确需重建，但重建走 SQLite 而非日志扫描。
+                if (persisted > 0 && !SkippedRescan)
+                {
+                    SkippedRescan = true;
+                    SkippedRescanBytes = persisted;
+                    Interlocked.Increment(ref _skippedRescanCount);
+                    Interlocked.Add(ref _skippedRescanTotalBytes, persisted);
+                    LogBus.Ok("采集·跳过重扫", UserName + " 持久化游标 " + persisted + " 字节，启动不读历史日志");
+                }
                 FileLength = 0;
                 PendingLen = 0;
                 // ★ 注意：CurrentGroup / OneDragon **不清空**。
@@ -157,6 +171,14 @@ namespace SoulLink.Services
 
         private static readonly Lock Sync = new();
         private static readonly Dictionary<string, Entry> Entries = new(StringComparer.OrdinalIgnoreCase);
+
+        // ── t52 启动跳过重扫可观测 + 手动全量重扫 ────────────────────────
+        /// <summary>本次启动跳过重扫的账号数（冷启动后累计；供 /api/bgi/ingest/status 反映优化是否生效）。</summary>
+        public static int SkippedRescanCount => Interlocked.CompareExchange(ref _skippedRescanCount, 0, 0);
+        private static int _skippedRescanCount;
+        /// <summary>本次启动因持久化游标而免于全量读取的历史字节总数。</summary>
+        public static long SkippedRescanTotalBytes => Interlocked.Read(ref _skippedRescanTotalBytes);
+        private static long _skippedRescanTotalBytes;
         private static Dictionary<int, BgiLogWatcher.Instance> _instances = new();
         private static DateTime _instancesAt = DateTime.MinValue;
 
@@ -711,8 +733,13 @@ namespace SoulLink.Services
                     _ = carry;
                 }
                 lock (Sync) { e.Cursor = end; e.FileLength = len; e.LastWrite = write; }
-                // ★ t45 断点续传：推进后节流写回游标（≥1MB 或 ≥30s 才真正落盘）。
-                IngestCursorStore.Advance(e.AccountId, e.LogFile, end, len, write.Ticks);
+                // ★ t45/t52 断点续传：持久化「行对齐游标」= end - 残行字节。
+                //   内存 e.Cursor 仍 = end（残行 bytes 在 e.Pending 里，下次 Pump 拼回）；
+                //   持久化必须回到上一个完整换行之后，否则重启后 cursor 落在半行中间，
+                //   从半行起读会解析出乱码/错锚点。ResetForNewFile 时 PendingLen=0，
+                //   重新从行首读这半行，天然对齐。
+                long aligned = Math.Max(0, end - e.PendingLen);
+                IngestCursorStore.Advance(e.AccountId, e.LogFile, aligned, len, write.Ticks);
                 bool wasPrimed = e.Primed;
                 e.Primed = true;
 
@@ -966,6 +993,32 @@ namespace SoulLink.Services
             }
         }
 
+        /// <summary>
+        /// t52 手动全量重扫：清除某账号（或全部）的持久化游标并重置内存状态，
+        /// 下次 Pump 会从 0 重新全量读该账号日志。默认关闭，仅用户怀疑数据不对时用。
+        /// 传 null/空 = 全部账号。
+        /// </summary>
+        public static void ForceFullRescan(string? account)
+        {
+            lock (Sync)
+            {
+                foreach (var e in Entries.Values)
+                {
+                    if (!string.IsNullOrWhiteSpace(account)
+                        && !string.Equals(e.AccountId, account, StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(e.UserName, account, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    IngestCursorStore.Reset(e.AccountId, e.LogFile);
+                    e.Cursor = 0;
+                    e.PendingLen = 0;
+                    e.Primed = false;
+                    e.SkippedRescan = false;
+                    e.SkippedRescanBytes = 0;
+                }
+            }
+            LogBus.Info("采集·手动重扫", string.IsNullOrWhiteSpace(account) ? "全部账号已重置游标，将全量重扫" : account + " 已重置游标，将全量重扫");
+        }
+
         public static void Clear()
         {
             // ★ 必须先释放 watcher：Entries.Clear() 只是丢引用，
@@ -976,7 +1029,7 @@ namespace SoulLink.Services
             {
                 foreach (var e in Entries.Values)
                     if (e.LogFile.Length > 0)
-                        IngestCursorStore.Flush(e.AccountId, e.LogFile, e.Cursor, e.FileLength, e.LastWrite.Ticks);
+                        IngestCursorStore.Flush(e.AccountId, e.LogFile, Math.Max(0, e.Cursor - e.PendingLen), e.FileLength, e.LastWrite.Ticks);
             }
             lock (Sync) Entries.Clear();
         }

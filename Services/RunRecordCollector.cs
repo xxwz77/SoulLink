@@ -878,7 +878,16 @@ namespace SoulLink.Services
                 if (sameAsOpenRoute)
                     events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => TouchRun(user, lineMs) });
                 else
-                    events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => StartRoute(user, "script", name, null, lineMs, srcFile) });
+                {
+                    // ★ t51 问题2：名字以 .json 结尾 = **路线文件**，不是脚本。
+                    //   真正的脚本是「全自动周一」「世界权限」「等待到指定时间」这类无扩展名中文名。
+                    //   原来一律记成 script，导致同一个 .json 既出现在 route 行、又出现在 script 行。
+                    //   （若上面 StartRoute 的实时同名合并已生效，这一条会被吞掉不重复落库；
+                    //     这里只保证**单独出现**的 map 锚点也不会被误标成 script。）
+                    bool isRouteFile = name.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+                    string mapKind = isRouteFile ? "route" : "script";
+                    events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => StartRoute(user, mapKind, name, null, lineMs, srcFile) });
+                }
             }
 
             // ── t6 A) 激活CD 线路层（kind="cd_line"；独立于 script/route 两层）──
@@ -1416,6 +1425,28 @@ namespace SoulLink.Services
             long atMs, string srcFile)
         {
             if (!OpenRuns.TryGetValue(user, out var run) || run == null) return;
+
+            // ★★ t51 问题2 修复：同一次执行的「两种锚点」合并 ★★
+            //
+            //   实测 A4 日志 10/10 配对（见 docs 报告）：
+            //     L2437  [DEBUG] 进入路线循环 count=1 route="07【额外】….json"    ← route 锚点
+            //     L2449  → 开始执行地图追踪任务: "07【额外】….json"              ← map 锚点（12 行后）
+            //   两者指向**同一个文件、同一次执行**，但 kind 不同 → 原来落库两条，
+            //   界面上同一个 .json 出现两行（一行"路线"一行"脚本"）。
+            //
+            //   为什么原来没合并：ScanEvents 里那段 sameAsOpenRoute 判断是在**扫描期**做的，
+            //   而那时 OpenRuns 还停在这批事件之前的状态（route 事件尚未 Apply）→ 永远 false。
+            //
+            //   现在改在 Apply 期判断：**当前打开的 route 同名且不是纯脚本**
+            //   → 视为同一次执行，只做 Touch（刷新 LastEventMs），不新建 record。
+            if (run.Route != null
+                && string.Equals(run.Route.Name, name, StringComparison.OrdinalIgnoreCase)
+                && run.Route.Kind != "script"
+                && kind != "route")          // route 锚点自身仍然开新窗（它是真正的边界）
+            {
+                run.LastEventMs = Math.Max(run.LastEventMs, atMs);
+                return;
+            }
 
             // ★ t6 B) 结构性边界挤掉：下一路线/脚本/线路开始而本条未完成 →
             //   紧邻错误（HasError）→ Failed；否则 Interrupted。end=本条开始后的最近事件时刻

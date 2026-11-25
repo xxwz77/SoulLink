@@ -23,6 +23,9 @@ public static partial class WebServer
 	{
 		public string? account { get; set; }
 
+		/// <summary>t50：设默认角色时传该账号下某个角色的 GameUid；空串/缺省 = 清除默认。</summary>
+		public string? gameUid { get; set; }
+
 		public string? session { get; set; }
 
 		public bool? enabled { get; set; }
@@ -624,6 +627,9 @@ public static partial class WebServer
 			}
 			case "/api/bgi/ingest/status":
 				await WriteJson(ctx, ApiBgiIngestStatus());
+				return;
+			case "/api/bgi/ingest/rescan":
+				await WriteJson(ctx, ApiBgiIngestRescan(ctx));
 				return;
 			case "/api/bgi/spans":
 			case "/api/bgi/spans/totals":
@@ -1715,6 +1721,11 @@ public static partial class WebServer
 		{
 			ok = true,
 			count = readOnlyList.Count,
+			skippedRescan = new
+			{
+				accounts = BgiLogCenter.SkippedRescanCount,
+				skippedBytes = BgiLogCenter.SkippedRescanTotalBytes
+			},
 			items = readOnlyList.Select((IngestCursorStatus s) => new
 			{
 				account = s.Account,
@@ -1724,6 +1735,18 @@ public static partial class WebServer
 				pendingBytes = s.PendingBytes,
 				updatedAtMs = s.UpdatedAtMs
 			}).ToList()
+		};
+	}
+
+	/// <summary>t52：手动全量重扫（清游标+重置内存状态）。默认不触发。</summary>
+	private static object ApiBgiIngestRescan(HttpListenerContext ctx)
+	{
+		string text = (ctx.Request.QueryString["user"] ?? "").Trim();
+		BgiLogCenter.ForceFullRescan(text.Length == 0 ? null : text);
+		return new
+		{
+			ok = true,
+			rescan = text.Length == 0 ? "all" : text
 		};
 	}
 

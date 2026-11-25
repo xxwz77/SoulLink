@@ -28,6 +28,13 @@ namespace SoulLink.Views
         /// <summary>上一轮渲染依据的数据签名；相同就不重建视觉树。</summary>
         private string _lastSignature = "";
 
+        // ── t52：主程序数据中心改用 SQLite 作为「今日配置组」权威数据源 ──
+        //   首帧显示 run.db 的今日记录（历史+当前），Tracker 只负责实时增量，
+        //   异步加载、幂等合并（同组名+同时刻去重），UI 线程零 IO。
+        private readonly Dictionary<string, IReadOnlyList<SoulLink.Services.RunRecord>> _sqliteTodayRuns
+            = new(StringComparer.OrdinalIgnoreCase);
+        private bool _sqliteLoading;
+
         /// <summary>
         /// 把"界面会显示的东西"压成一个字符串。
         /// ★ 只要它没变，重建出来的视觉树和现在完全一样，纯属白烧 CPU。
@@ -143,6 +150,9 @@ namespace SoulLink.Views
                     });
                     return;
                 }
+
+                // ★ t52：异步预载 run.db 今日记录（不阻塞首帧；回来后再刷一次界面）。
+                _ = EnsureSqliteTodayRunsAsync(states);
 
                 foreach (var st in states) CardList.Children.Add(BuildCard(st));
             }
@@ -438,6 +448,62 @@ namespace SoulLink.Views
             panel.Children.Add(grid); return panel;
         }
 
+        /// <summary>
+        /// t52：异步加载各账号「今日」的 run.db 记录（run 表），不阻塞 UI。
+        /// 加载完刷新一次（若页面可见）。SQLite 查询走 RunRecordStore 后台队列。
+        /// </summary>
+        private async System.Threading.Tasks.Task EnsureSqliteTodayRunsAsync(System.Collections.Generic.IReadOnlyList<AccountState> states)
+        {
+            if (_sqliteLoading) return;
+            _sqliteLoading = true;
+            try
+            {
+                foreach (var st in states)
+                {
+                    if (string.IsNullOrWhiteSpace(st.UserName)) continue;
+                    try
+                    {
+                        var runs = await SoulLink.Services.RunRecordStore.QueryRunsAsync(st.UserName, 1)
+                            .ConfigureAwait(true);
+                        long today0 = new DateTimeOffset(DateTime.Now.Date).ToUnixTimeMilliseconds();
+                        var todayRuns = runs.Where(r => r.StartAtMs >= today0 || (r.EndAtMs ?? r.StartAtMs) >= today0).ToList();
+                        _sqliteTodayRuns[st.UserName] = todayRuns;
+                    }
+                    catch { _sqliteTodayRuns[st.UserName] = Array.Empty<SoulLink.Services.RunRecord>(); }
+                }
+                await Dispatcher.InvokeAsync(() => { if (IsVisible) { _lastSignature = ""; Rebuild(); } });
+            }
+            finally { _sqliteLoading = false; }
+        }
+
+        /// <summary>t52：本地 DateTime → epoch ms（幂等合并去重用）。</summary>
+        private static long ToMsLocal(DateTime dt)
+            => dt == DateTime.MinValue ? 0 : new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Local)).ToUnixTimeMilliseconds();
+
+        /// <summary>t52：把 SQLite 的 RunRecord 映射为 ScriptGroupRun 展示（与 Tracker 同结构）。</summary>
+        private static SoulLink.Services.ScriptGroupRun ToScriptGroupRun(SoulLink.Services.RunRecord r)
+        {
+            var state = r.State switch
+            {
+                "Running" => SoulLink.Services.ScriptGroupState.Running,
+                "Finished" => SoulLink.Services.ScriptGroupState.Finished,
+                "Failed" => SoulLink.Services.ScriptGroupState.Failed,
+                "Cancelled" => SoulLink.Services.ScriptGroupState.Cancelled,
+                "Interrupted" => SoulLink.Services.ScriptGroupState.Interrupted,
+                _ => SoulLink.Services.ScriptGroupState.Never,
+            };
+            return new SoulLink.Services.ScriptGroupRun
+            {
+                Name = r.GroupName,
+                State = state,
+                StartedAt = DateTimeOffset.FromUnixTimeMilliseconds(r.StartAtMs).LocalDateTime,
+                EndedAt = r.EndAtMs.HasValue ? DateTimeOffset.FromUnixTimeMilliseconds(r.EndAtMs.Value).LocalDateTime : DateTime.MinValue,
+                ScriptCount = r.ScriptCount,
+                Detail = r.Detail ?? "",
+                TimeIsExact = true,
+            };
+        }
+
         private UIElement BuildGroupRuns(AccountState st)
         {
             var panel = new StackPanel();
@@ -455,22 +521,45 @@ namespace SoulLink.Views
                 return panel;
             }
 
-            // ★ 日志按天滚动，日界硬性 00:00（用户确认；狗粮仍保留 04:00）。
-            var runs = st.Groups.OrderByDescending(x => x.StartedAt).ToList();
-            string head = "今日配置组（" + runs.Count + " 个）";
-            if (st.CurrentGroup.Length > 0)
-                head += " · 当前：" + st.CurrentGroup
+            // ★ t52：今日配置组改用 SQLite（run.db）为权威数据源，重启后历史不丢、不扫 36MB 日志。
+            //   Tracker 只负责「启动后实时增量」，与 SQLite 历史做幂等合并（同名+同时刻去重）。
+            var merged = new List<SoulLink.Services.ScriptGroupRun>();
+            var seen = new HashSet<(string Name, long StartedMs)>();
+            if (_sqliteTodayRuns.TryGetValue(st.UserName, out var sqlRuns) && sqlRuns != null)
+            {
+                foreach (var r in sqlRuns)
+                {
+                    var sg = ToScriptGroupRun(r);
+                    if (seen.Add((sg.Name, ToMsLocal(sg.StartedAt)))) merged.Add(sg);
+                }
+            }
+            foreach (var tr in st.Groups)
+            {
+                if (seen.Add((tr.Name, ToMsLocal(tr.StartedAt)))) merged.Add(tr);
+            }
+            var runs = merged.OrderByDescending(x => x.StartedAt).ToList();
+
+            // 「当前执行组」：优先取 SQLite 的 Running 记录（重启后 Tracker 白纸也能正确显示）；
+            //   SQLite 无 Running 时回退 Tracker 的 CurrentGroup。
+            string currentFromSql = "";
+            if (_sqliteTodayRuns.TryGetValue(st.UserName, out var sr2))
+            {
+                var running = sr2?.FirstOrDefault(r => r.State == "Running");
+                if (running != null) currentFromSql = running.GroupName;
+            }
+            string currentGroup = currentFromSql.Length > 0 ? currentFromSql : st.CurrentGroup;
+            string head = "今日配置组（" + runs.Count + " 个）" + (_sqliteTodayRuns.ContainsKey(st.UserName) ? " · SQLite" : "");
+            if (currentGroup.Length > 0)
+                head += " · 当前：" + currentGroup
                      + (st.CurrentGroupAt == DateTime.MinValue ? "" : "（" + st.CurrentGroupAt.ToString("HH:mm:ss") + "）");
             else if (st.StoppedAt != DateTime.MinValue)
-                // ★ 日志里已经出现停止锚点（执行结束 / 未成功完成 / 取消 /
-                //   停止快捷键）→ 明确显示"已停止"，不再挂着上一个组名。
                 head += " · 已停止"
                      + (st.LastGroup.Length > 0 ? "（上一个：" + st.LastGroup + "）" : "")
                      + "（" + st.StoppedAt.ToString("HH:mm:ss") + "）";
             panel.Children.Add(new TextBlock { Text=head, FontSize=11, FontWeight=FontWeights.SemiBold, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextPrimary") });
-            panel.Children.Add(new TextBlock { Text=st.GroupsSource.Length==0?"尚未读取日志":"来源："+st.GroupsSource+" · 更新 "+st.GroupsUpdatedAt.ToString("HH:mm:ss"), FontSize=9.5, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextMuted"), Margin=new Thickness(0,3,0,5) });
+            panel.Children.Add(new TextBlock { Text="来源：run.db（今日运行记录）" + (st.GroupsSource.Length>0 ? " · 实时增量 " + st.GroupsUpdatedAt.ToString("HH:mm:ss") : ""), FontSize=9.5, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextMuted"), Margin=new Thickness(0,3,0,5) });
             if (runs.Count == 0)
-            { panel.Children.Add(new TextBlock { Text=st.GroupsReadError.Length>0?st.GroupsReadError:"今日日志中尚未识别到配置组", FontSize=10.5, Foreground=(Brush)FindResource("TextMuted") }); return panel; }
+            { panel.Children.Add(new TextBlock { Text="今日暂无配置组运行记录", FontSize=10.5, Foreground=(Brush)FindResource("TextMuted") }); return panel; }
             const int columns = 3;
             var grid = new Grid();
             for (int i=0;i<columns;i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width=new GridLength(1,GridUnitType.Star) });

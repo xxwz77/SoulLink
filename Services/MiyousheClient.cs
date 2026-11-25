@@ -352,7 +352,11 @@ namespace SoulLink.Services
             using var generator = new QRCoder.QRCodeGenerator();
             using var data = generator.CreateQrCode(url,QRCoder.QRCodeGenerator.ECCLevel.M);
             using var qr = new QRCoder.PngByteQRCode(data);
-            return Convert.ToBase64String(qr.GetGraphic(8));
+            // ★ t42 复查：真实米游社 URL 约 132 字符 → QR 57 模块。GetGraphic(8) 无静默区
+            //   → 456px 图片顶满 460 窗口被裁、且缺二维码规范要求的 4 模块白边。
+            //   改 GetGraphic(6, drawQuietZones:true)：57×6=342px + 4×2×6=48px 静默区 = 390px，
+            //   带静默区、尺寸匹配窗口、6px/模块在高 DPI（150%/200%）下仍清晰可扫。
+            return Convert.ToBase64String(qr.GetGraphic(6, drawQuietZones: true));
         }
 
         private static StringContent JsonContent(string json) => new(json,Encoding.UTF8,"application/json");

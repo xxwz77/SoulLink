@@ -7,12 +7,11 @@
     <StackPanel Margin="20">
         <TextBlock x:Name="AccountText" FontSize="13" FontWeight="SemiBold"
                    Foreground="{DynamicResource TextPrimary}" />
-        <!-- ★ t42 修复：二维码源图 392×392px（GetGraphic(8)，49×49 模块，URL≈90~120 字符）。
-             旧版容器固定 240×240 + Stretch=None → 只显示左上角，必然扫不了。
-             方案：容器不固定尺寸、Stretch=None → 图片按**自然尺寸 1:1** 显示。
-             为什么不用 Uniform+300（方案C）：392→300 是非整数缩放，模块 8px→6.12px
-             产生锯齿，实测 150% DPI 下解码失败；1:1 显示则模块在 100/125/150/200% DPI
-             下分别为 8/10/12/16 物理像素，全部整数、零重采样，任何 DPI 都清晰可扫。 -->
+        <!-- ★ t42 复查（真实数据订正）：米游社 URL 约 132 字符 → QR 57 模块。
+             生成侧已改 GetGraphic(6, drawQuietZones:true)：57×6=342px + 静默区 4×2×6=48px = 390px。
+             带 4 模块白边（二维码规范必需）、尺寸匹配窗口（460-40 margin=420 可用 > 390）、
+             6px/模块在高 DPI（150%/200%）下仍清晰。Stretch=None 自然尺寸 + NearestNeighbor，
+             不缩放不插值，定位角与静默区完整可见可扫。 -->
         <Border Margin="0,12,0,12" BorderBrush="#20FFFFFF" BorderThickness="1"
                 Background="White" HorizontalAlignment="Center" Padding="0">
             <Image x:Name="QrImage" Stretch="None" Margin="0"

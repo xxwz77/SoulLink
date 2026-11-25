@@ -241,7 +241,8 @@ namespace SoulLink
             Breadcrumb("config loaded: " + ConfigStore.ConfigPath);
 
             // 清理上次被强杀时遗留的投送任务与临时文件（正常退出会自行删除）。
-            try { Services.LaunchSweeper.Sweep(); } catch { }
+            // ★ t2 启动优化：SweepTasks 同步跑 schtasks.exe /query，实测约 1.3s，挪后台不挡启动。
+            _ = Task.Run(() => { try { Services.LaunchSweeper.Sweep(); } catch { } });
 
             // ★ 2.21.2：启动时按设置清理过期的备份与缓存。
             //   放后台线程：清理 872 MB 级目录可能要几秒，不能挡启动。
@@ -392,6 +393,9 @@ namespace SoulLink
             {
                 ShowMainWindow();
                 Breadcrumb("main window shown: " + (_window?.IsVisible) + " state=" + (_window?.WindowState));
+                App.Breadcrumb("WebServer.EnsureLiveRefresh begin");
+                try { Services.WebServer.EnsureLiveRefresh(); } catch { }
+                App.Breadcrumb("WebServer.EnsureLiveRefresh done");
 
                 // 调试用：--page=xxx 直接跳页
                 string? page = null;
@@ -678,6 +682,8 @@ namespace SoulLink
                 }
                 catch (Exception ex) { LogBus.Error("BGI 绑定迁移失败：" + ex.Message); }
 
+                App.Breadcrumb("ShowMainWindow: constructing services");
+
                 // 启动账号状态中心：每账号一份快照，供触发器/条件/界面统一取数。
                 // ★ 必须先于调度器启动，否则第一轮 Tick 会拿不到快照而各自现查。
                 try
@@ -697,6 +703,7 @@ namespace SoulLink
                 //     不挡界面、不扫日志、不枚举进程、不新建 DispatcherTimer。
                 try
                 {
+                    App.Breadcrumb("RunRecordHost.Start begin");
                     Services.RunRecordHost.Start();
                     Breadcrumb("RunRecordHost started: retention=" + Services.RunRecordHost.RetentionDays + "d");
                 }
@@ -720,18 +727,19 @@ namespace SoulLink
                 //   · 对外唯一端口 = AppSettings.WebPort（交给独立服务 SoulLink.TaskEdit 独占）；
                 //   · 主程序自己只绑回环 http://127.0.0.1:<内部端口>/，当独立服务的上游；
                 //   · 页面与 API 的内容一行未改，只是搬了入口。
+                App.Breadcrumb("WebHost.Apply begin");
                 try
                 {
                     Services.WebHost.Apply(
                         Config?.Settings?.WebPort ?? 0,
                         Config?.Settings?.WebInternalPort ?? 0,
                         Config?.Settings?.WebPassword);
-                    Services.WebServer.EnsureLiveRefresh();
                 }
                 catch (Exception ex)
                 {
                     LogBus.Error("启动网页入口失败：" + ex.Message);
                 }
+                App.Breadcrumb("WebHost.Apply done");
 
                 // 启动路线更新的定时调度器（与动作调度互不影响）
                 try
@@ -744,7 +752,9 @@ namespace SoulLink
                 }
             }
 
+            App.Breadcrumb("window.Show begin");
             if (!_window.IsVisible) _window.Show();
+            App.Breadcrumb("window.Show done");
             if (_window.WindowState == WindowState.Minimized) _window.WindowState = WindowState.Normal;
             _window.Activate();
             _window.Topmost = true;
