@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -113,6 +114,9 @@ namespace SoulLink.Services
 
             /// <summary>是否已经做过首次全量扫描。</summary>
             public bool Primed;
+
+            /// <summary>t55：本进程内是否已尝试过历史回填（每账号一次）。</summary>
+            public bool HistoryBackfilled;
             /// <summary>t52：本次启动是否因持久化游标跳过了全量重扫（可观测）。</summary>
             public bool SkippedRescan;
             /// <summary>t52：跳过重扫时起跳的游标字节数（本次启动零读取的历史字节）。</summary>
@@ -545,6 +549,137 @@ namespace SoulLink.Services
             catch { }
         }
 
+        // ── t55 历史回填 ─────────────────────────────────────────────
+        //
+        //  ★ 设计取舍：**不占用 Pump 的预算**，而是独立一次性扫（每份日志最多一次）。
+        //    理由：历史日志是「补账」，不影响实时跟随；如果混进 Pump 会和今天的日志抢预算，
+        //    导致实时数据延迟。这里按「每份文件一个标记」保证只扫一次。
+        //  ★ 只回填 cursor 不存在的文件（= 从未采过）。已采过的靠断点续传，不重复。
+        //  ★ 失败绝不抛出：回填是尽力而为，坏了不能影响主采集。
+        private static void MaybeBackfillHistory(Entry e, string exe)
+        {
+            if (string.IsNullOrWhiteSpace(exe)) return;
+            if (e.HistoryBackfilled) return;
+            e.HistoryBackfilled = true;   // 每账号每进程生命周期只尝试一次
+
+            try
+            {
+                int days = Math.Clamp(App.Config?.Settings?.RunDbRetentionDays ?? 7, 1, 30);
+                var files = BgiLogWatcher.ListRecentLogs(exe, days);
+                if (files.Count == 0) return;
+
+                // 今天那份交给 Pump 正常跟随，这里只补「历史」（文件名日期 < 今天）
+                string todayName = "better-genshin-impact" + DateTime.Now.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".log";
+                var todo = new List<string>();
+                foreach (string f in files)
+                {
+                    if (string.Equals(Path.GetFileName(f), todayName, StringComparison.OrdinalIgnoreCase)) continue;
+                    long cur = IngestCursorStore.LoadCursor(e.AccountId, f);
+                    if (cur < 0) todo.Add(f);   // -1 = 从未采过
+                }
+                if (todo.Count == 0) return;
+
+                LogBus.Ok("采集·历史回填", e.UserName + " 发现 " + todo.Count + " 份未采过的历史日志，开始回填");
+                foreach (string f in todo)
+                {
+                    try
+                    {
+                        long len = new FileInfo(f).Length;
+                        if (len <= 0) { IngestCursorStore.Advance(e.AccountId, f, 0, 0, 0); continue; }
+
+                        // 回填单份：整文件一次读完（历史文件不再增长，安全）。
+                        // 上限保护：单份最多 64MB，避免异常大文件卡住启动。
+                        long take = Math.Min(len, 64L * 1024 * 1024);
+                        byte[] buf = new byte[take];
+                        int got;
+                        using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read,
+                            FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.SequentialScan))
+                        {
+                            got = fs.Read(buf, 0, (int)take);
+                        }
+                        if (got <= 0) { IngestCursorStore.Advance(e.AccountId, f, 0, 0, 0); continue; }
+
+                        // 只取到最后一个换行，避免半行
+                        int lastNl = Array.LastIndexOf(buf, (byte)'\n', got - 1);
+                        int use = lastNl >= 0 ? lastNl + 1 : got;
+
+                        // ★★ t55 第二版修复：**必须分块喂**，不能一次性喂 37~58MB。
+                        //
+                        //   第一版一次性喂整份 → 出现 SqliteException FOREIGN KEY constraint failed
+                        //   （pick_event.run_id 引用 run.run_id，而 run 的写入被大流量挤掉/顺序错乱），
+                        //   整个写事务回滚 → 数据全丢，但 cursor 已推进 → 表面「回填过了实则空」。
+                        //
+                        //   现在与实时采集走完全相同的节奏：4MB 一块，块间让后台写队列消化。
+                        //   这样状态机（StartGroup/EndRoute）与写队列的时序与线上一致。
+                        // ★ t55 第三版修复：队列容量只有 8192 条，4MB 块在噪声日志下会产生
+                        //   上万 raw_event + 数百 pick_event → 队列溢出（实测 "运行记录队列已满，本条已丢弃"），
+                        //   导致 AddRun 被丢弃 → 后续 AddRoute 外键失败 → 整块数据回滚。
+                        //   改为 512KB/块，并每块都等队列排空，确保不溢出。
+                        const int ChunkBytes = 512 * 1024;
+                        bool ok = true;
+                        int offset = 0;
+                        try
+                        {
+                            RunRecordCollector.OnFileChanged(e.UserName, f);
+                            while (offset < use)
+                            {
+                                // 找块边界：不超过 ChunkBytes，且尽量落在换行后
+                                int want = Math.Min(ChunkBytes, use - offset);
+                                int end = offset + want;
+                                if (end < use)
+                                {
+                                    int nl = Array.LastIndexOf(buf, (byte)'\n', end - 1, want);
+                                    if (nl > offset) end = nl + 1;
+                                }
+                                int len2 = end - offset;
+                                if (len2 <= 0) break;
+
+                                string chunk = Encoding.UTF8.GetString(buf, offset, len2);
+                                RunRecordCollector.Feed(e.UserName, chunk, f, len, 0);
+
+                                // 让后台写队列消化（阻塞等待队列排空，避免外键时序问题）
+                                try { RunRecordStore.WaitForWritesDrain(TimeSpan.FromSeconds(30)); } catch { }
+
+                                offset = end;
+
+                                // ★ 只有「本块处理完且队列健康」才推进 cursor。
+                                //   队列溢出时 RunRecordStore 会丢弃数据 —— 此时推进游标 = 永久丢数据。
+                                if (!RunRecordStore.IsHealthy)
+                                {
+                                    ok = false;
+                                    LogBus.Warn("采集·历史回填中止", e.UserName + " " + Path.GetFileName(f)
+                                        + " 写队列不健康（溢出/降级），停止回填以保数据完整");
+                                    break;
+                                }
+                                IngestCursorStore.Advance(e.AccountId, f, offset, len, 0);
+                            }
+                        }
+                        catch (Exception feedEx)
+                        {
+                            ok = false;
+                            LogBus.Warn("采集·历史回填失败", e.UserName + " " + Path.GetFileName(f)
+                                + " 异常：" + feedEx.GetType().Name + " " + feedEx.Message);
+                        }
+
+                        if (!ok)
+                        {
+                            LogBus.Warn("采集·历史回填跳过", e.UserName + " " + Path.GetFileName(f) + " 已采部分保留，下次从断点续");
+                            continue;
+                        }
+
+                        LogBus.Ok("采集·历史回填", e.UserName + " 已回填 " + Path.GetFileName(f) + "（" + Math.Round(use / 1024.0 / 1024.0, 1) + " MB）");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogBus.Warn("采集·历史回填失败", e.UserName + " " + Path.GetFileName(f) + "：" + ex.GetType().Name);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                try { LogBus.Warn("采集·历史回填异常", e.UserName + " " + ex.GetType().Name); } catch { }
+            }
+        }
         /// <summary>返回 true 表示该账号的可见数据发生了变化。</summary>
         private static bool Step(Account acc)
         {
@@ -645,6 +780,13 @@ namespace SoulLink.Services
             // ★ 日志文件确定后建立 watcher：之后 BGI 一写入就立刻解析，
             //   不再等 AccountStateCenter 的轮询周期。
             EnsureWatcher(e);
+
+            // ★★ t55 历史回填：首次接入/清库后，把最近 N 天「还没采过」的日志补一遍。
+            //   为什么必须做：FindTodayLog 只看今天那份 —— 昨天/前天的运行记录永远补不回来，
+            //   与「留存 7 天」需求冲突。每份日志的日期由文件名唯一确定（用户原则：
+            //   同一份日志就是同一天），所以按文件回填是安全且确定的。
+            //   只在「该文件的持久化 cursor 不存在（-1）」时补，采过的不重复。
+            MaybeBackfillHistory(e, exe);
 
             return Pump(e);
         }

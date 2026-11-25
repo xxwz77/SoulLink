@@ -335,47 +335,32 @@ namespace SoulLink.Services
         /// 把行内 [HH:mm:ss.fff] 解析成绝对时刻：基于天轴单调推断跨日。
         /// 返回 false = 行无时间戳（续行，沿用上一时刻）。
         /// </summary>
+        /// <summary>
+        /// 【t54 根本重写 · 用户明确原则】「同一份日志就是同一天，不同日志才存在跨天」。
+        ///
+        /// 实测验证（A1 20261125.log）：
+        ///   · 文件名 better-genshin-impact20261125.log → 日期唯一权威 = 2026-11-25；
+        ///   · 文件内时间戳从 [00:00:00.535] 到 [23:58:34.392]，整天都在这一份文件里；
+        ///   · 所以 FileDayMs + 当日时刻 就是绝对时刻，不存在跨天推断的必要。
+        ///
+        /// 历史教训（为什么以前会错）：
+        ///   · t44/t54 之前用「时间回退约24h → +1 天」推断跨日 —— 但那是错的前提：
+        ///     同一份日志内时间戳本来就单调，回退 24h 在同一文件内不可能发生；
+        ///   · 一旦发生，只可能是「增量喂入时基线来自另一段/另一个文件」或「乱序行」，
+        ///     此时 +1 天会让 start 或 end 跑到次日 → 负时长(57 route) 或 24小时假时长(31 route)。
+        ///
+        /// 新逻辑（简单到不会错）：
+        ///   · 绝对时刻 = FileDayMs + 当日时刻，永不 +1 天；
+        ///   · LastRawMs 只用于时钟倒退的可观测（不参与计算），保留给跨文件/重扫诊断；
+        ///   · 真跨天由 OnFileChanged（换文件）处理 —— 那是唯一合法的跨天边界，已有实现。
+        /// </summary>
         private static bool ResolveTs(DayClock clock, string timeText, out long ms)
         {
             ms = 0;
             if (!TimeSpan.TryParse(timeText, CultureInfo.InvariantCulture, out var ts)) return false;
-            long raw = clock.FileDayMs + (long)ts.TotalMilliseconds;   // 当日绝对时刻
-            // ★ t44 修复（跨日 end 错乱 22.5h）：原「回退 1s~12h → +1 天」的分支方向反了——
-            //   真正的午夜跨越（23:59 → 00:00）是回退 ~24h；而回退 1s~12h 在增量尾随里几乎
-            //   总是**乱序行**（BGI 心跳/多线程写序），+1 天会造成 end 落到次日 → 22.5h 假时长。
-            //   新判据：
-            //   · 回退 ≈ 24h（22h~26h，即午夜跨越）→ +1 天（真正的跨日）；
-            //   · 回退 < 12h → 乱序行：按原值记录（不 +1 天，不推进基线）；
-            //   · 回退 > 26h → 整份文件重读/换源：重置基线重新建立。
-            if (clock.LastRawMs != long.MinValue && raw < clock.LastRawMs - 1_000)
-            {
-                long back = clock.LastRawMs - raw;
-                // ★★ t54 修复（负时长）：仅凭「回退 22~26h」还不够 —— 增量喂入时，
-                //   上一个基线可能是**后一段**的时间（比如日志被分段喂入，前一块已到次日），
-                //   此时一条 10:01 的行回退 24h，会被误判成跨日 → start 被 +1 天，
-                //   而随后的 end 用原值 → end < start → 负时长（实测 57 条 route / 7 条 run）。
-                //   真跨日的必要条件：**回退前接近一天末尾，回退后接近一天开头**。
-                //   例：23:59 → 00:00（lastHour=23, curHour=0 ✓）；
-                //       反过来 10:01 → 10:01（lastHour=10, curHour=10 ✗，不 +1 天）。
-                int lastHour = (int)(clock.LastRawMs % 86_400_000 / 3_600_000);
-                int curHour  = (int)(raw % 86_400_000 / 3_600_000);
-                bool looksLikeMidnightCross = lastHour >= 20 && curHour <= 4;
-                if (back >= 22 * 3600_000 && back <= 26 * 3600_000 && looksLikeMidnightCross)
-                {
-                    raw += 86_400_000;   // 23:59 → 00:00 真跨日
-                    clock.LastRawMs = raw;
-                    clock.LastMs = raw;
-                    ms = raw;
-                    return true;
-                }
-                if (back < 12 * 3600_000)
-                {
-                    // 乱序行：保持原值，不倒退基线（下一条正常行仍以旧基线比较）
-                    ms = raw;
-                    return true;
-                }
-                clock.LastRawMs = long.MinValue;   // >26h：重读/换源，重置基线
-            }
+            // 同一份日志 = 同一天：文件名日期 + 行内时刻 = 绝对时刻，绝不 +1 天。
+            // 跨天只可能发生在「换文件」时（由 OnFileChanged 处理）。
+            long raw = clock.FileDayMs + (long)ts.TotalMilliseconds;
             clock.LastRawMs = raw;
             clock.LastMs = raw;
             ms = raw;

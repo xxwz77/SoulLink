@@ -263,6 +263,19 @@ namespace SoulLink.Services
             Core.Value.EnqueueWrite(db => WriteRun(db, copy));
         }
 
+
+        /// <summary>
+        /// ★ t55：等待后台写队列排空（最多 timeout）。
+        ///
+        /// 用途：历史回填按 4MB 分块喂数据，块与块之间必须等写队列消化完 ——
+        /// 否则 pick_event 的 run_id 外键会因 run 还没写进去而失败（实测 SqliteException 19）。
+        /// 正常 UI/实时路径**不要**调这个（会阻塞）；只给「回填」这种可控批处理用。
+        /// </summary>
+        public static bool WaitForWritesDrain(TimeSpan timeout)
+        {
+            try { return Core.Value.WaitForWritesDrain(timeout); } catch { return false; }
+        }
+
         public static void AddRoute(RouteRecord row)
         {
             if (row == null || string.IsNullOrWhiteSpace(row.RouteId) || string.IsNullOrWhiteSpace(row.RunId)
@@ -1352,7 +1365,10 @@ DELETE FROM raw_event WHERE
         internal sealed class RunRecordStoreCore
         {
             private readonly Func<string> _getPath;
-            private readonly BlockingCollection<DbOp> _queue = new(new ConcurrentQueue<DbOp>(), 8192);
+            // ★ t55：8192 太小 —— 历史回填时 4MB 日志块可产生上万事件，队列溢出会静默丢弃
+        //   （实测「运行记录队列已满，本条已丢弃」→ AddRun 丢失 → AddRoute 外键失败）。
+        //   放宽到 65536（约 8 倍），内存代价可忽略（每个 DbOp 几百字节）。
+        private readonly BlockingCollection<DbOp> _queue = new(new ConcurrentQueue<DbOp>(), 65536);
             private readonly Lock _healthLock = new();
             private readonly Thread _writer;
             private SqliteConnection? _db;
@@ -1401,6 +1417,18 @@ DELETE FROM raw_event WHERE
                 }
             }
 
+            /// <summary>
+            /// ★ t55：把「排空」实现为一个排到队尾的同步 op —— 它执行完说明之前入队的写都已落库。
+            /// 不引入额外锁，复用同一个单线程写队列，天然有序。
+            /// </summary>
+            internal bool WaitForWritesDrain(TimeSpan timeout)
+            {
+                if (!IsHealthy) return false;
+                var op = new DbOp { Execute = db => null, Fallback = 0 };
+                if (!TryEnqueue(op)) return false;
+                try { return op.Completion.Task.Wait(timeout); }
+                catch { return false; }
+            }
             internal void Retry()
             {
                 var op = new DbOp { Retry = true, Fallback = 0 };

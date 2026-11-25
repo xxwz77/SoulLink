@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -679,6 +680,47 @@ namespace SoulLink.Services
                 return File.Exists(today) ? today : "";
             }
             catch { return ""; }
+        }
+
+
+        /// <summary>
+        /// 【t55 历史回填】列出某账号 BGI 日志目录下最近 N 天的日志文件（含今天），按日期从旧到新。
+        ///
+        /// 为什么需要：数据中心要求「留存 7 天」，但采集器原本只跟随**今天**那份日志
+        /// （FindTodayLog）—— 清空库/首次接入时，历史日志里已有的运行记录永远补不回来。
+        /// 用户明确要求：同一份日志就是同一天，所以按文件名日期回填是安全且确定的。
+        /// </summary>
+        /// <param name="bgiExePath">BetterGI.exe 路径（取其同级 log 目录）</param>
+        /// <param name="days">回看天数（含今天），默认 7，与 RunDbRetentionDays 对齐</param>
+        public static List<string> ListRecentLogs(string bgiExePath, int days = 7)
+        {
+            var result = new List<string>();
+            try
+            {
+                if (string.IsNullOrWhiteSpace(bgiExePath)) return result;
+                string? dir = Path.GetDirectoryName(bgiExePath);
+                if (string.IsNullOrEmpty(dir)) return result;
+                string logDir = Path.Combine(dir, "log");
+                if (!Directory.Exists(logDir)) return result;
+
+                if (days <= 0) days = 7;
+                var today = DateTime.Now.Date;
+                var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < days; i++)
+                    wanted.Add("better-genshin-impact" + today.AddDays(-i).ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".log");
+
+                var found = new List<(string Path, string Name)>();
+                foreach (string f in Directory.EnumerateFiles(logDir, "better-genshin-impact*.log", SearchOption.TopDirectoryOnly))
+                {
+                    string n = Path.GetFileName(f);
+                    if (wanted.Contains(n)) found.Add((f, n));
+                }
+                // 按文件名（含 yyyyMMdd）升序 = 从旧到新，保证回填顺序确定
+                found.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+                foreach (var x in found) result.Add(x.Path);
+            }
+            catch { }
+            return result;
         }
 
         /// <summary>从一行日志里读配置组名（兼容三种写法），没有则返回 null。</summary>
