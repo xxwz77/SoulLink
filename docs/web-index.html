@@ -832,6 +832,17 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
     <div class="userswitch" id="earningsSwitch" style="display:none"></div>
     <div id="earningsBody"></div>
   </div>
+
+  <!-- ══ 米游社页（#/miyoushe/:id，t58 补回）══
+       为什么单独一页：米游社是「账号运维」（扫码/凭据/签到/角色），
+       与运行分析的数据分析不是一类；混在 ledger 的折叠区里用户找不到。
+       ★ 按用户要求：只放运维操作 + 摘要，数据明细仍在「运行分析 → 米游社摩拉」区。 -->
+  <div id="miyoushePage" style="display:none">
+    <button class="page-back" id="miyousheBack" type="button">‹ 返回总览</button>
+    <div class="sect-t">米游社</div>
+    <div class="userswitch" id="miyousheSwitch" style="display:none"></div>
+    <div id="miyousheBody"></div>
+  </div>
 </main>
 
 <script>
@@ -1085,6 +1096,7 @@ function renderUsers() {
       + '<button class="uact-btn" data-act="remote">查看画面</button>'
       + '<button class="uact-btn" data-act="ledger">运行分析</button>'
       + '<button class="uact-btn" data-act="earnings">摩拉收益</button>'
+      + '<button class="uact-btn" data-act="miyoushe">米游社</button>'
       + '</div>'
       + '</div>'
       + '</div>';
@@ -3500,6 +3512,7 @@ function hideRemoteUi() {
 function hideFuncPages() {
   const lp = $('ledgerPage'); if (lp) lp.style.display = 'none';
   const ep = $('earningsPage'); if (ep) ep.style.display = 'none';
+  const mp = $('miyoushePage'); if (mp) mp.style.display = 'none';
 }
 
 // 用户切换器：容器 + 当前账号 + 选中回调。无账号时隐藏。
@@ -4535,6 +4548,7 @@ async function showEarnings(id) {
   hideRemoteUi();
   const lp = $('ledgerPage'); if (lp) lp.style.display = 'none';
   const ep = $('earningsPage'); if (ep) ep.style.display = 'block';
+  const mp = $('miyoushePage'); if (mp) mp.style.display = 'none';
   applyEarningsUser(u);
 }
 function applyEarningsUser(u) {
@@ -4571,6 +4585,136 @@ function renderEarnings(d) {
   return html;
 }
 
+
+// ── 米游社（#/miyoushe/:id，t58 补回）────────────────────────
+//   ★ 只放「账号运维」：凭据状态 / 扫码登录 / 一键导入 / 角色列表与切换 / 签到开关。
+//     数据明细（摩拉账目）仍在「运行分析 → 米游社摩拉（账目侧）」折叠区，不重复。
+async function showMiyoushe(id) {
+  await ensureSessions();
+  const u = users.find(x => x.id === id) || users[0];
+  if (!u) { showOverview(); return; }
+  document.body.classList.add('page-func');
+  hideRemoteUi();
+  hideFuncPages();
+  const mp = $('miyoushePage'); if (mp) mp.style.display = 'block';
+  applyMiyousheUser(u);
+}
+
+function applyMiyousheUser(u) {
+  curId = u.id;
+  document.title = '米游社 · ' + (u.label || u.user);
+  buildUserSwitch('miyousheSwitch', u.id, applyMiyousheUser);
+  loadMiyoushe(u);
+}
+
+async function loadMiyoushe(u) {
+  const body = $('miyousheBody');
+  if (!body) return;
+  body.innerHTML = '<div class="pageempty">加载中…</div>';
+  try {
+    const q = '?user=' + encodeURIComponent(u.user);
+    const [stResp, rolesResp] = await Promise.all([
+      fetch('/api/miyoushe/login/status' + q),
+      fetch('/api/miyoushe/roles' + q),
+    ]);
+    const status = await stResp.json();
+    const roles = await rolesResp.json();
+    body.innerHTML = renderMiyoushe(u, status, roles);
+    wireMiyoushe(u);
+  } catch (e) {
+    body.innerHTML = '<div class="pageempty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+function renderMiyoushe(u, status, roles) {
+  const st = (status && status.state) || '';
+  const ok = st === 'ok' || st === 'stored';
+  const uid = (status && (status.uid || status.Uid)) || '';
+  const aid = (status && (status.aidMasked || status.AidMasked)) || '';
+  const detail = (status && (status.detail || status.Detail)) || '';
+  let h = '<div class="metrics">'
+    + '<div class="metric"><div class="v">' + (ok ? '✔ 已登录' : (st ? esc(st) : '未登录')) + '</div><div class="k">凭据状态</div></div>'
+    + '<div class="metric"><div class="v">' + esc(aid || uid || '-') + '</div><div class="k">米游社 UID</div></div>'
+    + '<div class="metric"><div class="v num">' + ((roles && roles.count) || 0) + '</div><div class="k">原神角色</div></div>'
+    + '</div>';
+  if (detail) h += '<div class="dline" style="margin-top:10px"><span class="dk">详情</span><span class="dv">' + esc(detail) + '</span></div>';
+
+  // 操作区
+  h += '<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">'
+    + '<button class="uact-btn" id="myQrBtn">扫码登录</button>'
+    + '<button class="uact-btn" id="myImportBtn">一键导入（BetterGI/ABGI）</button>'
+    + '<button class="uact-btn" id="mySignBtn">立即签到</button>'
+    + '</div>';
+
+  // 角色列表（用户要求：能切换、能设默认）
+  const list = (roles && roles.roles) || [];
+  if (list.length > 0) {
+    h += '<div class="sect-t" style="margin-top:18px">原神角色（点击设为默认）</div>';
+    h += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
+    for (const r of list) {
+      const isDef = (roles.defaultRole === r.gameUid) || (roles.defaultRole === r.GameUid);
+      const guid = r.gameUid || r.GameUid || '';
+      const nick = r.nickname || r.Nickname || '(未命名)';
+      const lvl = r.level || r.Level || 0;
+      const reg = r.region || r.Region || '';
+      h += '<div class="dline" style="align-items:center">'
+        + '<span class="dv">' + esc(nick) + ' <span style="opacity:.6">Lv.' + lvl + ' · ' + esc(reg) + ' · ' + esc(guid) + '</span>'
+        + (isDef ? ' <span class="badge-ok">默认</span>' : '') + '</span>'
+        + (isDef ? '' : '<button class="uact-btn" data-defrole="' + esc(guid) + '">设为默认</button>')
+        + '</div>';
+    }
+    h += '</div>';
+  } else if (roles && roles.reason) {
+    h += '<div class="pageempty" style="margin-top:14px">' + esc(roles.reason) + '</div>';
+  }
+
+  return h;
+}
+
+function wireMiyoushe(u) {
+  const qr = $('myQrBtn');
+  if (qr) qr.onclick = () => { location.hash = '#/'; alert('扫码登录请在主程序「数据中心 → 米游社」点「扫码登录」，或使用下方「一键导入」。'); };
+
+  const imp = $('myImportBtn');
+  if (imp) imp.onclick = async () => {
+    const p = prompt('输入 BetterGI / ABGI 根目录（留空则使用已绑定路径）', '');
+    if (p === null) return;
+    try {
+      const r = await fetch('/api/miyoushe/import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account: u.user, path: p, verify: true }),
+      });
+      const d = await r.json();
+      alert(d.ok ? ('导入成功 ' + (d.okCount || 0) + ' 项（来源 ' + (d.sourceKind || '?') + '）') : ('导入失败：' + (d.detail || d.error || '未知')));
+      loadMiyoushe(u);
+    } catch (e) { alert('导入出错：' + e.message); }
+  };
+
+  const sign = $('mySignBtn');
+  if (sign) sign.onclick = async () => {
+    if (!confirm('现在为该账号执行签到？')) return;
+    try {
+      const r = await fetch('/api/miyoushe/sign/run?user=' + encodeURIComponent(u.user), { method: 'POST' });
+      const d = await r.json();
+      alert(d.ok ? '签到已执行' : ('失败：' + (d.error || '未知')));
+      loadMiyoushe(u);
+    } catch (e) { alert('签到出错：' + e.message); }
+  };
+
+  document.querySelectorAll('[data-defrole]').forEach(btn => {
+    btn.onclick = async () => {
+      const uid = btn.getAttribute('data-defrole');
+      try {
+        const r = await fetch('/api/miyoushe/roles', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: u.user, gameUid: uid }),
+        });
+        const d = await r.json();
+        if (d.ok) { loadMiyoushe(u); } else { alert('设置失败：' + (d.error || '未知')); }
+      } catch (e) { alert('请求出错：' + e.message); }
+    };
+  });
+}
 // ── 总览（#/）────────────────────────────────────────────────
 function showOverview() {
   hideRemoteUi();
@@ -4592,11 +4736,13 @@ function route() {
   if (page === 'remote' && id) { showRemote(id); return; }
   if (page === 'ledger') { showLedger(id); return; }
   if (page === 'earnings') { showEarnings(id); return; }
+  if (page === 'miyoushe') { showMiyoushe(id); return; }
   showOverview();
 }
 
 const lb = $('ledgerBack'); if (lb) lb.onclick = () => { location.hash = '#/'; };
 const eb = $('earningsBack'); if (eb) eb.onclick = () => { location.hash = '#/'; };
+const mb = $('miyousheBack'); if (mb) mb.onclick = () => { location.hash = '#/'; };
 window.addEventListener('hashchange', route);
 /* ══════════ Pointer Lock 真机验收清单（2026-11-23，部署后实测）══════════
    对应 POINTER-LOCK-DESIGN-20261123.md §7.2 V1-V10：

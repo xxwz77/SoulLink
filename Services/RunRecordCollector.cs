@@ -512,12 +512,49 @@ namespace SoulLink.Services
             }
             catch { return; }   // DB 暂不可用：等下次调用再试
 
+            // ★★ t58 修复（残留 Running 的根因）：**陈旧的 open 行必须在启动时清掉**。
+            //
+            //   原行为：把 DB 里所有 open 行灌回内存，不管它有多老。
+            //   后果：几天前的 open 行永远等不到关闭事件（日志已轮转、BGI 已重启），
+            //   于是永久停在 Running —— 实测残留 7 条（11-22 ~ 11-25 的联机锄地/混合精英）。
+            //
+            //   新行为：按「文件日期」判断 —— 如果 open 行属于**今天之外的日志**，
+            //   它不可能还有后续事件（日志已经关闭轮转），直接 close 掉：
+            //     · end = 该 run 的最后已知时刻（StartAtMs，没有更多信息）；
+            //     · state = Interrupted；
+            //     · detail 明确写「进程重启时日志已轮转，该组无后续事件」。
+            //   今天的 open 行仍然保留（那可能是真在跑的，等事件来续）。
+            long todayStart = ToMs(DateTime.Now.Date);
+            int staleClosed = 0;
             lock (StateLock)
             {
                 foreach (var row in rows)
                 {
                     if (string.IsNullOrWhiteSpace(row.Account) || string.IsNullOrWhiteSpace(row.GroupName))
                         continue;
+
+                    // 属于更早日期 → 陈旧，直接收尾（不进 OpenRuns）
+                    if (row.StartAtMs > 0 && row.StartAtMs < todayStart)
+                    {
+                        try
+                        {
+                            RunRecordStore.CloseRun(new RunClose
+                            {
+                                RunId = row.RunId,
+                                EndAtMs = row.StartAtMs,
+                                State = "Interrupted",
+                                Detail = "进程重启时该组所属日志已轮转，无后续事件（自动收尾）",
+                                Exp = row.Exp,
+                                Mora = row.Mora,
+                                Picks = row.Picks,
+                                PickUnattributed = 0,
+                            });
+                            staleClosed++;
+                        }
+                        catch { }
+                        continue;
+                    }
+
                     var run = new OpenRun
                     {
                         Account = row.Account,
@@ -534,6 +571,14 @@ namespace SoulLink.Services
                     };
                     OpenRuns[row.Account] = run;
                 }
+            }
+            if (staleClosed > 0)
+            {
+                try
+                {
+                    LogBus.Ok("运行记录·陈旧收尾", staleClosed + " 条历史 Running 已自动关闭（日志已轮转）");
+                }
+                catch { }
             }
         }
 
