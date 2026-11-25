@@ -34,6 +34,7 @@ import com.soullink.android.net.dto.SessionListDto
 @Composable
 fun SessionListScreen(
     api: SoulLinkApi,
+    via: String = "",
     onSessionClick: (SessionDto) -> Unit,
     onDirectToken: (String) -> Unit,
     onDisconnect: () -> Unit,
@@ -60,6 +61,13 @@ fun SessionListScreen(
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
+        // T44 连接类型显示（用户一眼知道走哪条路）
+        if (via.isNotBlank()) {
+            Text("已连接：$via",
+                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 6.dp))
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("会话列表", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             TextButton(onClick = onDisconnect) { Text("断开") }

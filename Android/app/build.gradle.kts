@@ -68,4 +68,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     // JSON（org.json 已内置于 Android，这里用 kotlinx.serialization 不需要，直接手写解析）
+
+    // P0-4 单元测试（阶段一：零设备验证摇杆逻辑）
+    testImplementation("junit:junit:4.13.2")
 }

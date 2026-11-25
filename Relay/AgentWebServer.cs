@@ -750,10 +750,19 @@ namespace SoulLink.Relay
             try
             {
                 if (!GetCursorPos(out POINT pt)) return new { nx = 0.0, ny = 0.0, visible = false };
+                // ★ T41e（2026-11-25 用户纠正「光标由游戏决定」）：只判坐标 inside 不够——
+                //   3D 游戏全屏时系统隐藏光标（GetCursorInfo 无 CURSOR_SHOWING），
+                //   此时 visible 必须 false（客户端不画影子光标）；游戏呼出菜单/2D 场景
+                //   系统恢复光标 → visible 自动回 true。服务端跟随系统状态，客户端零判断。
+                //   P/Invoke 复用 BitBltCapture 的 internal CURSORINFO/GetCursorInfo（不重复声明）。
+                var ci = new BitBltCapture.CURSORINFO();
+                ci.cbSize = System.Runtime.InteropServices.Marshal.SizeOf<BitBltCapture.CURSORINFO>();
+                bool showing = BitBltCapture.GetCursorInfo(ref ci)
+                               && (ci.flags & BitBltCapture.CURSOR_SHOWING) != 0;
                 bool inside = pt.X >= ox && pt.X < ox + w && pt.Y >= oy && pt.Y < oy + h;
                 double nx = (pt.X - ox) / (double)Math.Max(1, w);
                 double ny = (pt.Y - oy) / (double)Math.Max(1, h);
-                return new { nx, ny, visible = inside };
+                return new { nx, ny, visible = inside && showing };
             }
             catch { return new { nx = 0.0, ny = 0.0, visible = false }; }
         }

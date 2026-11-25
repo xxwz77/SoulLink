@@ -42,8 +42,9 @@ class SoulLinkApi(
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        // ★ Tailscale 首次连接可能超过 5s（握手建链慢），放宽到 15/30
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
     /**
@@ -53,9 +54,19 @@ class SoulLinkApi(
     suspend fun login(password: String): LoginResult = withContext(Dispatchers.IO) {
         val url = "$mainBase/api/login?pw=" + java.net.URLEncoder.encode(password, "UTF-8")
         val request = Request.Builder().url(url).get().build()
-        client.newCall(request).execute().use { resp ->
-            val body = resp.body?.string() ?: "{}"
-            LoginResult.fromJson(JSONObject(body))
+        // ★ T34 网络诊断：实际 URL + 响应码 / 完整异常链（adb logcat -s SoulLinkNet）
+        android.util.Log.i("SoulLinkNet", "GET $url")
+        val t0 = System.currentTimeMillis()
+        try {
+            client.newCall(request).execute().use { resp ->
+                android.util.Log.i("SoulLinkNet", "响应 code=" + resp.code + " url=" + resp.request.url + " 耗时=" + (System.currentTimeMillis() - t0) + "ms")
+                val body = resp.body?.string() ?: "{}"
+                LoginResult.fromJson(JSONObject(body))
+            }
+        } catch (e: Exception) {
+            val elapsed = System.currentTimeMillis() - t0
+            android.util.Log.e("SoulLinkNet", "连接失败 url=$url 耗时=${elapsed}ms", e)
+            LoginResult(false, "连接失败（${elapsed}ms）：$url — ${e.message}")
         }
     }
 
@@ -64,7 +75,9 @@ class SoulLinkApi(
      */
     suspend fun sessions(): SessionListDto = withContext(Dispatchers.IO) {
         val request = Request.Builder().url("$mainBase/api/sessions").get().build()
+        android.util.Log.i("SoulLinkNet", "GET $mainBase/api/sessions")
         client.newCall(request).execute().use { resp ->
+            android.util.Log.i("SoulLinkNet", "sessions code=" + resp.code)
             if (!resp.isSuccessful) {
                 throw IllegalStateException("sessions HTTP " + resp.code)
             }
@@ -79,5 +92,12 @@ class SoulLinkApi(
 
     /** 代理输入地址：POST /api/input，X-SoulLink-Token 头（留待输入层任务）。 */
     fun inputUrl(directPort: Int): String = "http://$host:$directPort/api/input"
+
+    /**
+     * T35: force IDR endpoint: POST /api/idr with X-SoulLink-Token header.
+     * Exists server-side (AgentWebServer HandleIdrAsync -> SessionRecorder.RequestKeyFrame).
+     * Player requests it when waiting for the first key frame times out.
+     */
+    fun idrUrl(directPort: Int): String = "http://$host:$directPort/api/idr"
 
 }

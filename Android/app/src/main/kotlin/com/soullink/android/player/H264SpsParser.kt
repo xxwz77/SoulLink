@@ -1,5 +1,7 @@
 package com.soullink.android.player
 
+import android.util.Log
+
 /**
  * 精简 H.264 SPS 解析器：提取 profile/level/宽高。
  * 宽高用于 MediaFormat KEY_WIDTH/KEY_HEIGHT（解析失败则传 0，由解码器从 csd 推断）。
@@ -68,6 +70,35 @@ object H264SpsParser {
                 nextScale = (lastScale + delta + 256) % 256
             }
             if (nextScale != 0) lastScale = nextScale
+        }
+    }
+
+    /**
+     * ★ T35b（对齐 Moonlight MediaCodecDecoderRenderer.java:1441-1455）：
+     * SPS level_idc 下修——部分解码器按 level 估算 DPB/输入 buffer 容量，
+     * 服务端给的高 level 反而让「大 IDR 塞不进 input buffer」被判容量不足整 AU 丢弃。
+     * 官方映射：720p→31（Level 3.1）、1080p→42（Level 4.2）；且只降不升。
+     *
+     * level_idc 位于 SPS 第 4 字节（NAL header + profileIdc + constraint 之后），
+     * 固定字节、不经过 exp-golomb，直接改写安全。
+     * 返回 null = 无需修改（原样用）。
+     */
+    fun downgradeLevelIdc(sps: Nal, width: Int, height: Int): Nal? {
+        return try {
+            val info = parse(sps) ?: return null
+            val current = info.levelIdc
+            val target = when {
+                height <= 720 -> 31
+                height <= 1080 -> 42
+                else -> 51
+            }
+            if (current <= target || sps.bytes.size < 4) return null   // 已低于目标或异常：不动
+            val out = sps.bytes.copyOf()
+            out[3] = target.toByte()
+            Log.i("SoulLinkPlayer", "SPS level_idc 下修：$current → $target（${width}x${height}，对齐 Moonlight）")
+            Nal(sps.type, out)
+        } catch (_: Exception) {
+            null
         }
     }
 }

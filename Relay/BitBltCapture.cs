@@ -42,7 +42,7 @@ namespace SoulLink.Relay
         [DllImport("user32.dll")] private static extern int GetSystemMetrics(int nIndex);
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct POINT { public int X; public int Y; }
+        internal struct POINT { public int X; public int Y; }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT { public int Left, Top, Right, Bottom; }
@@ -55,7 +55,7 @@ namespace SoulLink.Relay
         private const uint MONITOR_DEFAULTTOPRIMARY = 0x00000001;
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct CURSORINFO
+        internal struct CURSORINFO
         {
             public int cbSize;
             public int flags;
@@ -63,10 +63,10 @@ namespace SoulLink.Relay
             public POINT ptScreenPos;
         }
 
-        private const int CURSOR_SHOWING = 0x00000001;
+        internal const int CURSOR_SHOWING = 0x00000001;
         private const int DI_NORMAL = 0x0003;
 
-        [DllImport("user32.dll")] private static extern bool GetCursorInfo(ref CURSORINFO pci);
+        [DllImport("user32.dll")] internal static extern bool GetCursorInfo(ref CURSORINFO pci);
         [DllImport("user32.dll")] private static extern bool DrawIconEx(IntPtr hdc, int x, int y,
             IntPtr hIcon, int cx, int cy, int istepIfAniCur, IntPtr hbrFlickerFreeDraw, int diFlags);
         [DllImport("user32.dll")] private static extern bool GetIconInfo(IntPtr hIcon, out ICONINFO piconinfo);
@@ -227,3 +227,4 @@ namespace SoulLink.Relay
         }
     }
 }
+

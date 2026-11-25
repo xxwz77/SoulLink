@@ -88,6 +88,22 @@ class MoveThrottler(
         lastSent = SystemClock.elapsedRealtime()
         onSend(pendingX, pendingY)
     }
+
+    /**
+     * ★ T41g 修「操作快落点偏移」：立即发出压着的最终位置（绕过 8ms 窗口），
+     *   然后发 up——保证 up 带的最终坐标不会被迟到的旧 move 覆盖。
+     *   场景：快速拖动结束，up 与 throttler 里的 pending 竞速。
+     */
+    @Synchronized
+    fun flushNow() {
+        timer?.cancel()
+        timer = null
+        if (hasPending) {
+            hasPending = false
+            lastSent = SystemClock.elapsedRealtime()
+            onSend(pendingX, pendingY)
+        }
+    }
 }
 
 /**
