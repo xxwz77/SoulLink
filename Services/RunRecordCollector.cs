@@ -1049,7 +1049,7 @@ namespace SoulLink.Services
                 if (plan.Groups["n1"].Success) n = int.TryParse(plan.Groups["n1"].Value, out int v1) ? v1 : 0;
                 else if (plan.Groups["n3"].Success) n = int.TryParse(plan.Groups["n3"].Value, out int v3) ? v3 : 0;
                 if (n > 0)
-                    events.Add(new Ev { Pos = lineStart + plan.Index, Apply = () => SetPlannedRoutes(user, n) });
+                    events.Add(new Ev { Pos = lineStart + plan.Index, Apply = () => SetPlannedRoutes(user, n, srcFile) });
             }
             // 路径组头 / 开始遍历：仅记录上下文（不生成路线行）
             if (RxPathGroupHeader.IsMatch(line) || RxTraverseStart.IsMatch(line))
@@ -1090,13 +1090,13 @@ namespace SoulLink.Services
             {
                 long v = ParseV(m);
                 if (v <= 0) continue;
-                events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumReward(user, v, 0, lineMs) });
+                events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumReward(user, v, 0, lineMs, srcFile) });
             }
             foreach (Match m in RxMora.Matches(line))
             {
                 long v = ParseV(m);
                 if (v <= 0) continue;
-                events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumReward(user, 0, v, lineMs) });
+                events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumReward(user, 0, v, lineMs, srcFile) });
             }
         }
 
@@ -1631,6 +1631,14 @@ namespace SoulLink.Services
         {
             if (!OpenRuns.TryGetValue(user, out var run) || run == null) return;
 
+            // ★★ t76 补漏：StartRouteIdx 的「同名去重 / 跳过推断」两段都在调用
+            //   StartRoute（其内部有 IsSameDayAsOpenRun 防护）**之前**执行，且跳过推断
+            //   会直接 AddRoute 写库。回填历史文件（如 11-23）时，OpenRuns[user] 里是
+            //   今天正在跑的窗口，扫到历史的「开始第 x/y 条线路」锚点会在这里用今天的 run
+            //   + 历史 srcFile 生成 #skipped-N 坏行（实测 30 条：ts=今天、src_file=11-23）。
+            //   与 AccumPick / StartRoute / AccumReward 同一根因：文件日期是唯一权威。
+            if (!IsSameDayAsOpenRun(run, srcFile)) return;
+
             // ★ 同名去重：「进入路线循环」与「开始第 x/y 条线路」是同一事实的两个锚点（实测成对出现，
             //   相隔约 3 行）。若当前窗口已是同名路线 → 只补 idx，绝不开新窗（否则会自我挤掉、dur=0）。
             if (run.Route != null && string.Equals(run.Route.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -1996,9 +2004,11 @@ namespace SoulLink.Services
         }
 
         /// <summary>C) 计划对账：数量型锚点（共加载 N 条路线等）落到 run.planned_routes（取最大值）。</summary>
-        private static void SetPlannedRoutes(string user, int n)
+        private static void SetPlannedRoutes(string user, int n, string srcFile = "")
         {
             if (!OpenRuns.TryGetValue(user, out var run) || run == null) return;
+            // ★★ t76 补漏：历史文件的「共加载 N 条路线」不能改写今天 run 的计划数。
+            if (srcFile.Length > 0 && !IsSameDayAsOpenRun(run, srcFile)) return;
             if (n > run.PlannedRoutes) run.PlannedRoutes = n;
         }
 
@@ -2012,6 +2022,11 @@ namespace SoulLink.Services
             {
                 if (OpenRuns.TryGetValue(user, out var run) && run != null)
                 {
+                    // ★★ t76 补漏：ERR 块结算同样要跨文件隔离 —— 历史文件的错误不能挂到
+                    //   今天的 run 上（反之亦然）。实测 err 表 18 条坏行：回填历史文件时
+                    //   用今天的 run 记了历史的错误。与 AccumPick / StartRoute / AccumReward
+                    //   同一根因：文件日期是唯一权威。
+                    if (!IsSameDayAsOpenRun(run, srcFile)) return;
                     runId = run.RunId;
                     run.LastEventMs = Math.Max(run.LastEventMs, ts);
                     if (run.Route != null)
