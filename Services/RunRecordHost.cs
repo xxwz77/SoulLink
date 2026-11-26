@@ -162,10 +162,21 @@ namespace SoulLink.Services
             try { RunRecordCollector.ShutdownSpans(); } catch { }
             try
             {
-                var flush = RunRecordStore.FlushAsync();
-                flush.Wait(2000);
+                // Queue completion is asynchronous; do not block the UI/shutdown callback thread.
+                _ = FlushOnShutdownAsync();
             }
             catch { }
+        }
+
+        private static async Task FlushOnShutdownAsync()
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            try { await RunRecordStore.FlushAsync(timeout.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                WarnOnce("运行记录退出排空超时，已接受的写入可能未完成", new TimeoutException("Flush timed out after 2 seconds"));
+            }
+            catch (Exception ex) { WarnOnce("运行记录退出排空失败", ex); }
         }
 
         /// <summary>同一个原因只写一条警告（连续失败不刷爆 error.log）。</summary>

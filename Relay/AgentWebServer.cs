@@ -631,6 +631,8 @@ namespace SoulLink.Relay
                 case "click":   cmd = "click";   break;
                 case "down":    cmd = "down";    break;
                 case "up":      cmd = "up";      break;
+                // Web page lifecycle release must reach the same agent implementation as other inputs.
+                case "releaseall": cmd = "releaseall"; break;
                 case "move":    cmd = "move";    break;
                 case "wheel":   cmd = "wheel";   break;
                 case "key":     cmd = "key";     break;
@@ -665,8 +667,10 @@ namespace SoulLink.Relay
                           || cmd == "keysync" || cmd == "keystate")
                     ? keyName
                     : (dto.button ?? "left"),
-                Dx = dto.dx,
-                Dy = dto.dy,
+                // RelayAgent.Request uses integer relative deltas; retain fractional sensitivity
+                // remainder client-side and round only whole accumulated units here.
+                Dx = (int)Math.Truncate(dto.dx),
+                Dy = (int)Math.Truncate(dto.dy),
                 Delta = dto.delta,
                 Count = dto.count
             };
@@ -833,8 +837,9 @@ namespace SoulLink.Relay
             public string? action { get; set; }
             public double x { get; set; } = -1;
             public double y { get; set; } = -1;
-            public int dx { get; set; }
-            public int dy { get; set; }
+            // Relative pointer movement may be fractional after sensitivity scaling.
+            public double dx { get; set; }
+            public double dy { get; set; }
             public string? button { get; set; }
             public string? key { get; set; }
             public string? text { get; set; }

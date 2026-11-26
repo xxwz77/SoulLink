@@ -1183,9 +1183,9 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
                 return deleted;
             }, 0L, ct);
 
-        /// <summary>等待此前入队的操作完成；不保证数据库可用，只保证入队动作已处理。</summary>
+        /// <summary>等待此前已接受的操作完成；拒绝、不可用或写入失败均显式失败。</summary>
         public static Task FlushAsync(CancellationToken ct = default)
-            => Core.Value.EnqueueQuery<object?>(_ => null, null, ct);
+            => Core.Value.FlushAsync(ct);
 
         /// <summary>故障修复后显式重连；普通写入/查询不会自动刷错误日志。</summary>
         public static void RetryDatabase() => Core.Value.Retry();
@@ -1490,10 +1490,10 @@ DELETE FROM raw_event WHERE
 
             internal bool IsHealthy { get { lock (_healthLock) return !_disabled; } }
 
-            internal void EnqueueWrite(Action<SqliteConnection> write)
+            internal bool EnqueueWrite(Action<SqliteConnection> write)
             {
-                if (!IsHealthy) return;
-                TryEnqueue(new DbOp { Execute = db => { write(db); return null; } });
+                if (!IsHealthy) return false;
+                return TryEnqueue(new DbOp { Execute = db => { write(db); return true; }, Fallback = false });
             }
 
             internal Task<T> EnqueueQuery<T>(Func<SqliteConnection,T> query, T fallback, CancellationToken ct)
@@ -1549,12 +1549,17 @@ DELETE FROM raw_event WHERE
                     return o == null || o == DBNull.Value ? 0 : Convert.ToInt32(o);
                 }, 0, ct);
 
+            internal async Task FlushAsync(CancellationToken ct)
+            {
+                var op = new DbOp { Execute = db => { if (!IsHealthy) throw new InvalidOperationException("数据库已降级。"); return true; }, Fallback = false };
+                if (!TryEnqueue(op)) throw new InvalidOperationException("运行记录队列已满，无法确认排空。");
+                object? result = await op.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
+                if (result is not true) throw new InvalidOperationException("运行记录队列排空失败或数据库不可用。");
+            }
+
             internal bool WaitForWritesDrain(TimeSpan timeout)
             {
-                if (!IsHealthy) return false;
-                var op = new DbOp { Execute = db => null, Fallback = 0 };
-                if (!TryEnqueue(op)) return false;
-                try { return op.Completion.Task.Wait(timeout); }
+                try { return FlushAsync(CancellationToken.None).Wait(timeout); }
                 catch { return false; }
             }
             internal void Retry()

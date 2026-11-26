@@ -3504,8 +3504,9 @@ namespace SoulLink.Views
                 _isFullScreen = false;
 
                 EnsureFullScreenMenuWatch(false);
-                SetFullScreenMenuVisible(false);
-
+                // Hide the menu as part of the window restore; the final layout below
+                // applies both the restored window geometry and menu row together.
+                SetFullScreenMenuRowImmediate(false);
 
                 // ★★★ 3.2.7：退出全屏顺序 —— 先几何，最后才恢复窗口样式 ★★★
                 //

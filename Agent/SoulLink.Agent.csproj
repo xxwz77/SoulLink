@@ -27,7 +27,7 @@
          主程序升版不触发 agent 重铺；agent 行为变了才 +1。
          这个版本通过 FileVersion 与同目录 SoulLink.Agent.version 暴露，
          主程序用自己编译进的 <AgentVersion> 与之比对。 -->
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 注入代理</AssemblyTitle>

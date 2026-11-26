@@ -1669,7 +1669,7 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
       //   reader」，卡在 fetch 阶段无法取消 → 僵尸连接 + h264Active 卡 true。
       const ac = new AbortController();
       h264Abort = ac;
-      const FIRST_BYTE_MS = 8000;   // 首字节超时：8s 内响应头未回 → 主动 abort
+      const FIRST_BYTE_MS = 30000;   // 覆盖服务端最长 25s 冷启动首帧等待
       let firstByteTimer = setTimeout(() => {
         if (myGen === h264Gen) {
           console.warn('[H264] /stream 首字节 ' + FIRST_BYTE_MS + 'ms 无响应，主动取消');
@@ -2025,6 +2025,8 @@ let wsRetryDelay = 500;         // 当前退避间隔（指数增长，封顶 30
 let wsInputBase = '';           // WS 绑定的直连 base（切账号时据此重建）
 let wsInflight = null;          // 当前在途请求的 resolve（WS 单 in-flight 保序）
 let wsQueue = [];               // 排队中的 { body, resolve }
+const WS_QUEUE_LIMIT = 64;       // bound queued state transitions under slow/lost responses
+const WS_RESPONSE_TIMEOUT_MS = 2000;
 
 function wsInputUrl() {
   const base = directBase(cur);
@@ -2105,6 +2107,12 @@ function getWsInput() {
 
 function wsSend(body) {
   return new Promise(resolve => {
+    if (wsQueue.length >= WS_QUEUE_LIMIT) {
+      // Never discard a release action. For saturated queues drop superseded moves first.
+      const stale = wsQueue.findIndex(item => item.body.action === 'move' || item.body.action === 'moverel');
+      if (stale >= 0) { const dropped = wsQueue.splice(stale, 1)[0]; dropped.resolve(null); }
+      else if (body.action === 'move' || body.action === 'moverel') { resolve(null); return; }
+    }
     wsQueue.push({ body, resolve });
     pumpWs();
   });
@@ -2115,9 +2123,17 @@ function pumpWs() {
   const ws = wsInput;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;   // 未 open：等 onopen 回调再 pump
   const item = wsQueue.shift();
-  wsInflight = item.resolve;
+  let settled = false;
+  const finish = value => { if (settled) return; settled = true; clearTimeout(timer); if (wsInflight === finish) wsInflight = null; item.resolve(value); pumpWs(); };
+  const timer = setTimeout(() => {
+    // Close before settling: finish() pumps the next queued item synchronously.
+    // Closing first prevents that next command from being sent on a timed-out socket.
+    if (wsInput === ws) { wsInput = null; wsInputBase = ''; markWsFailed(); try { ws.close(); } catch (e) {} }
+    finish(null);
+  }, WS_RESPONSE_TIMEOUT_MS);
+  wsInflight = finish;
   try { ws.send(JSON.stringify(item.body)); }
-  catch (e) { wsInflight = null; item.resolve(null); pumpWs(); }
+  catch (e) { finish(null); }
 }
 
 async function postInputRaw(body, httpOnly) {
@@ -2555,13 +2571,15 @@ const LOOK_TAP_MS = 250;    // 长按阈值：按住不动超过它 = 进入拖�
 const LOOK_SLIDE_PX = 10;   // 位移阈值：抖动/误触容差（手指抖动比鼠标的 8px 更大）
 
 // 转视角位移累积 + 节流（合并后发 moverel，避免手指高频抖动打爆代理有界队列）
-let lookAcc = { dx: 0, dy: 0, lastSent: 0, timer: null };
+let lookAcc = { dx: 0, dy: 0, fracX: 0, fracY: 0, lastSent: 0, timer: null };
 const LOOK_HZ_MS = 8;       // 合并窗口：与桌面 LookInputQueue 的 8ms 对齐
 
 function flushLook() {
-  const d = lookAcc.dx, y = lookAcc.dy;
+  const tx = lookAcc.dx + lookAcc.fracX, ty = lookAcc.dy + lookAcc.fracY;
+  const d = Math.trunc(tx), y = Math.trunc(ty);
+  lookAcc.fracX = tx - d; lookAcc.fracY = ty - y;
   lookAcc.dx = lookAcc.dy = 0;
-  if (d || y) sendInput('moverel', -1, -1, { dx: d, dy: y });
+  if (d || y) sendInputNoWait('moverel', -1, -1, { dx: d, dy: y });
 }
 function lookDelta(dx, dy) {
   lookAcc.dx += dx; lookAcc.dy += dy;

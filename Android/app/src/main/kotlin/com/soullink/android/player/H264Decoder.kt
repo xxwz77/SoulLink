@@ -123,10 +123,15 @@ class H264Decoder(private val surface: Surface) {
             } else {
                 MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
             }
-            c.configure(format, surface, null, 0)
-            c.start()
-            // Moonlight configureAndStartDecoder :487-537: set scaling mode AFTER start()
-            c.setVideoScalingMode(MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT)
+            try {
+                c.configure(format, surface, null, 0)
+                c.start()
+                c.setVideoScalingMode(MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT)
+            } catch (e: Exception) {
+                // Ownership transfers to codec only after startup completes.
+                try { c.release() } catch (cleanup: Exception) { e.addSuppressed(cleanup) }
+                throw e
+            }
             codec = c
             running.set(true)
             isConfigured = true
@@ -135,6 +140,7 @@ class H264Decoder(private val surface: Surface) {
             Log.i(TAG, "configure parse=" + if (info != null) ("ok w=" + w + " h=" + h + " level=" + info.levelIdc + " decoder=" + c.name) else "NULL")
             true
         } catch (e: Exception) {
+            Log.e(TAG, "解码器初始化失败", e)
             onError?.invoke(e)
             false
         }
@@ -196,10 +202,10 @@ class H264Decoder(private val surface: Surface) {
         try { decodeThread?.join(100) } catch (_: Exception) {}
         try {
             codec?.stop()
-            codec?.release()
         } catch (e: Exception) {
-            // stop/release 竞态下的 IllegalStateException 是预期噪音（解码线程可能
-            // 恰在 dequeue 中），静默即可——decoderLoop 侧已区分正常/异常。
+            Log.w(TAG, "解码器停止失败，继续释放", e)
+        } finally {
+            try { codec?.release() } catch (e: Exception) { Log.w(TAG, "解码器释放失败", e) }
         }
         decodeThread = null
         codec = null

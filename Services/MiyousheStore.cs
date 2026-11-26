@@ -47,24 +47,39 @@ namespace SoulLink.Services
             try
             {
                 await _gate.WaitAsync(ct).ConfigureAwait(false);
-                try { EnsureOpen(); return action(_db!); }
-                finally { _gate.Release(); }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+
+            Exception? failure = null;
+            T result = fallback;
+            try
+            {
+                // SemaphoreSlim.WaitAsync may complete synchronously when the gate is free.
+                // Always run SQLite open/query work on a worker so UI callers never execute it inline.
+                result = await Task.Run(() =>
+                {
+                    EnsureOpen();
+                    return action(_db!);
+                }, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
+                failure = ex;
                 ErrorCountForTest++;
                 LastErrorForTest=ex.GetType().Name+": "+ex.Message;
                 _healthy=false; _lastFailure=ex;
                 try { _db?.Dispose(); } catch { }
                 _db = null;
-                if (!_warned)
-                {
-                    _warned = true;
-                    App.AppendErrorLog("MiyousheStore", new InvalidOperationException("米游社数据库暂不可用"));
-                }
-                return fallback;
             }
+            finally { _gate.Release(); }
+
+            if (failure != null && !_warned)
+            {
+                _warned = true;
+                App.AppendErrorLog("MiyousheStore", new InvalidOperationException("米游社数据库暂不可用"));
+            }
+            return result;
         }
 
         private void EnsureOpen()

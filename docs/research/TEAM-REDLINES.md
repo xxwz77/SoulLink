@@ -51,24 +51,26 @@
 | 会话 | 账号 | 性质 |
 |---|---|---|
 | session 1 | `lummy` | 本机控制台（用户本人），`dist\` 与 `dist\stable\` 都从这里跑 |
-| session 2 | **A1** | **生产，禁动** |
-| session 3 | **A4** | **生产，禁动** |
+| session 2 | **A1** | **生产，须用户授权** |
+| session 3 | **A4** | **生产，须用户授权** |
 | session 4 | **A2** | 测试，可随意启停 |
 | — | **A3** | 测试，未登录，可随意启停 |
 
-### 绝对不可触碰（唯一红线）
+### 生产操作须用户明确授权（2026-11-26）
+
+挂机版更新、A1 操作、A4 操作分别授权。用户点明本次任务的对象和操作即可执行，范围不清时先确认。更新开发版或笼统要求“更新 dist”仅适用于开发版。
 
 | 对象 | 判据 |
 |---|---|
-| **A1 / A4 两个账号** | 进程 owner 为 `A1` 或 `A4`（session 2 / 3）。这两个会话里的一切：进程、窗口、桌面、抓屏、输入，一律不动 |
-| `dist\stable\SoulLink-Stable.exe` | 文件名或路径含 `stable`，无论跑在哪个会话都不动 |
+| **A1 / A4 两个账号** | 进程 owner 为 `A1` 或 `A4`（session 2 / 3）。会话内的进程、窗口、桌面、抓屏和输入等操作，限于用户明确授权的账号和操作 |
+| `dist\stable\SoulLink-Stable.exe` | 文件名或路径含 `stable` 的产物默认受保护。用户明确要求更新挂机版时，可替换更新所需文件，并按授权范围停启、验证挂机版 |
 
-判定方法（唯一标准）：按进程 owner 判，不按文件路径判。
+账号归属按进程 owner 判定，挂机版另按文件名或路径识别。
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name LIKE 'SoulLink%'" | ForEach-Object {
   $o = Invoke-CimMethod -InputObject $_ -MethodName GetOwner
-  # $o.User 为 A1 / A4 -> 禁动；其余按下面规则
+  # $o.User 为 A1 / A4 -> 核对该账号及操作的用户授权
 }
 ```
 
@@ -80,7 +82,7 @@ Get-CimInstance Win32_Process -Filter "Name LIKE 'SoulLink%'" | ForEach-Object {
 |---|---|
 | `dist\SoulLink.exe` | 主程序（测试） |
 | `dist\SoulLink.Agent.exe` | 注入代理（测试） |
-| `dist\` 下任何产物 | 构建输出、version 文件、`sl-rescue.exe`、`sl-watchdog.exe` 等 |
+| `dist\` 下的非 stable 测试产物 | 构建输出、version 文件、`sl-rescue.exe`、`sl-watchdog.exe` 等 |
 | `C:\Program Files\SoulLinkDev\SoulLink.Agent.exe` | **服务侧 agent，测试用途，可停、可换、可重铺** |
 | `SoulLink.DevBroker` 服务（session 0 的 `SoulLink.exe --broker`） | **可停、可启、可改配置、可重装** |
 | session 4 (A2) / A3 | 测试账户，可随意启停 |
@@ -89,9 +91,9 @@ Get-CimInstance Win32_Process -Filter "Name LIKE 'SoulLink%'" | ForEach-Object {
 > ⚠️ 纠正一个历史误记：`C:\Program Files\SoulLinkDev\SoulLink.Agent.exe` **不是** A1/A4 专用。
 > 它被 A1、A4、A2 三个会话的 agent 进程**共用同一个可执行文件**。
 > 所以判据始终是**进程 owner**，不是文件所在目录：
-> 停「A2 会话里的 agent」可以；停「A1/A4 会话里的 agent」不行。
+> 停「A2 会话里的 agent」可以；停 A1 或 A4 的 agent 需要用户授权对应账号的停进程操作。
 > 替换 Program Files 里的 agent **文件**属于安装/修复动作，是允许的 ——
-> 但会 Kill 掉占用它的进程，那一步必须逐个核对 owner，凡被 A1/A4 持有，**先报 Lead，不许直接 Kill**。
+> 但会 Kill 掉占用它的进程，那一步必须逐个核对 owner，凡被 A1/A4 持有，**先报 Lead，确认已有该账号的用户授权后按精确 PID 操作**。
 
 ### 停进程规则（不变，更严）
 
