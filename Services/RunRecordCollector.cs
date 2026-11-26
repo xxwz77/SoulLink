@@ -176,10 +176,17 @@ namespace SoulLink.Services
         //     （实测 04:00 分解出 35 万经验 —— 那是背包容量不是本轮收益），
         //     真正的本轮收益在结束前最后那次分解（实测 04:37 的 61740）。
         //     7 天实测数据全部符合此规律。
+        //   ★ 实测同一天日志里有**两套格式**，不同脚本各用一种，必须都认：
+        //     · 狗粮批发类（AAA-Artifacts-Bulk）：
+        //         狗粮路线获取狗粮经验: 61740 / 狗粮路线获取摩拉: 21786
+        //         （同时也输出 分解可获得经验: 61740，数值相同、冗余）
+        //     · 联机狗粮类：
+        //         分解可获得经验: 86940 / 思收益：经验 未识别，摩拉 19400
+        //   只认其中一种会导致另一组的摩拉恒为 0（2026-11-26 用户实测踩到）。
         private static readonly Regex RxDogfoodExp = new(
-            @"分解可获得经验\s*[:：]\s*(?<v>\d+)", RegexOptions.Compiled);
+            @"(?:分解可获得经验|狗粮路线获取狗粮经验)\s*[:：]\s*(?<v>\d+)", RegexOptions.Compiled);
         private static readonly Regex RxDogfoodMora = new(
-            @"收益[：:]\s*经验\s*\S+\s*[，,]\s*摩拉\s*(?<v>\d+)", RegexOptions.Compiled);
+            @"(?:狗粮路线获取摩拉|收益[：:]\s*经验\s*\S+\s*[，,]\s*摩拉)\s*[:：]?\s*(?<v>\d+)", RegexOptions.Compiled);
 
         // 路线结束：无「耗时」的脚本执行结束，name 等于当前打开的路线
         private static readonly Regex RxScriptEndPlain = new(
