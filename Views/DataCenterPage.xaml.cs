@@ -930,21 +930,30 @@ namespace SoulLink.Views
             // ★ t52：今日配置组改用 SQLite（run.db）为权威数据源，重启后历史不丢、不扫 36MB 日志。
             //   Tracker 只负责「启动后实时增量」，与 SQLite 历史做幂等合并（同名+同时刻去重）。
             // ★ t2：合并后再**按组名折叠**，同一组只出一张卡片（见 BuildGroupAggregates）。
+            //
+            // ★★ 2026-11-26 修复「同一次运行显示成两条（今日 2 次却列 3 行）」：
+            //   两个数据源解析同一条日志锚点的毫秒值**不可能完全相等** ——
+            //     · SQLite：走 RunRecordCollector.ResolveTs，毫秒来自 char 偏移换算；
+            //     · Tracker：走 ScriptGroupTracker.EventTime，毫秒来自正则 capture。
+            //   旧去重键用**精确毫秒**，两者差 1ms 就被判成两次不同运行 → 多出一行。
+            //   改为**按秒对齐**（同组 + 同一秒 = 同一次运行）。日志锚点秒级精度已足够，
+            //   而同一配置组不可能在同一秒内启动两次。
             var merged = new List<GroupRunView>();
-            var seen = new HashSet<(string Name, long StartedMs)>();
+            var seen = new HashSet<(string Name, long StartSec)>();
+            long SecOf(DateTime dt) => dt == DateTime.MinValue ? 0 : ToMsLocal(dt) / 1000;
             if (_sqliteTodayRuns.TryGetValue(st.UserName, out var sqlRuns) && sqlRuns != null)
             {
                 foreach (var r in sqlRuns)
                 {
                     var v = ToGroupRunView(r);
                     if (IsBogusGroupName(v.Name)) continue;           // 误识别的英文异常消息不进卡片
-                    if (seen.Add((v.Name, ToMsLocal(v.StartedAt)))) merged.Add(v);
+                    if (seen.Add((v.Name, SecOf(v.StartedAt)))) merged.Add(v);
                 }
             }
             foreach (var tr in st.Groups)
             {
                 if (IsBogusGroupName(tr.Name)) continue;
-                if (seen.Add((tr.Name, ToMsLocal(tr.StartedAt))))
+                if (seen.Add((tr.Name, SecOf(tr.StartedAt))))
                     merged.Add(new GroupRunView
                     {
                         Name = tr.Name, State = tr.State, StartedAt = tr.StartedAt,
@@ -1082,7 +1091,6 @@ namespace SoulLink.Views
             foreach (UIElement child in BuildGroupCardChildren(agg, accountKey)) stack.Children.Add(child);
 
             string key = accountKey + "\u001f" + agg.Name;
-            bool expanded = _expandedGroups.Contains(key);
             var card = new Border
             {
                 Padding = new Thickness(8,5,8,5), Margin = new Thickness(0,3,7,3),
@@ -1124,8 +1132,11 @@ namespace SoulLink.Views
                 }
             };
 
-            if (expanded && agg.Runs.Count > 1)
-                stack.Children.Add(BuildGroupHistory(agg));
+            // ★★ 2026-11-26 修复「展开后历史列表重复显示两遍」：
+            //   这里原来又 add 了一次 BuildGroupHistory —— 而 BuildGroupCardChildren
+            //   （第 1071 行附近的 `if (_expandedGroups.Contains(key) && agg.Runs.Count > 1)`）
+            //   已经加过一次了。两处都加 = 展开后「今日全部运行」整块出现两遍。
+            //   展开列表只由 BuildGroupCardChildren 负责，此处不再重复添加。
 
             if (last.State == ScriptGroupState.Running)
             {
