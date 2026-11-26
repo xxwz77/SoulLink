@@ -177,3 +177,4 @@ scripts/publish-release.local.ps1
 
 # 误创建的目录（C:\Users\91244\AppData\Local\Temp 未展开）；永远不入库
 undefined/
+_tmp_*.py
