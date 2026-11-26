@@ -190,13 +190,30 @@ namespace SoulLink.Services
 
         internal static DateTime EventTime(string text, int position)
         {
-            int start = text.LastIndexOf('\n', Math.Max(0, position - 1));
-            start = start < 0 ? 0 : start + 1;
-            string prefix = text.Substring(start, Math.Min(90, Math.Max(0, position - start)));
-            var m = Regex.Match(prefix, @"\[(?<d>\d{4}-\d{2}-\d{2}[ T])?(?<t>\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?)\]");
-            if (!m.Success) return DateTime.MinValue;
-            string stamp = (m.Groups["d"].Success ? m.Groups["d"].Value.Trim() + " " : DateTime.Now.ToString("yyyy-MM-dd") + " ") + m.Groups["t"].Value;
-            return DateTime.TryParse(stamp, out var at) ? at : DateTime.MinValue;
+            // ★★ 2026-11-26 修复「过几秒界面冒出重复组卡片」：
+            //   配置组锚点（如「配置组 X 加载完成…开始执行」）是**续行**——时间戳在上一行，
+            //   本行开头没有 [HH:mm:ss]。旧实现只查当前行 90 字符 → 解析不到时间戳 →
+            //   StartedAt=DateTime.MinValue，与 SQLite（RunRecordCollector 用上一行时间戳）
+            //   的 start 对不齐 → 界面 (组名,开始时刻) 去重失效，同一组渲染成两条。
+            //   修法：从锚点行向前回溯，取「最近的上一行 [时间戳]」作为该锚点时刻。
+            int lineStart = text.LastIndexOf('\n', Math.Max(0, position - 1));
+            lineStart = lineStart < 0 ? 0 : lineStart + 1;
+            int scan = lineStart;
+            while (scan >= 0)
+            {
+                int prevNl = scan == 0 ? -1 : text.LastIndexOf('\n', scan - 1);
+                int curStart = prevNl < 0 ? 0 : prevNl + 1;
+                string curLine = text.Substring(curStart, scan - curStart);
+                var m = Regex.Match(curLine, @"\[(?<d>\d{4}-\d{2}-\d{2}[ T])?(?<t>\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?)\]");
+                if (m.Success)
+                {
+                    string stamp = (m.Groups["d"].Success ? m.Groups["d"].Value.Trim() + " " : DateTime.Now.ToString("yyyy-MM-dd") + " ") + m.Groups["t"].Value;
+                    return DateTime.TryParse(stamp, out var at) ? at : DateTime.MinValue;
+                }
+                if (prevNl < 0) break;
+                scan = prevNl;
+            }
+            return DateTime.MinValue;
         }
         private static bool HasEventTime(string text, int position) => EventTime(text, position) != DateTime.MinValue;
 
