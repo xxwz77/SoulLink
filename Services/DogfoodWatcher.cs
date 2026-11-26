@@ -87,11 +87,18 @@ namespace SoulLink.Services
                 w.Error += (_, __) =>
                 {
                     // 缓冲区溢出 / 路径失效：标记脏让上层重读，并移除 watcher 等下次重建。
+                    try { LogBus.Warn("狗粮·监听异常", acc + " watcher 出错，回退轮询"); } catch { }
                     try { Dirty[acc] = 1; StopFor(acc); } catch { }
                 };
                 w.EnableRaisingEvents = true;
 
                 lock (Gate) { Watchers[account] = (recordFile, w); }
+                // ★ 可观测：确认 watcher 真的挂上了。
+                //   挂不上会静默退化为轮询（功能仍正常，只是延迟回到 30 秒），
+                //   没有这条日志就无从判断「是没触发还是没挂上」。
+                //   LogBus 只在内存（界面可见）—— 实测验证过效果后不再写 error.log，
+                //   避免排查残留污染用户错误日志。
+                try { LogBus.Info("狗粮·监听", account + " 已监听 " + name); } catch { }
             }
             catch
             {

@@ -1,0 +1,17 @@
+feat(datacenter): 狗粮 records 挂 FileSystemWatcher（A+B 完成）
+
+A) 界面区分「读取时刻」与「数据时刻」：
+   新增 DogfoodFileWriteAt（records 文件真实写入时刻），
+   显示「数据更新于 04:37:39（9.6 小时前）（源文件未更新）· 读取：14:08:52」，
+   一眼区分「程序卡住」与「源文件没变」。
+
+B) 新增 Services/DogfoodWatcher.cs：
+   事件回调只置脏标记（纳秒级、零 IO），重活由刷新拍消费；
+   TickHub 5 秒兜底拍用 PeekDirty（只读不清），
+   清除留给 RefreshOnce 的 ConsumeDirty，避免标记被吃掉导致跳过重解析；
+   句柄生命周期完整收口（路径变化重建 / 账号移除 / Stop 时 Dispose）。
+
+实测验证（A1，写文件后立即）：
+  14:24:33 LISTEN A1 -> ...records/思.txt   （watcher 挂上）
+  14:25:00 改文件 -> 14:25:00 DIRTY A1      （同秒触发，延迟 <1s，原来最多 30s）
+  测完已还原文件并移除临时落盘诊断。
