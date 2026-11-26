@@ -848,8 +848,6 @@ namespace SoulLink.Services
                         bs.Offset = resumeFrom;
                     else if (resumeFrom >= len)
                         bs.Offset = len;   // 已读完（上一会话推进到结尾但未来得及 FileIndex++）
-                    // ★ B2：续读段字节偏移基线同步恢复，raw_id 用文件内绝对偏移、跨重启唯一。
-                    RunRecordCollector.SetRawByteOffsetBase(e.UserName, current, bs.Offset);
                 }
 
                 // ③ 读一小片（严格限量，不阻塞）
@@ -1161,11 +1159,6 @@ namespace SoulLink.Services
                     else e.PendingLen = 0;
 
                     string chunk = Encoding.UTF8.GetString(work, start, completeLen);
-                    // ★ B2：实时续读的字节偏移基线 = 本块首字节的文件绝对偏移。
-                    //   carry 是本次循环开头捕获的「旧残行长度」（上一块末尾字节数，位于 [pos-carry, pos)）；
-                    //   work 以残行打头、start=0，故首字节绝对偏移 = pos - carry。
-                    long baseOffset = pos - carry;
-                    RunRecordCollector.SetRawByteOffsetBase(e.UserName, e.LogFile, baseOffset);
                     ProcessChunk(e, chunk, len, write.Ticks);
                     changed = true;
 
