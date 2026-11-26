@@ -927,8 +927,23 @@ namespace SoulLink.Services
                     //   （实测残留 4 条 end=NULL：11-20 的联机锄地/小怪、11-21 的CD、11-22 的混合精英）。
                     //   这是回填**特有**的问题：实时采集时文件不会中途换，组的状态由 BGI 的下一个
                     //   锚点自然关闭；而回填是「按文件推进」，跨文件时上一个文件的 open 组无人关闭。
-                    bool isLast = bs.FileIndex >= bs.Pending.Count - 1;
-                    RunRecordCollector.CloseOpenForBackfill(e.UserName, current, isLast);
+                    // ★★ 2026-11-26 修复「今天正在跑的组被回填强行收尾」：
+                    //   实测：13:07 启动的「联机锄地-小怪-队员」日志里只有开始锚点、
+                    //   至今（13:49）仍在跑，但库里被写成 Finished 13:48:09，
+                    //   detail=「历史回填收尾（日志文件结束，未见结束锚点）」。
+                    //   根因：本函数是**回填**路径，把「读到当前 EOF」当成「文件结束」，
+                    //   但**今天的日志文件仍在实时增长** —— 读到 EOF 只是读到了此刻。
+                    //   修法：回填收尾只对**历史文件**（非今天）做。今天的 open 组
+                    //   交给实时采集，由 BGI 的下一个锚点自然关闭。
+                    bool isToday = string.Equals(
+                        Path.GetFileName(current),
+                        "better-genshin-impact" + DateTime.Now.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".log",
+                        StringComparison.OrdinalIgnoreCase);
+                    if (!isToday)
+                    {
+                        bool isLast = bs.FileIndex >= bs.Pending.Count - 1;
+                        RunRecordCollector.CloseOpenForBackfill(e.UserName, current, isLast);
+                    }
 
                     bs.FileIndex++; bs.Offset = 0;
                     LogBus.Ok("采集·历史回填完成", e.UserName + " " + Path.GetFileName(current));
