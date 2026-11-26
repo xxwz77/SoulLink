@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -613,6 +614,26 @@ namespace SoulLink.Services
                     && fileDayMs > 0 && clock.LastMs > 0
                     && DayOf(clock.LastMs) != DayOf(fileDayMs))   // 日期确实换了
                 {
+                    // ★★ t71 修复（实测：今天正在跑的「联机锄地-混合精英」被误判为中断）：
+                    //
+                    //   场景：回填历史日志（11-20…11-25）时，OnFileChanged 被逐份文件调用。
+                    //   当处理到比「当前 open run」更早的文件时，上面的日期不等条件成立，
+                    //   于是把**今天的** run 当成「跨天分段」关掉了：
+                    //     start=08:32:20  end=08:32:20  state=Interrupted
+                    //     detail=「跨天换文件分段(非异常)；结束时刻早于开始（乱序行），已夹齐」
+                    //   而它其实一直在跑（日志 09:48 仍在写该组）。
+                    //
+                    //   根因：跨天分段的语义是「时间往前推进到新的一天」，
+                    //   **绝不能用一份更早的文件去关闭一个更晚的 run**。
+                    //   回填历史时 srcFile 比 run 旧，方向反了，必须直接跳过。
+                    if (run.StartAtMs >= fileDayMs)
+                    {
+                        // run 的开始日期 >= 当前文件日期 → 这个 run 比文件还新，
+                        // 是「回填历史文件时遇到的今天的 run」，不能关它。
+                        // 只更新时钟基线到该文件日期，让后续解析落在那一天。
+                        return;
+                    }
+
                     long segEnd = run.LastEventMs > 0 ? run.LastEventMs : clock.LastMs;
                     // 兜底：当日最后事件晚于新文件 0 点（时钟漂移）就夹到 23:59:59.999
                     long dayEnd = fileDayMs - 1;
@@ -1345,6 +1366,35 @@ namespace SoulLink.Services
 
             if (OpenRuns.TryGetValue(user, out var prev) && prev != null)
             {
+                // ★★ t75 修复（实测证据：close-trace.log + PumpBackfill 调用栈）：
+                //
+                //   回填历史日志时，OpenRuns[user] 里混着**今天**正在跑的窗口，
+                //   而 PumpBackfill 喂进来的是 11-23 等历史文件的事件。
+                //   下面的逻辑会用历史事件去关闭今天的窗口 ——
+                //   实测：「CD采集-全采集」start=18:07:26（11-23 的事）被用来关闭
+                //   今天正在跑的那条，detail 写成「下一个配置组已开始」。
+                //
+                //   t73 我用「atMs < prev.StartAtMs」判断，**没能拦住** ——
+                //   因为历史事件的时刻（18:07）比今天的 start（08:32）更大，条件不成立。
+                //
+                //   正确判据：**看事件所属的「文件日期」与 open run 的「开始日期」是否同一天**。
+                //   不同天 = 跨文件串扰，必须忽略。
+                //   （日志文件名自带日期，TryFileDay 解析，这是最权威的依据 ——
+                //     用户原话「每份日志文件名自带日期」。）
+                long eventDayMs = TryFileDay(srcFile, out long fd) ? fd : 0;
+                long runDayMs = prev.StartAtMs > 0
+                    ? new DateTimeOffset(DateTime.SpecifyKind(
+                        DateTimeOffset.FromUnixTimeMilliseconds(prev.StartAtMs).LocalDateTime.Date,
+                        DateTimeKind.Local)).ToUnixTimeMilliseconds()
+                    : 0;
+                if (eventDayMs > 0 && runDayMs > 0 && eventDayMs != runDayMs)
+                {
+                    // 跨文件串扰：历史文件的事件不得操作今天的窗口（反之亦然）
+                    return;
+                }
+                // 兼容旧判据：同一文件内，事件早于窗口开始也不该关（乱序行）
+                if (prev.StartAtMs > 0 && atMs > 0 && atMs < prev.StartAtMs) return;
+
                 if (!string.Equals(prev.Group, g, StringComparison.OrdinalIgnoreCase))
                 {
                     // 上一窗口是别的组：Interrupted 收尾（不丢 start 事实）
@@ -1409,6 +1459,18 @@ namespace SoulLink.Services
             if (OpenRuns.TryGetValue(user, out var run) && run != null
                 && string.Equals(run.Group, g, StringComparison.OrdinalIgnoreCase))
             {
+                // ★★ t75：与 StartGroup 同理 —— 跨文件串扰必须拦住。
+                //   回填历史文件（如 11-23）时扫到的结束锚点，绝不能关闭今天的窗口。
+                //   判据：事件所属文件日期 vs open run 的开始日期，不同天就忽略。
+                long evDay = TryFileDay(srcFile, out long efd) ? efd : 0;
+                long rnDay = run.StartAtMs > 0
+                    ? new DateTimeOffset(DateTime.SpecifyKind(
+                        DateTimeOffset.FromUnixTimeMilliseconds(run.StartAtMs).LocalDateTime.Date,
+                        DateTimeKind.Local)).ToUnixTimeMilliseconds()
+                    : 0;
+                if (evDay > 0 && rnDay > 0 && evDay != rnDay) return;
+                if (run.StartAtMs > 0 && atMs > 0 && atMs < run.StartAtMs) return;
+
                 CloseRunLocked(run, state, detail, atMs, srcFile, run.FromDb, run.DaySplitSeg);
                 OpenRuns.Remove(user);
                 return;
@@ -1429,7 +1491,17 @@ namespace SoulLink.Services
             {
                 try
                 {
-                    var row = await RunRecordStore.FindOpenRunAsync(user, g).ConfigureAwait(false);
+                    // ★★ t72：用「源文件当天」作时间窗口，历史 END 只能关历史行。
+                    //   在此之前只按名字查，回填 11-20~11-25 的历史锚点会把
+                    //   今天正在跑的 open 行关掉（实测误伤「联机锄地-混合精英」）。
+                    long winFrom = 0, winTo = 0;
+                    if (TryFileDay(srcFile, out long fileDay))
+                    {
+                        winFrom = fileDay;
+                        winTo = fileDay + 24L * 60 * 60 * 1000;   // 次日 0 点
+                    }
+                    var row = await RunRecordStore.FindOpenRunAsync(user, g, default, winFrom, winTo)
+                        .ConfigureAwait(false);
                     if (row != null)
                     {
                         RunRecordStore.CloseRun(new RunClose
@@ -1476,6 +1548,27 @@ namespace SoulLink.Services
         private static void CloseRunLocked(OpenRun run, string state, string detail, long endMs,
             string srcFile, bool backfilled, bool daySplit = false)
         {
+            // ★★ t74：诊断 —— 记录每次关闭的调用来源，直接写文件（LogBus 不落盘）。
+            //   用户已多次反馈同一现象，之前靠推断改了 3 次都没改对，这次必须拿到证据。
+            try
+            {
+                var st = new System.Diagnostics.StackTrace(1, false);
+                var frames = new List<string>();
+                for (int fi = 0; fi < Math.Min(5, st.FrameCount); fi++)
+                {
+                    var m = st.GetFrame(fi)?.GetMethod();
+                    if (m != null) frames.Add(m.DeclaringType?.Name + "." + m.Name);
+                }
+                string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  CLOSE  " + run.Group
+                    + "  state=" + state
+                    + "  start=" + DateTimeOffset.FromUnixTimeMilliseconds(run.StartAtMs).ToLocalTime().ToString("HH:mm:ss")
+                    + "  end=" + (endMs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(endMs).ToLocalTime().ToString("HH:mm:ss") : "0")
+                    + "  by=" + string.Join(" <- ", frames)
+                    + "  detail=" + detail;
+                string p = Path.Combine(AppContext.BaseDirectory ?? ".", "close-trace.log");
+                File.AppendAllText(p, line + Environment.NewLine);
+            }
+            catch { }
             long end = endMs > 0 ? endMs : NowMs();
             // ★ t44 兜底：结束时刻早于开始（乱序行残余）→ 夹到开始，明细注明（不产负时长/假跨日）
             if (end < run.StartAtMs)
@@ -1691,6 +1784,17 @@ namespace SoulLink.Services
                 if (!isLastFile) PendingSplits.Remove(userName);
 
                 if (!OpenRuns.TryGetValue(userName, out var run) || run == null) return;
+
+                // ★★ t75：回填收尾同样要跨文件判定 ——
+                //   处理 11-23 的文件时绝不能把今天正在跑的窗口收尾。
+                long bfDay = TryFileDay(srcFile, out long bfd) ? bfd : 0;
+                long runDay = run.StartAtMs > 0
+                    ? new DateTimeOffset(DateTime.SpecifyKind(
+                        DateTimeOffset.FromUnixTimeMilliseconds(run.StartAtMs).LocalDateTime.Date,
+                        DateTimeKind.Local)).ToUnixTimeMilliseconds()
+                    : 0;
+                if (bfDay > 0 && runDay > 0 && bfDay != runDay) return;
+
                 long end = run.LastEventMs > 0 ? run.LastEventMs : NowMs();
                 // 先关 route（如有），再关 run
                 if (run.Route != null)

@@ -103,6 +103,55 @@ namespace SoulLink.Views
             = new(StringComparer.OrdinalIgnoreCase);
         private bool _sqliteLoading;
         private bool _sqliteLoaded;   // t62：是否已成功加载过一次今日 run
+        /// <summary>t71：上次查库的时刻 —— 节流用，避免每次 Rebuild 都打 DB。</summary>
+        private DateTime _lastSqliteQuery = DateTime.MinValue;
+        /// <summary>t71：查库最小间隔。3 秒足够跟上「配置组切换」这类低频变化。</summary>
+        private const int SqliteQueryMinIntervalMs = 3000;
+
+
+        // ── t70：轻量原地刷新时间戳（不重建整页）──────────────────────
+
+        /// <summary>
+        /// 记录每个账号「日志文件」「数据中心占用」两行的 TextBlock 引用，
+        /// 由 RefreshLiveStamps 原地改 Text —— **不触发任何布局重建**。
+        /// 
+        /// ★ 为什么这样做：这两个字段每秒都在变（日志在写），
+        ///   放进签名会导致每秒整页 Rebuild（就是 t64 修掉的卡死元凶），
+        ///   不放又会「画面不刷新」（用户实测反馈）。
+        ///   唯一正确的解：**只改这两个 Text 的字符串**，视觉树结构完全不动。
+        ///   WPF 对一个 TextBlock 改 Text 只重排那一个元素，开销可忽略。
+        /// </summary>
+        private readonly Dictionary<string, (TextBlock LogFile, TextBlock Center)> _liveStamps
+            = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>原地刷新所有账号的时间戳文本（每次 Tick 调，开销 ~微秒级）。</summary>
+        private void RefreshLiveStamps()
+        {
+            if (_liveStamps.Count == 0) return;
+            try
+            {
+                foreach (var acc in AccountScope.Accounts(App.Config))
+                {
+                    if (string.IsNullOrWhiteSpace(acc.UserName)) continue;
+                    if (!_liveStamps.TryGetValue(acc.UserName, out var refs)) continue;
+                    var st = AccountStateCenter.Get(acc.Id) ?? AccountStateCenter.GetByUser(acc.UserName);
+                    if (st == null) continue;
+
+                    string logText = string.IsNullOrWhiteSpace(st.BgiLogFile) ? "—"
+                        : (System.IO.Path.GetFileName(st.BgiLogFile) + "  " + st.BgiLogWrite.ToString("HH:mm:ss"));
+                    if (refs.LogFile.Text != logText) refs.LogFile.Text = logText;
+
+                    string centerText = (st.Bound ? "已绑定" : "未绑定（不读日志）")
+                        + "  ·  " + FormatSize(BgiLogCenter.ResidentChars() * 2L) + "（全部账号）"
+                        + "  ·  尾窗 " + CountLines(st.RecentLog) + " 行"
+                        + "  ·  " + (st.RecentLogAt == DateTime.MinValue
+                            ? "未采集"
+                            : st.RecentLogAt.ToString("HH:mm:ss") + " 更新");
+                    if (refs.Center.Text != centerText) refs.Center.Text = centerText;
+                }
+            }
+            catch { }
+        }
 
         /// <summary>
         /// 把"界面会显示的东西"压成一个字符串。
@@ -137,6 +186,8 @@ namespace SoulLink.Views
                       .Append(st.DogfoodRoute).Append(',')
                       .Append(st.DogfoodValid).Append(',')
                       .Append(st.BgiPath).Append(';');
+                    // ★★ t70：**时间戳不放进签名**（会每秒变 → 每秒重建 → 回到卡死老路）。
+                    //   改成 Rebuild 之后「原地刷新时间戳文本」，见 RefreshLiveStamps()。
                     // ★ 绝对不要把 st.UpdatedAt 放进签名：它在每轮刷新里都会被
                     //   赋成 DateTime.Now，等于签名每秒都变，去重完全失效
                     //   （实测：加了它 CPU 从 13% 反弹到 52%）。
@@ -174,6 +225,10 @@ namespace SoulLink.Views
             {
                 if (!IsVisible) return;
                 SharedDataChanged();
+
+                // ★★ t70：**先原地刷新时间戳**（不重建视觉树），再做签名判断。
+                //   这样即使签名没变（结构没变），用户也能看到「数据在采」。
+                RefreshLiveStamps();
 
                 // ★ 2.17.45：只有数据真的变了才重建视觉树。
                 string sig = BuildSignature();
@@ -259,6 +314,7 @@ namespace SoulLink.Views
                 //   留着只会让异步结果写到一个已脱离视觉树的 TextBlock（既无效又占内存）。
                 //   缓存 _miyoushe 本身**不清**：它就是用来跨重建保持值稳定的。
                 _miyousheBlocks.Clear();
+                _liveStamps.Clear();   // t70：旧 TextBlock 即将丢弃，引用不能留
                 CardList.Children.Clear();
 
                 if (states.Count == 0)
@@ -273,8 +329,15 @@ namespace SoulLink.Views
                     return;
                 }
 
-                // ★ t52：异步预载 run.db 今日记录（不阻塞首帧；回来后再刷一次界面）。
-                _ = EnsureSqliteTodayRunsAsync(states);
+                // ★ t52：异步预载 run.db 今日记录（不阻塞首帧）。
+                // ★ t71：加 3 秒节流 —— 原来每次 Rebuild 都查一遍 DB，
+                //   而签名变化时 Rebuild 可能连续触发（配置组切换、状态变化…），
+                //   查询过于频繁。3 秒足够跟上「配置组切换」这种低频变化。
+                if ((DateTime.UtcNow - _lastSqliteQuery).TotalMilliseconds >= SqliteQueryMinIntervalMs)
+                {
+                    _lastSqliteQuery = DateTime.UtcNow;
+                    _ = EnsureSqliteTodayRunsAsync(states);
+                }
 
                 foreach (var st in states) CardList.Children.Add(BuildCard(st));
             }
@@ -393,6 +456,7 @@ namespace SoulLink.Views
             AddRow(grid, row++, "一条龙", shared.OneDragonConfigs.Count + " 个：" + (shared.OneDragonConfigs.Count == 0 ? "未发现" : string.Join("、", shared.OneDragonConfigs)));
             AddRow(grid, row++, "停止快捷键", shared.HotkeyText);
             AddRow(grid, row++, "配置读取", shared.Error.Length > 0 ? shared.Error : (shared.ConfigExists ? "正常" : "尚未读取") + " · " + shared.ReadAt.ToString("HH:mm:ss"));
+            int rowLogFile = row;   // 记住行号，稍后取回 TextBlock 引用（t70 原地刷新用）
             AddRow(grid, row++, "日志文件", string.IsNullOrWhiteSpace(st.BgiLogFile) ? "—"
                 : (System.IO.Path.GetFileName(st.BgiLogFile) + "  " + st.BgiLogWrite.ToString("HH:mm:ss")), mono: true);
             AddRow(grid, row++, "任务原文", ExtractTaskLine(st), mono: true);
@@ -403,6 +467,7 @@ namespace SoulLink.Views
             //   ★ t61：用户要求恢复 —— 我 t60 时未经确认就删了它，是我越权了。
             long centerChars = BgiLogCenter.ResidentChars();
             long centerBytes = centerChars * 2L;
+            int rowCenter = row;
             AddRow(grid, row++, "数据中心占用",
                 (st.Bound ? "已绑定" : "未绑定（不读日志）")
                 + "  ·  " + FormatSize(centerBytes) + "（全部账号）"
@@ -410,6 +475,16 @@ namespace SoulLink.Views
                 + "  ·  " + (st.RecentLogAt == DateTime.MinValue
                     ? "未采集"
                     : st.RecentLogAt.ToString("HH:mm:ss") + " 更新"));
+
+            // ★ t70：取回这两行的值 TextBlock 引用，供 RefreshLiveStamps 原地改 Text
+            try
+            {
+                TextBlock? tbLog = FindCell(grid, rowLogFile);
+                TextBlock? tbCen = FindCell(grid, rowCenter);
+                if (tbLog != null && tbCen != null)
+                    _liveStamps[st.UserName] = (tbLog, tbCen);
+            }
+            catch { }
 
             columns.Children.Add(grid);
             var hotkeys = BuildHotkeyTable(shared);
@@ -760,6 +835,7 @@ namespace SoulLink.Views
             _sqliteLoading = true;
             try
             {
+                bool changed = false;
                 foreach (var st in states)
                 {
                     if (string.IsNullOrWhiteSpace(st.UserName)) continue;
@@ -773,19 +849,30 @@ namespace SoulLink.Views
                             DateTime.SpecifyKind(DateTime.Now.Date, DateTimeKind.Local)).ToUniversalTime()
                             .ToUnixTimeMilliseconds();
                         var todayRuns = runs.Where(r => r.StartAtMs >= today0 || (r.EndAtMs ?? r.StartAtMs) >= today0).ToList();
+                        // ★ t71：比较条数 + 最后一条的状态，变了才通知界面
+                        if (!_sqliteTodayRuns.TryGetValue(st.UserName, out var oldRuns)
+                            || oldRuns == null || oldRuns.Count != todayRuns.Count
+                            || (todayRuns.Count > 0 && (oldRuns.Count == 0
+                                || oldRuns[^1].State != todayRuns[^1].State
+                                || oldRuns[^1].EndAtMs != todayRuns[^1].EndAtMs)))
+                            changed = true;
                         _sqliteTodayRuns[st.UserName] = todayRuns;
                     }
                     catch { _sqliteTodayRuns[st.UserName] = Array.Empty<SoulLink.Services.RunRecord>(); }
                 }
-                // t62 致命 bug 修复（系统卡死的直接原因）：
-                //   原来这里写的是 _lastSignature = "" 加 Rebuild()；
-                //   而 Rebuild() 的开头又会 _ = EnsureSqliteTodayRunsAsync(states)。
-                //   于是形成无限递归：Rebuild -> 查 DB -> 回来 -> Rebuild -> 查 DB -> ...
-                //   每一轮都是一次完整 SQLite 查询 + 整页视觉树重建，
-                //   UI 线程永远在干活，消息队列被灌满 -> 窗口无响应 -> 系统卡死。
-                //   正确做法：查询完成后只更新缓存，不主动 Rebuild。
-                //   下一次正常的定时器刷新（1 秒一次、签名去重）自然会用上新数据。
-                _sqliteLoaded = true;   // 标记已成功加载过一次
+                // ★★ t62 教训 + t71 补全：
+                //
+                //   t62 修的是「Rebuild -> 查DB -> 回来 -> Rebuild -> 查DB」的无限递归。
+                //   当时把「回来后 Rebuild」整个删掉了，但**删过了头**：
+                //   缓存更新了、界面却不知道，于是配置组卡片永远停在启动那一刻的数据
+                //   （用户实测：卡片停在 08:32，标题却显示当前在跑 09:45 的组）。
+                //
+                //   正确的做法不是「不通知」，而是**只通知一次、且不递归**：
+                //     · 读回数据后若内容确实变了 → 让签名失效；
+                //     · 但**不直接调 Rebuild**，而是交给下一次 Tick 的签名比对去决定；
+                //     · 加「同一轮内只标记一次」的标志，杜绝自激。
+                _sqliteLoaded = true;
+                if (changed) _lastSignature = "";   // 让下一拍 Tick 自然重建（不在这里 Rebuild）
             }
             finally { _sqliteLoading = false; }
         }
@@ -1265,6 +1352,28 @@ namespace SoulLink.Views
             if (bytes < 1024) return bytes + " B";
             if (bytes < 1024 * 1024) return (bytes / 1024.0).ToString("0.0") + " KB";
             return (bytes / 1024.0 / 1024.0).ToString("0.00") + " MB";
+        }
+
+
+        /// <summary>
+        /// ★ t70：从 Grid 里取出「指定行、第 1 列」的 TextBlock（即 AddRow 建的值控件）。
+        /// AddRow 没有返回值，而改它的签名会影响十几处调用点；
+        /// 用这个查找代替，改动面最小。
+        /// </summary>
+        private static TextBlock? FindCell(Grid grid, int rowIdx)
+        {
+            try
+            {
+                foreach (UIElement child in grid.Children)
+                {
+                    if (child is TextBlock tb
+                        && Grid.GetRow(tb) == rowIdx
+                        && Grid.GetColumn(tb) == 1)
+                        return tb;
+                }
+            }
+            catch { }
+            return null;
         }
 
         private void AddRow(Grid grid, int rowIdx, string label, string value, bool mono = false)

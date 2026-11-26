@@ -985,19 +985,40 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             string? account = null, CancellationToken ct = default)
             => Core.Value.EnqueueQuery<IReadOnlyList<RunRecord>>(db => ReadOpenRuns(db, account), Array.Empty<RunRecord>(), ct);
 
+        /// <summary>
+        /// 找该账号该组名「未关闭」的 run。
+        ///
+        /// ★★ t72 修复（实测：今天正在跑的「联机锄地-混合精英」被历史 END 锚点关掉）：
+        ///
+        ///   原实现只按 account+group_name 查，**完全不管时间**。
+        ///   回填历史日志（11-20…11-25）时，扫到那些文件里「混合精英」的结束锚点，
+        ///   EndGroup 在内存里找不到窗口 → 走 BackfillCloseAsync → 这里按名字查到
+        ///   **今天** 08:32:20 那条 open 行 → 用历史的 endMs 把它关了（负时长被夹到 0，
+        ///   状态 Interrupted）。而它其实一直在跑（日志 09:55 还在写该组）。
+        ///
+        ///   修法：加**时间窗口**约束 —— 只匹配 start_at_ms 落在 [fromMs, toMs) 的 open 行。
+        ///   调用方（BackfillCloseAsync）用「源文件当天」作为窗口，
+        ///   这样历史 END 只能关历史行，绝不可能误伤今天的运行。
+        /// </summary>
         public static Task<RunRecord?> FindOpenRunAsync(
-            string account, string groupName, CancellationToken ct = default)
+            string account, string groupName, CancellationToken ct = default,
+            long fromMs = 0, long toMs = 0)
         {
             if (string.IsNullOrWhiteSpace(account) || string.IsNullOrWhiteSpace(groupName))
                 return Task.FromResult<RunRecord?>(null);
             return Core.Value.EnqueueQuery<RunRecord?>(db =>
             {
                 using var cmd = db.CreateCommand();
+                // 时间窗口：fromMs<=start<toMs。传 0 表示不限（保持旧行为）。
                 cmd.CommandText = RunColumns + @" WHERE account=$account COLLATE NOCASE
                     AND group_name=$group COLLATE NOCASE AND end_at_ms IS NULL
+                    AND ($from = 0 OR start_at_ms >= $from)
+                    AND ($to = 0 OR start_at_ms < $to)
                     ORDER BY start_at_ms DESC LIMIT 1;";
                 cmd.Parameters.AddWithValue("$account", account);
                 cmd.Parameters.AddWithValue("$group", groupName);
+                cmd.Parameters.AddWithValue("$from", fromMs);
+                cmd.Parameters.AddWithValue("$to", toMs);
                 using var reader = cmd.ExecuteReader();
                 return reader.Read() ? ReadRun(reader) : null;
             }, null, ct);
