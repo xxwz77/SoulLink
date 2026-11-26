@@ -129,7 +129,18 @@ namespace SoulLink.Services
         /// </summary>
         public bool DogfoodExpReachedLimit;
         public string DogfoodRecordPath = "";
+        /// <summary>
+        /// 上次**读取** records 文件的时刻（每轮刷新都更新）。
+        /// ★ 注意：它不代表数据新鲜度 —— 数据只在该文件被脚本写入时才变。
+        ///   界面上要同时显示 <see cref="DogfoodFileWriteAt"/>，否则用户会误以为
+        ///   「读数在跳 = 数据在更新」，实际可能已停了半天（2026-11-26 用户误解点）。
+        /// </summary>
         public DateTime DogfoodReadAt = DateTime.MinValue;
+        /// <summary>
+        /// records 文件的**最后写入时刻**（= 数据真实新鲜度）。
+        /// 文件不存在时为 MinValue。界面按此显示「数据更新于 …（N 小时前）」。
+        /// </summary>
+        public DateTime DogfoodFileWriteAt = DateTime.MinValue;
         public string DogfoodRecordStamp = "";
 
         /// <summary>
@@ -219,9 +230,41 @@ namespace SoulLink.Services
                     _timer = new System.Threading.Timer(_ => RefreshOnce(cfg), null,
                         dueTime: 200, period: RefreshMs);
                 }
+
+                // ★ 2026-11-26：狗粮 records 变化后的快速响应。
+                //   慢档 30 秒轮询 + watcher 命中 = 最多 30 秒延迟；
+                //   这里加一个 5 秒兜底拍：只要 watcher 报过脏就立刻走一轮刷新
+                //   （RefreshOnce 自带重入保护，不会堆积）。
+                //   ★ 走 TickHub 而不是新建 DispatcherTimer（AGENTS.md 性能约束）。
+                try
+                {
+                    _dogfoodTickSub ??= TickHub.RegisterBackground("AccountStateCenter.DogfoodWatch", 5, () =>
+                    {
+                        try
+                        {
+                            var c = _timerConfig;
+                            if (c == null) return;
+                            // 任一账号的狗粮文件报过变化 → 触发一轮完整刷新。
+                            // ★ 这里用 PeekDirty（只读不清）：清除动作必须留给
+                            //   RefreshOnce 里的 ConsumeDirty，否则标记被这里吃掉，
+                            //   那一轮刷新就检测不到「文件变了」而跳过重解析。
+                            foreach (var kv in _states)
+                                if (kv.Value != null && DogfoodWatcher.PeekDirty(kv.Value.UserName))
+                                {
+                                    RefreshOnce(c);
+                                    return;
+                                }
+                        }
+                        catch { }
+                    });
+                }
+                catch { }
             }
             catch (Exception ex) { App.AppendErrorLog("AccountStateCenter.Start", ex); }
         }
+
+        /// <summary>狗粮 watcher 的 5 秒兜底拍的订阅句柄。</summary>
+        private static IDisposable? _dogfoodTickSub;
 
         /// <summary>停止刷新（程序退出时调用）。</summary>
         public static void Stop()
@@ -235,6 +278,11 @@ namespace SoulLink.Services
                 }
             }
             catch { }
+            // ★ 释放狗粮 records 的 FileSystemWatcher 系统句柄。
+            //   本仓库踩过「Entries.Remove 没 Dispose 导致句柄泄漏」的坑
+            //   （见 BgiLogCenter.cs 的 StopAllWatchers），这里同样必须收口。
+            try { _dogfoodTickSub?.Dispose(); _dogfoodTickSub = null; } catch { }
+            try { DogfoodWatcher.StopAll(); } catch { }
         }
 
         // ── 读 ────────────────────────────────────────────────────────
@@ -360,7 +408,12 @@ namespace SoulLink.Services
                 }
 
                 foreach (var id in _states.Keys.ToList())
-                    if (!alive.Contains(id)) _states.Remove(id);
+                {
+                    if (alive.Contains(id)) continue;
+                    // ★ 账号被移除 → 先释放它的狗粮 watcher 句柄，再丢状态（防泄漏）。
+                    try { if (_states.TryGetValue(id, out var dead) && dead != null) DogfoodWatcher.StopFor(dead.UserName); } catch { }
+                    _states.Remove(id);
+                }
             }
             catch { }
         }
@@ -725,9 +778,22 @@ namespace SoulLink.Services
                 else
                 {
                     string recordFile = DogfoodRecordReader.ResolveRecordPath(st.BgiPath, DogfoodRecordReader.ResolveAccountName(st.BgiPath));
+
+                    // ★ 2026-11-26：给 records 文件挂 FileSystemWatcher。
+                    //   原来只能靠 30 秒慢档轮询发现变化 → 脚本刚写完要等最多 30 秒。
+                    //   watcher 只置脏标记（零 IO），这里消费标记决定是否重读。
+                    DogfoodWatcher.Ensure(st.UserName, recordFile);
+
                     var info = new FileInfo(recordFile);
                     string stamp = info.Exists ? info.Length + ":" + info.LastWriteTimeUtc.Ticks : "missing";
-                    if (stamp != st.DogfoodRecordStamp)
+                    // ★ 记录文件真实写入时刻（数据新鲜度），供界面区分「读取时刻」与「数据时刻」。
+                    st.DogfoodFileWriteAt = info.Exists ? info.LastWriteTime : DateTime.MinValue;
+
+                    // ★ 两条触发重读的条件，任一成立即重新解析：
+                    //   ① 文件戳变了（大小/修改时间）；② watcher 报过变化（防御 stat 精度/缓存）。
+                    bool fileChanged = stamp != st.DogfoodRecordStamp;
+                    bool watched = DogfoodWatcher.ConsumeDirty(st.UserName);
+                    if (fileChanged || watched)
                     {
                         st.DogfoodRecords = DogfoodRecordReader.ReadAllForBgi(st.BgiPath, out recordFile);
                         st.DogfoodRecordStamp = stamp;

@@ -1256,6 +1256,31 @@ namespace SoulLink.Views
             };
         }
 
+        /// <summary>
+        /// ★ 2026-11-26 修复「读取时刻」误导：
+        ///   用户看到「读取：14:08:52」在跳，以为数据在更新，实际 records 文件已 9.6 小时没动。
+        ///   「读取时刻」只说明程序去读了，「文件写入时刻」才是数据真正的年龄。
+        ///   两者同时显示，用户一眼就能判断是「程序卡住」还是「源文件没变」。
+        /// </summary>
+        private static string DescribeDogfoodFreshness(AccountState st)
+        {
+            string readText = st.DogfoodReadAt == DateTime.MinValue ? "—" : st.DogfoodReadAt.ToString("HH:mm:ss");
+            if (st.DogfoodFileWriteAt == DateTime.MinValue)
+                return "读取：" + readText + " · 源文件不存在";
+
+            var age = DateTime.Now - st.DogfoodFileWriteAt;
+            string ageText = age.TotalMinutes < 1 ? "刚刚"
+                : age.TotalHours < 1 ? (int)age.TotalMinutes + " 分钟前"
+                : age.TotalDays < 1 ? (int)age.TotalHours + " 小时前"
+                : (int)age.TotalDays + " 天前";
+
+            // 超过 1 小时没更新 → 明确提示「源文件未更新」，避免用户以为卡死
+            string warn = age.TotalHours >= 1 ? "（源文件未更新）" : "";
+            return "数据更新于 " + st.DogfoodFileWriteAt.ToString("HH:mm:ss")
+                 + "（" + ageText + "）" + warn
+                 + " · 读取：" + readText;
+        }
+
         private UIElement BuildDogfood(AccountState st)
         {
             var panel = new StackPanel { Margin=new Thickness(20,0,0,0) };
@@ -1278,7 +1303,7 @@ namespace SoulLink.Views
                      + "\n今日日志统计（00:00 日界）：经验 " + st.Today.DogfoodExp.ToString("N0")
                      + " / 摩拉 " + st.Today.DogfoodMora.ToString("N0")
                      + " / 拾取 " + st.Today.PickTotal.ToString("N0") + " 件"
-                     + "\n读取：" + (st.DogfoodReadAt == DateTime.MinValue ? "—" : st.DogfoodReadAt.ToString("HH:mm:ss"))
+                     + "\n" + DescribeDogfoodFreshness(st)
                      + "\n" + st.DogfoodRecordPath,
                 FontSize = 10.5, TextWrapping = TextWrapping.Wrap,
                 Foreground = (Brush)FindResource("TextSecondary"), Margin = new Thickness(0, 5, 0, 0)
