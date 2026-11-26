@@ -1543,7 +1543,19 @@ namespace SoulLink.Services
                     }
                     else
                     {
-                        // ghost：无任何 open 行（DB 被清/历史首捕）
+                        // ★★ 2026-11-26 修复「ghost 假记录」：
+                        //   用户实测：今天只跑过 1 次「联机锄地上线」（05:55），界面却显示 2 次。
+                        //   多出的一条是 src='' + is_backfilled=1 的 ghost 行，时刻 07:03:49 ——
+                        //   而 07:03:49 今天的日志里根本没有，它来自历史日志（11-20…11-25 每天固定此时刻）。
+                        //
+                        //   根因：这里在「查不到 open 行」时直接造 ghost（start=end=endMs），
+                        //   却**没有校验这个 endMs 是否落在 srcFile 那一天内**。历史回填时
+                        //   endMs 可能已被天轴污染，或该结束锚点本就属于另一天 → 串成今日假记录。
+                        //
+                        //   修法：ghost 的 start(=endMs) 必须落在源文件当天窗口 [winFrom, winTo) 内；
+                        //   窗口未知（解析不出文件名日期）时不造 —— 宁可少一条，也绝不造假。
+                        bool inWindow = winFrom > 0 && endMs >= winFrom && endMs < winTo;
+                        if (!inWindow) return;   // 不属于该文件当天：丢弃，不造 ghost
                         long start = endMs;
                         string runId = RunRecordStore.MakeRunId(user, g, start);
                         RunRecordStore.AddRun(new RunRecord
@@ -1556,6 +1568,8 @@ namespace SoulLink.Services
                             State = state,
                             Detail = detail + "（缺开始事件，ghost）",
                             IsBackfilled = true,
+                            SrcFileStart = BaseName(srcFile),
+                            SrcFileEnd = BaseName(srcFile),
                             StartDay = DayOf(start),
                             EndDay = DayOf(endMs),
                         });
