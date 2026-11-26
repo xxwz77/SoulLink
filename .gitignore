@@ -179,3 +179,4 @@ scripts/publish-release.local.ps1
 undefined/
 _tmp_*.py
 _commitmsg.txt
+_msg.txt
