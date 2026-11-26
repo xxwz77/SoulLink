@@ -77,6 +77,15 @@ namespace SoulLink.Services
         /// <summary>狗粮脚本目录名（固定）。</summary>
         public const string ScriptFolder = "AAA-Artifacts-Bulk-Supply";
 
+        /// <summary>
+        /// 产出 records/*.txt 的那个配置组名（默认「狗粮批发」）。
+        /// ★ 2026-11-26：主界面汇总时要**排除**这一组，因为它已由 records 文件单独给出
+        ///   （否则同一份收益被算两次，界面出现「经验 +61,740 · 其他组 +148,680」这种自相矛盾）。
+        ///   ★ 仅在「汇总去重」这一处使用；采集层解析锚点**绝不**依赖组名
+        ///     （用户要求：别人配置组名字可能不一样，按日志格式来）。
+        /// </summary>
+        public const string RecordsSourceGroup = "狗粮批发";
+
         /// <summary>BGI 默认日界；流程可显式选 00:00。</summary>
         public const int DayBoundaryHour = 4;
 

@@ -1184,20 +1184,21 @@ namespace SoulLink.Views
                 parts.Add(route);
             }
 
-            // ② 今日收益（这里只显示 records 文件里的那一组，
-            //    完整的分组+汇总在数据中心页；主界面保持简洁）
-            if (st.DogfoodExp > 0) parts.Add("经验 +" + FormatNum(st.DogfoodExp));
-            if (st.DogfoodMora > 0) parts.Add("摩拉 +" + FormatNum(st.DogfoodMora));
-
-            // ③ 其他组（如联机狗粮）的收益汇总（2026-11-26 用户要求主界面显示总数）
-            long otherExp = st.Today.DogfoodOtherExp;
-            long otherMora = st.Today.DogfoodOtherMora;
-            if (otherExp > 0 || otherMora > 0)
+            // ② 今日收益汇总（2026-11-26 用户要求：主界面**只要汇总**，不要逐组明细）
+            //
+            //   ★ 修掉的错误：原来显示「经验 +61,740 · 其他组 经验 +148,680」，
+            //     而后面的「其他组」其实是**含这一组在内的总数** → 看起来像重复计数/自相矛盾。
+            //     主界面只要「今日总收益」这一个数；逐组明细在数据中心页的狗粮分区。
+            //   ★ 汇总口径：records 那组（DogfoodExp/Mora）+ run.db 里其他组
+            //     （DogfoodOtherExp/Mora）。两处已互斥，不会重复累加。
+            long totalExp = st.DogfoodExp + st.Today.DogfoodOtherExp;
+            long totalMora = st.DogfoodMora + st.Today.DogfoodOtherMora;
+            if (totalExp > 0 || totalMora > 0)
             {
-                var extra = new List<string>();
-                if (otherExp > 0) extra.Add("经验 +" + FormatNum(otherExp));
-                if (otherMora > 0) extra.Add("摩拉 +" + FormatNum(otherMora));
-                parts.Add("其他组 " + string.Join("/", extra));
+                var gain = new List<string>();
+                if (totalExp > 0) gain.Add("经验 +" + FormatNum(totalExp));
+                if (totalMora > 0) gain.Add("摩拉 +" + FormatNum(totalMora));
+                parts.Add("汇总 " + string.Join(" · ", gain));
             }
 
             return string.Join(" · ", parts);
