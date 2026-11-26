@@ -3029,6 +3029,98 @@ namespace SoulLink.Views
 
         public void RefreshBadges() { RenderTabs(); UpdateLayoutUi(); }
 
+        /// <summary>
+        /// 会话操作（自动化执行器桥接，3.3.49）。
+        /// 由 FlowRunner.SessionOpBridge 调用；目标账号按用户名匹配行。
+        /// ★ 必须在 UI 线程上执行（RDP 控件/切画面都要求 UI 线程）。
+        /// </summary>
+        public Task<(bool ok, string msg)> RunSessionOpAsync(string userName, SoulLink.Services.FlowRunner.SessionOpKind kind, int waitSeconds)
+        {
+            var tcs = new TaskCompletionSource<(bool, string)>(TaskCreationOptions.RunContinuationsAsynchronously);
+            async void Work()
+            {
+                try { tcs.TrySetResult(await RunSessionOpCoreAsync(userName, kind, waitSeconds)); }
+                catch (Exception ex) { tcs.TrySetResult((false, "异常：" + ex.Message)); }
+            }
+            if (Dispatcher.CheckAccess()) Work();
+            else Dispatcher.BeginInvoke(new Action(Work));
+            return tcs.Task;
+        }
+
+        private async Task<(bool ok, string msg)> RunSessionOpCoreAsync(string userName, SoulLink.Services.FlowRunner.SessionOpKind kind, int waitSeconds)
+        {
+            if (string.IsNullOrWhiteSpace(userName)) return (false, "会话操作缺少目标账号");
+            var row = _rows.FirstOrDefault(r =>
+                string.Equals(r.Account.UserName, userName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(SessionService.BareName(r.Account.UserName), SessionService.BareName(userName), StringComparison.OrdinalIgnoreCase));
+            if (row == null) return (false, "找不到账号「" + userName + "」的画面行");
+
+            switch (kind)
+            {
+                case SoulLink.Services.FlowRunner.SessionOpKind.Logoff:
+                {
+                    var s = (await SessionService.QueryAsync()).Find(si => si.Id > 0
+                        && string.Equals(SessionService.BareName(si.UserName), SessionService.BareName(userName), StringComparison.OrdinalIgnoreCase));
+                    if (s == null) return (true, "会话「" + userName + "」已不存在，无需注销");
+
+                    try { row.Console?.SetInputMode(ConsoleInputMode.Pointer); } catch { }
+                    try { row.Console?.Disconnect(); } catch { }
+                    var (ok, msg) = await SessionPrepare.LogoffAsync(s.Id);
+                    if (!ok) return (false, msg);
+                    _openedIds.Remove(row.Account.Id);
+                    RemoveTile(row);
+                    try { row.Console?.Dispose(); } catch { }
+                    row.Console = null;
+                    RecreateShieldAfterConsoleDisposal();
+                    if (ReferenceEquals(_viewing, row))
+                    {
+                        _viewing = null;
+                        SetBusyVisible(false);
+                        ShowConfigPage();
+                    }
+                    RebuildUserList();
+                    RenderTabs();
+                    return (true, msg);
+                }
+                case SoulLink.Services.FlowRunner.SessionOpKind.Reconnect:
+                {
+                    try { row.Console?.Disconnect(); } catch { }
+                    var (ok, reason) = await ConnectOnUiAsync(row);
+                    return (ok, "会话「" + userName + "」已重连");
+                }
+                case SoulLink.Services.FlowRunner.SessionOpKind.Login:
+                default:
+                {
+                    // 登录 = 确保会话存在；断开(无会话)时用 RDP 凭据拉起。
+                    var s = (await SessionService.QueryAsync()).Find(si => si.Id > 0
+                        && string.Equals(SessionService.BareName(si.UserName), SessionService.BareName(userName), StringComparison.OrdinalIgnoreCase));
+                    if (s == null)
+                    {
+                        // 无会话：走 ConnectOnUiAsync（内部会按保存凭据自动登录建会话）
+                        var (ok, reason) = await ConnectOnUiAsync(row);
+                        if (!ok) return (false, reason);
+                    }
+
+                    // 可选等待：确认会话上线
+                    int waitMs = Math.Clamp(waitSeconds, 0, 60) * 1000;
+                    if (waitMs > 0)
+                    {
+                        var deadline = DateTime.UtcNow.AddMilliseconds(waitMs);
+                        while (DateTime.UtcNow < deadline)
+                        {
+                            var again = await SessionService.QueryAsync();
+                            var cur = SessionService.Find(again, userName);
+                            if (cur != null && cur.Id > 0 && !string.Equals(cur.State, "Disc", StringComparison.OrdinalIgnoreCase))
+                                return (true, "会话「" + userName + "」已上线（会话 " + cur.Id + "）");
+                            await Task.Delay(500);
+                        }
+                        return (false, "等待 " + waitSeconds + " 秒后会话仍未上线");
+                    }
+                    return (true, "会话「" + userName + "」登录请求已提交");
+                }
+            }
+        }
+
         public void DisposeConsoles()
         {
             foreach (var r in _rows) { try { r.Console?.Dispose(); } catch { } }

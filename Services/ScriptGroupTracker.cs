@@ -87,6 +87,41 @@ namespace SoulLink.Services
             lock (_sync) _map.Clear();
         }
 
+        /// <summary>
+        /// 从权威数据源（SQLite run 表）重建今天的运行状态。
+        ///
+        /// ★ 2026-11-26 修复「数据中心改造后，自动化读不到配置组运行状态」：
+        ///   冷启动/首次绑定时，持久化游标已在 EOF，Pump 不会重读历史日志 →
+        ///   本 Tracker 一直是空的 → CondScriptGroupState / TrigScriptGroup 永远
+        ///   读到 Never。这里用 SQLite 里已入库的今日 run 把内存状态补齐，
+        ///   与「实时增量」无缝衔接（后续日志增量仍走 Update）。
+        ///
+        /// ★ 传入的每条 run 已带**权威终态**（Finished/Failed/Interrupted/…），
+        ///   中断接替关系在 RunRecordCollector 落库时已经算好，这里**只做拷贝**，
+        ///   绝不重新推导「后续组开始 → 前一组中断」——那会污染历史真值。
+        ///
+        /// ★ 调用方必须按 **start 升序** 传入；同名组后出现的覆盖先出现的
+        ///   （与实时 Tracker「同名只留最新一次状态」语义一致）。
+        /// </summary>
+        public void Seed(IEnumerable<ScriptGroupRun> runsChronological)
+        {
+            if (runsChronological == null) return;
+            lock (_sync)
+            {
+                foreach (var r in runsChronological)
+                {
+                    if (r == null || string.IsNullOrWhiteSpace(r.Name)) continue;
+                    var e = Ensure(r.Name);
+                    e.State = r.State;
+                    e.StartedAt = r.StartedAt;
+                    e.EndedAt = r.EndedAt;
+                    e.ScriptCount = r.ScriptCount;
+                    e.Detail = r.Detail ?? "";
+                    e.TimeIsExact = r.TimeIsExact;
+                }
+            }
+        }
+
         /// <summary>取某个配置组的运行记录；从未出现返回 null。</summary>
         public ScriptGroupRun? Get(string name)
         {

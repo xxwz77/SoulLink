@@ -53,12 +53,26 @@ namespace SoulLink.Models
         /// <summary>今日执行失败次数。</summary>
         public int TodayFailCount { get; set; }
 
+        /// <summary>当前业务日键（与 RecordRunResult 同一口径）。</summary>
+        public string CurrentStatDayKey(DateTime now)
+            => PlcLogic.DayKey(now, PlcLogic.HasEnd(this) ? PlcLogic.EndBoundaryHour(this) : 0);
+
+        /// <summary>
+        /// 读取「今日」成功/失败次数。
+        /// ★ 2026-11-26：清零原来只发生在下一次执行动作时（RecordRunResult），
+        ///   当天没再执行的流程会一直显示好几天前的次数。读取时按业务日判断：
+        ///   存的日期不是当前业务日 → 视为 0。界面必须走这里，不要直接读两个字段。
+        /// </summary>
+        public (int ok, int fail) TodayCounts(DateTime now)
+            => string.Equals(StatDayKey, CurrentStatDayKey(now), StringComparison.Ordinal)
+                ? (TodayOkCount, TodayFailCount) : (0, 0);
+
         /// <summary>
         /// 记录一次执行结果（自动按业务日重置计数）。由 PlcScanEngine 每次动作执行后调用。
         /// </summary>
         public void RecordRunResult(bool ok, DateTime now)
         {
-            string key = PlcLogic.DayKey(now, PlcLogic.HasEnd(this) ? PlcLogic.EndBoundaryHour(this) : 0);
+            string key = CurrentStatDayKey(now);
             if (!string.Equals(StatDayKey, key, StringComparison.Ordinal))
             {
                 StatDayKey = key;
@@ -334,7 +348,14 @@ namespace SoulLink.Models
         /// <summary>触发即截一张图，存进「录制回放用户名-昵称时间-触发条件」。</summary>
         ActScreenshot = 45,
         /// <summary>保存触发点前 N 秒 + 后 N 秒的录像（N 不得大于保留时长的一半）。</summary>
-        ActSaveRecording = 46
+        ActSaveRecording = 46,
+        // ── 3.3.49：会话操作（自动化执行器）──────────────────────────
+        /// <summary>登录目标会话（用保存凭据经 RDP 建立/恢复会话）。</summary>
+        ActSessionLogin = 47,
+        /// <summary>注销目标会话（关闭其中所有程序，不可恢复）。</summary>
+        ActSessionLogoff = 48,
+        /// <summary>重连目标会话（连接/恢复 RDP 画面）。</summary>
+        ActSessionReconnect = 49
     }
 
     public class FlowNode

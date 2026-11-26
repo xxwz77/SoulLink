@@ -161,6 +161,15 @@ namespace SoulLink.Models
                   "前 N 秒 + 后 N 秒 = 共 2N 秒；N 不得超过 RDP 通用设置里的保留时长的一半",
                   required: false));
 
+            // ── 3.3.49：会话操作执行器 ──────────────────────────────
+            D(FlowNodeType.ActSessionLogin, FlowNodeKind.Action, "登录会话",
+                "用保存的凭据经 RDP 建立/恢复目标账号会话；无会话或断开都会尝试", "\uE7EE",
+                P("waitSeconds", "等待上线（秒）", "0", FlowParamKind.Number, "登录后最多等这么久确认会话上线；0=不等待", false));
+            D(FlowNodeType.ActSessionLogoff, FlowNodeKind.Action, "注销会话",
+                "注销目标账号会话并关闭其中所有程序（不可恢复）", "\uE711");
+            D(FlowNodeType.ActSessionReconnect, FlowNodeKind.Action, "重连会话",
+                "连接/恢复目标账号的 RDP 画面", "\uE768");
+
             D(FlowNodeType.ActEndFlow,FlowNodeKind.Terminate,"每天完成","到达后当天停止扫描；到本节点日界自动重置。属性里可手动切换今天是否运行","\uE71A");
         }
         public static FlowNodeDef? Get(FlowNodeType t) => Map.TryGetValue(t,out var d) ? d : null;

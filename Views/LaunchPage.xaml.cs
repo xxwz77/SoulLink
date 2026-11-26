@@ -2196,23 +2196,24 @@ namespace SoulLink.Views
             });
             //   ★ 顺序固定为「成功 → 失败」，数字用等宽感更强的小字号；
             //     两个都是 0 时不显示（避免新流程一上来就挂两个 0 显得像报错）。
-            if (f.TodayOkCount > 0 || f.TodayFailCount > 0)
+            var (todayOk, todayFail) = f.TodayCounts(DateTime.Now);   // 按业务日读取，过期视为 0
+            if (todayOk > 0 || todayFail > 0)
             {
                 nameLine.Children.Add(new TextBlock
                 {
-                    Text = "  " + f.TodayOkCount,
+                    Text = "  " + todayOk,
                     FontSize = 9.5, FontWeight = FontWeights.SemiBold,
                     Foreground = new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0)),   // 绿 = 今日成功次数
                     VerticalAlignment = VerticalAlignment.Center,
-                    ToolTip = "今日成功 " + f.TodayOkCount + " 次"
+                    ToolTip = "今日成功 " + todayOk + " 次"
                 });
                 nameLine.Children.Add(new TextBlock
                 {
-                    Text = " / " + f.TodayFailCount,
+                    Text = " / " + todayFail,
                     FontSize = 9.5, FontWeight = FontWeights.SemiBold,
                     Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x8B)),   // 红 = 今日失败次数
                     VerticalAlignment = VerticalAlignment.Center,
-                    ToolTip = "今日失败 " + f.TodayFailCount + " 次"
+                    ToolTip = "今日失败 " + todayFail + " 次"
                 });
             }
             sp.Children.Add(nameLine);

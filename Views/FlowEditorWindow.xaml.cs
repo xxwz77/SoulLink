@@ -72,35 +72,8 @@ namespace SoulLink.Views
 
             _ready = true;
 
-            // ★★ 2.17.25：新建流程默认给一个**能自己触发**的触点 ★★
-            //
-            //   原来新建的空流程什么都不种，用户在画布上手动加的第一个触点
-            //   往往就是「手动」——于是"新建之后必须点一下才动"（用户实测反馈）。
-            //   用户要求："新建跟重启就要自动跑，除非用户暂停或者删除"。
-            //
-            //   这里给一个**「定时·间隔」**触点打底（不连任何动作，不产生副作用）。
-            //
-            //   ★ 为什么不用「会话在线」：它依赖 AccountStateCenter 的会话快照，
-            //     账号没登录 / 快照还没起来时恒为 false，新建流程会"看起来又不动了"
-            //     （探针实测：只有触发条件为 false，动作永远不执行）。
-            //     而「定时·间隔」是纯本地计时，只要窗口开着就一定会周期触发，
-            //     不依赖会话/BGI/日志任何外部状态 —— 这才是"新建就能自己跑"的可靠底座。
-            //
-            //   用户要改类型可以直接在画布里换，不想让它跑就点「自动运行」关掉或删除流程。
-            if (_isNew && flow.Nodes.Count == 0)
-            {
-                var seed = new FlowNode
-                {
-                    Kind = FlowNodeKind.Condition,
-                    Type = FlowNodeType.TrigInterval,
-                    Logic = FlowLogicOp.LD,
-                    X = 260, Y = 150
-                };
-                seed.Set("user", account.UserName ?? "");
-                seed.Set("intervalSeconds", "5");
-                flow.Nodes.Add(seed);
-                _dirty = true;
-            }
+            // ★ 2026-11-26 用户要求：新建自动化**不再默认塞入「定时·间隔」触点**。
+            //   由用户在画布上自行添加需要的条件 / 触发器，空画布保持空白。
 
             Canvas.Load(flow);
             UpdateEmptyHint();

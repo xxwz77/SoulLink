@@ -136,6 +136,10 @@ namespace SoulLink.Views
             ConsoleView.MainWindowRef = this;
             ConsoleView.AddRequested += () => NavigateTo("sessions");
 
+            // ★ 3.3.49：自动化「会话操作」执行器桥接 —— 由控制台页真正掌握 RDP 控件。
+            Services.FlowRunner.SessionOpBridge =
+                (user, kind, wait) => ConsoleView.RunSessionOpAsync(user, kind, wait);
+
             UpdateMaxGlyph();
             UpdateThemeGlyph();
             foreach (var button in RailIcons.FindChildren<Button>())

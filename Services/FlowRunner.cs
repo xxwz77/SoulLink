@@ -25,6 +25,17 @@ namespace SoulLink.Services
         private static readonly HashSet<string> Running = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Lock Sync = new();
 
+        /// <summary>
+        /// 会话操作执行桥（3.3.49）。
+        /// ★ 由 UI 层（MainWindow/ConsolePage）在启动时注册，把「登录/注销/重连」
+        ///   的动作转发给真正掌握 RDP 控件与画面页的 ConsolePage 执行。
+        ///   流程执行器只负责按目标账号解析用户名，不直接碰 ActiveX。
+        ///   未注册时（例如纯测试环境）返回「当前环境不支持会话操作」。
+        /// </summary>
+        public static Func<string, SessionOpKind, int, Task<(bool ok, string msg)>>? SessionOpBridge;
+
+        public enum SessionOpKind { Login = 0, Logoff = 1, Reconnect = 2 }
+
         public sealed class RunResult
         {
             public bool Triggered;
@@ -295,7 +306,7 @@ namespace SoulLink.Services
                     return state?.BgiRunning == true && (now - state.BgiLogWrite).TotalSeconds >= n.GetInt("idleSeconds", 300);
                 case FlowNodeType.TrigScriptGroup:
                 case FlowNodeType.CondScriptGroupState:
-                    return GroupMatches(n, accountId, state, flow, now);
+                    return GroupMatches(n, state, LiveLog(accountId, user), now);
                 case FlowNodeType.TrigDogfoodRoute:
                 case FlowNodeType.CondDogfoodRoute:
                 {
@@ -320,7 +331,10 @@ namespace SoulLink.Services
                 {
                     // ★ 统一从 BgiLogCenter 的尾窗取原文（唯一保留原文的地方）。
                     //   未绑定 BGI 路径 → 没有数据 → 条件不满足（编辑器里已不列出这类账号）。
-                    string text = state?.RecentLog ?? "";
+                    // ★ 2026-11-26：直接读 BgiLogCenter 的版本缓存快照（约 1 秒新鲜度），
+                    //   不再读 AccountState 里 30 秒才同步一次的副本。详见 LiveLog。
+                    var live = LiveLog(accountId, user);
+                    string text = live?.TailText ?? state?.RecentLog ?? "";
                     int within = Math.Max(1, n.GetInt("withinSeconds", n.Type == FlowNodeType.TrigLogMatch ? 10 : 120));
 
                     // ★★ 事件锁存（用户方案）：TrigLogMatch 改成「出现即锁存，动作消费后清空」，
@@ -328,10 +342,11 @@ namespace SoulLink.Services
                     //   CondLogContains / CondLogMissing 保持电平语义（见 LOG-LATCH-DESIGN）。
                     if (n.Type == FlowNodeType.TrigLogMatch)
                     {
-                        var tail0 = state?.LogTail ?? Array.Empty<BgiLogLine>();
+                        var tail0 = live?.Tail ?? state?.LogTail ?? Array.Empty<BgiLogLine>();
+                        long lastSeq = live?.LastSeq ?? state?.LogTailSeq ?? 0;
                         var refs = new LogLineRef[tail0.Count];
                         for (int i = 0; i < tail0.Count; i++) refs[i] = new LogLineRef(tail0[i].Seq, tail0[i].Level, tail0[i].Text);
-                        return LogLatch.Scan(flow, n, refs, state?.LogTailSeq ?? 0, now, mutable);
+                        return LogLatch.Scan(flow, n, refs, lastSeq, now, mutable);
                     }
 
                     if (text.Length == 0 || !PlcLogMatcher.ValidPattern(n.Get("pattern"), n.GetBool("isRegex", false))) return new PlcSignal(false,false);
@@ -340,7 +355,7 @@ namespace SoulLink.Services
                 }
                 case FlowNodeType.CondLogHasError:
                 {
-                    string text = state?.RecentLog ?? "";
+                    string text = LiveLog(accountId, user)?.TailText ?? state?.RecentLog ?? "";
                     return PlcLogMatcher.HasError(text, Math.Max(1, n.GetInt("withinSeconds", 300)), now);
                 }
                 case FlowNodeType.CondProcessExists:
@@ -388,13 +403,38 @@ namespace SoulLink.Services
             }
         }
 
-        private static bool GroupMatches(FlowNode n, string accountId, AccountState? state, AutomationFlow flow, DateTime now)
+        /// <summary>
+        /// 自动化读取 BGI 日志派生数据的**唯一入口**（尾窗 / 行序号 / 配置组状态）。
+        ///
+        /// ★ 2026-11-26 修「自动化拿不到第一时间数据」：
+        ///   原来读 AccountState.RecentLog / LogTail / Groups —— 那是 AccountStateCenter
+        ///   在刷新轮里从快照**拷过去**的副本，空闲时 30 秒才刷一次（IdleRefreshMs），
+        ///   于是 5 秒时间窗的「日志包含」基本永远看不到新行。
+        ///
+        ///   现在直接取 BgiLogCenter.Snapshot：
+        ///     · 不读文件、不解析 —— 日志仍只由数据中心单遍流式消费一次；
+        ///     · 快照按 Version 缓存，日志没变时返回同一个对象（一次字典查找）；
+        ///     · 数据中心 1 秒合并一次，所以新鲜度约 1 秒。
+        ///   未绑定 / 尚未扫描时返回 null，调用方回退到 AccountState。
+        /// </summary>
+        private static BgiLogSnapshot? LiveLog(string accountId, string user)
+        {
+            try
+            {
+                return BgiLogCenter.Snapshot(accountId)
+                    ?? (user.Length > 0 ? BgiLogCenter.SnapshotByUser(user) : null);
+            }
+            catch { return null; }
+        }
+
+        private static bool GroupMatches(FlowNode n, AccountState? state, BgiLogSnapshot? live, DateTime now)
         {
             string expect = n.Get("expect", "finished");
             if (state == null || n.Get("group").Length == 0) return false;
-            // ★ 配置组状态来自 BgiLogCenter 快照（只读列表，不再每次重建投影）。
+            // ★ 配置组状态优先取数据中心的实时快照（约 1 秒新鲜度），回退到 AccountState 副本。
             string name = n.Get("group");
-            var hit = state.Groups.FirstOrDefault(g => string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase));
+            var groups = (IEnumerable<ScriptGroupRun>?)live?.Groups ?? state.Groups;
+            var hit = groups.FirstOrDefault(g => string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase));
             var value = hit?.State ?? ScriptGroupState.Never;
             return expect switch { "never" => value == ScriptGroupState.Never, "running" => value == ScriptGroupState.Running,
                 "finished" or "done" => value == ScriptGroupState.Finished,
@@ -458,6 +498,24 @@ namespace SoulLink.Services
             {
                 switch (a.Type)
                 {
+                    case FlowNodeType.ActSessionLogin:
+                    case FlowNodeType.ActSessionLogoff:
+                    case FlowNodeType.ActSessionReconnect:
+                    {
+                        // ★ 3.3.49：会话操作。目标账号取「节点 user 优先，否则流程账号」。
+                        var bridge = SessionOpBridge;
+                        if (bridge == null) return (false, "会话操作未就绪（控制台未注册）");
+                        string user = UserOf(accountId, cfg);
+                        var kind = a.Type switch
+                        {
+                            FlowNodeType.ActSessionLogin => SessionOpKind.Login,
+                            FlowNodeType.ActSessionLogoff => SessionOpKind.Logoff,
+                            _ => SessionOpKind.Reconnect,
+                        };
+                        int wait = a.Type == FlowNodeType.ActSessionLogin ? a.GetInt("waitSeconds", 0) : 0;
+                        var res = await bridge(user, kind, wait).ConfigureAwait(false);
+                        return (res.ok, res.msg);
+                    }
                     case FlowNodeType.ActRunAction:
                     {
                         var act = cfg.Actions.FirstOrDefault(x => x.Id == a.Get("actionId"));
@@ -501,7 +559,11 @@ namespace SoulLink.Services
                         var p = await BgiStartGuard.BeforeStartAsync(sessionId, exe).ConfigureAwait(false);
                         if (!p.Ok) return (false, "停止旧任务失败：" + p.Message);
                         var r = await SystemLauncher.LaunchAsync(sessionId, exe, args).ConfigureAwait(false);
-                        return (r.Ok, r.Message);
+                        // ★ 2026-11-26：成功时也带上清场过程（是否按下「停止当前脚本」快捷键、
+                        //   是否确认停止、是否已关闭 BGI）。原来只在失败时显示，
+                        //   用户在界面上看不到快捷键这一步，误以为没按。
+                        string prep = string.IsNullOrWhiteSpace(p.Message) ? "" : "清场：" + p.Message + "\n";
+                        return (r.Ok, prep + r.Message);
                     }
                     case FlowNodeType.ActCloseGenshin:
                     {

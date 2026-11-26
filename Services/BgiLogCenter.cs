@@ -181,6 +181,13 @@ namespace SoulLink.Services
                 //   用户要求：当前配置组做快照，跨天滚动时延续，出现新的才丢弃。
                 //   但如果它已经被"停止"标记清空过，这里保持空 —— 停止状态同样跨天延续。
                 Groups.Reset();
+                // ★ 2026-11-26 修复「自动化读不到配置组运行状态」：
+                //   跳过重扫（持久化游标已在 EOF）时，Tracker 内存态刚被 Reset 清空，
+                //   而历史日志不会再读 → 自动化条件（CondScriptGroupState/TrigScriptGroup）
+                //   读到的永远是 Never。这里从 SQLite run 表（权威）异步把「今天」的
+                //   运行状态灌回 Tracker，与实时增量无缝衔接（尽力而为，不阻塞采集）。
+                if (persisted > 0 && UserName.Length > 0)
+                    _ = SeedGroupsFromDbAsync(this);
                 Today = new DailyStats();
                 PicksByGroup.Clear();
                 ErrorCount = WarnCount = FailCount = 0;
@@ -1444,6 +1451,64 @@ namespace SoulLink.Services
                 Error = e.Error
             };
         }
+
+        /// <summary>
+        /// 从 SQLite run 表（权威）把「今天」的配置组运行状态灌回内存 Tracker。
+        /// ★ 只在跳过重扫（持久化游标已在 EOF）时调用，填补 Reset 之后空白的
+        ///   运行状态，供自动化条件（CondScriptGroupState/TrigScriptGroup）读取。
+        /// ★ 尽力而为：DB 不可用或查询失败时静默返回，不影响日志采集主链路。
+        ///   结果按 start 升序喂入，与日志事件先后顺序一致。
+        /// </summary>
+        private static async Task SeedGroupsFromDbAsync(Entry e)
+        {
+            try
+            {
+                string user = e.UserName;
+                var rows = await RunRecordStore.QueryRunsAsync(user, 1).ConfigureAwait(false);
+                if (rows == null || rows.Count == 0) return;
+
+                // 只看今天（start 或 end 落在今天 0 点之后）。
+                long todayStart = new DateTimeOffset(DateTime.SpecifyKind(DateTime.Now.Date, DateTimeKind.Local))
+                    .ToUniversalTime().ToUnixTimeMilliseconds();
+                var today = rows
+                    .Where(r => r.StartAtMs >= todayStart || (r.EndAtMs ?? r.StartAtMs) >= todayStart)
+                    .OrderBy(r => r.StartAtMs)
+                    .ToList();
+                if (today.Count == 0) return;
+
+                var runs = today.Select(r => new ScriptGroupRun
+                {
+                    Name = r.GroupName ?? "",
+                    State = ParseRunState(r.State),
+                    StartedAt = r.StartAtMs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(r.StartAtMs).LocalDateTime : DateTime.MinValue,
+                    EndedAt = r.EndAtMs.HasValue && r.EndAtMs.Value > 0
+                        ? DateTimeOffset.FromUnixTimeMilliseconds(r.EndAtMs.Value).LocalDateTime : DateTime.MinValue,
+                    ScriptCount = r.ScriptCount,
+                    Detail = r.Detail ?? "",
+                    TimeIsExact = true,
+                }).Where(r => r.Name.Length > 0).ToList();
+
+                lock (Sync)
+                {
+                    // 只有该 Entry 仍指向同一账号、且用户确实被跳过重扫时才灌入，
+                    // 避免「异步回来时账号已切文件/换人」把旧数据灌进新状态。
+                    if (Entries.TryGetValue(e.AccountId, out var cur) && ReferenceEquals(cur, e)
+                        && cur.UserName == user)
+                        cur.Groups.Seed(runs);
+                }
+            }
+            catch { }
+        }
+
+        private static ScriptGroupState ParseRunState(string? state) => state switch
+        {
+            "Running" => ScriptGroupState.Running,
+            "Finished" => ScriptGroupState.Finished,
+            "Failed" => ScriptGroupState.Failed,
+            "Cancelled" => ScriptGroupState.Cancelled,
+            "Interrupted" => ScriptGroupState.Interrupted,
+            _ => ScriptGroupState.Never,
+        };
 
         /// <summary>立即释放所有常驻（退出/切账号时用）。</summary>
         /// <summary>停止全部 watcher（退出 / 重置时调用）。</summary>

@@ -122,6 +122,32 @@ namespace SoulLink.Services
         }
 
         public bool HasData => Cursor > 0 || Tail.Count > 0 || LastSeq > 0;
+
+        private string? _tailText;
+
+        /// <summary>
+        /// 尾窗拼接文本（供日志条件匹配 / 界面展示）。
+        /// ★ 快照按 Version 缓存且不可变，所以这里**一个版本只拼一次**，
+        ///   所有流程、所有扫描共用同一个字符串；日志不变时零分配。
+        ///   并发首次访问最多重复拼一次，结果相同，无害。
+        /// </summary>
+        public string TailText
+        {
+            get
+            {
+                var t = _tailText;
+                if (t != null) return t;
+                if (Tail == null || Tail.Count == 0) t = "";
+                else
+                {
+                    var sb = new StringBuilder(Tail.Count * 96);
+                    foreach (var l in Tail) sb.AppendLine(l.Text);
+                    t = sb.ToString();
+                }
+                _tailText = t;
+                return t;
+            }
+        }
     }
 
     /// <summary>尾窗里的一行日志。level 取自 [INF]/[WRN]/[ERR]，无则空。</summary>

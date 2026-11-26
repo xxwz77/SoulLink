@@ -60,13 +60,26 @@ namespace SoulLink.Services
         private static bool Scan(string text, string level, int seconds, DateTime now, Func<string,bool> match)
         {
             if (string.IsNullOrEmpty(text)) return false;
+            DateTime? lastAt = null;
+            string lastLevel = "";
             foreach (string raw in text.Replace("\r", "").Split('\n'))
             {
                 string line = raw.Trim(); if (line.Length == 0) continue;
                 var m = Prefix.Match(line);
-                if (!m.Success || !TryTimestamp(m, now, out var at)) continue; // 无可靠时间戳的行不能当作新信号
+                if (m.Success)
+                {
+                    // 带时间戳的行：更新基线；续行沿用上一个带时间戳行的时刻与级别。
+                    if (TryTimestamp(m, now, out var parsed)) lastAt = parsed;
+                    if (m.Groups["level"].Value.Length > 0) lastLevel = m.Groups["level"].Value;
+                }
+                // ★ 2026-11-26 修复：续行（无时间戳）不再被直接跳过，而是沿用
+                //   上一行时间戳参与时间窗匹配。BGI 日志大量关键输出是续行
+                //   （如「循环测试」这类脚本打点），旧逻辑把整行 continue 掉，
+                //   导致「日志包含」永远匹配不到续行内容。
+                if (lastAt == null) continue;   // 尚未遇到任何带时间戳的行，无法定位
+                var at = lastAt.Value;
                 if (at > now.AddSeconds(2) || at < now.AddSeconds(-Math.Max(1, seconds))) continue;
-                if (level.Length > 0 && !string.Equals(m.Groups["level"].Value, level, StringComparison.OrdinalIgnoreCase)) continue;
+                if (level.Length > 0 && !string.Equals(lastLevel, level, StringComparison.OrdinalIgnoreCase)) continue;
                 if (match(line)) return true;
             }
             return false;

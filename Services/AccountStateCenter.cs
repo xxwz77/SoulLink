@@ -422,10 +422,7 @@ namespace SoulLink.Services
         /// <summary>把快照尾窗拼成一段文本（供界面展示与日志条件匹配）。</summary>
         private static string BuildTailText(BgiLogSnapshot snap)
         {
-            if (snap == null || snap.Tail.Count == 0) return "";
-            var sb = new System.Text.StringBuilder(snap.Tail.Count * 96);
-            foreach (var l in snap.Tail) sb.AppendLine(l.Text);
-            return sb.ToString();
+            return snap?.TailText ?? "";
         }
 
         /// <summary>兜底读文件尾部（只在走不了快照的极少数情况下使用）。</summary>
