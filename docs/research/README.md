@@ -329,3 +329,14 @@
 - [RUN-RECORD-STORE-20261125.md](RUN-RECORD-STORE-20261125.md) —— **t2 SQLite 存储层交付**：RunRecordStore 公共 API、单文件原生库实测、跨天/迁移/去重/清理/故障降级完整可执行证据；JSONL 搬迁与集成归 t4。
 - [DATA-CENTER-RUN-DB-VERIFY-20261125.md](DATA-CENTER-RUN-DB-VERIFY-20261125.md) —— **t5 独立验证交付**：构建/发布/SQLite 原生库、跨天补全（换文件主场景 + 重启次要场景，用户四判据）、路线拾取 73 次 + 26/85 行报错栈、留存 1 天清理幂等、API 回归 + 401、零 DispatcherTimer、界面零展示 —— 64/64 断言通过，3 条非阻塞观察项移交 t6。
 - [DATA-CENTER-RUN-DB-VERIFY-20261125.md](DATA-CENTER-RUN-DB-VERIFY-20261125.md)（t7 复验追加七章）—— **t7 独立复验交付**：路线全量覆盖（锄地10/CD8/地图追踪10）、拾取不屏蔽、守恒 73/73、否定事实（**P0：pick_event 多 chunk 少记+重扫翻倍**，collector:1511/store:1499）、三态时段、时长 0 不一致、**P1：day_span 切分数学错（负 unknown）**（store:686/1435）、采集纯度、界面零展示；11 项通过 2 项未通过，修复归 collector/store 作者。
+
+---
+
+## 数据中心交接（2026-11-26 第二轮）
+
+- [HANDOFF-20261126-DATACENTER-R2.md](HANDOFF-20261126-DATACENTER-R2.md) ← **数据中心第二轮收官交接（2026-11-26 14:00）**
+  ★核心：①**纠正上午交接的三处错误**——「零串台」不成立（残留 pick 102/route 43/err 18/raw 9609）、最终修复 `2c0ab71` 从未进二进制（跑的是 `7f1ab57`）、t76 漏 5 处（`StartRouteIdx`/`SetPlannedRoutes`/`EmitError`/`AccumReward`×2 含死参数）；
+  ②**三个「假数据」根因**——未来 ghost（天轴未按文件名校准，历史 `14:28:34` 算成今天）、历史锚点串成今天（`BackfillCloseAsync` 造 ghost 不校验日期窗口）、回填把今天正在跑的组误收尾（把 EOF 当文件结束）；统一修复原则=**宁缺勿假**；
+  ③**新增轮次能力**（用户要求「有轮次记轮次，没轮次记启动次数」）：`run` 表加 `round_index/round_total/round_host/round_count`，解析 `[第 N/M 轮 房主]` 与 `[多世界] 第 N/M 轮，房主: X`；一次启动内多轮仍算「1 次运行」；
+  ④**回填断点续传修复**（`ResumeFrom` 记录入队 offset，不再从头重扫）+ pick_event 唯一索引去掉 `chunk_offset` + 背压前置到 Feed 之前 + 尾窗 800→200；
+  ⑤数据全绿：负时长 0/0、跨文件错乱 0/0/0/0、ghost 0、重复 0；4 次清理均已备份；11 个提交。
