@@ -34,7 +34,9 @@ namespace SoulLink.Services
     {
         // ── 预算 ────────────────────────────────────────────────────
         /// <summary>尾窗最多保留多少行（界面展示 + 日志条件匹配用）。</summary>
-        public const int TailMaxLines = 800;
+        /// ★ 2026-11-26 用户要求：日志快照可减少到 200 行。尾窗只用于界面展示与
+        ///   日志条件匹配，200 行足够；更少的内存与更少的快照深拷贝成本。
+        public const int TailMaxLines = 200;
         /// <summary>尾窗最多保留多少字符（硬上限，防止超长行撑爆内存）。</summary>
         public const int TailBudgetChars = 200_000;
         /// <summary>单次 tick 最多读多少字节；超了下个 tick 继续，避免长卡顿。</summary>
@@ -648,6 +650,14 @@ namespace SoulLink.Services
 
             /// <summary>放弃的文件名列表（只用于日志与诊断，不参与推进）。</summary>
             public List<string> GaveUp = new();
+
+            /// <summary>
+            /// ★ B1（断点续传）：文件名 → 入队时确定的「期望起始读取偏移」。
+            ///   两种来源：① 游标没读完 → ResumeFrom[f] = 持久化游标（续读）；
+            ///   ② 库里该天零记录（CheckMissingDaysAsync 补入）→ 0（重读，幂等去重兜底）。
+            ///   开始处理某文件时按它初始化 bs.Offset，处理完移除。
+            /// </summary>
+            public readonly Dictionary<string, long> ResumeFrom = new(StringComparer.OrdinalIgnoreCase);
         }
 
         private static readonly Dictionary<string, BackfillState> Backfills =
@@ -684,7 +694,12 @@ namespace SoulLink.Services
                     {
                         lock (Sync)
                         {
-                            if (!bs.Pending.Contains(f)) bs.Pending.Add(f);
+                            if (!bs.Pending.Contains(f))
+                            {
+                                bs.Pending.Add(f);
+                                // ★ B1：库里零记录 → 从头重读（0）；幂等去重兜底不产生重复。
+                                bs.ResumeFrom[f] = 0;
+                            }
                             bs.Pending.Sort(StringComparer.Ordinal);   // 保持按文件名（=日期）升序
                         }
                         LogBus.Info("采集·历史回填补充", e.UserName + " " + Path.GetFileName(f)
@@ -763,7 +778,12 @@ namespace SoulLink.Services
                         //   这里只按「游标没读完」筛选；「库里缺该日数据」的判定
                         //   交给独立的异步补查（见 CheckMissingDaysAsync），
                         //   由它在后台一次性算完再补进 Pending。
-                        if (notFullyRead) bs.Pending.Add(f);
+                        if (notFullyRead)
+                        {
+                            bs.Pending.Add(f);
+                            // ★ B1：游标续读 —— 从持久化游标处继续，绝不从头重读。
+                            bs.ResumeFrom[f] = cur < 0 ? 0 : cur;
+                        }
                     }
                     if (bs.Pending.Count > 0)
                         LogBus.Ok("采集·历史回填", e.UserName + " 待回填 " + bs.Pending.Count
@@ -816,6 +836,22 @@ namespace SoulLink.Services
                 }
                 long len = fi.Length;
 
+                // ★★ B1（2026-11-26 修复断点续传重复）：开始处理某文件时，按入队时记录的
+                //   期望起始偏移初始化 bs.Offset。原实现只判断「游标 < 文件长度」就把文件塞进
+                //   待办，却**从 0 开始重读** —— 重启一次，历史文件就从头回填一遍，叠加
+                //   chunk_offset 去重失效造成海量重复（实测 11426 组 pick + 32936 组 raw）。
+                //   恢复后：中断的文件从游标处续读，不漏不重。
+                if (bs.ResumeFrom.TryGetValue(current, out long resumeFrom))
+                {
+                    bs.ResumeFrom.Remove(current);
+                    if (resumeFrom >= 0 && resumeFrom < len)
+                        bs.Offset = resumeFrom;
+                    else if (resumeFrom >= len)
+                        bs.Offset = len;   // 已读完（上一会话推进到结尾但未来得及 FileIndex++）
+                    // ★ B2：续读段字节偏移基线同步恢复，raw_id 用文件内绝对偏移、跨重启唯一。
+                    RunRecordCollector.SetRawByteOffsetBase(e.UserName, current, bs.Offset);
+                }
+
                 // ③ 读一小片（严格限量，不阻塞）
                 long remain = len - bs.Offset;
                 if (remain <= 0)
@@ -850,6 +886,23 @@ namespace SoulLink.Services
                     return false;
                 }
 
+                // ★★ t63（architect 审查 P0-2，卡死元凶之二）：
+                //   队列背压检查**必须提前到 Feed 之前**。若在 Feed 之后才检查，队列积压时
+                //   本 tick 直接 return、offset 未推进，下一拍会重读同一块 —— 而 raw_event 的
+                //   去重键一旦含 chunk_offset（进程内自增），重读即重复入库。前置后：
+                //   「队列满 → 本 tick 不读不喂 → 下一拍从同一 offset 续读」，天然幂等。
+                int qDepth = RunRecordStore.PendingWriteCount;
+                if (qDepth > 2000)
+                {
+                    return true;   // 不推进游标，下一拍重读这一块（幂等）
+                }
+                if (!RunRecordStore.IsHealthy)
+                {
+                    LogBus.Warn("采集·历史回填中止", e.UserName + " 写队列不健康，暂停回填");
+                    bs.FileIndex = bs.Pending.Count;
+                    return false;
+                }
+
                 // ④ 首次进这个文件时建立该文件的时钟基线（每份文件独立）
                 if (bs.Offset == 0)
                 {
@@ -863,36 +916,6 @@ namespace SoulLink.Services
                 using (RunRecordCollector.EnterBackfillMode())
                 {
                     RunRecordCollector.Feed(e.UserName, chunk, current, len, 0);
-                }
-
-                // ★★ t63（architect 审查 P0-2，卡死元凶之二）：
-                //   原来这里是同步 WaitForWritesDrain(10s) —— Task.Wait 会**阻塞当前线程最多 10 秒**，
-                //   而它跑在 ServiceTick 的串行 foreach 里：
-                //     A2 回填阻塞 10 秒 → A3/A1 的实时采集全被拖住
-                //   多账号回填 = 逐账号串行等 = 累计几十秒 → 界面无响应。
-                //
-                //   改法：**不做阻塞等待**，改为「看队列深度」决定是否让出。
-                //   队列是 FIFO 单线程消费，只要每块喂完检查一下水位，
-                //   太高就本 tick 停止回填（下 tick 继续，游标幂等），
-                //   既不阻塞采集线程，也不会让队列无限堆积。
-                //
-                //   关于外键时序：RunRecordStore 的写队列是**单线程按入队顺序执行**的，
-                //   AddRun 一定先于同批 AddPickEvent 落库 —— 原来担心的时序问题不存在，
-                //   那个 Wait 只是当初为排查外键失败加的保守措施，现在可以去掉。
-                int qDepth = RunRecordStore.PendingWriteCount;
-                if (qDepth > 2000)
-                {
-                    // 队列积压过多：**本 tick 不再继续回填**，让写线程追上来。
-                    // 不推进游标（offset 没加），下一拍会重读这一块 —— 幂等，不会重复入库。
-                    return true;
-                }
-
-                // ⑥ 队列不健康 → 停回填，保住已有数据
-                if (!RunRecordStore.IsHealthy)
-                {
-                    LogBus.Warn("采集·历史回填中止", e.UserName + " 写队列不健康，暂停回填");
-                    bs.FileIndex = bs.Pending.Count;   // 本次运行不再尝试
-                    return false;
                 }
 
                 bs.Offset += use;
@@ -1138,6 +1161,11 @@ namespace SoulLink.Services
                     else e.PendingLen = 0;
 
                     string chunk = Encoding.UTF8.GetString(work, start, completeLen);
+                    // ★ B2：实时续读的字节偏移基线 = 本块首字节的文件绝对偏移。
+                    //   carry 是本次循环开头捕获的「旧残行长度」（上一块末尾字节数，位于 [pos-carry, pos)）；
+                    //   work 以残行打头、start=0，故首字节绝对偏移 = pos - carry。
+                    long baseOffset = pos - carry;
+                    RunRecordCollector.SetRawByteOffsetBase(e.UserName, e.LogFile, baseOffset);
                     ProcessChunk(e, chunk, len, write.Ticks);
                     changed = true;
 

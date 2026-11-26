@@ -429,7 +429,6 @@ namespace SoulLink.Services
             string line = raw.TrimEnd('\r');
             string hash = RawHashOf(line);
             long collected = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            string rawId = string.Join('\u001f', user, BaseName(srcFile), "chunk", chunkOffset, lineStart);
             int terminatorBytes = 0;
             if (lineStart + raw.Length < currentChunkLength)
             {
@@ -445,6 +444,10 @@ namespace SoulLink.Services
                 byteOffset = RawByteOffsets.TryGetValue(key, out long prior) ? prior : 0;
                 RawByteOffsets[key] = byteOffset + Encoding.UTF8.GetByteCount(raw) + terminatorBytes;
             }
+            // ★★ B2（2026-11-26 稳定去重键）：rawId 原用 chunkOffset（进程内自增、
+            //   重启/断点续传归零）→ 同一物理行以不同 raw_id 重复入库（实测 32936 组）。
+            //   改用 byteOffset（文件字节偏移，由日志内容唯一确定、跨重启稳定）作为自然键。
+            string rawId = string.Join('\u001f', user, BaseName(srcFile), "off", byteOffset);
             string logger = "";
             var m = RxLineTs.Match(line);
             if (m.Success)
@@ -699,6 +702,23 @@ namespace SoulLink.Services
                 return best != null ? BaseName(best) : BaseName(srcFile);
             }
             catch { return BaseName(srcFile); }
+        }
+
+        /// <summary>
+        /// ★ B2（稳定去重键）：恢复「原始行字节偏移」的累计基线。
+        ///   RawByteOffsets 是进程内字典，重启归零。断点续传（回填续读 / 实时游标续读）时，
+        ///   续读段的 byteOffset 若从 0 重新累计，会与文件头已入库行的 raw_id 碰撞，
+        ///   导致 INSERT OR IGNORE 把续读的新行**误丢**。必须在续读前把基线设为
+        ///   「本次续读的起始文件字节偏移」（= 持久化游标），使 raw_id 全程用文件内绝对偏移。
+        /// </summary>
+        internal static void SetRawByteOffsetBase(string user, string srcFile, long baseOffset)
+        {
+            if (string.IsNullOrWhiteSpace(user) || baseOffset <= 0) return;
+            string key = user + "\u001f" + BaseName(srcFile);
+            lock (StateLock)
+            {
+                RawByteOffsets[key] = baseOffset;
+            }
         }
 
         /// <summary>

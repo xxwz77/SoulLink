@@ -1734,6 +1734,10 @@ CREATE TABLE IF NOT EXISTS raw_event (
             EnsureColumn(db,"err","src_file","TEXT NOT NULL DEFAULT ''");
             // t35：pick_event 跨 chunk 去重维度（LineNo 是 chunk 内偏移，跨 chunk 重复）
             EnsureColumn(db,"pick_event","chunk_offset","INTEGER NOT NULL DEFAULT 0");
+            // ★ 2026-11-26：chunk_offset 是进程内自增序号（RawChunkSequences），重启/断点续传
+            //   会归零，导致同一物理行以不同 chunk_offset 重复入库（实测 11426 组重复）。
+            //   去重键改为 (run_id,ts_ms,line_no,line_offset,kind) —— 全部由日志内容派生、
+            //   跨重启稳定。chunk_offset 列保留（读侧 ORDER BY 仍用），但不再参与唯一约束。
 
             using var index = db.CreateCommand();
             index.CommandText = @"
@@ -1747,7 +1751,7 @@ CREATE INDEX IF NOT EXISTS ix_err_route ON err(route_id);
 CREATE INDEX IF NOT EXISTS ix_err_ts ON err(ts_ms);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_err_dedup ON err(run_id,ts_ms,level,content_hash);
 DROP INDEX IF EXISTS ux_pick_dedup;
-CREATE UNIQUE INDEX IF NOT EXISTS ux_pick_dedup ON pick_event(run_id,ts_ms,chunk_offset,line_no,line_offset,kind);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_pick_dedup ON pick_event(run_id,ts_ms,line_no,line_offset,kind);
 CREATE INDEX IF NOT EXISTS ix_pick_run ON pick_event(run_id);
 CREATE INDEX IF NOT EXISTS ix_pick_route ON pick_event(route_id);
 CREATE INDEX IF NOT EXISTS ix_pick_kind_ts ON pick_event(kind,ts_ms);
