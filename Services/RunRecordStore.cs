@@ -65,6 +65,20 @@ namespace SoulLink.Services
         public bool DaySplit { get; set; }
         /// <summary>t6：拾取守恒差异（unattributed 数，不为 0 时也在 detail 注明）。</summary>
         public int PickUnattributed { get; set; }
+
+        // ── 轮次（2026-11-26 用户要求：「有轮次要记录轮次，没轮次只记录配置组启动次数」）──
+        //   锄地类日志会写 `[第 N/M 轮 房主名]` / `[多世界] 第 N/M 轮，房主: "X"`，
+        //   一次配置组启动内部可能循环多轮（用户明确：仍算「1 次运行」，只是带上轮次信息）。
+        //   好感/CD采集等无轮次锚点的组，三个字段保持 0/空，界面按「启动次数」展示。
+        /// <summary>第几轮（N）；0 = 该组无轮次概念。</summary>
+        public int RoundIndex { get; set; }
+        /// <summary>共几轮（M）；0 = 该组无轮次概念。</summary>
+        public int RoundTotal { get; set; }
+        /// <summary>本轮房主名（锄地多世界）；空 = 无。</summary>
+        public string RoundHost { get; set; } = "";
+        /// <summary>本 run 内实际完成的轮次数（同一启动内可跑多轮）。</summary>
+        public int RoundCount { get; set; }
+
         public string Detail { get; set; } = "";
     }
 
@@ -163,6 +177,11 @@ namespace SoulLink.Services
         public int PickUnattributed { get; set; }
         /// <summary>t6：计划路线数（数量型锚点落 run）。</summary>
         public int PlannedRoutes { get; set; }
+        /// <summary>轮次（关闭时落最终值；0 = 该组无轮次概念）。</summary>
+        public int RoundIndex { get; set; }
+        public int RoundTotal { get; set; }
+        public string RoundHost { get; set; } = "";
+        public int RoundCount { get; set; }
         public long Exp { get; set; }
         public long Mora { get; set; }
         public int Picks { get; set; }
@@ -1162,7 +1181,7 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
 
         private const string RunColumns = @"SELECT run_id,account,group_name,start_at_ms,end_at_ms,dur_ms,state,
             script_count,exp,mora,picks,src_file_start,src_file_end,start_day,end_day,is_cross_day,is_backfilled,detail,
-            planned_routes,day_split,pick_unattributed FROM run";
+            planned_routes,day_split,pick_unattributed,round_index,round_total,round_host,round_count FROM run";
 
         private static List<RunRecord> ReadOpenRuns(SqliteConnection db, string? account)
         {
@@ -1193,7 +1212,11 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             IsCrossDay = r.GetInt64(15) != 0, IsBackfilled = r.GetInt64(16) != 0, Detail = r.GetString(17),
             PlannedRoutes = r.FieldCount > 18 && !r.IsDBNull(18) ? r.GetInt32(18) : 0,
             DaySplit = r.FieldCount > 19 && !r.IsDBNull(19) && r.GetInt64(19) != 0,
-            PickUnattributed = r.FieldCount > 20 && !r.IsDBNull(20) ? r.GetInt32(20) : 0
+            PickUnattributed = r.FieldCount > 20 && !r.IsDBNull(20) ? r.GetInt32(20) : 0,
+            RoundIndex = r.FieldCount > 21 && !r.IsDBNull(21) ? r.GetInt32(21) : 0,
+            RoundTotal = r.FieldCount > 22 && !r.IsDBNull(22) ? r.GetInt32(22) : 0,
+            RoundHost = r.FieldCount > 23 && !r.IsDBNull(23) ? r.GetString(23) : "",
+            RoundCount = r.FieldCount > 24 && !r.IsDBNull(24) ? r.GetInt32(24) : 0
         };
 
         private static RouteRecord ReadRoute(SqliteDataReader r) => new()
@@ -1221,10 +1244,12 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             cmd.CommandText = @"INSERT OR IGNORE INTO run
                 (run_id,account,group_name,start_at_ms,end_at_ms,dur_ms,state,script_count,exp,mora,picks,
                  src_file_start,src_file_end,start_day,end_day,is_cross_day,is_backfilled,detail,
-                 planned_routes,day_split,pick_unattributed)
+                 planned_routes,day_split,pick_unattributed,
+                 round_index,round_total,round_host,round_count)
                 VALUES($id,$account,$group,$start,$end,$dur,$state,$scripts,$exp,$mora,$picks,
                  $srcStart,$srcEnd,$startDay,$endDay,$cross,$backfilled,$detail,
-                 $planned,$daySplit,$pickUnattr);";
+                 $planned,$daySplit,$pickUnattr,
+                 $rdIdx,$rdTotal,$rdHost,$rdCount);";
             Add(cmd,"$id",row.RunId); Add(cmd,"$account",row.Account); Add(cmd,"$group",row.GroupName);
             Add(cmd,"$start",row.StartAtMs); Add(cmd,"$end",row.EndAtMs); Add(cmd,"$dur",row.DurMs);
             Add(cmd,"$state",row.State); Add(cmd,"$scripts",row.ScriptCount); Add(cmd,"$exp",row.Exp);
@@ -1233,6 +1258,8 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             Add(cmd,"$cross",row.IsCrossDay ? 1 : 0); Add(cmd,"$backfilled",row.IsBackfilled ? 1 : 0);
             Add(cmd,"$planned",row.PlannedRoutes); Add(cmd,"$daySplit",row.DaySplit ? 1 : 0);
             Add(cmd,"$pickUnattr",row.PickUnattributed);
+            Add(cmd,"$rdIdx",row.RoundIndex); Add(cmd,"$rdTotal",row.RoundTotal);
+            Add(cmd,"$rdHost",row.RoundHost); Add(cmd,"$rdCount",row.RoundCount);
             Add(cmd,"$detail",row.Detail); cmd.ExecuteNonQuery();
         }
 
@@ -1284,12 +1311,18 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
                 day_split=CASE WHEN $daySplit=1 THEN 1 ELSE day_split END,
                 pick_unattributed=$pickUnattr,
                 planned_routes=CASE WHEN $planned>0 THEN $planned ELSE planned_routes END,
+                round_index=CASE WHEN $rdIdx>0 THEN $rdIdx ELSE round_index END,
+                round_total=CASE WHEN $rdTotal>0 THEN $rdTotal ELSE round_total END,
+                round_host=CASE WHEN $rdHost<>'' THEN $rdHost ELSE round_host END,
+                round_count=CASE WHEN $rdCount>0 THEN $rdCount ELSE round_count END,
                 exp=$exp,mora=$mora,picks=$picks WHERE run_id=$id AND end_at_ms IS NULL;";
             Add(cmd,"$id",close.RunId); Add(cmd,"$end",close.EndAtMs); Add(cmd,"$state",close.State);
             Add(cmd,"$detail",close.Detail); Add(cmd,"$src",close.SrcFileEnd); Add(cmd,"$endDay",close.EndDay);
             Add(cmd,"$cross",close.IsCrossDay ? 1 : 0); Add(cmd,"$backfilled",close.IsBackfilled ? 1 : 0);
             Add(cmd,"$daySplit",close.DaySplit ? 1 : 0); Add(cmd,"$pickUnattr",close.PickUnattributed);
             Add(cmd,"$planned",close.PlannedRoutes);
+            Add(cmd,"$rdIdx",close.RoundIndex); Add(cmd,"$rdTotal",close.RoundTotal);
+            Add(cmd,"$rdHost",close.RoundHost); Add(cmd,"$rdCount",close.RoundCount);
             Add(cmd,"$exp",close.Exp); Add(cmd,"$mora",close.Mora); Add(cmd,"$picks",close.Picks);
             cmd.ExecuteNonQuery();
         }
@@ -1655,7 +1688,9 @@ CREATE TABLE IF NOT EXISTS run (
  script_count INTEGER NOT NULL DEFAULT 0,exp INTEGER NOT NULL DEFAULT 0,mora INTEGER NOT NULL DEFAULT 0,
  picks INTEGER NOT NULL DEFAULT 0,src_file_start TEXT NOT NULL DEFAULT '',src_file_end TEXT NOT NULL DEFAULT '',
  start_day TEXT NOT NULL DEFAULT '',end_day TEXT NOT NULL DEFAULT '',is_cross_day INTEGER NOT NULL DEFAULT 0,
- is_backfilled INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '');
+ is_backfilled INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '',
+ round_index INTEGER NOT NULL DEFAULT 0,round_total INTEGER NOT NULL DEFAULT 0,
+ round_host TEXT NOT NULL DEFAULT '',round_count INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS route (
  route_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES run(run_id) ON DELETE CASCADE,
  kind TEXT NOT NULL,name TEXT NOT NULL,parent_route_id TEXT,start_at_ms INTEGER NOT NULL,end_at_ms INTEGER,
@@ -1722,6 +1757,11 @@ CREATE TABLE IF NOT EXISTS raw_event (
             EnsureColumn(db,"run","day_split","INTEGER NOT NULL DEFAULT 0");
             // t6：拾取守恒差异（sum(route.picked)+run级 ≠ 实际行数时写 N，不许静默吞掉）
             EnsureColumn(db,"run","pick_unattributed","INTEGER NOT NULL DEFAULT 0");
+            // 轮次（2026-11-26）：锄地类 `[第 N/M 轮 房主]`；无轮次的组保持 0/空。
+            EnsureColumn(db,"run","round_index","INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn(db,"run","round_total","INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn(db,"run","round_host","TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(db,"run","round_count","INTEGER NOT NULL DEFAULT 0");
             // 初版已使用自然键；若部署过草稿库，仅补缺失列，不删除已有行。
             EnsureColumn(db,"run","src_file_end","TEXT NOT NULL DEFAULT ''");
             EnsureColumn(db,"run","end_day","TEXT NOT NULL DEFAULT ''");

@@ -83,6 +83,14 @@ namespace SoulLink.Views
             public int ScriptCount;
             public int Picks;
             public string Detail = "";
+            // ── 轮次（2026-11-26）──────────────────────────────────────────
+            //   锄地类：round_total>0，显示「N 轮」；好感/CD采集等无轮次概念，显示「N 次启动」。
+            public int RoundIndex;
+            public int RoundTotal;
+            public int RoundCount;
+            public string RoundHost = "";
+            /// <summary>该组是否有轮次概念（锄地多世界）。</summary>
+            public bool HasRounds => RoundTotal > 0 || RoundCount > 0;
             public TimeSpan? Duration
                 => EndedAt > StartedAt && StartedAt != DateTime.MinValue
                    ? EndedAt - StartedAt : (TimeSpan?)null;
@@ -907,6 +915,10 @@ namespace SoulLink.Views
                 ScriptCount = r.ScriptCount,
                 Picks = r.Picks,
                 Detail = r.Detail ?? "",
+                RoundIndex = r.RoundIndex,
+                RoundTotal = r.RoundTotal,
+                RoundCount = r.RoundCount,
+                RoundHost = r.RoundHost ?? "",
             };
         }
 
@@ -1053,13 +1065,35 @@ namespace SoulLink.Views
         ///   旧实现点展开时整页 Children.Clear()，把米游社的 ComboBox 也销毁了，
         ///   导致下拉框选不中、视觉上「展开又收回」。
         /// </summary>
+        /// <summary>
+        /// ★ 2026-11-26 用户要求：「有轮次要记录轮次，没轮次只记录配置组启动次数」。
+        ///   · 有轮次（锄地多世界，日志有 `[第 N/M 轮 房主]`）→「今日 N 轮」
+        ///   · 无轮次（好感/CD采集/钓鱼等）→「今日 N 次」（配置组启动次数）
+        ///   判定用 RoundTotal/RoundCount（都来自日志真实锚点），绝不用组名猜。
+        /// </summary>
+        private static string BuildCountText(GroupAggregate agg)
+        {
+            int withRounds = agg.Runs.Count(r => r.HasRounds);
+            if (withRounds > 0)
+            {
+                int rounds = agg.Runs.Sum(r => r.RoundCount > 0 ? r.RoundCount : r.RoundTotal);
+                if (rounds <= 0) rounds = agg.Runs.Max(r => r.RoundTotal);
+                return "今日 " + agg.Runs.Count + " 次启动" + (rounds > 0 ? " · " + rounds + " 轮" : "");
+            }
+            return "今日 " + agg.Runs.Count + " 次";
+        }
+
         private List<UIElement> BuildGroupCardChildren(GroupAggregate agg, string accountKey)
         {
             var last = agg.Last;
             var (accent, _) = GroupColors(last.State);
             string state = StateText(last.State);
             string times = TimeText(last);
-            string meta = "今日 " + agg.Runs.Count + " 次 · 最后一次 " + state
+            // ★ 2026-11-26 用户要求：「有轮次要记录轮次，没轮次只记录配置组启动次数」。
+            //   锄地类有 `[第 N/M 轮]` 锚点 → 报「今日 N 轮」；
+            //   好感/CD采集等无轮次概念 → 报「今日 N 次」（=配置组启动次数）。
+            string countText = BuildCountText(agg);
+            string meta = countText + " · 最后一次 " + state
                 + (times.Length > 0 ? " · " + times : "")
                 + (last.ScriptCount > 0 ? " · " + last.ScriptCount + " 脚本" : "")
                 + (last.Duration.HasValue ? " · " + FmtDur(last.Duration.Value) : "")
@@ -1162,7 +1196,16 @@ namespace SoulLink.Views
             for (int i = 0; i < shown; i++)
             {
                 var r = agg.Runs[i];
+                // 每行带上该次运行的轮次（锄地类才有）；无轮次的组不显示。
+                string roundText = "";
+                if (r.HasRounds)
+                {
+                    int rc = r.RoundCount > 0 ? r.RoundCount : r.RoundTotal;
+                    roundText = " · " + rc + " 轮";
+                    if (r.RoundHost.Length > 0) roundText += "（房主 " + r.RoundHost + "）";
+                }
                 string line = TimeText(r) + " · " + StateText(r.State)
+                    + roundText
                     + (r.Duration.HasValue ? " · " + FmtDur(r.Duration.Value) : "")
                     + (r.Picks > 0 ? " · 拾取 " + r.Picks : "");
                 list.Children.Add(new TextBlock

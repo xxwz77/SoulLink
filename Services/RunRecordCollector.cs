@@ -155,6 +155,15 @@ namespace SoulLink.Services
         private static readonly Regex RxRouteIdxDone = new(
             @"完成第\s*(?<idx>\d+)/(?<total>\d+)\s*条线路[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
 
+        // ── 轮次锚点（2026-11-26）────────────────────────────────────────
+        //   实测 BGI 两种写法，同一轮会各出现一次，取任一即可：
+        //     ① [第 1/4 轮 海带屁骨汤] "当前进度：开始第 1/78 条线路: ..."
+        //     ② [多世界] 第 1/4 轮，房主: "海带屁骨汤"，我是"成员"
+        private static readonly Regex RxRoundBracket = new(
+            @"\[第\s*(?<idx>\d+)/(?<total>\d+)\s*轮\s*(?<host>[^\]]*)\]", RegexOptions.Compiled);
+        private static readonly Regex RxRoundMultiWorld = new(
+            @"\[多世界\]\s*第\s*(?<idx>\d+)/(?<total>\d+)\s*轮[，,]\s*房主\s*[:：]\s*""(?<host>[^""]*)""", RegexOptions.Compiled);
+
         // 路线结束：无「耗时」的脚本执行结束，name 等于当前打开的路线
         private static readonly Regex RxScriptEndPlain = new(
             @"→\s*脚本执行结束\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
@@ -219,6 +228,17 @@ namespace SoulLink.Services
             public long LazyDeadlineMs;
             /// <summary>t6：本段由跨天换文件拆出（收尾时 is_cross_day/day_split 置 1）。</summary>
             public bool DaySplitSeg;
+            // ── 轮次（2026-11-26）──────────────────────────────────────────
+            //   锄地类日志写出 `[第 N/M 轮 房主名]` 与 `[多世界] 第 N/M 轮，房主: "X"`。
+            //   一次配置组启动内可能循环多轮；用户明确「仍算 1 次运行」，只额外记轮次。
+            /// <summary>第几轮（N），0 = 无轮次概念。</summary>
+            public int RoundIndex;
+            /// <summary>共几轮（M），0 = 无轮次概念。</summary>
+            public int RoundTotal;
+            /// <summary>本轮房主名。</summary>
+            public string RoundHost = "";
+            /// <summary>本 run 内已见过的最大轮序号（收尾时作为 round_count）。</summary>
+            public int RoundSeen;
         }
 
         /// <summary>当前打开的路线/脚本窗口（嵌套：route 挂在 script 下）。</summary>
@@ -1051,6 +1071,23 @@ namespace SoulLink.Services
                 if (n > 0)
                     events.Add(new Ev { Pos = lineStart + plan.Index, Apply = () => SetPlannedRoutes(user, n, srcFile) });
             }
+            // ── 轮次锚点（2026-11-26）────────────────────────────────────────
+            //   两种写法各出现一次；同一轮重复触发是幂等的（只覆盖同样的 N/M/host）。
+            foreach (Match m in RxRoundBracket.Matches(line))
+            {
+                if (!int.TryParse(m.Groups["idx"].Value, out int ri)) continue;
+                int rt = int.TryParse(m.Groups["total"].Value, out int t) ? t : 0;
+                string rh = m.Groups["host"].Value.Trim();
+                events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => TouchRound(user, ri, rt, rh, srcFile) });
+            }
+            foreach (Match m in RxRoundMultiWorld.Matches(line))
+            {
+                if (!int.TryParse(m.Groups["idx"].Value, out int ri)) continue;
+                int rt = int.TryParse(m.Groups["total"].Value, out int t) ? t : 0;
+                string rh = m.Groups["host"].Value.Trim();
+                events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => TouchRound(user, ri, rt, rh, srcFile) });
+            }
+
             // 路径组头 / 开始遍历：仅记录上下文（不生成路线行）
             if (RxPathGroupHeader.IsMatch(line) || RxTraverseStart.IsMatch(line))
             {
@@ -1626,6 +1663,10 @@ namespace SoulLink.Services
                 DaySplit = daySplit,
                 PlannedRoutes = run.PlannedRoutes,
                 PickUnattributed = run.PickUnattributed,
+                RoundIndex = run.RoundIndex,
+                RoundTotal = run.RoundTotal,
+                RoundHost = run.RoundHost,
+                RoundCount = run.RoundSeen,
                 EndDay = DayOf(end),
                 // O5：跨天分段两段都置 1（「参与跨天分段」语义，非纯日历判断）
                 IsCrossDay = daySplit || DayOf(run.StartAtMs) != DayOf(end),
@@ -1715,6 +1756,22 @@ namespace SoulLink.Services
                 && string.Equals(run.Route.Name, name, StringComparison.OrdinalIgnoreCase)
                 && run.Route.Kind != "script"
                 && kind != "route")          // route 锚点自身仍然开新窗（它是真正的边界）
+            {
+                run.LastEventMs = Math.Max(run.LastEventMs, atMs);
+                return;
+            }
+
+            // ★★ 2026-11-26 修复「同一路线入库两条（route_id 只差 1ms）」：
+            //   实测 `[DEBUG] 进入路线循环 route="X"` 与紧随其后的 `→ 开始执行地图追踪任务 "X"`
+            //   在两个相邻文本块里被解析，lineMs 只差 1ms → 两条都走 route 开窗，
+            //   生成两个 route_id（实测 08:33:15.609 / 08:33:15.610），界面同一路线出现两行。
+            //   判据：同名 route + 距上次开窗 < 2 秒 = 同一次执行的重复锚点 → 合并（不新建）。
+            //   2 秒远小于真实路线的耗时（实测最短也有数十秒），不会误合并真正连跑两次的路线。
+            if (run.Route != null
+                && string.Equals(run.Route.Kind, kind, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(run.Route.Name, name, StringComparison.OrdinalIgnoreCase)
+                && atMs > 0 && run.Route.StartAtMs > 0
+                && Math.Abs(atMs - run.Route.StartAtMs) < 2000)
             {
                 run.LastEventMs = Math.Max(run.LastEventMs, atMs);
                 return;
@@ -2015,6 +2072,24 @@ namespace SoulLink.Services
         {
             if (!OpenRuns.TryGetValue(user, out var run) || run == null) return;
             run.LastEventMs = Math.Max(run.LastEventMs, atMs);
+        }
+
+        /// <summary>
+        /// ★ 轮次（2026-11-26）：`[第 N/M 轮 房主名]` / `[多世界] 第 N/M 轮，房主: "X"`。
+        /// 用户要求：有轮次记轮次，无轮次只记配置组启动次数；一次启动内多轮仍算「1 次运行」。
+        /// 同一 run 内 N 会递增（1,2,3,4），取最新值写入 round_index，RoundSeen 记最大轮号。
+        /// </summary>
+        private static void TouchRound(string user, int idx, int total, string host, string srcFile)
+        {
+            if (!OpenRuns.TryGetValue(user, out var run) || run == null) return;
+            // 跨文件串扰保护：历史文件的轮次不能改写今天 run 的轮次。
+            if (!IsSameDayAsOpenRun(run, srcFile)) return;
+            if (idx <= 0) return;
+            run.RoundIndex = idx;
+            if (total > 0) run.RoundTotal = total;
+            if (host.Length > 0) run.RoundHost = host;
+            if (idx > run.RoundSeen) run.RoundSeen = idx;
+            run.DirtyRun = true;
         }
 
         /// <summary>C) 计划对账：数量型锚点（共加载 N 条路线等）落到 run.planned_routes（取最大值）。</summary>
