@@ -647,13 +647,32 @@ namespace SoulLink.Services
                 bs.Initialized = true;
                 try
                 {
-                    int days = Math.Clamp(App.Config?.Settings?.RunDbRetentionDays ?? 7, 1, 30);
+                    // ★ t66：回填窗口用独立配置 BgiBackfillDays（默认 7，可调 1~60）。
+                //   原来复用 RunDbRetentionDays（留存天数），两者语义不同：
+                //   想多采历史但不留那么久，就会被绑死。
+                int days = Math.Clamp(App.Config?.Settings?.BgiBackfillDays ?? 7, 1, 60);
                     var files = BgiLogWatcher.ListRecentLogs(exe, days);
                     string todayName = "better-genshin-impact" + DateTime.Now.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".log";
                     foreach (string f in files)
                     {
                         if (string.Equals(Path.GetFileName(f), todayName, StringComparison.OrdinalIgnoreCase)) continue;
-                        if (IngestCursorStore.LoadCursor(e.AccountId, f) < 0) bs.Pending.Add(f);
+
+                        // ★★ t66 修复（11-25 卡在 9/36.9 MB 的根因）：
+                        //
+                        //   原逻辑：只有「完全没有游标」的文件才加入待办。
+                        //   后果：**采到一半中断的文件永远补不上**。
+                        //   实测：11-25 的日志 cursor=9.44MB / file_length=36.89MB，
+                        //   因为昨天 21:14 回填被中断，之后再启动就认为「已采过」直接跳过，
+                        //   剩下 27.4 MB 永远进不了库 —— 那天只有 14 条 run（其它天 28~42 条）。
+                        //
+                        //   正确逻辑：**游标 < 文件长度 就要继续**（断点续传）。
+                        //   LoadCursor 返回 -1 表示没游标，从 0 开始；
+                        //   返回 >=0 且 < 长度 表示没采完，从游标处继续；
+                        //   返回 == 长度 才是真采完了。
+                        long cur = IngestCursorStore.LoadCursor(e.AccountId, f);
+                        long lenNow = 0;
+                        try { lenNow = new FileInfo(f).Length; } catch { }
+                        if (cur < 0 || (lenNow > 0 && cur < lenNow)) bs.Pending.Add(f);
                     }
                     if (bs.Pending.Count > 0)
                         LogBus.Ok("采集·历史回填", e.UserName + " 待回填 " + bs.Pending.Count
@@ -998,15 +1017,29 @@ namespace SoulLink.Services
                 bool wasPrimed = e.Primed;
                 e.Primed = true;
 
-                // ★ 首次全量扫完：把刚才那几十 MB 的临时字符串/数组彻底还回去。
-                //   不这么做的话 LOH 会一直挂着碎片（旧实现 Priv 1.5GB 就是这么来的）。
+                // ★ 首次全量扫完：请求「下一次自然 GC 时压缩 LOH」。
+                //
+                // ★★ t65（architect 审查 P1-1）：**不再主动调 GC.Collect(2)**。
+                //
+                //   原实现：CompactOnce + GC.Collect(2, Optimized, blocking:false, compacting:true)
+                //   问题：
+                //     · GC.Collect(2) 即使 blocking:false 也会安排一次**全代**回收，
+                //       而 full GC 有 STW 阶段；它发生在 Pump() 里，而 Pump 在
+                //       ServiceTick 的串行路径上 —— 首扫大日志时正好把该线程钉住。
+                //     · 叠加「启动首帧」就是用户看到的启动期卡顿。
+                //
+                //   现在：**只设 CompactOnce 标志就返回**，让它在下一次
+                //   .NET 自己认为合适的时候顺带压缩 —— 我们不主动打断运行时。
+                //   效果一样（LOH 碎片会被清掉），但不再由我们制造停顿。
+                //
+                //   至于「不压缩 LOH 会涨到 Priv 1.5GB」的旧问题：那来自旧实现的
+                //   大缓冲未释放；如今 buf 在 finally 里立刻置空，碎片自然少得多。
                 if (!wasPrimed && budget > 8 * 1024 * 1024)
                 {
                     try
                     {
                         System.Runtime.GCSettings.LargeObjectHeapCompactionMode =
                             System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
-                        GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: true);
                     }
                     catch { }
                 }

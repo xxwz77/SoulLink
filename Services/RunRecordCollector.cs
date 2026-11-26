@@ -1355,7 +1355,27 @@ namespace SoulLink.Services
                         "日志无结束锚点（推断边界：下一个配置组已开始）",
                         atMs, srcFile, backfilled: false);
                 }
-                // 同组重跑未收尾：旧窗口作废（run_id 不同 → 旧 open 行留给陈旧清理兜底）
+                else
+                {
+                    // ★★ t67 修复「负时长 run」的根因（实测 11-23 的 CD采集-全采集）：
+                    //
+                    //   原逻辑：同组重跑未收尾时**不做任何事**，直接新建 run。
+                    //   后果：旧的 open 行永久停在 Running，下次别的组的结束锚点到来时，
+                    //   `FindOpenRunAsync(user, g)` 按「用户名+组名」查到它，
+                    //   却用**当前事件的时间**当结束时刻 —— 如果当前时间早于该行的 start，
+                    //   就得到负时长（实测：00:47:01 开始的 run 被 00:35:51 的结束锚点收尾）。
+                    //
+                    //   而且 BGI 日志里「未成功完成」不一定有对应的「加载完成」
+                    //   （跨天分段时开始锚点在上一个文件里），所以这种配对错位很常见。
+                    //
+                    //   修法：同组重跑时**显式收尾旧窗口**，用 prev.LastEventMs 作结束时刻
+                    //   （它一定是旧窗口内部的时间，绝不可能晚于新 start，从根上杜绝负时长）。
+                    //   状态记 Interrupted 而非 Finished —— 因为我们确实没看到它的结束锚点。
+                    long prevEnd = prev.LastEventMs > 0 ? prev.LastEventMs : prev.StartAtMs;
+                    CloseRunLocked(prev, "Interrupted",
+                        "同组重跑未收尾（日志无该次结束锚点，按最后一次事件时刻收尾）",
+                        prevEnd, srcFile, backfilled: false);
+                }
             }
             long startMs = atMs > 0 ? atMs : NowMs();
             string runId = RunRecordStore.MakeRunId(user, g, startMs);

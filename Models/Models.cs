@@ -416,6 +416,20 @@ namespace SoulLink.Models
         /// </summary>
         public int RunDbRetentionDays { get; set; } = 7;
 
+        /// <summary>
+        /// ★ t66：**历史回填窗口天数**（与 RunDbRetentionDays 分离）。
+        ///
+        ///   RunDbRetentionDays 回答「库里留几天」（清理用）；
+        ///   BgiBackfillDays    回答「启动时往回扫几天日志」（采集用）。
+        ///   两者默认都是 7，但可以不同：
+        ///     · 想把历史日志都吃进来 → BgiBackfillDays 调大（如 21、30）；
+        ///     · 库只留 7 天 → RunDbRetentionDays 保持 7，超期自动清掉。
+        ///
+        ///   ★ 刻意不做界面（用户要求）：要改就手改 config.json。
+        ///   范围 1~60：BGI 日志一天约 40MB，60 天就是 2.4GB，再大回填太慢。
+        /// </summary>
+        public int BgiBackfillDays { get; set; } = 7;
+
         /// <summary>米游社自动签到总开关；默认开启（用户 2026-11-25 明确要签到，仍可手动关闭）。</summary>
         public bool MiyousheSignEnabled { get; set; } = true;
         /// <summary>每日签到小时（0-23，本地时间）；兼容字段，新配置优先用 MiyousheSignTime。</summary>
