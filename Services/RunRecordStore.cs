@@ -276,6 +276,16 @@ namespace SoulLink.Services
             try { return Core.Value.WaitForWritesDrain(timeout); } catch { return false; }
         }
 
+        /// <summary>
+        /// ★ t63：当前写队列积压条数。用于**非阻塞背压** ——
+        /// 回填/批量导入时用它判断「该让出了没」，而不是 Task.Wait 阻塞线程。
+        /// 0 表示没有积压（或是降级状态，此时一并当作 0，由 IsHealthy 单独判断）。
+        /// </summary>
+        public static int PendingWriteCount
+        {
+            get { try { return Core.Value.PendingWriteCount; } catch { return 0; } }
+        }
+
         public static void AddRoute(RouteRecord row)
         {
             if (row == null || string.IsNullOrWhiteSpace(row.RouteId) || string.IsNullOrWhiteSpace(row.RunId)
@@ -1421,6 +1431,12 @@ DELETE FROM raw_event WHERE
             /// ★ t55：把「排空」实现为一个排到队尾的同步 op —— 它执行完说明之前入队的写都已落库。
             /// 不引入额外锁，复用同一个单线程写队列，天然有序。
             /// </summary>
+            /// <summary>★ t63：队列当前积压条数（阻塞队列的 Count 是 O(1)）。</summary>
+            internal int PendingWriteCount
+            {
+                get { try { return _queue.Count; } catch { return 0; } }
+            }
+
             internal bool WaitForWritesDrain(TimeSpan timeout)
             {
                 if (!IsHealthy) return false;

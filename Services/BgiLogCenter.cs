@@ -37,7 +37,25 @@ namespace SoulLink.Services
         /// <summary>尾窗最多保留多少字符（硬上限，防止超长行撑爆内存）。</summary>
         public const int TailBudgetChars = 200_000;
         /// <summary>单次 tick 最多读多少字节；超了下个 tick 继续，避免长卡顿。</summary>
-        private const int MaxBytesPerTick = 32 * 1024 * 1024;
+        ///
+        /// ★★ t63（architect 审查 P0-1，卡死元凶之一）：
+        ///   原来是 32MB —— 首次全量扫描时，一个账号一个 tick 就可能读满 32MB，
+        ///   而 ProcessChunk 要跑 5 个解析器 × ~15 个正则：
+        ///     32MB × 15 正则 × 5 解析器 ≈ 单账号 10 秒
+        ///   而 ServiceTick 是**串行 foreach 所有账号、无单轮超时**：
+        ///     3 个账号 × 10 秒 = 30 秒卡死一轮
+        ///   用户实测「有配置就卡死、无配置就流畅」正是这个原因（无账号时 Tick 直接 return）。
+        ///
+        ///   2MB 的依据：真实 A1 4MB chunk 实测扫描约 1.3s，2MB 约 0.65s；
+        ///   3 个账号串行约 2s，在一秒节拍内可接受；积压靠字节游标幂等续读，不会丢数据。
+        private const int MaxBytesPerTick = 2 * 1024 * 1024;
+
+        /// <summary>
+        /// ★★ t63：单轮 ServiceTick 的总耗时预算。
+        ///   即使每账号只读 2MB，账号多时仍会超时；超预算就让出，剩下的下 tick 继续。
+        ///   （字节游标保证幂等，绝不会漏读。）
+        /// </summary>
+        private const int ServiceTickBudgetMs = 1200;
         /// <summary>进程/日志目录探测的缓存时间。</summary>
         private static readonly TimeSpan DiscoverTtl = TimeSpan.FromSeconds(2);
 
@@ -377,9 +395,20 @@ namespace SoulLink.Services
             }
             if (work == null) return;
 
+            // ★★ t63（P0-1）：单轮耗时预算 —— 超预算立刻让出，剩下的下 tick 继续。
+            //   字节游标（e.Cursor）保证幂等续读，让出绝不会漏数据。
+            //   没有这个预算时，3 个账号首扫能把一轮 Tick 拖到 30 秒，整个界面卡死。
+            var budgetSw = System.Diagnostics.Stopwatch.StartNew();
+
             bool any = false;
             foreach (var e in work)
             {
+                if (budgetSw.ElapsedMilliseconds > ServiceTickBudgetMs)
+                {
+                    // 超预算：本 tick 到此为止，剩下的账号下一拍继续（保持 Dirty 未清则下拍会重来）
+                    _ = Interlocked.Exchange(ref e.Dirty, 1);
+                    break;
+                }
                 try
                 {
                     // 取出并清标记：期间新来的事件会重新置位，下一拍处理。
@@ -510,12 +539,19 @@ namespace SoulLink.Services
             }
 
             // 清掉已删除账号的条目，避免越积越多。
+            // ★★ t63（architect 审查 P0-3，watcher 泄漏）：
+            //   原来直接 Entries.Remove(id) —— 但该 Entry 的 FileSystemWatcher 没 Dispose！
+            //   watcher 持有内核句柄 + 线程池回调，且 onChanged 闭包捕获 Entry
+            //   （钉住 64KB Pending + Tail + PicksByGroup）→ 反复改配置会只增不减。
             var alive = new HashSet<string>(list.Select(a => a.Id), StringComparer.OrdinalIgnoreCase);
+            var toRemove = new List<Entry>();
             lock (Sync)
             {
-                foreach (var id in Entries.Keys.ToList())
-                    if (!alive.Contains(id)) Entries.Remove(id);
+                foreach (var kv in Entries.ToList())
+                    if (!alive.Contains(kv.Key)) { toRemove.Add(kv.Value); Entries.Remove(kv.Key); }
             }
+            // ★ 必须在锁外 Dispose（StopWatcher 内部会 Stop/Timer 操作，避免死锁）
+            foreach (var dead in toRemove) { try { StopWatcher(dead); } catch { } }
 
             if (any) { try { Changed?.Invoke(); } catch { } }
         }
@@ -691,8 +727,27 @@ namespace SoulLink.Services
                     RunRecordCollector.Feed(e.UserName, chunk, current, len, 0);
                 }
 
-                // ⑤ 等写队列排空（避免外键时序问题）；超时也不阻塞太久
-                try { RunRecordStore.WaitForWritesDrain(TimeSpan.FromSeconds(10)); } catch { }
+                // ★★ t63（architect 审查 P0-2，卡死元凶之二）：
+                //   原来这里是同步 WaitForWritesDrain(10s) —— Task.Wait 会**阻塞当前线程最多 10 秒**，
+                //   而它跑在 ServiceTick 的串行 foreach 里：
+                //     A2 回填阻塞 10 秒 → A3/A1 的实时采集全被拖住
+                //   多账号回填 = 逐账号串行等 = 累计几十秒 → 界面无响应。
+                //
+                //   改法：**不做阻塞等待**，改为「看队列深度」决定是否让出。
+                //   队列是 FIFO 单线程消费，只要每块喂完检查一下水位，
+                //   太高就本 tick 停止回填（下 tick 继续，游标幂等），
+                //   既不阻塞采集线程，也不会让队列无限堆积。
+                //
+                //   关于外键时序：RunRecordStore 的写队列是**单线程按入队顺序执行**的，
+                //   AddRun 一定先于同批 AddPickEvent 落库 —— 原来担心的时序问题不存在，
+                //   那个 Wait 只是当初为排查外键失败加的保守措施，现在可以去掉。
+                int qDepth = RunRecordStore.PendingWriteCount;
+                if (qDepth > 2000)
+                {
+                    // 队列积压过多：**本 tick 不再继续回填**，让写线程追上来。
+                    // 不推进游标（offset 没加），下一拍会重读这一块 —— 幂等，不会重复入库。
+                    return true;
+                }
 
                 // ⑥ 队列不健康 → 停回填，保住已有数据
                 if (!RunRecordStore.IsHealthy)
@@ -747,6 +802,7 @@ namespace SoulLink.Services
                 e = found;
             }
 
+            bool wasUnbound = false;
             lock (Sync)
             {
                 e.UserName = user;
@@ -762,8 +818,15 @@ namespace SoulLink.Services
                     e.Primed = false;
                     e.Error = "";
                     if (had) { e.Tail.Clear(); e.TailChars = 0; }
-                    return had;
+                    wasUnbound = true;
                 }
+            }
+            if (wasUnbound)
+            {
+                // ★★ t63（P0-3）：未绑定必须停掉 watcher —— 否则它继续监听一个
+                //   已不该采集的文件，每次写入都触发回调（白烧 CPU），且句柄不释放。
+                try { StopWatcher(e); } catch { }
+                return true;
             }
 
             // 绑定了：解析路径（不写回配置），再找该会话里正在跑的 BGI 日志。

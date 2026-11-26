@@ -27,6 +27,10 @@ namespace SoulLink.Views
 
         /// <summary>上一轮渲染依据的数据签名；相同就不重建视觉树。</summary>
         private string _lastSignature = "";
+        /// <summary>t64：上次整页重建的时刻 —— 用于强制冷却，防止签名高频变化导致每秒重建。</summary>
+        private DateTime _lastRebuildAt = DateTime.MinValue;
+        /// <summary>t64：两次整页重建之间的最小间隔（毫秒）。3 秒是实测安全的：状态显示延迟可接受，DWM 压力可忽略。</summary>
+        private const int RebuildMinIntervalMs = 3000;
 
         // ══ t2 问题1：米游社摘要「每秒闪一次」═══════════════════════════════
         //
@@ -98,6 +102,7 @@ namespace SoulLink.Views
         private readonly Dictionary<string, IReadOnlyList<SoulLink.Services.RunRecord>> _sqliteTodayRuns
             = new(StringComparer.OrdinalIgnoreCase);
         private bool _sqliteLoading;
+        private bool _sqliteLoaded;   // t62：是否已成功加载过一次今日 run
 
         /// <summary>
         /// 把"界面会显示的东西"压成一个字符串。
@@ -121,15 +126,39 @@ namespace SoulLink.Views
                       .Append(st.CurrentGroup).Append(',')
                       .Append(st.OneDragon).Append(',')
                       .Append(st.Groups.Count).Append(',')
-                      .Append(st.ErrorCount).Append(',')
-                      .Append(st.WarnCount).Append(',')
-                      .Append(st.FailCount).Append(',')
+                      // ★★ t64 根治：**移除 ErrorCount/WarnCount/FailCount**。
+                      //   它们是高频变化的计数器 —— A1 的 37MB 日志里报错很多，
+                      //   这三个数每秒都在涨 → 签名每秒都变 → 每秒整页 Rebuild。
+                      //   而整页 Rebuild（Children.Clear + 重建全部卡片）会产生海量
+                      //   视觉树节点重排 → DWM 合成队列积压 → 整个桌面黑屏。
+                      //
+                      //   代价：这三个数字在界面上的更新会延迟到「其它字段变化时」才刷新。
+                      //   这是**正确的取舍** —— 报错计数不值得用整页重建来换实时性。
                       .Append(st.DogfoodRoute).Append(',')
                       .Append(st.DogfoodValid).Append(',')
                       .Append(st.BgiPath).Append(';');
                     // ★ 绝对不要把 st.UpdatedAt 放进签名：它在每轮刷新里都会被
                     //   赋成 DateTime.Now，等于签名每秒都变，去重完全失效
                     //   （实测：加了它 CPU 从 13% 反弹到 52%）。
+
+                    // ★★ t61：角色数据也要进签名 —— 否则角色列表读回来后签名没变，
+                    //   界面不会刷新，下拉框永远停在「读取中…」。
+                    if (_miyousheRoles.TryGetValue(a.UserName, out var rv))
+                        sb.Append("roles=").Append(rv.Roles.Count).Append('/').Append(rv.DefaultRole).Append(';');
+                }
+
+                // ★★ t64 根治（系统卡死/黑屏的元凶）：展开态**必须排序后**拼进签名。
+                //   HashSet<string> 的枚举顺序在 .NET 里**不保证稳定**（尤其是插入/删除混合操作后），
+                //   每个 tick 拼出来的字符串都可能不同 → 签名永远「变了」→ **每秒整页 Rebuild**。
+                //   而整页 Rebuild = CardList.Children.Clear() + 重建 4 个账号的全部卡片
+                //   （每卡片 11 行 AddRow + 2 个表格 + 米游社行 + 配置组网格），
+                //   相当于每秒丢弃并重建上百个视觉树节点 → WPF 全量 Measure/Arrange/Render
+                //   → DWM 合成队列被灌满 → **整个桌面黑屏**（DWM 是所有窗口的合成器）。
+                if (_expandedGroups.Count > 0)
+                {
+                    var keys = _expandedGroups.ToArray();
+                    Array.Sort(keys, StringComparer.Ordinal);   // 稳定顺序才算得出稳定签名
+                    foreach (string k in keys) sb.Append("exp=").Append(k).Append(';');
                 }
             }
             catch { }
@@ -145,13 +174,35 @@ namespace SoulLink.Views
             {
                 if (!IsVisible) return;
                 SharedDataChanged();
+
                 // ★ 2.17.45：只有数据真的变了才重建视觉树。
-                //   原来每秒无条件 Rebuild() —— 整个页面的卡片、边框、文本块
-                //   全部丢弃重建，WPF 每次都要重新测量/排版/生成字形，
-                //   即使内容一个字都没变。这是纯浪费的 UI 线程开销。
                 string sig = BuildSignature();
                 if (sig == _lastSignature) return;
                 _lastSignature = sig;
+
+                // ★★ t64 根治（系统级黑屏的直接原因，已用实测确认）：
+                //   **给整页重建加强制间隔**。
+                //
+                //   实测证据链：
+                //     · A1 跑配置组时 CurrentGroup 每秒变 → 签名每秒变 → 每秒 Rebuild
+                //     · Rebuild = CardList.Children.Clear() + 重建全部账号卡片
+                //       （每卡片 7~11 个控件 + 配置组网格 + 米游社行 + 2 个表格）
+                //     · 4 个账号 = 每秒丢弃重建**上百个视觉树节点**
+                //     · WPF 全量 Measure/Arrange/Render → 每帧提交大 surface 给 DWM
+                //     · 持续 GPU 抖动 + DWM 合成压力 → **整个桌面黑屏**
+                //   （对照：SoulLink 停掉后 DWM 从「8秒涨2.19s」恢复到「10秒涨0.98s」）
+                //
+                //   修法：重建至少间隔 3 秒。中间的签名变化只记录不重建，
+                //   等冷却期过了再一次性应用 —— 状态显示最多延迟 3 秒，
+                //   但绝不会把 GPU/DWM 按在地上摩擦。
+                var now = DateTime.UtcNow;
+                if ((now - _lastRebuildAt).TotalMilliseconds < RebuildMinIntervalMs)
+                {
+                    // 冷却中：保留签名（下次比对会继续触发），但不重建
+                    _lastSignature = "";   // 让下次 tick 重新判定
+                    return;
+                }
+                _lastRebuildAt = now;
                 Rebuild();
             };
         }
@@ -324,7 +375,7 @@ namespace SoulLink.Views
             Grid.SetColumn(grid,0);
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            for (int i = 0; i < 8; i++)   // t60：字段从 11 减到 8（去掉 3 个调试字段）
+            for (int i = 0; i < 11; i++)
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             int row = 0;
@@ -337,21 +388,28 @@ namespace SoulLink.Views
             var shared = BgiDataCenter.Get(st.UserName);
             AddRow(grid, row++, "BGI 路径", shared.ExePath.Length == 0 ? "未设置" : shared.ExePath, mono: true);
             AddRow(grid, row++, "配置目录", shared.RootPath.Length == 0 ? "—" : shared.DirectoryOf("User"), mono: true);
-            // ★★ t60：配置组/一条龙**只显示数量**，不再拼接完整名单。
-            //   原来 39 个组名铺满 3~4 行，把真正有用的信息（会话/BGI/日志）挤到看不见。
-            //   要看完整名单 → 点「配置管理」页，那里是专门的地方。
-            AddRow(grid, row++, "配置组", shared.ScriptGroups.Count + " 个" + (shared.ScriptGroups.Count == 0 ? "（未发现）" : ""));
-            AddRow(grid, row++, "一条龙", shared.OneDragonConfigs.Count + " 个" + (shared.OneDragonConfigs.Count == 0 ? "（未发现）" : ""));
+            // ★ t61：恢复完整名单（我 t60 擅自改成只显示数量，用户要求还原）。
+            AddRow(grid, row++, "配置组", shared.ScriptGroups.Count + " 个：" + (shared.ScriptGroups.Count == 0 ? "未发现" : string.Join("、", shared.ScriptGroups)));
+            AddRow(grid, row++, "一条龙", shared.OneDragonConfigs.Count + " 个：" + (shared.OneDragonConfigs.Count == 0 ? "未发现" : string.Join("、", shared.OneDragonConfigs)));
             AddRow(grid, row++, "停止快捷键", shared.HotkeyText);
+            AddRow(grid, row++, "配置读取", shared.Error.Length > 0 ? shared.Error : (shared.ConfigExists ? "正常" : "尚未读取") + " · " + shared.ReadAt.ToString("HH:mm:ss"));
             AddRow(grid, row++, "日志文件", string.IsNullOrWhiteSpace(st.BgiLogFile) ? "—"
                 : (System.IO.Path.GetFileName(st.BgiLogFile) + "  " + st.BgiLogWrite.ToString("HH:mm:ss")), mono: true);
+            AddRow(grid, row++, "任务原文", ExtractTaskLine(st), mono: true);
 
-            // ★★ t60：移除三个**纯调试字段**（用户反馈「多余无用字段」）：
-            //   · 「配置读取」（正常 · 02:13:50）—— 只有排查配置读不出时才需要；
-            //   · 「任务原文」（截断的日志行）—— 界面看这个没意义，日志里有完整的；
-            //   · 「数据中心占用」（70.7 KB / 尾窗 353 行）—— 这是给开发看的内存哨兵，
-            //     用户完全看不懂，而且它和「这个账号在干什么」毫无关系。
-            //   需要排查时看 设置 → 诊断日志，那里有完整信息。
+            // ── 数据中心占用（回归哨兵：改造后应稳定在百 KB 级）──
+            //   ★ 2.17.45 起不再保留日志原文，这里改成数据中心常驻量；
+            //     如果这个数字开始涨到 MB 级，说明尾窗预算失守。
+            //   ★ t61：用户要求恢复 —— 我 t60 时未经确认就删了它，是我越权了。
+            long centerChars = BgiLogCenter.ResidentChars();
+            long centerBytes = centerChars * 2L;
+            AddRow(grid, row++, "数据中心占用",
+                (st.Bound ? "已绑定" : "未绑定（不读日志）")
+                + "  ·  " + FormatSize(centerBytes) + "（全部账号）"
+                + "  ·  尾窗 " + CountLines(st.RecentLog) + " 行"
+                + "  ·  " + (st.RecentLogAt == DateTime.MinValue
+                    ? "未采集"
+                    : st.RecentLogAt.ToString("HH:mm:ss") + " 更新"));
 
             columns.Children.Add(grid);
             var hotkeys = BuildHotkeyTable(shared);
@@ -487,11 +545,29 @@ namespace SoulLink.Views
 
             border.Child = panel;
 
-            // 角色列表异步填充（有缓存直接填，不闪）
+            // ★★ t61 修复（角色下拉框刷新时消失）：
+            //   旧代码无条件走异步（除非已有缓存），而 Rebuild 每次重建 roleBox 都是新的、
+            //   初始 Visibility=Collapsed，要等异步回来才 Visible —— 期间它就是「消失」状态。
+            //   而每秒的定时器只要签名变了一次就会 Rebuild → 下拉框反复消失/出现，
+            //   用户根本点不中（这也解释了他说的「无法切换」）。
+            //
+            //   现在的修法：
+            //     ① 有缓存 → **同步**填充 + 显示（重建当拍就有内容，零等待）；
+            //     ② 无缓存 → 先给一个「读取中…」占位项让它**立刻可见**，异步回来再替换；
+            //     ③ 角色数据参与 BuildSignature（见下方），避免无意义的整页重建。
             if (_miyousheRoles.TryGetValue(st.UserName, out var cachedRoles) && cachedRoles.Roles.Count > 0)
-                FillRoleBox(roleBox, cachedRoles.Roles, cachedRoles.DefaultRole);
+            {
+                FillRoleBox(roleBox, cachedRoles.Roles, cachedRoles.DefaultRole);   // 同步，当拍可见
+            }
             else
+            {
+                // 立刻可见的占位（避免「先消失再出现」）
+                roleBox.Items.Clear();
+                roleBox.Items.Add(new ComboBoxItem { Content = "（读取角色中…）", IsEnabled = false });
+                roleBox.SelectedIndex = 0;
+                roleBox.Visibility = Visibility.Visible;
                 _ = RefreshMiyousheRolesAsync(st.UserName, roleBox);
+            }
             // ★ t2：只有「还没有缓存」或「强制刷新」时才发起异步读取。
             //   原来无条件 `_ = RefreshMiyousheAsync(status, ...)`：页面每次重建都多发一次
             //   读取，回来又各自改一次 Text —— 闪烁的直接来源。
@@ -518,7 +594,9 @@ namespace SoulLink.Views
                 ComboBoxItem? pick = null;
                 foreach (var r in roles)
                 {
-                    string label = r.Nickname + "  Lv." + r.Level + "  " + r.Region + "  " + r.GameUid;
+                    // ★ t61：用户明确「cn_gf01 是多余的」——只显示昵称 + 等级，
+                    //   区服代码（cn_gf01/cn_qd01）是技术内码，对用户没有意义。
+                    string label = r.Nickname + "  Lv." + r.Level;
                     var item = new ComboBoxItem { Content = label, Tag = r.GameUid };
                     box.Items.Add(item);
                     if (!string.IsNullOrEmpty(defaultRole)
@@ -620,10 +698,12 @@ namespace SoulLink.Views
             {
                 var w = new MiyousheQrWindow(account, "cn") { Owner = Window.GetWindow(this) };
                 w.ShowDialog();
-                // 扫码后凭据可能变了：作废缓存并强制重读（一次性用户动作，不进 1 秒循环）
+                // 扫码后凭据可能变了：作废缓存并强制重读（一次性用户动作）
+                // ★ t62：**不再主动 Rebuild** —— 与 EnsureSqliteTodayRunsAsync 的死循环教训一致：
+                //   任何「异步回来又触发整页重建」的路径都可能自激。这里只作废缓存，
+                //   下一次定时器刷新（1 秒、签名去重）自然会用新数据。最多晚 1 秒，绝不会卡死。
                 _miyoushe.Remove(account);
                 _ = RefreshMiyousheAsync(account, force: true);
-                Rebuild();
             }
             catch (Exception ex)
             {
@@ -648,10 +728,9 @@ namespace SoulLink.Views
                 if (confirm != MessageBoxResult.Yes) return;
                 var outcome = await MiyousheImporter.ImportAsync(account, path, true, default).ConfigureAwait(true);
                 MessageBox.Show("导入完成：" + outcome.OkCount + " 成功 / " + outcome.FailedCount + " 失败\n" + outcome.Detail, "一键导入", MessageBoxButton.OK, MessageBoxImage.Information);
-                // 导入后凭据变了：作废缓存并强制重读
+                // 导入后凭据变了：作废缓存并强制重读（同样不主动 Rebuild，理由同上）
                 _miyoushe.Remove(account);
                 _ = RefreshMiyousheAsync(account, force: true);
-                Rebuild();
             }
             catch (Exception ex)
             {
@@ -688,13 +767,25 @@ namespace SoulLink.Views
                     {
                         var runs = await SoulLink.Services.RunRecordStore.QueryRunsAsync(st.UserName, 1)
                             .ConfigureAwait(true);
-                        long today0 = new DateTimeOffset(DateTime.Now.Date).ToUnixTimeMilliseconds();
+                        // t62：RunRecord.StartAtMs 是 UTC 毫秒（见 RunRecordCollector.ToMs），
+                        //   这里必须用同一基准算「今天 0 点」，否则跨时区会筛错。
+                        long today0 = new DateTimeOffset(
+                            DateTime.SpecifyKind(DateTime.Now.Date, DateTimeKind.Local)).ToUniversalTime()
+                            .ToUnixTimeMilliseconds();
                         var todayRuns = runs.Where(r => r.StartAtMs >= today0 || (r.EndAtMs ?? r.StartAtMs) >= today0).ToList();
                         _sqliteTodayRuns[st.UserName] = todayRuns;
                     }
                     catch { _sqliteTodayRuns[st.UserName] = Array.Empty<SoulLink.Services.RunRecord>(); }
                 }
-                await Dispatcher.InvokeAsync(() => { if (IsVisible) { _lastSignature = ""; Rebuild(); } });
+                // t62 致命 bug 修复（系统卡死的直接原因）：
+                //   原来这里写的是 _lastSignature = "" 加 Rebuild()；
+                //   而 Rebuild() 的开头又会 _ = EnsureSqliteTodayRunsAsync(states)。
+                //   于是形成无限递归：Rebuild -> 查 DB -> 回来 -> Rebuild -> 查 DB -> ...
+                //   每一轮都是一次完整 SQLite 查询 + 整页视觉树重建，
+                //   UI 线程永远在干活，消息队列被灌满 -> 窗口无响应 -> 系统卡死。
+                //   正确做法：查询完成后只更新缓存，不主动 Rebuild。
+                //   下一次正常的定时器刷新（1 秒一次、签名去重）自然会用上新数据。
+                _sqliteLoaded = true;   // 标记已成功加载过一次
             }
             finally { _sqliteLoading = false; }
         }
@@ -942,7 +1033,6 @@ namespace SoulLink.Views
                 catch
                 {
                     // 万一卡片结构异常，退回整页重建（保证至少能用）
-                    _lastSignature = "";
                     Rebuild();
                 }
             };
