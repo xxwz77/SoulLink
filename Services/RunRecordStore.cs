@@ -286,6 +286,25 @@ namespace SoulLink.Services
             get { try { return Core.Value.PendingWriteCount; } catch { return 0; } }
         }
 
+
+        /// <summary>
+        /// ★ t68：查某账号在指定日期（yyyy-MM-dd，本地时间）有多少条 run 记录。
+        ///
+        /// 用途：回填前置检查「数据库是否缺失」—— 用户明确要求回填必须有依据：
+        ///   「需要日志存在且数据库缺失」。
+        /// 只有日志、没有库记录时才回填，不是无脑重复扫描。
+        ///
+        /// 与 QueryRunsAsync 的区别：这个只 COUNT(*)，不拉数据，开销极小；
+        /// 而且是**同步**的（回填扫描在 ServiceTick 里，异步反而不方便）。
+        /// </summary>
+        public static Task<int> CountRunsOnDayAsync(string account, string day, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(account) || string.IsNullOrWhiteSpace(day))
+                return Task.FromResult(0);
+            try { return Core.Value.CountRunsOnDayAsync(account, day, ct); }
+            catch { return Task.FromResult(0); }
+        }
+
         public static void AddRoute(RouteRecord row)
         {
             if (row == null || string.IsNullOrWhiteSpace(row.RouteId) || string.IsNullOrWhiteSpace(row.RunId)
@@ -1436,6 +1455,23 @@ DELETE FROM raw_event WHERE
             {
                 get { try { return _queue.Count; } catch { return 0; } }
             }
+
+
+            /// <summary>
+            /// ★ t68：某账号某天的 run 条数（回填的「库缺失」判据）。
+            /// ★ 走 EnqueueQuery（与其它查询一致的串行队列），**不自己开连接** ——
+            ///   避免与写线程抢 SQLite 锁，也复用同一套降级/重试。
+            /// </summary>
+            internal Task<int> CountRunsOnDayAsync(string account, string day, CancellationToken ct = default)
+                => EnqueueQuery<int>(db =>
+                {
+                    using var cmd = db.CreateCommand();
+                    cmd.CommandText = "SELECT COUNT(*) FROM run WHERE account=$a AND start_day=$d;";
+                    cmd.Parameters.AddWithValue("$a", account);
+                    cmd.Parameters.AddWithValue("$d", day);
+                    object? o = cmd.ExecuteScalar();
+                    return o == null || o == DBNull.Value ? 0 : Convert.ToInt32(o);
+                }, 0, ct);
 
             internal bool WaitForWritesDrain(TimeSpan timeout)
             {

@@ -1588,8 +1588,26 @@ namespace SoulLink.Services
             if (run.Route != null)
             {
                 string evictState = run.Route.HasError ? "Failed" : "Interrupted";
-                long evictEnd = run.Route.StartAtMs > 0 && run.LastEventMs > 0
-                    ? Math.Min(run.LastEventMs, atMs) : atMs;
+
+                // ★★ t69 修复（route 层负时长，实测 -1651s / -28047s）：
+                //
+                //   原算法：evictEnd = min(run.LastEventMs, atMs)
+                //   意图是对的（不能晚于新路线的开始），但**漏了下界**。
+                //   回填历史日志时 run.LastEventMs 可能远早于 run.Route.StartAtMs
+                //   （跨天分段、日志乱序），于是 evictEnd < StartAtMs → 负时长。
+                //   实测：start=09:11:06 / end=08:43:35（diff -1651s）；
+                //        最严重一条 diff -28047s（7.8 小时）。
+                //   虽然有「夹到 0」的防线不至于脏库，但每秒一条 ERROR 日志刷屏，
+                //   而且真实时长信息本来就丢了（本该 >0 的被记成 0）。
+                //
+                //   修法：**下界钳到 StartAtMs**。语义上「这条路线至少持续了 0 秒」，
+                //   永远不会算出负数；同时保留 min(LastEventMs, atMs) 的上界语义。
+                long evictEnd = atMs;
+                if (run.Route.StartAtMs > 0 && run.LastEventMs > 0)
+                    evictEnd = Math.Min(run.LastEventMs, atMs);
+                if (run.Route.StartAtMs > 0 && evictEnd < run.Route.StartAtMs)
+                    evictEnd = run.Route.StartAtMs;   // ★ 下界：绝不早于开始
+
                 CloseRouteLocked(run, run.Route, evictState, evictEnd, 0);
                 run.Route = null;
             }
@@ -1689,6 +1707,10 @@ namespace SoulLink.Services
 
         private static void CloseRouteLocked(OpenRun run, OpenRoute route, string state, long endMs, long durMs)
         {
+            // ★★ t69 兜底：**所有**关路线的路径都在这里收口，
+            //   所以在这里做最后一道下界钳制 —— 哪怕上游算错了，也绝不写负时长。
+            //   （上游 StartRoute 的挤掉逻辑已单独修，这里是防御性的第二层。）
+            if (route.StartAtMs > 0 && endMs < route.StartAtMs) endMs = route.StartAtMs;
             RunRecordStore.CloseRoute(new RouteClose
             {
                 RouteId = route.RouteId,

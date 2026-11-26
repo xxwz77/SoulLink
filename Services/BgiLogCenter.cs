@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using SoulLink.Models;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace SoulLink.Services
 {
@@ -617,10 +618,82 @@ namespace SoulLink.Services
             public int FileIndex;
             public long Offset;                    // 当前文件内的读取偏移
             public bool Initialized;               // 是否已扫描过待办列表
+
+            // ★★ t68（用户明确要求的三条保护机制）：
+
+            /// <summary>
+            /// 失败计数。**同一文件连续失败达到上限就放弃它，不再重试。**
+            /// 用户原话：「失败不继续，也不再重试」。
+            /// 为什么按文件计数而不是全局：一份日志坏了不该拖累其它文件；
+            /// 但也不能无限重试同一份坏文件把日志刷爆。
+            /// </summary>
+            public int FailStreak;
+
+            /// <summary>连续失败上限。达到即把该文件标记为「放弃」并前进。</summary>
+            public const int MaxFailStreak = 3;
+
+            /// <summary>
+            /// 本次会话已消耗的回填时间（毫秒）。**总量封顶后天内不再继续。**
+            /// 用户原话：「性能占用一定要控制」。
+            /// 极端情况（21 天 900MB）也不允许长时间吃 CPU —— 用完预算就停，
+            /// 下次启动重新计算（cursor 已落盘，不会重做）。
+            /// </summary>
+            public long SpentMs;
+
+            /// <summary>单次会话回填总预算：5 分钟。超出即优雅停止。</summary>
+            public const long SessionBudgetMs = 5 * 60 * 1000;
+
+            /// <summary>是否已因超预算/连续失败而停止（本会话不再推进）。</summary>
+            public bool Suspended;
+
+            /// <summary>放弃的文件名列表（只用于日志与诊断，不参与推进）。</summary>
+            public List<string> GaveUp = new();
         }
 
         private static readonly Dictionary<string, BackfillState> Backfills =
             new(StringComparer.OrdinalIgnoreCase);
+
+
+        /// <summary>
+        /// ★ t68：异步核查「游标已读完但库里没数据」的日志文件，补进回填队列。
+        ///
+        /// 用户明确要求：**回填必须有依据 —— 日志存在且数据库缺失**。
+        /// 只有「日志读过了」不够，还要确认「库里真的有这天的记录」。
+        ///
+        /// ★ 全程异步，不阻塞 ServiceTick。★ 失败静默（回填是尽力而为）。
+        /// </summary>
+        private static async Task CheckMissingDaysAsync(Entry e, List<string> files, BackfillState bs)
+        {
+            try
+            {
+                await Task.Delay(3000).ConfigureAwait(false);   // 让启动先忙完
+                foreach (string f in files)
+                {
+                    if (string.IsNullOrWhiteSpace(f)) continue;
+                    if (bs.Pending.Contains(f)) continue;        // 已在待办里
+                    if (!RunRecordCollector.TryFileDay(f, out long fileDayMs)) continue;
+
+                    string day = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                        .AddMilliseconds(fileDayMs).ToLocalTime().ToString("yyyy-MM-dd");
+
+                    int cnt = 0;
+                    try { cnt = await RunRecordStore.CountRunsOnDayAsync(e.UserName, day).ConfigureAwait(false); }
+                    catch { continue; }
+
+                    if (cnt <= 0)
+                    {
+                        lock (Sync)
+                        {
+                            if (!bs.Pending.Contains(f)) bs.Pending.Add(f);
+                            bs.Pending.Sort(StringComparer.Ordinal);   // 保持按文件名（=日期）升序
+                        }
+                        LogBus.Info("采集·历史回填补充", e.UserName + " " + Path.GetFileName(f)
+                            + " 库中无 " + day + " 的记录，安排回填");
+                    }
+                }
+            }
+            catch { }
+        }
 
         /// <summary>
         /// 推进一小片历史回填（每次 Step 调一次）。返回 true 表示本次有进展（供 Changed 事件）。
@@ -669,23 +742,69 @@ namespace SoulLink.Services
                         //   LoadCursor 返回 -1 表示没游标，从 0 开始；
                         //   返回 >=0 且 < 长度 表示没采完，从游标处继续；
                         //   返回 == 长度 才是真采完了。
+                        // ★★ t68（用户要求「回填要有依据：日志存在且数据库缺失」）：
+                        //
+                        //   原来只看游标 —— 后果是：如果数据库被清空（或换库）但 cursor 还在，
+                        //   那天的数据**永远补不回来**（因为 cursor 说「采过了」）。
+                        //   实测过这个坑：清空 run.db 后 11-25 只有 14 条，怎么重启都不补。
+                        //
+                        //   现在三重依据：
+                        //     ① 日志文件存在且非空；
+                        //     ② 游标 < 文件长度（没读完）；**或** 该日期在库里零记录（库缺失）；
+                        //     ③ 文件名日期在回填窗口内（ListRecentLogs 已保证）。
                         long cur = IngestCursorStore.LoadCursor(e.AccountId, f);
                         long lenNow = 0;
                         try { lenNow = new FileInfo(f).Length; } catch { }
-                        if (cur < 0 || (lenNow > 0 && cur < lenNow)) bs.Pending.Add(f);
+                        if (lenNow <= 0) continue;                       // ① 空文件跳过
+
+                        bool notFullyRead = cur < 0 || cur < lenNow;     // ② 没读完
+
+                        // ★★ t68：**不在 tick 里同步查库**（会阻塞 ServiceTick）。
+                        //   这里只按「游标没读完」筛选；「库里缺该日数据」的判定
+                        //   交给独立的异步补查（见 CheckMissingDaysAsync），
+                        //   由它在后台一次性算完再补进 Pending。
+                        if (notFullyRead) bs.Pending.Add(f);
                     }
                     if (bs.Pending.Count > 0)
                         LogBus.Ok("采集·历史回填", e.UserName + " 待回填 " + bs.Pending.Count
                             + " 份历史日志（低优先级后台进行，每秒约 1MB）");
+
+                    // ★★ t68（用户要求「回填要有依据：日志存在且数据库缺失」）：
+                    //   **异步**核查「游标已读完、但库里没有该日数据」的文件，
+                    //   补进 Pending。
+                    //
+                    //   为什么异步：查 COUNT(*) 要走 EnqueueQuery（单线程写队列），
+                    //   在 1Hz 的 ServiceTick 里同步等待它会阻塞采集线程 ——
+                    //   那正是我 t63 修掉的坑，不能又踩回去。
+                    //
+                    //   为什么要查：游标只说明「日志被读过」，不说明「数据在库里」。
+                    //   清库/换库后游标仍在，那天的数据就永远补不回来（实测过）。
+                    _ = CheckMissingDaysAsync(e, files, bs);
                 }
                 catch { }
                 return false;   // 本 tick 只做初始化，不干活
+            }
+
+            // ★★ t68：熔断 —— 本会话已超预算或已停止，直接返回。
+            //   用户要求「性能占用一定要控制」，所以宁可少采也不长期占用。
+            if (bs.Suspended) return false;
+            if (bs.SpentMs >= BackfillState.SessionBudgetMs)
+            {
+                if (!bs.Suspended)
+                {
+                    bs.Suspended = true;
+                    LogBus.Warn("采集·历史回填暂停", e.UserName + " 已达单次上限 "
+                        + (BackfillState.SessionBudgetMs / 60000) + " 分钟，剩余 "
+                        + Math.Max(0, bs.Pending.Count - bs.FileIndex) + " 份下次启动继续");
+                }
+                return false;
             }
 
             // ② 没有待办 → 结束
             if (bs.FileIndex >= bs.Pending.Count) return false;
 
             string current = bs.Pending[bs.FileIndex];
+            var sliceSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 var fi = new FileInfo(current);
@@ -797,10 +916,29 @@ namespace SoulLink.Services
             }
             catch (Exception ex)
             {
-                LogBus.Warn("采集·历史回填失败", e.UserName + " " + Path.GetFileName(current)
-                    + "：" + ex.GetType().Name);
-                bs.FileIndex++; bs.Offset = 0;   // 跳过这份，不卡住整个流程
+                // ★★ t68（用户要求「失败不继续，也不再重试」）：
+                //   同一文件连续失败 MaxFailStreak 次 → **放弃它**，前进到下一个。
+                //   不是无限重试：日志刷屏 + 白烧 CPU 都不可接受。
+                bs.FailStreak++;
+                if (bs.FailStreak >= BackfillState.MaxFailStreak)
+                {
+                    bs.GaveUp.Add(Path.GetFileName(current));
+                    LogBus.Warn("采集·历史回填放弃", e.UserName + " " + Path.GetFileName(current)
+                        + " 连续失败 " + bs.FailStreak + " 次（" + ex.GetType().Name + "），本会话不再重试");
+                    bs.FileIndex++; bs.Offset = 0; bs.FailStreak = 0;
+                }
+                else
+                {
+                    LogBus.Warn("采集·历史回填失败", e.UserName + " " + Path.GetFileName(current)
+                        + "：" + ex.GetType().Name + "（第 " + bs.FailStreak + "/"
+                        + BackfillState.MaxFailStreak + " 次）");
+                }
                 return false;
+            }
+            finally
+            {
+                // 累计本次消耗（用于总量封顶）
+                bs.SpentMs += sliceSw.ElapsedMilliseconds;
             }
         }
 
