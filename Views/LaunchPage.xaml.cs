@@ -1184,9 +1184,21 @@ namespace SoulLink.Views
                 parts.Add(route);
             }
 
-            // ② 今日收益
+            // ② 今日收益（这里只显示 records 文件里的那一组，
+            //    完整的分组+汇总在数据中心页；主界面保持简洁）
             if (st.DogfoodExp > 0) parts.Add("经验 +" + FormatNum(st.DogfoodExp));
             if (st.DogfoodMora > 0) parts.Add("摩拉 +" + FormatNum(st.DogfoodMora));
+
+            // ③ 其他组（如联机狗粮）的收益汇总（2026-11-26 用户要求主界面显示总数）
+            long otherExp = st.Today.DogfoodOtherExp;
+            long otherMora = st.Today.DogfoodOtherMora;
+            if (otherExp > 0 || otherMora > 0)
+            {
+                var extra = new List<string>();
+                if (otherExp > 0) extra.Add("经验 +" + FormatNum(otherExp));
+                if (otherMora > 0) extra.Add("摩拉 +" + FormatNum(otherMora));
+                parts.Add("其他组 " + string.Join("/", extra));
+            }
 
             return string.Join(" · ", parts);
         }

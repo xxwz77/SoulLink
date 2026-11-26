@@ -79,6 +79,19 @@ namespace SoulLink.Services
         /// <summary>本 run 内实际完成的轮次数（同一启动内可跑多轮）。</summary>
         public int RoundCount { get; set; }
 
+        // ── 狗粮收益（2026-11-26 用户要求）──────────────────────────────
+        //   来源是日志锚点，**不写死组名**（用户：别人配置组名字可能不一样，按日志格式来）：
+        //     · `分解可获得经验: N`      → 经验（同组内取**最后一次**）
+        //     · `X收益：经验 …，摩拉 N`  → 摩拉（同业取最后一次）
+        //   为什么取最后一次：狗粮类配置组开跑时会先「清空背包」分解一次
+        //   （实测 04:00 分解出 35 万经验，那是背包容量不是本轮收益），
+        //   真正的本轮收益在结束前最后那次分解（实测 04:37 的 61740）。
+        //   7 天数据全部符合此规律，且与 AAA 脚本写进 records/*.txt 的值一致。
+        /// <summary>本 run 的狗粮经验（分解可获得经验，取最后一次；0 = 无）。</summary>
+        public long DogfoodExp { get; set; }
+        /// <summary>本 run 的狗粮摩拉（收益行，取最后一次；0 = 无）。</summary>
+        public long DogfoodMora { get; set; }
+
         public string Detail { get; set; } = "";
     }
 
@@ -182,6 +195,9 @@ namespace SoulLink.Services
         public int RoundTotal { get; set; }
         public string RoundHost { get; set; } = "";
         public int RoundCount { get; set; }
+        /// <summary>狗粮收益（关闭时落最终值；0 = 该组无此数据）。</summary>
+        public long DogfoodExp { get; set; }
+        public long DogfoodMora { get; set; }
         public long Exp { get; set; }
         public long Mora { get; set; }
         public int Picks { get; set; }
@@ -1181,7 +1197,7 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
 
         private const string RunColumns = @"SELECT run_id,account,group_name,start_at_ms,end_at_ms,dur_ms,state,
             script_count,exp,mora,picks,src_file_start,src_file_end,start_day,end_day,is_cross_day,is_backfilled,detail,
-            planned_routes,day_split,pick_unattributed,round_index,round_total,round_host,round_count FROM run";
+            planned_routes,day_split,pick_unattributed,round_index,round_total,round_host,round_count,dogfood_exp,dogfood_mora FROM run";
 
         private static List<RunRecord> ReadOpenRuns(SqliteConnection db, string? account)
         {
@@ -1216,7 +1232,9 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             RoundIndex = r.FieldCount > 21 && !r.IsDBNull(21) ? r.GetInt32(21) : 0,
             RoundTotal = r.FieldCount > 22 && !r.IsDBNull(22) ? r.GetInt32(22) : 0,
             RoundHost = r.FieldCount > 23 && !r.IsDBNull(23) ? r.GetString(23) : "",
-            RoundCount = r.FieldCount > 24 && !r.IsDBNull(24) ? r.GetInt32(24) : 0
+            RoundCount = r.FieldCount > 24 && !r.IsDBNull(24) ? r.GetInt32(24) : 0,
+            DogfoodExp = r.FieldCount > 25 && !r.IsDBNull(25) ? r.GetInt64(25) : 0,
+            DogfoodMora = r.FieldCount > 26 && !r.IsDBNull(26) ? r.GetInt64(26) : 0
         };
 
         private static RouteRecord ReadRoute(SqliteDataReader r) => new()
@@ -1245,11 +1263,11 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
                 (run_id,account,group_name,start_at_ms,end_at_ms,dur_ms,state,script_count,exp,mora,picks,
                  src_file_start,src_file_end,start_day,end_day,is_cross_day,is_backfilled,detail,
                  planned_routes,day_split,pick_unattributed,
-                 round_index,round_total,round_host,round_count)
+                 round_index,round_total,round_host,round_count,dogfood_exp,dogfood_mora)
                 VALUES($id,$account,$group,$start,$end,$dur,$state,$scripts,$exp,$mora,$picks,
                  $srcStart,$srcEnd,$startDay,$endDay,$cross,$backfilled,$detail,
                  $planned,$daySplit,$pickUnattr,
-                 $rdIdx,$rdTotal,$rdHost,$rdCount);";
+                 $rdIdx,$rdTotal,$rdHost,$rdCount,$dfExp,$dfMora);";
             Add(cmd,"$id",row.RunId); Add(cmd,"$account",row.Account); Add(cmd,"$group",row.GroupName);
             Add(cmd,"$start",row.StartAtMs); Add(cmd,"$end",row.EndAtMs); Add(cmd,"$dur",row.DurMs);
             Add(cmd,"$state",row.State); Add(cmd,"$scripts",row.ScriptCount); Add(cmd,"$exp",row.Exp);
@@ -1260,6 +1278,7 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             Add(cmd,"$pickUnattr",row.PickUnattributed);
             Add(cmd,"$rdIdx",row.RoundIndex); Add(cmd,"$rdTotal",row.RoundTotal);
             Add(cmd,"$rdHost",row.RoundHost); Add(cmd,"$rdCount",row.RoundCount);
+            Add(cmd,"$dfExp",row.DogfoodExp); Add(cmd,"$dfMora",row.DogfoodMora);
             Add(cmd,"$detail",row.Detail); cmd.ExecuteNonQuery();
         }
 
@@ -1315,6 +1334,8 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
                 round_total=CASE WHEN $rdTotal>0 THEN $rdTotal ELSE round_total END,
                 round_host=CASE WHEN $rdHost<>'' THEN $rdHost ELSE round_host END,
                 round_count=CASE WHEN $rdCount>0 THEN $rdCount ELSE round_count END,
+                dogfood_exp=CASE WHEN $dfExp>0 THEN $dfExp ELSE dogfood_exp END,
+                dogfood_mora=CASE WHEN $dfMora>0 THEN $dfMora ELSE dogfood_mora END,
                 exp=$exp,mora=$mora,picks=$picks WHERE run_id=$id AND end_at_ms IS NULL;";
             Add(cmd,"$id",close.RunId); Add(cmd,"$end",close.EndAtMs); Add(cmd,"$state",close.State);
             Add(cmd,"$detail",close.Detail); Add(cmd,"$src",close.SrcFileEnd); Add(cmd,"$endDay",close.EndDay);
@@ -1323,6 +1344,7 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             Add(cmd,"$planned",close.PlannedRoutes);
             Add(cmd,"$rdIdx",close.RoundIndex); Add(cmd,"$rdTotal",close.RoundTotal);
             Add(cmd,"$rdHost",close.RoundHost); Add(cmd,"$rdCount",close.RoundCount);
+            Add(cmd,"$dfExp",close.DogfoodExp); Add(cmd,"$dfMora",close.DogfoodMora);
             Add(cmd,"$exp",close.Exp); Add(cmd,"$mora",close.Mora); Add(cmd,"$picks",close.Picks);
             cmd.ExecuteNonQuery();
         }
@@ -1690,7 +1712,8 @@ CREATE TABLE IF NOT EXISTS run (
  start_day TEXT NOT NULL DEFAULT '',end_day TEXT NOT NULL DEFAULT '',is_cross_day INTEGER NOT NULL DEFAULT 0,
  is_backfilled INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '',
  round_index INTEGER NOT NULL DEFAULT 0,round_total INTEGER NOT NULL DEFAULT 0,
- round_host TEXT NOT NULL DEFAULT '',round_count INTEGER NOT NULL DEFAULT 0);
+ round_host TEXT NOT NULL DEFAULT '',round_count INTEGER NOT NULL DEFAULT 0,
+ dogfood_exp INTEGER NOT NULL DEFAULT 0,dogfood_mora INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS route (
  route_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES run(run_id) ON DELETE CASCADE,
  kind TEXT NOT NULL,name TEXT NOT NULL,parent_route_id TEXT,start_at_ms INTEGER NOT NULL,end_at_ms INTEGER,
@@ -1762,6 +1785,9 @@ CREATE TABLE IF NOT EXISTS raw_event (
             EnsureColumn(db,"run","round_total","INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(db,"run","round_host","TEXT NOT NULL DEFAULT ''");
             EnsureColumn(db,"run","round_count","INTEGER NOT NULL DEFAULT 0");
+            // 狗粮收益（2026-11-26）：来自日志锚点，空组保持 0。
+            EnsureColumn(db,"run","dogfood_exp","INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn(db,"run","dogfood_mora","INTEGER NOT NULL DEFAULT 0");
             // 初版已使用自然键；若部署过草稿库，仅补缺失列，不删除已有行。
             EnsureColumn(db,"run","src_file_end","TEXT NOT NULL DEFAULT ''");
             EnsureColumn(db,"run","end_day","TEXT NOT NULL DEFAULT ''");

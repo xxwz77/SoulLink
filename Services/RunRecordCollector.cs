@@ -164,6 +164,23 @@ namespace SoulLink.Services
         private static readonly Regex RxRoundMultiWorld = new(
             @"\[多世界\]\s*第\s*(?<idx>\d+)/(?<total>\d+)\s*轮[，,]\s*房主\s*[:：]\s*""(?<host>[^""]*)""", RegexOptions.Compiled);
 
+        // ── 狗粮收益锚点（2026-11-26）────────────────────────────────────
+        //   ★ 用户要求「别人配置组名字可能跟我不一样，按日志格式来」→ 纯按格式匹配，
+        //     **绝不写死组名**；归属交给「当前打开的 run」（AccumPick 同一套机制）。
+        //
+        //   实测 BGI + AAA 脚本的固定输出：
+        //     `分解可获得经验: 61740`
+        //     `思收益：经验 未识别，摩拉 19400`   （前缀是脚本作者名，会变）
+        //
+        //   ★ 为什么取「最后一次」而不是累加：狗粮类组开跑时会先清空背包分解一次
+        //     （实测 04:00 分解出 35 万经验 —— 那是背包容量不是本轮收益），
+        //     真正的本轮收益在结束前最后那次分解（实测 04:37 的 61740）。
+        //     7 天实测数据全部符合此规律。
+        private static readonly Regex RxDogfoodExp = new(
+            @"分解可获得经验\s*[:：]\s*(?<v>\d+)", RegexOptions.Compiled);
+        private static readonly Regex RxDogfoodMora = new(
+            @"收益[：:]\s*经验\s*\S+\s*[，,]\s*摩拉\s*(?<v>\d+)", RegexOptions.Compiled);
+
         // 路线结束：无「耗时」的脚本执行结束，name 等于当前打开的路线
         private static readonly Regex RxScriptEndPlain = new(
             @"→\s*脚本执行结束\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
@@ -239,6 +256,12 @@ namespace SoulLink.Services
             public string RoundHost = "";
             /// <summary>本 run 内已见过的最大轮序号（收尾时作为 round_count）。</summary>
             public int RoundSeen;
+            // ── 狗粮收益（2026-11-26）────────────────────────────────────
+            //   取「最后一次」而非累加：开跑前清空背包那次分解不是本轮收益。
+            /// <summary>狗粮经验（分解可获得经验，后写覆盖前写 = 取最后一次）。</summary>
+            public long DogfoodExp;
+            /// <summary>狗粮摩拉（收益行，后写覆盖前写）。</summary>
+            public long DogfoodMora;
         }
 
         /// <summary>当前打开的路线/脚本窗口（嵌套：route 挂在 script 下）。</summary>
@@ -1071,6 +1094,20 @@ namespace SoulLink.Services
                 if (n > 0)
                     events.Add(new Ev { Pos = lineStart + plan.Index, Apply = () => SetPlannedRoutes(user, n, srcFile) });
             }
+            // ── 狗粮收益锚点（2026-11-26）────────────────────────────────────
+            //   纯按日志格式匹配、不认组名。同一次运行内出现多次时
+            //   AccumDogfoodGain 用「后写覆盖」实现取最后一次（= 本轮真实收益）。
+            foreach (Match m in RxDogfoodExp.Matches(line))
+            {
+                if (!long.TryParse(m.Groups["v"].Value, out long dfExp)) continue;
+                events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumDogfoodGain(user, dfExp, 0, srcFile) });
+            }
+            foreach (Match m in RxDogfoodMora.Matches(line))
+            {
+                if (!long.TryParse(m.Groups["v"].Value, out long dfMora)) continue;
+                events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumDogfoodGain(user, 0, dfMora, srcFile) });
+            }
+
             // ── 轮次锚点（2026-11-26）────────────────────────────────────────
             //   两种写法各出现一次；同一轮重复触发是幂等的（只覆盖同样的 N/M/host）。
             foreach (Match m in RxRoundBracket.Matches(line))
@@ -1667,6 +1704,8 @@ namespace SoulLink.Services
                 RoundTotal = run.RoundTotal,
                 RoundHost = run.RoundHost,
                 RoundCount = run.RoundSeen,
+                DogfoodExp = run.DogfoodExp,
+                DogfoodMora = run.DogfoodMora,
                 EndDay = DayOf(end),
                 // O5：跨天分段两段都置 1（「参与跨天分段」语义，非纯日历判断）
                 IsCrossDay = daySplit || DayOf(run.StartAtMs) != DayOf(end),
@@ -2089,6 +2128,23 @@ namespace SoulLink.Services
             if (total > 0) run.RoundTotal = total;
             if (host.Length > 0) run.RoundHost = host;
             if (idx > run.RoundSeen) run.RoundSeen = idx;
+            run.DirtyRun = true;
+        }
+
+        /// <summary>
+        /// ★ 狗粮收益（2026-11-26）：`分解可获得经验: N` / `X收益：经验 …，摩拉 N`。
+        /// ★ 用户明确：只记**第二次**（=最后一次）的收益 —— 第一次是开跑前清空背包，
+        ///   分解出来的是背包容量不是本轮收益（实测 35 万 vs 6 万）。
+        ///   实现上就是「后写覆盖前写」，天然取最后一次，不需要判断次数。
+        /// ★ 不写死组名：哪个组在跑就记到哪个组（用户：别人组名可能不一样）。
+        /// </summary>
+        private static void AccumDogfoodGain(string user, long exp, long mora, string srcFile)
+        {
+            if (!OpenRuns.TryGetValue(user, out var run) || run == null) return;
+            // 跨文件串扰保护：历史文件的收益不能记到今天的 run 上。
+            if (!IsSameDayAsOpenRun(run, srcFile)) return;
+            if (exp > 0) run.DogfoodExp = exp;      // 覆盖 = 取最后一次
+            if (mora > 0) run.DogfoodMora = mora;   // 覆盖 = 取最后一次
             run.DirtyRun = true;
         }
 

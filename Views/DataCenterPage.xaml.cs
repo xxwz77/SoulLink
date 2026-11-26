@@ -865,6 +865,24 @@ namespace SoulLink.Views
                                 || oldRuns[^1].EndAtMs != todayRuns[^1].EndAtMs)))
                             changed = true;
                         _sqliteTodayRuns[st.UserName] = todayRuns;
+
+                        // ★ 2026-11-26 用户要求「主界面汇总显示总数」：
+                        //   把 run.db 里各组解析到的狗粮收益汇总到 st.Today。
+                        //   ★ 只累加「除 records 那一组之外」的组（DogfoodOtherExp），
+                        //     避免与 records/*.txt 的口径重复计算（records 值已单独显示）。
+                        try
+                        {
+                            long otherExp = 0, otherMora = 0;
+                            foreach (var r in todayRuns)
+                            {
+                                if (r.DogfoodExp <= 0 && r.DogfoodMora <= 0) continue;
+                                otherExp += r.DogfoodExp;
+                                otherMora += r.DogfoodMora;
+                            }
+                            st.Today.DogfoodOtherExp = otherExp;
+                            st.Today.DogfoodOtherMora = otherMora;
+                        }
+                        catch { }
                     }
                     catch { _sqliteTodayRuns[st.UserName] = Array.Empty<SoulLink.Services.RunRecord>(); }
                 }
@@ -1300,15 +1318,91 @@ namespace SoulLink.Views
                      + "\n日期：" + (rec.Date.Length == 0 ? "—" : rec.Date)
                      + "\n经验：" + rec.Exp.ToString("N0") + " · 摩拉：" + rec.Mora.ToString("N0")
                      + "\n" + (rec.Reason.Length == 0 ? "记录读取正常" : rec.Reason)
-                     + "\n今日日志统计（00:00 日界）：经验 " + st.Today.DogfoodExp.ToString("N0")
-                     + " / 摩拉 " + st.Today.DogfoodMora.ToString("N0")
-                     + " / 拾取 " + st.Today.PickTotal.ToString("N0") + " 件"
                      + "\n" + DescribeDogfoodFreshness(st)
                      + "\n" + st.DogfoodRecordPath,
                 FontSize = 10.5, TextWrapping = TextWrapping.Wrap,
                 Foreground = (Brush)FindResource("TextSecondary"), Margin = new Thickness(0, 5, 0, 0)
             });
+
+            // ── 今日各组收益分解（2026-11-26 用户要求：两个数据分别显示 + 汇总，共三行）──
+            //   数据来自 run.db 的 dogfood_exp/dogfood_mora（采集层按日志格式解析）。
+            //   ★ 不写死组名：哪个组产出了收益就列哪个组（用户：别人组名可能不一样）。
+            var breakdown = BuildDogfoodBreakdown(st);
+            if (breakdown != null) panel.Children.Add(breakdown);
+
             return panel;
+        }
+
+        /// <summary>
+        /// ★ 2026-11-26 用户要求：把各组的狗粮收益「分别显示 + 汇总」，一共三行。
+        ///   数据来自 run.db（采集层按日志格式 `分解可获得经验` / `收益：…摩拉 N` 解析，
+        ///   取每组最后一次 = 本轮真实收益，第一次是清空背包不算）。
+        ///   ★ 组名完全来自数据，不写死 —— 用户换了组名照样能显示。
+        /// </summary>
+        private UIElement? BuildDogfoodBreakdown(AccountState st)
+        {
+            try
+            {
+                if (!_sqliteTodayRuns.TryGetValue(st.UserName, out var runs) || runs == null || runs.Count == 0)
+                    return null;
+
+                // 只取有狗粮收益的 run，按组聚合（同组多次 → 累加，因为每次都是独立的一轮收益）
+                var byGroup = new Dictionary<string, (long Exp, long Mora)>(StringComparer.OrdinalIgnoreCase);
+                foreach (var r in runs)
+                {
+                    if (r.DogfoodExp <= 0 && r.DogfoodMora <= 0) continue;
+                    string g = string.IsNullOrWhiteSpace(r.GroupName) ? "（未标注组）" : r.GroupName;
+                    byGroup.TryGetValue(g, out var cur);
+                    byGroup[g] = (cur.Exp + r.DogfoodExp, cur.Mora + r.DogfoodMora);
+                }
+                if (byGroup.Count == 0) return null;
+
+                var grid = new Grid { Margin = new Thickness(0, 6, 0, 0) };
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                int row = 0;
+                void AddRow(string label, long exp, long mora, bool bold)
+                {
+                    grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                    var brush = bold ? (Brush)FindResource("TextPrimary") : (Brush)FindResource("TextSecondary");
+                    var w = bold ? FontWeights.SemiBold : FontWeights.Normal;
+                    var cells = new[]
+                    {
+                        label,
+                        exp > 0 ? exp.ToString("N0") : "—",
+                        mora > 0 ? mora.ToString("N0") : "—",
+                    };
+                    for (int c = 0; c < cells.Length; c++)
+                    {
+                        var tb = new TextBlock
+                        {
+                            Text = cells[c], FontSize = 10.5, Foreground = brush, FontWeight = w,
+                            Margin = new Thickness(0, 2, 8, 2),
+                        };
+                        Grid.SetRow(tb, row); Grid.SetColumn(tb, c);
+                        grid.Children.Add(tb);
+                    }
+                    row++;
+                }
+
+                // 表头
+                AddRow("组（经验 / 摩拉）", 0, 0, false);
+                // 各组一行
+                long totalExp = 0, totalMora = 0;
+                foreach (var kv in byGroup.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    AddRow(kv.Key, kv.Value.Exp, kv.Value.Mora, false);
+                    totalExp += kv.Value.Exp;
+                    totalMora += kv.Value.Mora;
+                }
+                // 合计行
+                AddRow("合计", totalExp, totalMora, true);
+
+                return grid;
+            }
+            catch { return null; }
         }
 
         private UIElement BuildHotkeyTable(BgiAccountData data)

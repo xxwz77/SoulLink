@@ -25,8 +25,16 @@ namespace SoulLink.Services
         //   否则同一个数字会被算两遍。
         /// <summary>今日狗粮获得经验（累加）。</summary>
         public long DogfoodExp;
+        /// <summary>
+        /// ★ 2026-11-26：**其他组**（如联机狗粮）的狗粮收益，与 DogfoodExp 分开记。
+        ///   原来 DogfoodExp 只统计日志里的某些锚点，和「狗粮批发」的 records 值容易混淆。
+        ///   这里单独累加，主界面可显示「records 值 + 其他组值」。
+        /// </summary>
+        public long DogfoodOtherExp;
         /// <summary>今日狗粮获得摩拉（累加）。</summary>
         public long DogfoodMora;
+        /// <summary>★ 2026-11-26：其他组的狗粮摩拉收益（见 DogfoodOtherExp）。</summary>
+        public long DogfoodOtherMora;
 
         /// <summary>今日获得经验（兼容旧字段名，供界面使用）。</summary>
         public long ExpGained => DogfoodExp;
