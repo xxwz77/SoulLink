@@ -768,10 +768,31 @@ namespace SoulLink.Services
 
             DayClock clock;
             lock (StateLock) { clock = GetClock(user); }
-            if (clock.FileDayMs == 0 && !TryFileDay(srcFile, out clock.FileDayMs))
+
+            // ★★ t77 修复（实测：今天的日志里出现 11-24 的时间戳，导致数据串天）：
+            //
+            //   原逻辑：`if (clock.FileDayMs == 0 && !TryFileDay(...))` —— 只在**没设置过**时才设。
+            //   而回填历史文件时 OnFileChanged 会把 clock.FileDayMs 改到历史那一天（如 11-24），
+            //   回填完成后**没有恢复**。此后喂今天的日志，绝对时刻 = 11-24 + [10:12:27]，
+            //   于是今天的数据被算成 11-24 —— 实测 route 表里 4 条今天写入的记录落在 11-24。
+            //
+            //   修法：**每次 Feed 都按 srcFile 校验**。文件名日期与 clock 不一致就重置天轴
+            //   （LastRawMs 也归零，避免时钟倒退误判）。日志文件名自带日期是权威依据。
+            if (TryFileDay(srcFile, out long feedFileDay) && feedFileDay > 0)
+            {
+                if (clock.FileDayMs != feedFileDay)
+                {
+                    lock (StateLock)
+                    {
+                        clock.FileDayMs = feedFileDay;
+                        clock.LastRawMs = long.MinValue;
+                    }
+                }
+            }
+            else if (clock.FileDayMs == 0)
             {
                 // 无文件名日期：退化为当天（只影响时刻精度，不影响归因正确性）
-                clock.FileDayMs = ToMs(DateTime.Now.Date);
+                lock (StateLock) { clock.FileDayMs = ToMs(DateTime.Now.Date); }
             }
 
             long lastMs = clock.LastMs;
@@ -1652,6 +1673,9 @@ namespace SoulLink.Services
         {
             if (!OpenRuns.TryGetValue(user, out var run) || run == null) return;
 
+            // ★★ t76：跨文件串扰保护 —— 历史文件的路线不能挂到今天的 run 上。
+            if (!IsSameDayAsOpenRun(run, srcFile)) return;
+
             // ★★ t51 问题2 修复：同一次执行的「两种锚点」合并 ★★
             //
             //   实测 A4 日志 10/10 配对（见 docs 报告）：
@@ -1851,6 +1875,37 @@ namespace SoulLink.Services
         private static int ParseGroup(Match m, string name)
             => m.Groups[name].Success && int.TryParse(m.Groups[name].Value, out int v) ? v : 0;
 
+
+        /// <summary>
+        /// ★★ t76：判断「事件所属文件」与「当前 open run 的开始日期」是否同一天。
+        ///
+        /// 为什么需要：回填历史日志时，OpenRuns[user] 里是**今天**正在跑的窗口，
+        /// 而 PumpBackfill 喂进来的是 11-22/11-23/11-24 等历史文件的事件。
+        /// 如果不加隔离，历史文件的 route / pick / 收益会全部记到今天的 run 上 ——
+        /// 实测「联机锄地-混合精英」一条 run 被塞进 4 天的数据：
+        ///   route 3421 条（11-22:1004 + 11-23:1140 + 11-24:1213 + 11-26:64）
+        ///   pick_event 42648 条（11-22:24906 + 11-23:8251 + 11-24:9206 + 11-26:287）
+        ///   picks 12008（实际今天只有 1）
+        ///
+        /// 用户原则：「数据中心应该记录最真实最可靠的结果」。
+        /// 串台比缺失更糟 —— 缺失能看出来，串台看不出来。
+        ///
+        /// ★ 判据用**日志文件名自带的日期**（TryFileDay），这是最权威的依据。
+        /// </summary>
+        private static bool IsSameDayAsOpenRun(OpenRun run, string srcFile)
+        {
+            try
+            {
+                if (run == null || run.StartAtMs <= 0) return true;   // 无基线时不拦（保持旧行为）
+                if (!TryFileDay(srcFile, out long fileDay)) return true;  // 解析不出日期时不拦
+                long runDay = new DateTimeOffset(DateTime.SpecifyKind(
+                    DateTimeOffset.FromUnixTimeMilliseconds(run.StartAtMs).LocalDateTime.Date,
+                    DateTimeKind.Local)).ToUnixTimeMilliseconds();
+                return fileDay == runDay;
+            }
+            catch { return true; }
+        }
+
         /// <summary>
         /// t6 三类拾取：kind=picked/no_target/skipped。
         /// picked 计 run.Picks 与 route.PickCount（语义不变）；no_target/skipped 只进三分类计数与
@@ -1870,6 +1925,13 @@ namespace SoulLink.Services
                 }
                 return;
             }
+
+            // ★★ t76：**跨文件串扰保护** —— 历史文件（11-22 等）的拾取绝不能记到今天的 run 上。
+            //   实测：这条保护缺失导致「联机锄地-混合精英」一天就记了 12008 次拾取
+            //   （实际只有 1 次），route 3421 条横跨 4 天。
+            //   不记入 OrphanPicks 也不算丢弃 —— 历史那天的 run 会在回填自己那天时重建。
+            if (!IsSameDayAsOpenRun(run, srcFile)) return;
+
             run.LastEventMs = Math.Max(run.LastEventMs, atMs);
 
             string? routeId = null;
@@ -1915,9 +1977,11 @@ namespace SoulLink.Services
             });
         }
 
-        private static void AccumReward(string user, long exp, long mora, long atMs)
+        private static void AccumReward(string user, long exp, long mora, long atMs, string srcFile = "")
         {
             if (!OpenRuns.TryGetValue(user, out var run) || run == null) return;
+            // ★★ t76：跨文件串扰保护 —— 历史文件的收益不能记到今天的 run 上。
+            if (srcFile.Length > 0 && !IsSameDayAsOpenRun(run, srcFile)) return;
             run.Exp += exp;
             run.Mora += mora;
             run.LastEventMs = Math.Max(run.LastEventMs, atMs);
