@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.WebSockets;
@@ -45,6 +46,14 @@ namespace SoulLink.Relay
         private static HttpListener? _listener;
         private static CancellationTokenSource? _cts;
         private static int _port;
+        private static readonly ConcurrentDictionary<HttpListenerResponse, byte> ActiveStreams = new();
+        private static readonly ConcurrentDictionary<WebSocket, byte> ActiveInputs = new();
+
+        internal static void CloseRemoteConnections()
+        {
+            foreach (var response in ActiveStreams.Keys) try { response.Abort(); } catch { }
+            foreach (var socket in ActiveInputs.Keys) try { socket.Abort(); } catch { }
+        }
 
         /// <summary>正在监听的端口（0 = 未启动）。</summary>
         internal static int Port => _listener?.IsListening == true ? _port : 0;
@@ -152,8 +161,6 @@ namespace SoulLink.Relay
         {
             try
             {
-                // 在同步入口先加载依赖，避免 async 路由的 JIT 异常穿过最外层 catch。
-                if (ctx.Request.Url?.AbsolutePath == "/stream") EnsureVideoDependencies();
                 Task task = HandleAsync(ctx);
                 if (task.IsCompleted) task.GetAwaiter().GetResult();
                 else _ = task.ContinueWith(t => OnRequestFailed(ctx, t.Exception?.GetBaseException()
@@ -261,6 +268,12 @@ namespace SoulLink.Relay
                 return;
             }
 
+            if (!SessionRecorder.RemoteControlEnabled && path != "/api/info")
+            {
+                await WriteText(ctx, 403, "网页远控已关闭").ConfigureAwait(false);
+                return;
+            }
+
             if (path == "/api/info")
             {
                 // ★ P1-A2：回显真实抓屏几何（尺寸 + 虚拟桌面原点），供网页端与 norm() 基准自检
@@ -273,6 +286,7 @@ namespace SoulLink.Relay
                     session = _sessionId,
                     pid = Environment.ProcessId,
                     port = _port,
+                    remoteControlEnabled = SessionRecorder.RemoteControlEnabled,
                     // ★ P0 传输层：流协议版本。网页端据此决定 /stream 是否带 v=2（帧边界）。
                     streamVersion = StreamProtocolVersion,
                     // ★ 当前实际生效的抓屏后端（DXGI-DDA / WGC / BitBlt），网页端用于「配置的 vs 实际」对照显示。
@@ -304,7 +318,6 @@ namespace SoulLink.Relay
 
             if (path == "/stream")
             {
-                // 同步入口已经做过依赖预检；这里继续兜底其他依赖的加载失败。
                 try { EnsureVideoDependencies(); }
                 catch (Exception ex)
                 {
@@ -414,6 +427,11 @@ namespace SoulLink.Relay
             byte[]? jpeg = null;
             try { jpeg = SessionRecorder.CaptureJpegOnce(75); } catch { }
 
+            if (!SessionRecorder.RemoteControlEnabled)
+            {
+                await WriteText(ctx, 403, "网页远控已关闭").ConfigureAwait(false);
+                return;
+            }
             if (jpeg == null || jpeg.Length == 0)
             {
                 await WriteText(ctx, 404, "缓冲里没有帧").ConfigureAwait(false);
@@ -448,7 +466,11 @@ namespace SoulLink.Relay
         private static async Task WriteStreamAsync(HttpListenerContext ctx)
         {
             if (!SessionRecorder.TrySubscribe(out int viewerId, out byte[]? initial, out string error))
-                throw new InvalidOperationException("共享视频管线不可用：" + error);
+            {
+                await WriteText(ctx, SessionRecorder.RemoteControlEnabled ? 503 : 403, error).ConfigureAwait(false);
+                return;
+            }
+            ActiveStreams.TryAdd(ctx.Response, 0);
             try
             {
                 if (initial == null)
@@ -456,7 +478,7 @@ namespace SoulLink.Relay
                     var wait = System.Diagnostics.Stopwatch.StartNew();
                     // 软件 MFT 可能先缓冲若干输入帧才产生 IDR；等待期不占用编码线程。
                     long lastNudge = -1000;   // ★ P1 加固：距上次主动请求 IDR 的毫秒，防高频重复
-                    while (initial == null && wait.ElapsedMilliseconds < 25000)
+                    while (initial == null && SessionRecorder.HasViewer(viewerId) && wait.ElapsedMilliseconds < 25000)
                     {
                         initial = SessionRecorder.ReadViewerFrame(viewerId);
                         if (initial == null)
@@ -471,7 +493,7 @@ namespace SoulLink.Relay
                                 SessionRecorder.RequestKeyFrameUnthrottled();
                                 lastNudge = wait.ElapsedMilliseconds;
                             }
-                            await Task.Delay(20).ConfigureAwait(false);
+                            await SessionRecorder.WaitForFrameAsync(viewerId, 500).ConfigureAwait(false);
                         }
                     }
                 }
@@ -480,6 +502,11 @@ namespace SoulLink.Relay
                     string detail = SessionRecorder.StreamReadiness;
                     LogFailure("[stream] 首帧等待超时：" + detail);
                     await WriteText(ctx, 503, "视频尚未就绪：" + detail).ConfigureAwait(false);
+                    return;
+                }
+                if (!SessionRecorder.HasViewer(viewerId))
+                {
+                    await WriteText(ctx, 403, "网页远控已关闭").ConfigureAwait(false);
                     return;
                 }
                 ctx.Response.StatusCode = 200;
@@ -502,7 +529,7 @@ namespace SoulLink.Relay
                 {
                     await WriteFrameAsync(initial).ConfigureAwait(false);
                     frames++;
-                    while (true)
+                    while (SessionRecorder.HasViewer(viewerId))
                     {
                         byte[]? nal = SessionRecorder.ReadViewerFrame(viewerId);
                         if (nal != null)
@@ -513,13 +540,17 @@ namespace SoulLink.Relay
                         // ★ P0（2026-11-24）：事件驱动等帧替代 Task.Delay(10) 轮询。
                         //   帧入队即被 SessionRecorder.WaitForFrame 的内核信号唤醒，消除每帧平均 +5ms（最坏 +10ms）轮询延迟税；
                         //   真阻塞（零 CPU 空转）。1000ms 兜底超时仅覆盖 worker 异常停止的边界（正常有观众时 500ms 保活帧必醒）。
-                        else SessionRecorder.WaitForFrame(viewerId, 1000);
+                        else await SessionRecorder.WaitForFrameAsync(viewerId, 1000).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex) { LogFailure("[stream] 客户端断开 frames=" + frames + "：" + ex); }
                 finally { try { ctx.Response.Close(); } catch (Exception ex) { Log("[stream] 关闭响应异常：" + ex.Message); } }
             }
-            finally { SessionRecorder.Unsubscribe(viewerId); }
+            finally
+            {
+                ActiveStreams.TryRemove(ctx.Response, out _);
+                SessionRecorder.Unsubscribe(viewerId);
+            }
         }
 
         /// <summary>
@@ -603,6 +634,7 @@ namespace SoulLink.Relay
         /// </summary>
         private static object ExecuteInput(string body)
         {
+            if (!SessionRecorder.RemoteControlEnabled) return new { ok = false, error = "网页远控已关闭" };
             var dto = System.Text.Json.JsonSerializer.Deserialize<InputDto>(body,
                 new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             if (dto == null) return new { ok = false, error = "请求格式错误" };
@@ -796,34 +828,40 @@ namespace SoulLink.Relay
             {
                 var wsCtx = await ctx.AcceptWebSocketAsync(null).ConfigureAwait(false);
                 using var ws = wsCtx.WebSocket;
-                var buffer = new byte[64 * 1024];
-                while (ws.State == WebSocketState.Open)
+                ActiveInputs.TryAdd(ws, 0);
+                try
                 {
-                    WebSocketReceiveResult result;
-                    using (var ms = new MemoryStream())
+                    var buffer = new byte[64 * 1024];
+                    while (SessionRecorder.RemoteControlEnabled && ws.State == WebSocketState.Open)
                     {
-                        do
+                        WebSocketReceiveResult result;
+                        using (var ms = new MemoryStream())
                         {
-                            result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).ConfigureAwait(false);
-                            ms.Write(buffer, 0, result.Count);
-                        } while (!result.EndOfMessage);
+                            do
+                            {
+                                result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).ConfigureAwait(false);
+                                ms.Write(buffer, 0, result.Count);
+                            } while (!result.EndOfMessage);
 
-                        if (result.MessageType == WebSocketMessageType.Close)
-                        {
-                            try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None).ConfigureAwait(false); } catch { }
-                            break;
+                            if (result.MessageType == WebSocketMessageType.Close)
+                            {
+                                try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None).ConfigureAwait(false); } catch { }
+                                break;
+                            }
+                            if (result.MessageType != WebSocketMessageType.Text) continue;   // 只接受文本 JSON 指令
+                            if (!SessionRecorder.RemoteControlEnabled) break;
+
+                            string body = Encoding.UTF8.GetString(ms.ToArray());
+                            object respObj;
+                            try { respObj = ExecuteInput(body); }
+                            catch (Exception ex) { respObj = new { ok = false, error = ex.Message }; }
+                            string respJson = System.Text.Json.JsonSerializer.Serialize(respObj);
+                            var respBytes = Encoding.UTF8.GetBytes(respJson);
+                            await ws.SendAsync(new ArraySegment<byte>(respBytes), WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
                         }
-                        if (result.MessageType != WebSocketMessageType.Text) continue;   // 只接受文本 JSON 指令
-
-                        string body = Encoding.UTF8.GetString(ms.ToArray());
-                        object respObj;
-                        try { respObj = ExecuteInput(body); }
-                        catch (Exception ex) { respObj = new { ok = false, error = ex.Message }; }
-                        string respJson = System.Text.Json.JsonSerializer.Serialize(respObj);
-                        var respBytes = Encoding.UTF8.GetBytes(respJson);
-                        await ws.SendAsync(new ArraySegment<byte>(respBytes), WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
                     }
                 }
+                finally { ActiveInputs.TryRemove(ws, out _); }
             }
             catch (Exception ex)
             {

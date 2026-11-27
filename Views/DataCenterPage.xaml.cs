@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Threading;
 using System.Threading.Tasks;
 using SoulLink.Services;
 
@@ -23,7 +24,9 @@ namespace SoulLink.Views
     {
         private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
         private bool _active;
-        private readonly Dictionary<string, string> _sharedSignatures = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, BgiAccountData> _bgiSnapshots = new(StringComparer.OrdinalIgnoreCase);
+        private readonly SemaphoreSlim _bgiSnapshotGate = new(1, 1);
+        private DateTime _lastBgiSnapshotAt;
 
         /// <summary>上一轮渲染依据的数据签名；相同就不重建视觉树。</summary>
         private string _lastSignature = "";
@@ -56,6 +59,8 @@ namespace SoulLink.Views
         private readonly Dictionary<string, (List<MiyousheRole> Roles, string DefaultRole, string Reason)> _miyousheRoles
             = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _miyousheRolesLoading = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, ComboBox> _miyousheRoleBoxes = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<ComboBox> _fillingMiyousheRoles = new();
         /// <summary>账号 → 当前活在视觉树里的状态文本块（异步回来只改它自己）。</summary>
         private readonly Dictionary<string, TextBlock> _miyousheBlocks
             = new(StringComparer.OrdinalIgnoreCase);
@@ -232,7 +237,7 @@ namespace SoulLink.Views
             _timer.Tick += (_, __) =>
             {
                 if (!IsVisible) return;
-                SharedDataChanged();
+                _ = RefreshBgiSnapshotsAsync();
 
                 // ★★ t70：**先原地刷新时间戳**（不重建视觉树），再做签名判断。
                 //   这样即使签名没变（结构没变），用户也能看到「数据在采」。
@@ -270,24 +275,44 @@ namespace SoulLink.Views
             };
         }
 
+        private bool _loadingMoraInterval;
+
         public void Activate()
         {
+            _loadingMoraInterval = true;
+            try
+            {
+                int minutes = App.Config?.Settings?.MiyousheLedgerIntervalMinutes ?? 60;
+                MoraIntervalBox.SelectedIndex = MiyousheHost.LedgerIntervalHours(minutes) - 1;
+            }
+            finally { _loadingMoraInterval = false; }
+
             try { _timer.Start(); } catch { }
+            _ = RefreshBgiSnapshotsAsync();
             Rebuild();
         }
 
-        private void BtnRefresh_Click(object sender, RoutedEventArgs e)
+        private void MoraInterval_Changed(object sender, SelectionChangedEventArgs e)
         {
+            if (_loadingMoraInterval || MoraIntervalBox.SelectedIndex < 0 || App.Config?.Settings == null) return;
+
+            int minutes = (MoraIntervalBox.SelectedIndex + 1) * 60;
+            if (App.Config.Settings.MiyousheLedgerIntervalMinutes == minutes) return;
+            App.Config.Settings.MiyousheLedgerIntervalMinutes = minutes;
+            ConfigStore.Save(App.Config);
+        }
+
+        private async void BtnRefresh_Click(object sender, RoutedEventArgs e)
+        {
+            BtnRefresh.IsEnabled = false;
             try
             {
-                AccountStateCenter.RefreshNow(App.Config);
-                BgiDataCenter.RefreshAll(AccountScope.Accounts(App.Config).Select(a => a.UserName));
-                _sharedSignatures.Clear();
-                // ★ t2：用户点「刷新」= 显式要求重读，连米游社缓存一起作废
-                //   （正常情况下缓存只增不改，否则又回到「每次重建都重读」的闪烁老路）。
+                await RefreshBgiSnapshotsAsync(force: true);
                 _miyoushe.Clear();
-            } catch { }
-            Rebuild();
+                _miyousheRoles.Clear();
+                _lastSignature = "";
+            }
+            finally { BtnRefresh.IsEnabled = true; }
         }
 
         // ── 渲染 ─────────────────────────────────────────────────────
@@ -322,6 +347,7 @@ namespace SoulLink.Views
                 //   留着只会让异步结果写到一个已脱离视觉树的 TextBlock（既无效又占内存）。
                 //   缓存 _miyoushe 本身**不清**：它就是用来跨重建保持值稳定的。
                 _miyousheBlocks.Clear();
+                _miyousheRoleBoxes.Clear();
                 _liveStamps.Clear();   // t70：旧 TextBlock 即将丢弃，引用不能留
                 CardList.Children.Clear();
 
@@ -373,19 +399,43 @@ namespace SoulLink.Views
             return false;
         }
 
-        private bool SharedDataChanged()
+        private async Task RefreshBgiSnapshotsAsync(bool force = false)
         {
-            bool changed = false;
-            foreach (var st in AccountStateCenter.All())
+            if (force)
+                await _bgiSnapshotGate.WaitAsync();
+            else if ((DateTime.UtcNow - _lastBgiSnapshotAt).TotalSeconds < 5 || !_bgiSnapshotGate.Wait(0))
+                return;
+            _lastBgiSnapshotAt = DateTime.UtcNow;
+            try
             {
-                var d = BgiDataCenter.Get(st.UserName);
-                string signature = d.ExePath + "|" + d.CancelTaskHotkey + "|" + d.Error
-                    + "|" + string.Join(",",d.OneDragonConfigs) + "|" + string.Join(",",d.ScriptGroups);
-                if (_sharedSignatures.TryGetValue(st.UserName,out var old) && old == signature) continue;
-                _sharedSignatures[st.UserName] = signature; changed = true;
+                var config = App.Config;
+                string[] users = AccountScope.Accounts(config).Select(a => a.UserName)
+                    .Where(user => !string.IsNullOrWhiteSpace(user)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                var snapshots = await Task.Run(() =>
+                {
+                    if (force) AccountStateCenter.RefreshNow(config);
+                    return users.Select(user => force ? BgiDataCenter.Refresh(user) : BgiDataCenter.Get(user)).ToArray();
+                });
+                bool changed = _bgiSnapshots.Count != snapshots.Length;
+                foreach (var snapshot in snapshots)
+                {
+                    if (!_bgiSnapshots.TryGetValue(snapshot.UserName, out var previous)
+                        || !string.Equals(SnapshotSignature(previous), SnapshotSignature(snapshot), StringComparison.Ordinal))
+                        changed = true;
+                }
+
+                _bgiSnapshots.Clear();
+                foreach (var snapshot in snapshots) _bgiSnapshots[snapshot.UserName] = snapshot;
+                if (changed) _lastSignature = "";
             }
-            return changed;
+            catch (Exception ex) { App.AppendErrorLog("DataCenter.BgiSnapshots", ex); }
+            finally { _bgiSnapshotGate.Release(); }
         }
+
+        private static string SnapshotSignature(BgiAccountData data)
+            => data.ExePath + "|" + data.CancelTaskHotkey + "|" + data.Error
+                + "|" + string.Join(",", data.OneDragonConfigs) + "|" + string.Join(",", data.ScriptGroups)
+                + "|" + string.Join(",", data.DisplayHotkeys.Select(item => item.Name + "=" + item.Key));
 
         private UIElement BuildCard(AccountState st)
         {
@@ -456,7 +506,8 @@ namespace SoulLink.Views
             AddRow(grid, row++, "BGI", st.BgiRunning
                 ? ("运行中  PID " + st.BgiPid)
                 : "未运行");
-            var shared = BgiDataCenter.Get(st.UserName);
+            var shared = _bgiSnapshots.TryGetValue(st.UserName, out var snapshot)
+                ? snapshot : new BgiAccountData { UserName = st.UserName, ExePath = st.BgiPath };
             AddRow(grid, row++, "BGI 路径", shared.ExePath.Length == 0 ? "未设置" : shared.ExePath, mono: true);
             AddRow(grid, row++, "配置目录", shared.RootPath.Length == 0 ? "—" : shared.DirectoryOf("User"), mono: true);
             // ★ t61：恢复完整名单（我 t60 擅自改成只显示数量，用户要求还原）。
@@ -589,6 +640,7 @@ namespace SoulLink.Views
                 MiyousheCredentialStore.Delete(st.UserName, "os");
                 // 删除后强制重读一次（缓存作废，但**不**整页重建）
                 _miyoushe.Remove(st.UserName);
+                _miyousheRoles.Remove(st.UserName);
                 _ = RefreshMiyousheAsync(st.UserName, force: true);
             };
             panel.Children.Add(btnDel);
@@ -604,24 +656,26 @@ namespace SoulLink.Views
                 FontSize = 10.5,
                 Margin = new Thickness(10, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-                ToolTip = "该米游社账号绑定的原神角色；选中即设为默认（签到/拉取优先用它）",
+                ToolTip = "选择用来拉取摩拉流水的默认原神角色",
                 Visibility = Visibility.Collapsed   // 读到角色后再显示
             };
+            _miyousheRoleBoxes[st.UserName] = roleBox;
             roleBox.SelectionChanged += async (_, __) =>
             {
+                if (_fillingMiyousheRoles.Contains(roleBox)) return;
                 if (roleBox.SelectedItem is ComboBoxItem item && item.Tag is string uid && uid.Length > 0)
                 {
+                    if (string.Equals(MiyousheService.GetDefaultRole(st.UserName), uid, StringComparison.OrdinalIgnoreCase))
+                        return;
+                    roleBox.IsEnabled = false;
                     try
                     {
-                        await MiyousheService.SetDefaultRoleAsync(st.UserName, uid, default).ConfigureAwait(true);
-                        _miyousheRoles.Remove(st.UserName);       // 作废缓存，下次重读
-                        _ = RefreshMiyousheRolesAsync(st.UserName, roleBox);
+                        bool saved = await MiyousheService.SetDefaultRoleAsync(st.UserName, uid, default).ConfigureAwait(true);
+                        if (!saved) ThemedMessage.Error(Window.GetWindow(this), "米游社", "设置默认角色失败。");
+                        await RefreshMiyousheRolesAsync(st.UserName).ConfigureAwait(true);
                     }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show("设置默认角色失败：" + ex.Message, "米游社",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
-                    }
+                    catch (Exception ex) { App.AppendErrorLog("DataCenter.DefaultRole", ex); }
+                    finally { roleBox.IsEnabled = true; }
                 }
             };
             panel.Children.Add(roleBox);
@@ -638,7 +692,7 @@ namespace SoulLink.Views
             //     ① 有缓存 → **同步**填充 + 显示（重建当拍就有内容，零等待）；
             //     ② 无缓存 → 先给一个「读取中…」占位项让它**立刻可见**，异步回来再替换；
             //     ③ 角色数据参与 BuildSignature（见下方），避免无意义的整页重建。
-            if (_miyousheRoles.TryGetValue(st.UserName, out var cachedRoles) && cachedRoles.Roles.Count > 0)
+            if (_miyousheRoles.TryGetValue(st.UserName, out var cachedRoles))
             {
                 FillRoleBox(roleBox, cachedRoles.Roles, cachedRoles.DefaultRole);   // 同步，当拍可见
             }
@@ -649,7 +703,7 @@ namespace SoulLink.Views
                 roleBox.Items.Add(new ComboBoxItem { Content = "（读取角色中…）", IsEnabled = false });
                 roleBox.SelectedIndex = 0;
                 roleBox.Visibility = Visibility.Visible;
-                _ = RefreshMiyousheRolesAsync(st.UserName, roleBox);
+                _ = RefreshMiyousheRolesAsync(st.UserName);
             }
             // ★ t2：只有「还没有缓存」或「强制刷新」时才发起异步读取。
             //   原来无条件 `_ = RefreshMiyousheAsync(status, ...)`：页面每次重建都多发一次
@@ -665,12 +719,13 @@ namespace SoulLink.Views
         /// </summary>
         private void FillRoleBox(ComboBox box, List<MiyousheRole> roles, string defaultRole)
         {
+            _fillingMiyousheRoles.Add(box);
             try
             {
                 box.Items.Clear();
-                if (roles == null || roles.Count <= 1)
+                if (roles.Count == 0)
                 {
-                    box.Visibility = Visibility.Collapsed;   // 只有 0~1 个角色，不需要切换
+                    box.Visibility = Visibility.Collapsed;
                     return;
                 }
 
@@ -686,26 +741,31 @@ namespace SoulLink.Views
                         && string.Equals(r.GameUid, defaultRole, StringComparison.OrdinalIgnoreCase))
                         pick = item;
                 }
-                // 未设默认时选第一个（只是显示，不触发写入）
-                box.SelectedItem = pick ?? box.Items[0];
+                if (pick == null)
+                {
+                    pick = new ComboBoxItem { Content = "请选择默认角色", IsEnabled = false };
+                    box.Items.Insert(0, pick);
+                }
+                box.SelectedItem = pick;
                 box.Visibility = Visibility.Visible;
             }
-            catch { }
+            finally { _fillingMiyousheRoles.Remove(box); }
         }
 
         /// <summary>
         /// t59：异步读角色并填充。不整页重建（沿用 t2 的不闪烁原则）。
         /// 同一账号只允许一次在途读取。
         /// </summary>
-        private async Task RefreshMiyousheRolesAsync(string account, ComboBox box)
+        private async Task RefreshMiyousheRolesAsync(string account)
         {
             if (string.IsNullOrWhiteSpace(account)) return;
             if (!_miyousheRolesLoading.Add(account)) return;   // 在途去重
             try
             {
                 var (roles, reason) = await MiyousheService.GetRolesForUiAsync(account, default).ConfigureAwait(true);
-                _miyousheRoles[account] = (roles, MiyousheService.GetDefaultRole(account), reason);
-                FillRoleBox(box, roles, MiyousheService.GetDefaultRole(account));
+                string defaultRole = MiyousheService.GetDefaultRole(account);
+                _miyousheRoles[account] = (roles, defaultRole, reason);
+                if (_miyousheRoleBoxes.TryGetValue(account, out var box)) FillRoleBox(box, roles, defaultRole);
             }
             catch { }
             finally { _miyousheRolesLoading.Remove(account); }
@@ -786,6 +846,7 @@ namespace SoulLink.Views
                 //   任何「异步回来又触发整页重建」的路径都可能自激。这里只作废缓存，
                 //   下一次定时器刷新（1 秒、签名去重）自然会用新数据。最多晚 1 秒，绝不会卡死。
                 _miyoushe.Remove(account);
+                _miyousheRoles.Remove(account);
                 _ = RefreshMiyousheAsync(account, force: true);
             }
             catch (Exception ex)
@@ -813,6 +874,7 @@ namespace SoulLink.Views
                 MessageBox.Show("导入完成：" + outcome.OkCount + " 成功 / " + outcome.FailedCount + " 失败\n" + outcome.Detail, "一键导入", MessageBoxButton.OK, MessageBoxImage.Information);
                 // 导入后凭据变了：作废缓存并强制重读（同样不主动 Rebuild，理由同上）
                 _miyoushe.Remove(account);
+                _miyousheRoles.Remove(account);
                 _ = RefreshMiyousheAsync(account, force: true);
             }
             catch (Exception ex)
@@ -849,22 +911,17 @@ namespace SoulLink.Views
                     if (string.IsNullOrWhiteSpace(st.UserName)) continue;
                     try
                     {
-                        var runs = await SoulLink.Services.RunRecordStore.QueryRunsAsync(st.UserName, 1)
-                            .ConfigureAwait(true);
-                        // t62：RunRecord.StartAtMs 是 UTC 毫秒（见 RunRecordCollector.ToMs），
-                        //   这里必须用同一基准算「今天 0 点」，否则跨时区会筛错。
-                        long today0 = new DateTimeOffset(
-                            DateTime.SpecifyKind(DateTime.Now.Date, DateTimeKind.Local)).ToUniversalTime()
-                            .ToUnixTimeMilliseconds();
-                        var todayRuns = runs.Where(r => r.StartAtMs >= today0 || (r.EndAtMs ?? r.StartAtMs) >= today0).ToList();
-                        // ★ t71：比较条数 + 最后一条的状态，变了才通知界面
-                        if (!_sqliteTodayRuns.TryGetValue(st.UserName, out var oldRuns)
-                            || oldRuns == null || oldRuns.Count != todayRuns.Count
-                            || (todayRuns.Count > 0 && (oldRuns.Count == 0
-                                || oldRuns[^1].State != todayRuns[^1].State
-                                || oldRuns[^1].EndAtMs != todayRuns[^1].EndAtMs)))
-                            changed = true;
-                        _sqliteTodayRuns[st.UserName] = todayRuns;
+                        _sqliteTodayRuns.TryGetValue(st.UserName, out var previous);
+                        var snapshot = await Task.Run(async () =>
+                        {
+                            var runs = await RunRecordStore.QueryRunsAsync(st.UserName, 1).ConfigureAwait(false);
+                            long today0 = new DateTimeOffset(DateTime.Today).ToUnixTimeMilliseconds();
+                            var current = runs.Where(run => run.StartAtMs >= today0
+                                || (run.EndAtMs ?? run.StartAtMs) >= today0).ToList();
+                            return (Current: current, Changed: previous == null || !previous.SequenceEqual(current));
+                        }).ConfigureAwait(true);
+                        changed |= snapshot.Changed;
+                        _sqliteTodayRuns[st.UserName] = snapshot.Current;
 
 
                     }

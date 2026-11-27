@@ -6,6 +6,10 @@ dist-test/
 out/
 publish/
 
+# Independent private mobile repositories
+/SoulLink-Android/
+/SoulLink-iOS/
+
 # tools/: 只忽略构建产物与二进制，源码要进库
 tools/*/bin/
 tools/*/obj/
@@ -188,8 +192,6 @@ _m3.txt
 /Server/
 /.local-server/
 /Android/
-/SoulLink-Android/
-/SoulLink-iOS/
 /docs/HANDOFF-2.17.50-20261121.md
 /docs/HANDOFF-2.18.0-20261121.md
 /docs/HANDOFF-3.0.0-20261121.md

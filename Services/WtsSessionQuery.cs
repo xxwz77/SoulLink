@@ -65,6 +65,9 @@ namespace SoulLink.Services
         private const int WTSConnectState = 8;
         private const int WTSClientName = 10;
 
+        internal static (string User, string Domain) AccountForSession(int sessionId)
+            => (QueryString(sessionId, WTSUserName), QueryString(sessionId, WTSDomainName));
+
         // WTS_CONNECTSTATE_CLASS → 界面用词
         private static string StateText(int state) => state switch
         {

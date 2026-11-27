@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS my_ledger_entry(account TEXT NOT NULL,game_uid TEXT N
  year_month TEXT NOT NULL,kind INTEGER NOT NULL,action_id INTEGER NOT NULL,action TEXT NOT NULL DEFAULT '',
  num INTEGER,single_mora INTEGER,count INTEGER,time_text TEXT NOT NULL DEFAULT '',ts_ms INTEGER,raw_json TEXT NOT NULL,source TEXT NOT NULL,
  fetched_date TEXT NOT NULL DEFAULT '',source_ordinal INTEGER NOT NULL DEFAULT 0,
- fetched_at_ms INTEGER NOT NULL,PRIMARY KEY(account,game_uid,kind,action_id,time_text,raw_json,source_ordinal));
+ pull_confirmed INTEGER NOT NULL DEFAULT 0,fetched_at_ms INTEGER NOT NULL,PRIMARY KEY(account,game_uid,kind,action_id,time_text,raw_json,source_ordinal));
 CREATE TABLE IF NOT EXISTS my_ledger_day(account TEXT NOT NULL,game_uid TEXT NOT NULL,day TEXT NOT NULL,kind INTEGER NOT NULL,
  primogems INTEGER,mora INTEGER,raw_json TEXT NOT NULL,source TEXT NOT NULL,fetched_at_ms INTEGER NOT NULL,
  PRIMARY KEY(account,game_uid,day));
@@ -119,9 +119,16 @@ CREATE TABLE IF NOT EXISTS my_ledger_month(account TEXT NOT NULL,game_uid TEXT N
 CREATE TABLE IF NOT EXISTS my_cred_state(account TEXT PRIMARY KEY,state TEXT NOT NULL DEFAULT 'ok',
  detail TEXT NOT NULL DEFAULT '',updated_at_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_my_entry_account_time ON my_ledger_entry(account,game_uid,ts_ms);
+CREATE TABLE IF NOT EXISTS my_mora_route_income(
+ entry_rowid INTEGER PRIMARY KEY,account TEXT NOT NULL,game_uid TEXT NOT NULL,entry_ts_ms INTEGER NOT NULL,
+ amount INTEGER NOT NULL,run_id TEXT,route_id TEXT,route_name TEXT,route_start_ms INTEGER,route_end_ms INTEGER,
+ checked_at_ms INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_mora_income_route ON my_mora_route_income(account,run_id,route_id)
+ WHERE route_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS my_pull_log(batch_id TEXT PRIMARY KEY,account TEXT NOT NULL,game_uid TEXT NOT NULL,
 state TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',pages INTEGER NOT NULL DEFAULT 0,inserted INTEGER NOT NULL DEFAULT 0,
 started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_my_pull_account_role_time ON my_pull_log(account,game_uid,started_at_ms DESC);
 CREATE TABLE IF NOT EXISTS my_sign_batch(batch_id TEXT PRIMARY KEY,account TEXT NOT NULL,state TEXT NOT NULL,
 started_at_ms INTEGER NOT NULL,ended_at_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS my_sign_task(batch_id TEXT NOT NULL,account TEXT NOT NULL,region TEXT NOT NULL,task_id TEXT NOT NULL,
@@ -134,6 +141,7 @@ CREATE INDEX IF NOT EXISTS ix_my_sign_date ON my_sign_log(account,sign_date);";
             EnsureColumn("my_role", "raw_json", "TEXT NOT NULL DEFAULT '{}'");
             EnsureColumn("my_role", "fetched_at_ms", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn("my_ledger_entry", "source_ordinal", "INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn("my_ledger_entry", "pull_confirmed", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn("my_ledger_entry", "fetched_date", "TEXT NOT NULL DEFAULT ''");
             EnsureColumn("my_ledger_entry", "single_mora", "INTEGER");
             EnsureColumn("my_ledger_entry", "count", "INTEGER");
@@ -275,24 +283,57 @@ source=excluded.source,fetched_at_ms=excluded.fetched_at_ms;";
                 return cmd.ExecuteNonQuery();
             }, 0, ct);
         internal Task<int> SaveLedgerFactsAsync(IReadOnlyList<MiyousheLedgerEntry> entries,
-            IReadOnlyList<MiyousheLedgerDay> days, CancellationToken ct = default)
+            IReadOnlyList<MiyousheLedgerDay> days, CancellationToken ct = default, bool stableOccurrences = false)
             => RunAsync(db =>
             {
                 using var tx = db.BeginTransaction();
                 int inserted = 0;
+                using var confirm = db.CreateCommand();
+                confirm.Transaction = tx;
+                confirm.CommandText = @"SELECT rowid,pull_confirmed FROM my_ledger_entry
+ WHERE account=$a AND game_uid=$u AND kind=$k AND action_id=$ai AND time_text=$tt AND raw_json=$raw
+ ORDER BY source_ordinal LIMIT 1 OFFSET $ord;";
+                using var mark = db.CreateCommand();
+                mark.Transaction = tx;
+                mark.CommandText = "UPDATE my_ledger_entry SET pull_confirmed=1 WHERE rowid=$id;";
+                mark.Parameters.Add("$id", SqliteType.Integer);
                 foreach (var row in entries)
                 {
+                    if (stableOccurrences)
+                    {
+                        confirm.Parameters.Clear();
+                        Add(confirm, "$a", row.Account); Add(confirm, "$u", row.GameUid);
+                        Add(confirm, "$k", row.Kind); Add(confirm, "$ai", row.ActionId);
+                        Add(confirm, "$tt", row.TimeText); Add(confirm, "$raw", row.RawJson);
+                        Add(confirm, "$ord", row.SourceOrdinal);
+                        long? priorId = null;
+                        bool confirmed = false;
+                        using (var reader = confirm.ExecuteReader())
+                            if (reader.Read()) { priorId = reader.GetInt64(0); confirmed = reader.GetBoolean(1); }
+                        if (priorId.HasValue)
+                        {
+                            if (!confirmed)
+                            {
+                                mark.Parameters["$id"].Value = priorId.Value;
+                                mark.ExecuteNonQuery();
+                            }
+                            continue;
+                        }
+                    }
+
                     using var cmd = db.CreateCommand(); cmd.Transaction = tx;
                     cmd.CommandText = @"INSERT OR IGNORE INTO my_ledger_entry(account,game_uid,region,year_month,kind,
-action_id,action,num,single_mora,count,time_text,ts_ms,raw_json,source,fetched_at_ms,fetched_date,source_ordinal)
-VALUES($a,$u,$r,$ym,$k,$ai,$an,$n,$sm,$cnt,$tt,$ts,$raw,$src,$at,$fd,$ord);";
+action_id,action,num,single_mora,count,time_text,ts_ms,raw_json,source,fetched_at_ms,fetched_date,source_ordinal,pull_confirmed)
+VALUES($a,$u,$r,$ym,$k,$ai,$an,$n,$sm,$cnt,$tt,$ts,$raw,$src,$at,$fd,
+ CASE WHEN $stable=0 THEN $ord ELSE COALESCE((SELECT MAX(source_ordinal) FROM my_ledger_entry
+ WHERE account=$a AND game_uid=$u AND kind=$k AND action_id=$ai AND time_text=$tt AND raw_json=$raw),-1)+1 END,$stable);";
                     Add(cmd,"$a",row.Account); Add(cmd,"$u",row.GameUid); Add(cmd,"$r",row.Region);
                     Add(cmd,"$ym",row.YearMonth); Add(cmd,"$k",row.Kind); Add(cmd,"$ai",row.ActionId);
                     Add(cmd,"$an",row.Action); Add(cmd,"$n",row.Num); Add(cmd,"$sm",row.SingleMora); Add(cmd,"$cnt",row.Count);
                     Add(cmd,"$tt",row.TimeText); Add(cmd,"$ts",row.TsMs);
                     Add(cmd,"$raw",row.RawJson); Add(cmd,"$src",row.Source); Add(cmd,"$at",row.FetchedAtMs);
                     Add(cmd,"$fd",row.TsMs.HasValue?DateTimeOffset.FromUnixTimeMilliseconds(row.TsMs.Value).LocalDateTime.ToString("yyyy-MM-dd"):"");
-                    Add(cmd,"$ord",row.SourceOrdinal);
+                    Add(cmd,"$ord",row.SourceOrdinal); Add(cmd,"$stable",stableOccurrences ? 1 : 0);
                     inserted += cmd.ExecuteNonQuery();
                 }
                 foreach (var row in days)
@@ -320,10 +361,8 @@ UNION SELECT account FROM my_sign_log ORDER BY account COLLATE NOCASE;";
                 return list;
             }, Array.Empty<string>(), ct);
 
-        internal async Task<MiyousheArchive> QueryAsync(string account, int limit = 5000, CancellationToken ct = default)
-        {
-            limit = Math.Clamp(limit, 1, 50000);
-            var roles = await RunAsync<IReadOnlyList<MiyousheRole>>(db =>
+        internal Task<IReadOnlyList<MiyousheRole>> QueryRolesAsync(string account, CancellationToken ct = default)
+            => RunAsync<IReadOnlyList<MiyousheRole>>(db =>
             {
                 using var cmd = db.CreateCommand();
                 cmd.CommandText = "SELECT account,game_uid,region,nickname,level FROM my_role WHERE account=$a ORDER BY game_uid;";
@@ -331,7 +370,12 @@ UNION SELECT account FROM my_sign_log ORDER BY account COLLATE NOCASE;";
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read()) list.Add(new(reader.GetString(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetInt32(4)));
                 return list;
-            }, Array.Empty<MiyousheRole>(), ct).ConfigureAwait(false);
+            }, Array.Empty<MiyousheRole>(), ct);
+
+        internal async Task<MiyousheArchive> QueryAsync(string account, int limit = 5000, CancellationToken ct = default)
+        {
+            limit = Math.Clamp(limit, 1, 50000);
+            var roles = await QueryRolesAsync(account, ct).ConfigureAwait(false);
             var entries = await RunAsync<IReadOnlyList<MiyousheLedgerEntry>>(db =>
             {
                 using var cmd = db.CreateCommand();
@@ -385,6 +429,16 @@ FROM my_sign_log WHERE account=$a ORDER BY ts_ms DESC LIMIT 400;";
                 OptLong(r,7),OptLong(r,8),OptInt(r,9),r.GetString(10),OptLong(r,11),r.GetString(12),r.GetString(13),r.GetInt64(14),r.GetInt32(15));
         private static long? OptLong(SqliteDataReader r,int i) => r.IsDBNull(i) ? null : r.GetInt64(i);
         private static int? OptInt(SqliteDataReader r,int i) => r.IsDBNull(i) ? null : r.GetInt32(i);
+
+        internal Task<long?> LatestPullStartAsync(string account, string uid, CancellationToken ct)
+            => RunAsync<long?>(db =>
+            {
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = "SELECT started_at_ms FROM my_pull_log WHERE account=$a AND game_uid=$u ORDER BY started_at_ms DESC LIMIT 1;";
+                Add(cmd, "$a", account);
+                Add(cmd, "$u", uid);
+                return cmd.ExecuteScalar() is long start ? start : null;
+            }, null, ct);
 
         internal Task SavePullStatusAsync(MiyoushePullStatus row,CancellationToken ct=default)
             => RunAsync(db =>

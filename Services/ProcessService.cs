@@ -13,7 +13,7 @@ namespace SoulLink.Services
     public static class ProcessService
     {
         /// <summary>列出某会话中的可见用户进程。</summary>
-        public static List<RemoteProcess> List(int sessionId, bool includeSystem = false)
+        public static List<RemoteProcess> List(int sessionId, bool includeSystem = false, bool includeMemory = false)
         {
             var result = new List<RemoteProcess>();
             foreach (var p in Process.GetProcesses())
@@ -29,13 +29,16 @@ namespace SoulLink.Services
                     string path = SafePath(p);
                     if (!includeSystem && string.IsNullOrEmpty(path)) continue;
 
+                    DateTime started = ReadStart(p);
                     result.Add(new RemoteProcess
                     {
                         Pid = p.Id,
                         Name = name,
                         ExePath = path,
                         Title = SafeTitle(p),
-                        StartTime = SafeStart(p)
+                        StartTime = started == default ? "" : started.ToString("yyyy-MM-dd HH:mm:ss"),
+                        StartFileTime = started == default ? 0 : started.ToFileTimeUtc(),
+                        PrivateBytes = includeMemory ? ReadPrivateBytes(p) : 0
                     });
                 }
                 catch { }
@@ -72,9 +75,14 @@ namespace SoulLink.Services
             try { return p.MainWindowTitle ?? ""; } catch { return ""; }
         }
 
-        private static string SafeStart(Process p)
+        private static DateTime ReadStart(Process p)
         {
-            try { return p.StartTime.ToString("yyyy-MM-dd HH:mm:ss"); } catch { return ""; }
+            try { return p.StartTime; } catch { return default; }
+        }
+
+        private static long ReadPrivateBytes(Process p)
+        {
+            try { return p.PrivateMemorySize64; } catch { return 0; }
         }
 
         /// <summary>根据路径 / 文件名匹配进程（大小写不敏感，全路径优先，退化到文件名）。</summary>

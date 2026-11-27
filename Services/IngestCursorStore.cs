@@ -59,14 +59,17 @@ namespace SoulLink.Services
             if (string.IsNullOrWhiteSpace(account)) return -1;
             try
             {
-                var db = Open();
-                using var cmd = db.CreateCommand();
-                cmd.CommandText = "SELECT cursor FROM ingest_cursor WHERE account=$a AND src_file=$f";
-                cmd.Parameters.AddWithValue("$a", account);
-                cmd.Parameters.AddWithValue("$f", BaseName(srcFile));
-                var v = cmd.ExecuteScalar();
-                if (v == null || v is DBNull) return -1;
-                return Convert.ToInt64(v);
+                lock (Gate)
+                {
+                    var db = Open();
+                    using var cmd = db.CreateCommand();
+                    cmd.CommandText = "SELECT cursor FROM ingest_cursor WHERE account=$a AND src_file=$f";
+                    cmd.Parameters.AddWithValue("$a", account);
+                    cmd.Parameters.AddWithValue("$f", BaseName(srcFile));
+                    var v = cmd.ExecuteScalar();
+                    if (v == null || v is DBNull) return -1;
+                    return Convert.ToInt64(v);
+                }
             }
             catch { return -1; }
         }
@@ -133,15 +136,18 @@ namespace SoulLink.Services
             var list = new List<IngestCursorStatus>();
             try
             {
-                var db = Open();
-                using var cmd = db.CreateCommand();
-                cmd.CommandText = "SELECT account, src_file, cursor, file_length, file_write_ticks, updated_at_ms, first_seen_ms FROM ingest_cursor ORDER BY account, src_file";
-                using var r = cmd.ExecuteReader();
-                while (r.Read())
+                lock (Gate)
                 {
-                    list.Add(new IngestCursorStatus(
-                        r.GetString(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3),
-                        r.GetInt64(4), r.GetInt64(5), r.GetInt64(6)));
+                    var db = Open();
+                    using var cmd = db.CreateCommand();
+                    cmd.CommandText = "SELECT account, src_file, cursor, file_length, file_write_ticks, updated_at_ms, first_seen_ms FROM ingest_cursor ORDER BY account, src_file";
+                    using var r = cmd.ExecuteReader();
+                    while (r.Read())
+                    {
+                        list.Add(new IngestCursorStatus(
+                            r.GetString(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3),
+                            r.GetInt64(4), r.GetInt64(5), r.GetInt64(6)));
+                    }
                 }
             }
             catch { }

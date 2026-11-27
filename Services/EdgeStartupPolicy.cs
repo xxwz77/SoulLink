@@ -1,71 +1,54 @@
 using System;
-using System.Diagnostics;
-using System.IO;
+using System.Collections.Generic;
+using Microsoft.Win32;
 
 namespace SoulLink.Services
 {
-    /// <summary>
-    /// 用户级 Edge 预启动策略（HKCU，class=User）。
-    ///
-    /// ★★ t7a 抽取（2026-11-24）★★
-    ///   原实现 = Services/SessionSlimmer.ApplyUserPolicy。抽取理由：注入代理(SoulLink.Agent.exe)
-    ///   只调用这一个方法（Relay/RelayAgent.cs 启动时），而 SessionSlimmer 其余方法引用 App.Config
-    ///   与 SessionService（主程序 UI 依赖）。抽出来后：主程序与代理共用同一份真实实现，零 stub、零漂移。
-    ///
-    /// 语义：由**代理在目标会话内**调用，写当前进程（代理）自己的 HKCU —— 天然就是目标账号，
-    ///   绕开「宿主挂载已登录用户 NTUSER.DAT 会失败」的死结（路径A）。
-    ///   · 幂等 + 写失败静默降级：绝不抛异常、绝不阻塞代理进入注入循环；失败只落一行日志。
-    ///   · 是否执行由主程序投送时的环境变量 SOULLINK_USER_POLICY 决定（见 RelayAgent.ApplyStartupUserPolicy）。
-    /// </summary>
     public static class EdgeStartupPolicy
     {
-        /// <summary>enable=true 写入禁用；false 删值恢复默认。</summary>
+        private const string EdgeKey = @"SOFTWARE\Policies\Microsoft\Edge";
+        private const string Ownership = @"SOFTWARE\SoulLink\SessionSlim\Edge";
+        private static readonly (string Name, int Value)[] Values = { ("StartupBoostEnabled", 0), ("BackgroundModeEnabled", 0) };
+
         public static void ApplyUserPolicy(bool enable)
         {
-            try
-            {
-                if (enable)
-                {
-                    WriteDword(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled", 0);
-                    WriteDword(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "BackgroundModeEnabled", 0);
-                }
-                else
-                {
-                    DeleteValue(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled");
-                    DeleteValue(@"HKCU\SOFTWARE\Policies\Microsoft\Edge", "BackgroundModeEnabled");
-                }
-            }
-            catch (Exception ex)
-            {
-                // 静默降级：只落日志，不抛出，不阻塞代理主循环。
-                try { SoulLink.Relay.RelayAgent.LogQuiet("EdgeStartupPolicy.ApplyUserPolicy 失败：" + ex.Message); } catch { }
-            }
+            try { ApplyForUser(Registry.CurrentUser, enable); }
+            catch (Exception ex) { SoulLink.Relay.RelayAgent.LogQuiet("Edge 启动项策略失败：" + ex.Message); }
         }
 
-        private static void WriteDword(string keyFullPath, string name, int value)
-            => RunReg(new[] { "add", keyFullPath, "/v", name, "/t", "REG_DWORD", "/d", value.ToString(), "/f" });
+        internal static int ApplyForUser(RegistryKey hive, bool enable) => ApplyOwned(hive, EdgeKey, Ownership, Values, enable);
 
-        private static void DeleteValue(string keyFullPath, string name)
-            => RunReg(new[] { "delete", keyFullPath, "/v", name, "/f" });
-
-        private static void RunReg(string[] args)
+        // Never replace an existing policy. A rollback deletes only values this app owns and that still match.
+        internal static int ApplyOwned(RegistryKey hive, string policyPath, string ownershipPath,
+            IReadOnlyList<(string Name, int Value)> values, bool enable)
         {
-            try
+            using var policy = enable ? hive.CreateSubKey(policyPath) : hive.OpenSubKey(policyPath, writable: true);
+            using var ownership = enable ? hive.CreateSubKey(ownershipPath) : hive.OpenSubKey(ownershipPath, writable: true);
+            if (policy == null || ownership == null) return 0;
+
+            int changed = 0;
+            foreach (var (name, value) in values)
             {
-                var psi = new ProcessStartInfo("reg.exe")
+                object? current = policy.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                if (enable)
                 {
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                };
-                foreach (var a in args) psi.ArgumentList.Add(a);
-                using var p = Process.Start(psi);
-                p?.StandardOutput.ReadToEnd();
-                p?.StandardError.ReadToEnd();
-                p?.WaitForExit(8000);
+                    if (current != null) continue;
+                    ownership.SetValue(name, value, RegistryValueKind.DWord);
+                    try { policy.SetValue(name, value, RegistryValueKind.DWord); }
+                    catch { ownership.DeleteValue(name, false); throw; }
+                    changed++;
+                }
+                else if (ownership.GetValue(name) is int written && written == value)
+                {
+                    if (current is int actual && actual == written)
+                    {
+                        policy.DeleteValue(name, false);
+                        changed++;
+                    }
+                    ownership.DeleteValue(name, false);
+                }
             }
-            catch { }
+            return changed;
         }
     }
 }

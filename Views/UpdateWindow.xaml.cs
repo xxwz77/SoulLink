@@ -107,7 +107,7 @@ namespace SoulLink.Views
         /// <summary>把内部异常翻译成用户能看懂的说法（不泄露发布地址）。</summary>
         private static string FriendlyError(Exception ex)
         {
-            if (ex is InvalidOperationException &&
+            if (ex is InvalidDataException &&
                 ex.Message.Contains("校验", StringComparison.Ordinal))
                 return "下载的文件校验不通过，请重试。";
             if (ex is HttpRequestException || ex is TaskCanceledException)
@@ -147,13 +147,12 @@ namespace SoulLink.Views
                     Arguments = string.Join(" ",
                         "--pid", Environment.ProcessId.ToString(),
                         "--root", Quote(dir),
+                        "--exe", Quote(Path.GetFileName(self)),
                         "--package", Quote(downloadedPackage))
                 };
-                Process.Start(psi);
+                Process.Start(psi)?.Dispose();
 
                 DialogResult = true;
-                Close();
-                Application.Current?.Shutdown();
             }
             catch (Exception)
             {

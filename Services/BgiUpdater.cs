@@ -73,7 +73,8 @@ namespace SoulLink.Services
             List<Target> targets, string archivePath, bool backupUser,
             Action<string> log,
             IProgress<Progress>? progress = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            bool requireClosedBgi = false)
         {
             var results = new Dictionary<string, UpdateResult>();
             foreach (var t in targets)
@@ -96,35 +97,19 @@ namespace SoulLink.Services
 
                 // ── ① 停进程（并行）──
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                Log("═══ ① 停止 BGI 和茶包助手 ═══");
-
-                var sessions = await SessionService.QueryAsync().ConfigureAwait(false);
-                var sessionMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-                foreach (var t in targets)
+                if (requireClosedBgi)
                 {
-                    var sess = SessionService.Find(sessions, t.UserName);
-                    if (sess != null) sessionMap[t.UserName] = sess.Id;
+                    Log("═══ ① 检查目标 BGI 是否已退出 ═══");
+                    await Task.Run(() => EnsureUpdateTargetsClosed(targets), ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    Log("═══ ① 停止 BGI 和茶包助手 ═══");
+                    await StopTargetsAsync(targets, Log, ct).ConfigureAwait(false);
+                    await Task.Delay(1200, ct).ConfigureAwait(false);
                 }
 
-                await Task.WhenAll(targets.Select(async t =>
-                {
-                    if (!sessionMap.TryGetValue(t.UserName, out int sid))
-                    {
-                        Log("│ [" + t.UserName + "] 没有会话，跳过停机");
-                        return;
-                    }
-
-                    Log("│ [" + t.UserName + "] 停止当前脚本并关闭 BGI / 茶包助手…");
-                    var guard = await BgiStartGuard.BeforeStartAsync(sid, t.BgiExePath, ct).ConfigureAwait(false);
-                    Log("│   [" + t.UserName + "] " + guard.Message);
-                    if (!guard.Ok) throw new InvalidOperationException(t.UserName + "：" + guard.Message);
-                    KillInSession(TeaBagProcessName, sid,
-                        s => Log("│   [" + t.UserName + "] " + s));
-                })).ConfigureAwait(false);
-
                 ct.ThrowIfCancellationRequested();
-                await Task.Delay(1200, ct).ConfigureAwait(false);
                 Log("│ ① 耗时 " + Sec(sw) + " 秒");
 
                 // ── ② 备份 User（并行）──
@@ -173,7 +158,12 @@ namespace SoulLink.Services
                 if (fileCount == 0)
                     throw new InvalidOperationException("更新包里没有文件，包可能不对");
 
+                if (requireClosedBgi && !File.Exists(Path.Combine(contentRoot, "BetterGI.exe")))
+                    throw new InvalidDataException("便携包中未找到 BetterGI.exe，无法应用更新。");
                 Log("│ ③ 耗时 " + Sec(sw) + " 秒，共 " + fileCount + " 个文件");
+
+                if (requireClosedBgi)
+                    await Task.Run(() => EnsureUpdateTargetsClosed(targets), ct).ConfigureAwait(false);
 
                 // ── ④ 并行复制到各 BGI 目录 ──
                 Log("");
@@ -244,6 +234,71 @@ namespace SoulLink.Services
             }
 
             return results.Values.ToList();
+        }
+
+        private static async Task StopTargetsAsync(List<Target> targets, Action<string> log, CancellationToken ct)
+        {
+            var sessions = await SessionService.QueryAsync().ConfigureAwait(false);
+            await Task.WhenAll(targets.Select(async target =>
+            {
+                var session = SessionService.Find(sessions, target.UserName);
+                if (session == null)
+                {
+                    log("│ [" + target.UserName + "] 没有会话，跳过停机");
+                    return;
+                }
+
+                log("│ [" + target.UserName + "] 停止当前脚本并关闭 BGI / 茶包助手…");
+                var guard = await BgiStartGuard.BeforeStartAsync(session.Id, target.BgiExePath, ct).ConfigureAwait(false);
+                log("│   [" + target.UserName + "] " + guard.Message);
+                if (!guard.Ok) throw new InvalidOperationException(target.UserName + "：" + guard.Message);
+                KillInSession(TeaBagProcessName, session.Id, s => log("│   [" + target.UserName + "] " + s));
+            })).ConfigureAwait(false);
+        }
+
+        internal static void EnsureUpdateTargetsClosed(List<Target> targets)
+        {
+            var processes = Process.GetProcessesByName(BgiProcessName);
+            try
+            {
+                foreach (var process in processes)
+                {
+                    if (process.HasExited) continue;
+                    string? image;
+                    try
+                    {
+                        image = process.MainModule?.FileName;
+                    }
+                    catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+                    {
+                        if (process.HasExited) continue;
+                        throw new InvalidOperationException("无法确认一个正在运行的 BGI 使用哪个目录，请关闭该实例后重试。", ex);
+                    }
+                    if (string.IsNullOrEmpty(image))
+                        throw new InvalidOperationException("无法确认一个正在运行的 BGI 使用哪个目录，请关闭该实例后重试。");
+                    var target = targets.FirstOrDefault(candidate => string.Equals(
+                        Path.GetFullPath(candidate.BgiExePath), Path.GetFullPath(image), StringComparison.OrdinalIgnoreCase));
+                    if (target != null)
+                        throw new InvalidOperationException(target.UserName + " 对应的 BGI 正在运行，请退出该实例后重试。");
+                }
+            }
+            finally
+            {
+                foreach (var process in processes) process.Dispose();
+            }
+
+            foreach (var target in targets)
+            {
+                try
+                {
+                    // Also check sharing so aliases of the same executable cannot bypass the process check.
+                    using var executable = File.OpenHandle(target.BgiExePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                }
+                catch (IOException ex)
+                {
+                    throw new InvalidOperationException(target.UserName + " 的 BGI 程序文件正在使用或已不可用。", ex);
+                }
+            }
         }
 
         /// <summary>读 exe 的版本号。</summary>

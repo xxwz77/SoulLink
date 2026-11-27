@@ -1,0 +1,70 @@
+name: SoulLink desktop release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Build and package Windows x64
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { '' }
+          ./scripts/publish-release.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'release') -Tag $tag
+      - uses: actions/upload-artifact@v6
+        with:
+          name: soullink-win-x64
+          path: ${{ runner.temp }}/release/*.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    concurrency: soullink-desktop-publish
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: soullink-win-x64
+          path: ${{ runner.temp }}/release
+      - name: Publish verified assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $repo = $env:GITHUB_REPOSITORY
+          $assets = @(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'release') -Filter *.zip)
+          if ($assets.Count -ne 4) { throw 'Expected four release ZIPs' }
+          $paths = $assets.FullName
+          gh release create $tag --repo $repo --verify-tag --draft --generate-notes --title "SoulLink $tag" @paths
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release failed' }
+          $id = gh release view $tag --repo $repo --json databaseId --jq '.databaseId'
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release lookup failed' }
+          $uploaded = gh api "repos/$repo/releases/$id/assets" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset lookup failed' }
+          foreach ($file in $assets) {
+            $remote = $uploaded | Where-Object { $_.name -ceq $file.Name }
+            $digest = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+            if (!$remote -or $remote.state -ne 'uploaded' -or $remote.size -ne $file.Length -or $remote.digest -ine "sha256:$digest") {
+              throw "Release asset verification failed $($file.Name)"
+            }
+          }
+          gh release edit $tag --repo $repo --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing release failed' }

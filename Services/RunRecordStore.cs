@@ -1005,25 +1005,29 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
                 return ReadRunList(cmd);
             }, Array.Empty<RunRecord>(), default);
 
-        internal sealed record LedgerWindow(string RunId, string GroupName, string RouteId, string RouteName, long Start, long End);
+        internal sealed record LedgerWindow(string RunId, string GroupName, string RouteId, string RouteName,
+            long Start, long End, string Kind = "");
 
-        // Only closed, observed windows are eligible. Both sides of midnight can own a ledger minute.
-        internal static Task<List<LedgerWindow>?> QueryLedgerWindowsAsync(string account, long lo, long hi)
+        // The incremental linker can read completed routes inside an ongoing group.
+        internal static Task<List<LedgerWindow>?> QueryLedgerWindowsAsync(string account, long lo, long hi,
+            bool includeCollectCd = false, CancellationToken ct = default)
             => Core.Value.EnqueueQuery<List<LedgerWindow>?>(db =>
             {
                 using var cmd = db.CreateCommand();
-                cmd.CommandText = @"SELECT run_id,group_name,'','',start_at_ms,end_at_ms FROM run
-                    WHERE account=$a COLLATE NOCASE AND start_at_ms<$hi AND end_at_ms>$lo
-                    UNION ALL SELECT r.run_id,r.group_name,t.route_id,t.name,t.start_at_ms,t.end_at_ms FROM route t
-                    JOIN run r ON r.run_id=t.run_id WHERE r.account=$a COLLATE NOCASE AND t.kind='route'
+                cmd.CommandText = @"SELECT run_id,group_name,'','',start_at_ms,COALESCE(end_at_ms,$hi),'' FROM run
+                    WHERE account=$a COLLATE NOCASE AND start_at_ms<$hi
+                    AND (end_at_ms>$lo OR ($cd=1 AND end_at_ms IS NULL))
+                    UNION ALL SELECT r.run_id,r.group_name,t.route_id,t.name,t.start_at_ms,t.end_at_ms,t.kind FROM route t
+                    JOIN run r ON r.run_id=t.run_id WHERE r.account=$a COLLATE NOCASE
+                    AND (t.kind='route' OR ($cd=1 AND t.kind='cd_line'))
                     AND t.start_at_ms<$hi AND t.end_at_ms>$lo ORDER BY 5,1,3;";
-                Add(cmd,"$a",account); Add(cmd,"$lo",lo); Add(cmd,"$hi",hi);
+                Add(cmd,"$a",account); Add(cmd,"$lo",lo); Add(cmd,"$hi",hi); Add(cmd,"$cd",includeCollectCd ? 1 : 0);
                 using var reader = cmd.ExecuteReader();
                 var rows = new List<LedgerWindow>();
                 while (reader.Read()) rows.Add(new(reader.GetString(0),reader.GetString(1),reader.GetString(2),
-                    reader.GetString(3),reader.GetInt64(4),reader.GetInt64(5)));
+                    reader.GetString(3),reader.GetInt64(4),reader.GetInt64(5),reader.GetString(6)));
                 return rows;
-            }, null, default);
+            }, null, ct);
 
         internal static Task<Dictionary<string, (long Exp, long Mora)>?> QueryDogfoodTotalsAsync(DateTime day)
         {

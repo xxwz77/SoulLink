@@ -27,19 +27,19 @@ namespace SoulLink.Services
             var results=new List<MiyousheTaskExecution>();
             try
             {
-                if(!settings.MiyousheSignEnabled)
+                if (scheduled && (!settings.MiyousheSignEnabled || !MiyousheSignPreferences.AccountEnabled(settings, account)))
                 {
                     results.Add(new(batch,account,"all","all","","skipped",0,"总开关关闭，全部不执行",0,0,NowMs()));
                     return results;
                 }
                 if(!await Gate.WaitAsync(0,ct).ConfigureAwait(false))
                 {
-                    results.Add(new(batch,account,"all","all","","skipped",0,"另一批次进行中",0,0,NowMs()));
+                    results.Add(new(batch,account,"all","all","","queued",0,"另一批次进行中",0,0,NowMs()));
                     return results;
                 }
                 try
                 {
-                    string region=settings.MiyousheAccountRegions.TryGetValue(account,out var r)&&r=="os"?"os":"cn";
+                    string region = MiyousheSignPreferences.RegionFor(settings, account);
                     var credential=await MiyousheCredentialStore.LoadAsync(account,region,ct).ConfigureAwait(false);
                     if(credential==null)
                     {
@@ -48,22 +48,27 @@ namespace SoulLink.Services
                     }
                     using var http=new HttpClient();
                     var client=ClientFactoryForTest?.Invoke(http,region) ?? new MiyousheTaskClient(http,region);
-                    foreach(var game in MiyousheCatalog.ForRegion(region))
+                    foreach (var game in MiyousheSignPreferences.Projects(settings, account))
                     {
-                        string id=game.GameBiz+"@"+region;
-                        if(!game.ActVerified || game.ActId.Length==0)
-                        { results.Add(Skip(batch,account,region,id,"act_id/端点未核实，未发送请求"));continue; }
-                        if(!Enabled(settings,account,id))
+                        string id = MiyousheSignPreferences.ProjectId(game);
+                        if (!MiyousheSignPreferences.ProjectEnabled(settings, account, id))
                         {
                             results.Add(Skip(batch,account,region,id,"不参与/分项开关关闭"));continue;
                         }
                         if(scheduled && await MiyousheStore.Shared.HasTaskSuccessAsync(account,id,DateTime.Now.ToString("yyyy-MM-dd"),ct).ConfigureAwait(false))
                         { results.Add(Skip(batch,account,region,id,"今日已完成，幂等跳过"));continue; }
+                        if (id == MiyousheSignPreferences.DomesticGenshin)
+                        {
+                            var sign = await MiyousheService.RunForAccountAsync(account, true, false, ct).ConfigureAwait(false);
+                            string state = sign.ok ? (sign.signed > 0 ? "success" : "already") : (sign.state ?? "failed");
+                            results.Add(new(batch,account,region,id,"",state,0,sign.error ?? "原神签到已处理",0,0,NowMs()));
+                            continue;
+                        }
                         results.Add(await client.GameAsync(batch,account,credential,game,DateTime.Now.ToString("yyyy-MM-dd"),ct).ConfigureAwait(false));
                         if(PacingForTest!=null) await PacingForTest(Math.Clamp(settings.MiyousheCommunityDelaySeconds,8,120)).ConfigureAwait(false);
                         else await DelayAsync(0).ConfigureAwait(false);
                     }
-                    foreach(var task in MiyousheCatalog.Community.Values.Where(t=>t.Region==region))
+                    foreach(var task in MiyousheCatalog.Community.Values.Where(t=>!scheduled && t.Region==region))
                     {
                         string id=task.Id+"@"+region;
                         if(!Enabled(settings,account,id))
@@ -83,7 +88,7 @@ namespace SoulLink.Services
             finally
             {
                 foreach(var row in results) await MiyousheStore.Shared.SaveTaskResultAsync(row,ct).ConfigureAwait(false);
-                string state=results.Any(x=>x.State is "failed" or "risk" or "needs_login")?"failed":"completed";
+                string state=results.Any(x=>x.State is "failed" or "risk" or "needs_login" or "queued")?"failed":"completed";
                 await MiyousheStore.Shared.SaveBatchAsync(new MiyousheBatch(batch,account,state,start,NowMs()),ct).ConfigureAwait(false);
             }
         }

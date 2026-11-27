@@ -28,9 +28,10 @@ namespace SoulLink.Relay
             public readonly object Sync = new();
             public readonly ViewerFrameQueue<(byte[] Nal, DateTime At)> Pending;
             public Viewer(bool hasInitialIdr) => Pending = new(ViewerQueueDepthValue, hasInitialIdr);
-            /// <summary>★ P0（事件驱动等帧）：入队后 Set，唤醒该观众的等帧线程；替代 WriteStreamAsync 的 10ms 轮询。</summary>
-            public readonly AutoResetEvent FrameReady = new(false);
+            public readonly SemaphoreSlim FrameReady = new(0, 1);
             public bool Closed;
+
+            public void Signal() { if (FrameReady.CurrentCount == 0) FrameReady.Release(); }
         }
 
         private static IScreenCapture Capture = CreateCapture();
@@ -55,6 +56,8 @@ namespace SoulLink.Relay
         private static int _width, _height;
         private static int _nextViewerId;
         private static bool _recordRequested;
+        private static volatile bool _remoteControlEnabled = Environment.GetEnvironmentVariable("SOULLINK_REMOTE_CONTROL") == "1";
+        public static bool RemoteControlEnabled => _remoteControlEnabled;
         private static long _captureMs, _convertMs, _encodeMs;
         private static long _zeroMs;   // ★ P0-F：零拷贝单帧总耗时（抓取→着色器转换→编码，可观测）
         private static long _zeroConvertMs;   // ★ P0-F：零拷贝纯 GPU 转换耗时（不含等帧）
@@ -658,8 +661,12 @@ namespace SoulLink.Relay
 
         public static bool Start(int fps, int quality, int keepSeconds, int sessionId, out string message)
         {
-            lock (Gate) { _recordRequested = true; RecomputeLifecycle(); }
-            return StartCore(fps, quality, keepSeconds, sessionId, out message);
+            lock (Gate)
+            {
+                _recordRequested = true;
+                RecomputeLifecycle();
+                return StartCore(fps, quality, keepSeconds, sessionId, out message);
+            }
         }
 
         private static bool StartCore(int fps, int quality, int keepSeconds, int sessionId, out string message)
@@ -675,6 +682,8 @@ namespace SoulLink.Relay
                     message = "共享 H.264 管线已在运行，" + _fps + "fps，观众=" + Viewers.Count;
                     return true;
                 }
+                Capture = CreateCapture();
+                _captureSwitchRequested = false;
                 _stopRequested = false;
                 _status = "recording";
                 _worker = new Thread(Loop) { IsBackground = true, Name = "SoulLinkVideo" };
@@ -689,8 +698,21 @@ namespace SoulLink.Relay
             lock (Gate)
             {
                 _recordRequested = false;
+                TrimFrames(DateTime.Now, _fps, _keepSeconds);
+                if (Ring.Capacity > 300) Ring.TrimExcess();
                 RecomputeLifecycle();
             }
+        }
+
+        // Stream viewers have their own bounded queues. Only recording needs a clip-length history.
+        private static void TrimFrames(DateTime now, int fps, int keepSeconds)
+        {
+            int seconds = _recordRequested ? keepSeconds : 1;
+            int limit = _recordRequested ? Math.Max(300, fps * seconds * 2) : fps + 1;
+            var cutoff = now.AddSeconds(-seconds);
+            int remove = Math.Max(0, Ring.Count - limit);
+            while (remove < Ring.Count && Ring[remove].At < cutoff) remove++;
+            if (remove > 0) Ring.RemoveRange(0, remove);
         }
 
         private static void RecomputeLifecycle()
@@ -700,12 +722,29 @@ namespace SoulLink.Relay
             LifecycleChanged.Set();
         }
 
+        public static void SetRemoteControl(bool enabled)
+        {
+            lock (Gate)
+            {
+                _remoteControlEnabled = enabled;
+                if (!enabled)
+                {
+                    foreach (var viewer in Viewers.Values) CloseViewer(viewer);
+                    Viewers.Clear();
+                }
+                RecomputeLifecycle();
+            }
+        }
+
+        private static void CloseViewer(Viewer viewer)
+        {
+            lock (viewer.Sync) { viewer.Closed = true; viewer.Signal(); }
+        }
+
         public static void Shutdown(int waitMs = 1500)
         {
-            _stopRequested = true;
-            lock (Gate) { foreach (var v in Viewers.Values) lock (v.Sync) v.Closed = true; }
+            lock (Gate) { _recordRequested = false; SetRemoteControl(false); }
             try { var t = _worker; if (t != null && t.IsAlive) t.Join(waitMs); } catch { }
-            try { Capture.Dispose(); } catch { }
         }
 
         private static void Loop()
@@ -715,6 +754,7 @@ namespace SoulLink.Relay
             int encodedWidth = 0, encodedHeight = 0;
             long frameIndex = 0;
             byte[]? previousBgra = null;
+            byte[]? nv12Buffer = null;
             long previousFrameSeq = -1;   // DDA 后端上一次的 FrameSequence（-1=尚未取得）
             long previousZeroSeq = -1;    // GPU 后端（WGC/DDA）上一次的 FrameSequence（零拷贝分支静止判定用）
             bool zeroCopyPsnrDone = false;   // 零拷贝首帧 PSNR 诊断只跑一次
@@ -724,6 +764,7 @@ namespace SoulLink.Relay
             VideoParameters? applied = null;
             int appliedCaptureVersion = _captureModeVersion;
             long appliedCaptureGeneration = -1;   // ★ P0-A：后端实例替换代数（探测/重试/降级/D04 后重置静止基准）
+            bool stoppedNormally = false;
             try
             {
                 timeBeginPeriod(1);   // ★ P0-E：定时器精度 1ms，消除节拍超调
@@ -862,6 +903,7 @@ namespace SoulLink.Relay
                                         byte[]? zNal = nvencZero.EncodeD3D11Texture(nv12Tex, frameIndex * 1_000_000L / fps);
                                         if (zNal != null && zNal.Length > 0)
                                         {
+                                            nv12Buffer = null;
                                             zeroCopyFailStreak = 0;   // ★ P0-E：成功清零连续失败计数
                                             frameIndex++; _noNalFrames = 0; _lastNalAt = DateTime.UtcNow;
                                             var zFrame = new VideoFrame { Nal = zNal, At = DateTime.Now, KeyFrame = IsKeyFrame(zNal) };
@@ -876,8 +918,7 @@ namespace SoulLink.Relay
                                                     RelayAgent.LogQuiet("[video] 零拷贝管线 total=" + _totalFrames + " zeroMs=" + _zeroMs
                                                         + " convMs=" + _zeroConvertMs + " viewers=" + Viewers.Count + " loop=" + _loopSequence
                                                         + " queueDrops=" + _viewerQueueDrops + " queueDepthMax=" + _viewerQueueDepthMax);
-                                                DateTime cutoff = zFrame.At.AddSeconds(-keepSec);
-                                                while (Ring.Count > 0 && (Ring[0].At < cutoff || Ring.Count > Math.Max(300, fps * keepSec * 2))) Ring.RemoveAt(0);
+                                                TrimFrames(zFrame.At, fps, keepSec);
                                                 PublishToViewers(zFrame);
                                             }
                                             // ★ 零拷贝首帧 PSNR 诊断（只跑一次）：GPU NV12 vs CPU 路径 NV12 同帧对比
@@ -1071,10 +1112,10 @@ namespace SoulLink.Relay
                     }
 
                     var convertStart = Stopwatch.StartNew();
-                    byte[] nv12 = BgraToNv12(bgra, ew, eh, width * 4);
+                    nv12Buffer = BgraToNv12(bgra, ew, eh, width * 4, nv12Buffer);
                     long convertMs = convertStart.ElapsedMilliseconds;
                     var encodeStart = Stopwatch.StartNew();
-                    byte[]? nal = encoder.EncodeNv12(nv12, frameIndex * 1_000_000L / fps);
+                    byte[]? nal = encoder.EncodeNv12(nv12Buffer, frameIndex * 1_000_000L / fps);
                     long encodeMs = encodeStart.ElapsedMilliseconds;
                     _lastEncodeAt = DateTime.UtcNow;
                     if (nal != null && nal.Length > 0)
@@ -1097,8 +1138,7 @@ namespace SoulLink.Relay
                                     + " staticSkipped=" + _skippedStaticFrames + " keepalive=" + _keepaliveFrames
                                     + " queueDrops=" + _viewerQueueDrops + " queueDepthMax=" + _viewerQueueDepthMax
                                     + " queueAge=" + _queueAgeMs + " queueAgeMax=" + _queueAgeMaxMs);
-                            DateTime cutoff = frame.At.AddSeconds(-keepSec);
-                            while (Ring.Count > 0 && (Ring[0].At < cutoff || Ring.Count > Math.Max(300, fps * keepSec * 2))) Ring.RemoveAt(0);
+                            TrimFrames(frame.At, fps, keepSec);
                             PublishToViewers(frame);
                         }
                     }
@@ -1128,6 +1168,7 @@ namespace SoulLink.Relay
                             + " lastCapture=" + _lastCaptureAt.ToString("HH:mm:ss.fff") + " lastEncode=" + _lastEncodeAt.ToString("HH:mm:ss.fff")
                             + " lastNal=" + _lastNalAt.ToString("HH:mm:ss.fff") + " staticSkipped=" + _skippedStaticFrames + " noNal=" + _noNalFrames);
                 }
+                stoppedNormally = true;
             }
             catch (Exception ex)
             {
@@ -1138,12 +1179,17 @@ namespace SoulLink.Relay
             {
                 timeEndPeriod(1);   // ★ P0-E：与 timeBeginPeriod 配对
                 try { encoder?.Dispose(); } catch { }
-                // 静态 Capture 跨订阅复用；仅热切/Shutdown 释放，避免二次订阅拿到已 disposed 后端。
+                try { gpuConverter?.Dispose(); } catch { }
                 lock (Gate)
                 {
-                    Ring.Clear(); _status = "idle"; _worker = null;
-                    // 停止与最后一位观众退订可能并发：仅在确实无需求时保留停止态。
-                    if (_recordRequested || Viewers.Count > 0) _stopRequested = false;
+                    try { Capture.Dispose(); } catch { }
+                    _probeClock = null;
+                    _captureProbeComplete = false;
+                    _width = _height = 0;
+                    Ring.Clear(); Ring.TrimExcess(); _status = "idle"; _worker = null;
+                    // A subscriber can arrive after the old worker observes the stop flag.
+                    if (stoppedNormally && (_recordRequested || Viewers.Count > 0))
+                        StartCore(_fps, _quality, _keepSeconds, _sessionId, out _);
                 }
             }
         }
@@ -1162,7 +1208,7 @@ namespace SoulLink.Relay
                     bool queued = viewer.Pending.Offer((frame.Nal, frame.At), frame.KeyFrame, out int drops, out bool request);
                     _viewerQueueDrops += drops;
                     needsRecovery |= request;
-                    if (queued) viewer.FrameReady.Set();
+                    if (queued) viewer.Signal();
                     _viewerQueueDepthMax = Math.Max(_viewerQueueDepthMax, viewer.Pending.Count);
                 }
             }
@@ -1180,6 +1226,7 @@ namespace SoulLink.Relay
             viewerId = 0; initial = null; error = "";
             lock (Gate)
             {
+                if (!_remoteControlEnabled) { error = "网页远控已关闭"; return false; }
                 if (_status == "error")
                 {
                     // 编码/抓屏失败可重试：清错误并允许 StartCore 新建 worker，不永久拒绝后续观众。
@@ -1192,21 +1239,24 @@ namespace SoulLink.Relay
                 Viewers[viewerId] = new Viewer(initial != null);
                 _forceKeyFrame = true;
                 RecomputeLifecycle();
+                using var process = Process.GetCurrentProcess();
+                if (StartCore(StreamFps, _quality, _keepSeconds, process.SessionId, out error)) return true;
+                Unsubscribe(viewerId);
+                viewerId = 0;
+                return false;
             }
-            if (!StartCore(StreamFps, _quality, _keepSeconds, Process.GetCurrentProcess().SessionId, out error))
-            {
-                Unsubscribe(viewerId); viewerId = 0; return false;
-            }
-            return true;
         }
 
         public static void Unsubscribe(int viewerId)
         {
-            lock (Gate) { if (Viewers.Remove(viewerId, out var viewer)) lock (viewer.Sync) viewer.Closed = true; }
-            // 录制未开启且最后一个观众离开时停止共享管线，释放编码器与 MF 缓冲池。
-            // 锁外赋值避免在持锁状态调用线程管理。
-            lock (Gate) RecomputeLifecycle();
+            lock (Gate)
+            {
+                if (Viewers.Remove(viewerId, out var viewer)) CloseViewer(viewer);
+                RecomputeLifecycle();
+            }
         }
+
+        public static bool HasViewer(int viewerId) { lock (Gate) return Viewers.ContainsKey(viewerId); }
 
         // ── 按需 IDR 的进程内节流（2026-11-24，T26 第④处修复）──────────────
         //
@@ -1397,7 +1447,7 @@ namespace SoulLink.Relay
             int ageMs;
             lock (viewer.Sync)
             {
-                if (viewer.Pending.Count == 0) return null;
+                if (viewer.Closed || viewer.Pending.Count == 0) return null;
                 var (n, at) = viewer.Pending.Dequeue();
                 ageMs = (int)(DateTime.Now - at).TotalMilliseconds;   // ★ P0 队列观测：帧龄 = 服务端队列等待
                 nal = n;
@@ -1418,11 +1468,10 @@ namespace SoulLink.Relay
         /// 信号只是「可能有帧」提示，队列仍是唯一真源——调用方醒来后必须再 ReadViewerFrame 取帧。
         /// timeoutMs 兜底用于 worker 异常停止/观众移除等边界（正常有观众时 500ms 保活帧必醒，不命中超时）。
         /// </summary>
-        public static void WaitForFrame(int viewerId, int timeoutMs)
+        public static Task<bool> WaitForFrameAsync(int viewerId, int timeoutMs)
         {
-            Viewer? viewer;
-            lock (Gate) { if (!Viewers.TryGetValue(viewerId, out viewer)) return; }
-            viewer.FrameReady.WaitOne(timeoutMs);
+            lock (Gate)
+                return Viewers.TryGetValue(viewerId, out var viewer) ? viewer.FrameReady.WaitAsync(timeoutMs) : Task.FromResult(false);
         }
 
         public static int FrameCount { get { lock (Gate) return Ring.Count; } }
@@ -1436,7 +1485,17 @@ namespace SoulLink.Relay
 
         /// <summary>一次性 JPEG 截图，仅供静态 shot/frame 协议使用；绝不进入实时 Ring。</summary>
         public static byte[]? CaptureJpegOnce(int quality)
-            => Capture.CaptureJpeg(Math.Clamp(quality, 30, 95), out _, out _);
+            => CaptureStill(quality, out _, out _);
+
+        private static byte[]? CaptureStill(int quality, out int width, out int height)
+        {
+            using var capture = CreateCapture();
+            int clamped = Math.Clamp(quality, 30, 95);
+            var jpeg = capture.CaptureJpeg(clamped, out width, out height);
+            if (jpeg != null || capture is BitBltCapture) return jpeg;
+            using var fallback = new BitBltCapture();
+            return fallback.CaptureJpeg(clamped, out width, out height);
+        }
 
         public static string? SaveRecording(string userTag, string trigger,
             double beforeSeconds, double afterSeconds, int sessionId,
@@ -1510,8 +1569,10 @@ namespace SoulLink.Relay
             if (start >= 0 && start < data.Length) yield return (start, data.Length - start);
         }
 
-        private static byte[] BgraToNv12(byte[] bgra, int w, int h, int stride)
+        private static byte[] BgraToNv12(byte[] bgra, int w, int h, int stride, byte[]? buffer = null)
         {
+            int size = w * h * 3 / 2;
+            var nv12 = buffer?.Length == size ? buffer : new byte[size];
             // ★ P1 并行化：跨 GPU 场景（Intel/AMD 抓屏 + NVENC 编码）零拷贝被路由禁用时，
             //   CPU 转换是必经之路；原单线程标量 1080p ≈7.8ms，按行并行后多核分摊（8 核实测 ~1.5ms）。
             //   实现与 BgraToNv12Scalar 逐字节一致（每行公式逐字复制），并行只发生在行级：
@@ -1519,17 +1580,17 @@ namespace SoulLink.Relay
             //   小图（≤640x480 像素量级）不值得开线程，直接走标量。
             if (w * h >= 640 * 480 && Environment.ProcessorCount > 1)
             {
-                try { return BgraToNv12Parallel(bgra, w, h, stride); }
+                try { BgraToNv12Parallel(bgra, w, h, stride, nv12); return nv12; }
                 catch { /* 线程池异常 → 静默降级标量 */ }
             }
-            return BgraToNv12Scalar(bgra, w, h, stride);
+            BgraToNv12Scalar(bgra, w, h, stride, nv12);
+            return nv12;
         }
 
         /// <summary>★ P1 行级并行版：与 BgraToNv12Scalar 逐字节等价（行内公式完全相同）。</summary>
-        private static byte[] BgraToNv12Parallel(byte[] bgra, int w, int h, int stride)
+        private static void BgraToNv12Parallel(byte[] bgra, int w, int h, int stride, byte[] nv12)
         {
             int ySize = w * h;
-            var nv12 = new byte[ySize + ySize / 2];
 
             // Y 平面：每行独立（dst 区间 [y*w, y*w+w) 互不重叠）
             var yOptions = new ParallelOptions { MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount, 8) };
@@ -1559,14 +1620,12 @@ namespace SoulLink.Relay
                     nv12[uv + 1] = (byte)(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
                 }
             });
-            return nv12;
         }
 
         /// <summary>原标量实现（保留作为 SIMD 降级路径与等价性基准）。</summary>
-        private static byte[] BgraToNv12Scalar(byte[] bgra, int w, int h, int stride)
+        private static void BgraToNv12Scalar(byte[] bgra, int w, int h, int stride, byte[] nv12)
         {
             int ySize = w * h;
-            var nv12 = new byte[ySize + ySize / 2];
             // 保持单线程：多会话同时运行时，不为每帧创建 Parallel 任务/争用线程池。
             // 每行复用递增索引，减少像素坐标换算和重复数组访问。
             for (int y = 0; y < h; y++)
@@ -1591,7 +1650,6 @@ namespace SoulLink.Relay
                     nv12[uv + 1] = (byte)(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
                 }
             }
-            return nv12;
         }
 
         private static void WriteMeta(string dir, int sessionId, int frames, string trigger, double before, double after)
@@ -1623,7 +1681,7 @@ namespace SoulLink.Relay
             path = ""; message = "";
             try
             {
-                var jpeg = Capture.CaptureJpeg(Math.Clamp(quality, 30, 95), out int width, out int height);
+                var jpeg = CaptureStill(quality, out int width, out int height);
                 if (jpeg == null) { message = "抓屏失败"; return false; }
                 string folder = DateTime.Now.ToString("yyyy-MM-dd-HHmmss") + (Sanitize(trigger).Length > 0 ? "-" + Sanitize(trigger) : "");
                 string dir = Path.Combine(CaptureRoot, "录制回放", string.IsNullOrWhiteSpace(userTag) ? "会话" + sessionId : Sanitize(userTag), folder);

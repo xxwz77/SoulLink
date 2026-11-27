@@ -43,8 +43,7 @@
                                 </StackPanel>
                             </StackPanel>
 
-                            <!-- ★ 兜底修复入口：注入代理版本不一致/缺失时一键修复（AgentSync） -->
-                            <Button x:Name="BtnRepairAgent" Content="修复注入代理"
+                            <Button x:Name="BtnRepairAgent" Content="更新引擎组件" Visibility="Collapsed"
                                     Style="{StaticResource GhostButton}" HorizontalAlignment="Left"
                                     Margin="0,10,0,0" Click="RepairAgent_Click" />
 
@@ -272,46 +271,6 @@
 
                             <TextBlock x:Name="WebStatus" Style="{StaticResource Caption}"
                                        Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="18" />
-                        </StackPanel>
-                    </Border>
-
-                    <!-- ══════════ 系统优化（可关服务 + Defender 排除）══════════
-                         需管理员权限；服务只做「本次停止」，不改启动类型；
-                         Defender 排除只增删目录路径，绝不关闭实时保护。 -->
-                    <TextBlock Text="系统优化" Style="{StaticResource Label}" Margin="0,18,0,6" />
-                    <Border Style="{StaticResource GlassPanel}" Padding="14,12">
-                        <StackPanel>
-                            <TextBlock Text="可停止的后台服务（仅本次，重启后自动恢复）"
-                                       FontSize="12.5" FontWeight="SemiBold"
-                                       Foreground="{DynamicResource TextPrimary}" />
-                            <TextBlock Text="白名单制：只列出明确安全的 6 项，绝不改动启动类型。停止需要管理员权限。"
-                                       Style="{StaticResource Caption}" Margin="0,4,0,8" TextWrapping="Wrap" />
-
-                            <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,0,0,10">
-                                <StackPanel x:Name="ServiceList" />
-                            </Border>
-
-                            <TextBlock Text="Defender 目录排除" FontSize="12.5" FontWeight="SemiBold"
-                                       Foreground="{DynamicResource TextPrimary}" />
-                            <TextBlock Text="把 SoulLink 数据目录加入 Windows Defender 排除，避免实时扫描拖慢挂机日志与画面缓存。只增删目录，不关闭实时保护。"
-                                       Style="{StaticResource Caption}" Margin="0,4,0,8" TextWrapping="Wrap" />
-
-                            <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,0,0,8">
-                                <StackPanel x:Name="DefenderExclusionList" />
-                            </Border>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                <Button Style="{StaticResource PrimaryButton}" Padding="14,7"
-                                        Click="AddDefenderExclusion_Click">
-                                    <TextBlock Text="把数据目录加入排除" FontSize="11.5" FontWeight="SemiBold" />
-                                </Button>
-                                <Button Style="{StaticResource GhostButton}" Padding="14,7" Margin="8,0,0,0"
-                                        Click="RefreshSystemOptimize_Click">
-                                    <TextBlock Text="刷新" FontSize="11.5" />
-                                </Button>
-                            </StackPanel>
-                            <TextBlock x:Name="DefenderStatus" Style="{StaticResource Caption}"
-                                       Margin="0,8,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
 

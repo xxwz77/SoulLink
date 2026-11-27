@@ -9,3 +9,11 @@ namespace SoulLink
             => Console.WriteLine("[app-diag] " + source + ": " + (ex?.Message ?? ""));
     }
 }
+
+namespace SoulLink.Services
+{
+    internal static class LogBus
+    {
+        internal static void Ok(string title, string detail) => Console.WriteLine(title + ": " + detail);
+    }
+}

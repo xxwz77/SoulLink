@@ -4,7 +4,7 @@
     <WebPagesGenerated>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\WebPages.Index.g.cs</WebPagesGenerated>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="$(WebPagesGenerated)" Condition="Exists('$(WebPagesGenerated)')" />
+    <Compile Include="$(WebPagesGenerated)" />
   </ItemGroup>
   <!-- 每个 TFM 使用独立 IntermediateOutputPath，杜绝双目标并发写同一文件。 -->
   <Target Name="GenerateWebPagesIndex"

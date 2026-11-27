@@ -47,10 +47,12 @@ namespace SoulLink.Services
         }
         private CancellationTokenSource? _cts;
         private volatile bool _disposed;
+        private readonly SemaphoreSlim _remoteControlUpdate = new(1, 1);
 
         public string PipeName { get; }
         public int SessionId { get; }
         public string UserName { get; }
+        public string? AccountId { get; private set; }
         public bool IsConnected { get; private set; }
         public string AgentInfo { get; private set; } = "";
         public int AgentPid { get; private set; }
@@ -63,10 +65,11 @@ namespace SoulLink.Services
         public event Action<RelayClient, bool>? StateChanged;
         public event Action<RelayClient, string>? HotkeyPressed;
 
-        public RelayClient(string userName, int sessionId)
+        public RelayClient(string userName, int sessionId, string? accountId = null)
         {
             UserName = userName;
             SessionId = sessionId;
+            AccountId = accountId;
             // 管道名带随机后缀，避免多实例 / 多会话串线
             PipeName = AppIdentity.RelayPipePrefix + sessionId + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
         }
@@ -99,7 +102,9 @@ namespace SoulLink.Services
         /// <summary>登记一个在线通道（由 RdpConsole 在投送成功后调用）。</summary>
         public static void Register(int sessionId, RelayClient relay)
         {
-            if (sessionId > 0 && relay != null) LiveRegistry[sessionId] = relay;
+            if (sessionId <= 0 || relay == null) return;
+            LiveRegistry[sessionId] = relay;
+            _ = relay.UpdateRemoteControlAsync();
         }
 
         /// <summary>注销通道（断开时调用）。</summary>
@@ -210,6 +215,7 @@ namespace SoulLink.Services
         /// </summary>
         public async Task<(bool ok, string message)> DeployAsync(Account account, int timeoutMs = 20000)
         {
+            AccountId = account.Id;
             // 用 SoulLink.exe 自己当代理 —— 自包含单文件，目标会话里不需要任何运行时
             string self = SystemLauncher.ResolveSelfExe();
             if (!File.Exists(self)) return (false, "找不到 SoulLink.exe 本体：" + self);
@@ -708,6 +714,31 @@ namespace SoulLink.Services
         public Task<RelayResponse?> UpdateCaptureModeAsync(int mode)
             => SendAsync(new { Cmd = "captureParams", CaptureMode = Math.Clamp(mode, 0, 3) });
 
+        internal bool IsRemoteControlEnabled
+            => App.Config?.Settings?.IsRemoteControlEnabledFor(AccountId) == true;
+
+        private async Task UpdateRemoteControlAsync()
+        {
+            await _remoteControlUpdate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                for (int attempt = 0; attempt < 3 && IsConnected; attempt++)
+                {
+                    var result = await SendAsync(new { Cmd = "remoteControl", Count = IsRemoteControlEnabled ? 1 : 0 }).ConfigureAwait(false);
+                    if (result != null) return;
+                    await Task.Delay(150).ConfigureAwait(false);
+                }
+            }
+            catch { }
+            finally { _remoteControlUpdate.Release(); }
+        }
+
+        public static void PushRemoteControlToConnectedAgents(string accountId)
+        {
+            foreach (var relay in LiveRegistry.Values)
+                if (relay.IsConnected && relay.AccountId == accountId) _ = relay.UpdateRemoteControlAsync();
+        }
+
         public static int PushCaptureModeToConnectedAgents(int mode)
         {
             int count = 0;
@@ -766,7 +797,8 @@ namespace SoulLink.Services
         ///   config.json（那边是另一份 data）。所以所有它需要的东西都从环境变量下发：
         ///
         ///   SOULLINK_CAPTURE_DIR  录像/截图根目录（必须在主程序目录下，别写 C 盘）
-        ///   SOULLINK_WEB_PORT     网页直连端口（0 = 不启用）
+        ///   SOULLINK_WEB_PORT     已开启网页远控的直连端口
+        ///   SOULLINK_WEB_REMOTE_PORT  网页远控关闭时给支持按账号开关的代理保留的直连端口
         ///   SOULLINK_WEB_TOKEN    网页直连共享口令（默认拒绝空口令）
         ///   SOULLINK_WEB_ALLOW_NO_TOKEN  仅显式允许时才接受空口令（默认 0）
         ///   SOULLINK_ACCOUNT_ID   本代理所属账号 Id（/api/info 回显 + 端口分配依据）
@@ -780,14 +812,17 @@ namespace SoulLink.Services
 
                 var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["SOULLINK_CAPTURE_DIR"] = System.IO.Path.Combine(dir, "capture")
+                    ["SOULLINK_CAPTURE_DIR"] = System.IO.Path.Combine(dir, "capture"),
+                    ["SOULLINK_WEB_PORT"] = "0",
+                    ["SOULLINK_WEB_REMOTE_PORT"] = "0"
                 };
 
                 // ── 用户级启动项策略（路径A）：代理在目标会话内写自己的 HKCU ──
                 //   开关来自配置 SessionSlimUserPolicyEnabled；1=写禁用，0=删值恢复。
                 var s0 = App.Config?.Settings;
-                if (s0 != null)
-                    env["SOULLINK_USER_POLICY"] = s0.SessionSlimUserPolicyEnabled ? "1" : "0";
+                bool remoteControlEnabled = s0?.IsRemoteControlEnabledFor(accountId) == true;
+                if (accountId != null && s0?.SessionSlimEdgeAccounts?.TryGetValue(accountId, out bool optedIn) == true)
+                    env["SOULLINK_SLIM_EDGE_POLICY"] = s0.SessionSlimUserPolicyEnabled && optedIn ? "1" : "0";
 
                 // ── 抓屏后端（2026-11-22 补）──
                 //   ★ 之前漏了这一环：AppSettings.CaptureMode 有字段、SessionRecorder 读环境变量，
@@ -796,6 +831,7 @@ namespace SoulLink.Services
                 if (s0 != null)
                 {
                     env["SOULLINK_CAPTURE_MODE"] = Math.Clamp(s0.CaptureMode, 0, 3).ToString();
+                    env["SOULLINK_REMOTE_CONTROL"] = remoteControlEnabled ? "1" : "0";
                     env["SOULLINK_STREAM_FPS"] = Math.Clamp(s0.StreamFps, 1, 120).ToString();
                     env["SOULLINK_REC_FPS"] = Math.Clamp(s0.RecordFps, 1, 30).ToString();
                     env["SOULLINK_VIDEO_BITRATE"] = Math.Clamp(s0.VideoBitrateKbps, 1000, 500000).ToString();
@@ -810,7 +846,9 @@ namespace SoulLink.Services
                     int port = ResolveDirectPort(s, accountId);
                     if (port > 0)
                     {
-                        env["SOULLINK_WEB_PORT"] = port.ToString();
+                        // 旧代理只识别 SOULLINK_WEB_PORT，也不一定识别网页远控开关。
+                        string portKey = remoteControlEnabled ? "SOULLINK_WEB_PORT" : "SOULLINK_WEB_REMOTE_PORT";
+                        env[portKey] = port.ToString();
                         env["SOULLINK_WEB_TOKEN"] = s.WebPassword ?? "";
                         env["SOULLINK_WEB_ALLOW_NO_TOKEN"] = s.WebAllowNoToken ? "1" : "0";
                         if (!string.IsNullOrWhiteSpace(accountId))
@@ -821,8 +859,7 @@ namespace SoulLink.Services
                     {
                         LogBus.Info("投送环境变量", "账号 " + (accountId ?? "?")
                             + " → 直连端口 " + (port > 0 ? port.ToString() : "未分配")
-                            + " · CaptureMode=" + (env.TryGetValue("SOULLINK_CAPTURE_MODE", out var cm) ? cm : "?")
-                            + " · WebPort=" + (env.TryGetValue("SOULLINK_WEB_PORT", out var wp) ? wp : "?"));
+                            + " · CaptureMode=" + (env.TryGetValue("SOULLINK_CAPTURE_MODE", out var cm) ? cm : "?"));
                     }
                     catch { }
                 }

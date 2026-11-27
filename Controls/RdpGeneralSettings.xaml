@@ -5,7 +5,7 @@
  <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel>
    <TextBlock Text="RDP 通用设置" Style="{StaticResource Title}" />
-   <TextBlock Text="以下交互设置作用于全部用户，不修改单个用户的连接参数。"
+   <TextBlock Text="交互设置对所有用户生效。屏幕录制和网页远控可按账号设置。"
               Style="{StaticResource Caption}" Margin="0,5,0,16" TextWrapping="Wrap" />
    <Border Style="{StaticResource GlassPanel}" Padding="16,14">
     <StackPanel>
@@ -73,20 +73,24 @@
      <TextBlock Text="★ 默认不占用 Esc —— 游戏里 Esc 是菜单/取消键，被拦截会导致游戏没法用。若你想给自己留一条额外的退出退路，再自己录一个（例如 Ctrl+Shift+Q）。两个热键都只在全屏时生效，非全屏一律原样送给画面，绝不拦截。"
                 Style="{StaticResource Caption}" Margin="2,8,0,0" TextWrapping="Wrap" />
 
-     <!-- ══════════ 屏幕录制（3.2.8）══════════
-          用户需求：「在 RDP 通用配置里增加一个设置栏目，对目标用户（RDP 配置里
-                    有的用户，可多选）开启录像功能，然后用户可以设置录像时长」。
-          ★ 录制在**目标会话的代理**里跑，录的是那个账号的 RDP 画面（不是主控台桌面）。
-          ★ 环形缓冲：只保留最近 N 秒，SSD 平时零写入，保存时才落盘。 -->
      <Border Style="{StaticResource Divider}" Margin="0,18,0,0" />
-     <TextBlock Text="屏幕录制" Style="{StaticResource Label}" Margin="0,14,0,0"
-                ToolTip="在目标账号的 RDP 会话内录制画面。勾选的账号才会录。" />
-
-     <TextBlock Text="选择要录制的账号（可多选）" Style="{StaticResource Caption}"
-                Margin="2,8,0,6" TextWrapping="Wrap" />
-     <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,0,0,6">
-      <StackPanel x:Name="RecordAccountPanel">
-       <TextBlock Text="正在读取账号…" Style="{StaticResource Caption}" />
+     <Border Style="{StaticResource GlassPanel}" Padding="12,8" Margin="0,14,0,6">
+      <StackPanel Grid.IsSharedSizeScope="True">
+       <Grid Margin="0,0,0,4">
+        <Grid.ColumnDefinitions>
+         <ColumnDefinition Width="*" />
+         <ColumnDefinition Width="Auto" SharedSizeGroup="RecordOption" />
+         <ColumnDefinition Width="Auto" SharedSizeGroup="RemoteOption" />
+        </Grid.ColumnDefinitions>
+        <TextBlock Text="账号" Style="{StaticResource Label}" Margin="0" />
+        <TextBlock Grid.Column="1" Text="屏幕录制" Style="{StaticResource Label}" HorizontalAlignment="Center"
+                   Margin="16,0" ToolTip="在该账号的 RDP 会话内循环录制画面。" />
+        <TextBlock Grid.Column="2" Text="网页远控" Style="{StaticResource Label}" HorizontalAlignment="Center"
+                   Margin="16,0" ToolTip="允许查看和操作该账号的画面。有人观看时才启动直播。" />
+       </Grid>
+       <StackPanel x:Name="CaptureAccountPanel" />
+       <TextBlock x:Name="CaptureAccountsEmpty" Text="没有可配置的账号" Style="{StaticResource Caption}"
+                  Margin="0,4,0,0" Visibility="Collapsed" />
       </StackPanel>
      </Border>
 

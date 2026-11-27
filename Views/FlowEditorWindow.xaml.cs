@@ -2256,12 +2256,13 @@ namespace SoulLink.Views
 
         private void OnSharedBgiDataChanged(string userName)
         {
-            var selected = Canvas.SelectedNode;
-            if (selected != null && selected.Get("user").Length > 0 && !selected.Get("user").Equals(userName, StringComparison.OrdinalIgnoreCase)) return;
-            if (selected == null && !_account.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase)) return;
             Dispatcher.InvokeAsync(() =>
             {
-                if (Canvas.SelectedNode != null) ShowPropPanel(Canvas.SelectedNode);
+                var selected = Canvas.SelectedNode;
+                if (selected != null && selected.Get("user").Length > 0
+                    && !selected.Get("user").Equals(userName, StringComparison.OrdinalIgnoreCase)) return;
+                if (selected == null && !_account.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase)) return;
+                if (selected != null) ShowPropPanel(selected);
                 RefreshValidateHint();
             });
         }

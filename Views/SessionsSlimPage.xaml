@@ -86,7 +86,7 @@
                                     <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
                                         <TextBlock Text="清理会话外围进程" FontSize="13" FontWeight="SemiBold"
                                                    Foreground="{DynamicResource TextPrimary}" />
-                                        <TextBlock Text="浏览器窗口 · 手机连接 · 跨设备 · 游戏栏 · 触摸键盘 · OneDrive 授权"
+                                        <TextBlock Text="手机连接、跨设备、游戏栏为默认候选。Edge、OneDrive 和 Teams 可手动加入。"
                                                    FontSize="10.5" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <ToggleButton Grid.Column="1" x:Name="KillToggle" Style="{StaticResource SlimSwitch}"
@@ -156,17 +156,17 @@
 
                                 <TextBlock x:Name="ZoneBHint" FontSize="10.5" Margin="0,12,0,0"
                                            Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" LineHeight="18"
-                                           Text="生效方式：需管理员权限写入系统策略；已登录的会话要注销重登后才生效。关闭开关即恢复系统默认。" />
+                                           Text="Windows 可能在重新登录后应用全机策略。恢复时仅撤销本工具写入且仍未变更的设置。" />
                             </StackPanel>
                         </Border>
 
-                        <!-- ════════ 收益一览 ════════ -->
+                        <!-- ════════ 查看内存占用 ════════ -->
                         <Border Style="{StaticResource GlassPanel}" Margin="0,22,0,0" Padding="18,16">
                             <StackPanel>
-                                <TextBlock Text="收益一览" FontSize="14" FontWeight="SemiBold"
+                                <TextBlock Text="查看内存占用" FontSize="14" FontWeight="SemiBold"
                                            Foreground="{DynamicResource TextPrimary}" />
                                 <TextBlock Style="{StaticResource Caption}" Margin="0,7,0,0" TextWrapping="Wrap"
-                                           Text="数字是说明性估算（按单会话），实际以当前会话里真正开着的进程为准。" />
+                                           Text="会话列表显示专用提交内存。进程结束后，系统实际释放的物理内存会随共享页和系统缓存变化。" />
 
                                 <Grid Margin="0,12,0,0">
                                     <Grid.ColumnDefinitions>
@@ -188,11 +188,11 @@
                                     </Border>
 
                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="浏览器窗口（msedge）" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
-                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="约 391 MB（开过才有）" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="手动加入名单" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
                                     <TextBlock Grid.Row="2" Grid.Column="0" Text="手机连接 + 跨设备" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
-                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="约 221 MB" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
-                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="游戏栏 + 触摸键盘 + 向导 + OneDrive 授权" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
-                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="约 100+ MB" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="默认清理名单" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="游戏栏" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="默认清理名单" FontSize="11.5" Foreground="{DynamicResource TextMuted}" Margin="0,7,0,0" />
 
                                     <Border Grid.Row="4" Grid.ColumnSpan="2" Padding="0,8,0,2" Background="Transparent" Margin="0,6,0,0">
                                         <TextBlock Text="全机设置（任务栏搜索 + 小组件，按会话）" FontSize="11" FontWeight="SemiBold"
@@ -200,7 +200,7 @@
                                     </Border>
 
                                     <TextBlock Grid.Row="5" Grid.Column="0" Text="任务栏搜索块 + 小组件块（含其浏览器内核子进程）" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" />
-                                    <TextBlock Grid.Row="5" Grid.Column="1" Text="约 490 MB/会话" FontSize="11.5" Foreground="{DynamicResource TextMuted}" />
+                                    <TextBlock Grid.Row="5" Grid.Column="1" Text="按 Windows 策略生效" FontSize="11.5" Foreground="{DynamicResource TextMuted}" />
                                 </Grid>
                             </StackPanel>
                         </Border>
@@ -244,7 +244,7 @@
                                            Foreground="{DynamicResource TextPrimary}" />
                                 <StackPanel Margin="0,10,0,0">
                                     <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="19"
-                                               Text="· 每个开关都能单独关回去：关掉即恢复该项的默认状态。"/>
+                                               Text="· 已关闭的应用可重新打开。撤销策略时会保留已有的系统设置。"/>
                                     <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="19" Margin="0,5,0,0"
                                                Text="· 全机设置（任务栏搜索 + 小组件）关闭后，已登录的会话要注销重登才彻底恢复。"/>
                                     <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="19" Margin="0,5,0,0"

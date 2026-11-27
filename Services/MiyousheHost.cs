@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using SoulLink.Models;
@@ -12,6 +13,7 @@ namespace SoulLink.Services
         private static IDisposable? _tick;
         private static int _started;
         private static int _warned;
+        private static int _ticking;
         internal static Func<CancellationToken,Task<IReadOnlyList<string>>>? AccountProviderForTest;
         internal static int TickCount { get; private set; }
         internal static int RunCount { get; private set; }
@@ -21,12 +23,12 @@ namespace SoulLink.Services
         private static readonly Dictionary<string, HashSet<string>> SignDoneByDay = new(StringComparer.Ordinal);
         private static readonly object SignDoneLock = new();
 
-        /// <summary>签到当日失败重试计数：key = account|day，value = 已重试次数。</summary>
-        private static readonly Dictionary<string, int> SignRetryCount = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, (DateOnly Day, int Attempts, DateTimeOffset RetryAt)> SignRetryCount
+            = new(StringComparer.OrdinalIgnoreCase);
         private static readonly object SignRetryLock = new();
 
         /// <summary>每账号上次摩拉拉取时刻（本地时间），用于每小时一次的节流。</summary>
-        private static readonly Dictionary<string, DateTime> LastLedgerPull = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<(string Account, string Uid), DateTimeOffset> LastLedgerPull = new();
         private static readonly object LedgerLock = new();
 
         public static void Start()
@@ -37,6 +39,13 @@ namespace SoulLink.Services
         }
 
         internal static async Task TickAsync(CancellationToken ct=default)
+        {
+            if (Interlocked.Exchange(ref _ticking, 1) != 0) return;
+            try { await TickCoreAsync(ct).ConfigureAwait(false); }
+            finally { Interlocked.Exchange(ref _ticking, 0); }
+        }
+
+        private static async Task TickCoreAsync(CancellationToken ct)
         {
             TickCount++;
             AppConfig? config=App.Config;
@@ -59,15 +68,7 @@ namespace SoulLink.Services
         }
 
         /// <summary>解析签到时刻（HH:mm）；MiyousheSignTime 为空时回退 MiyousheSignHour。</summary>
-        private static TimeSpan SignTimeOfDay(AppSettings s)
-        {
-            string t = (s.MiyousheSignTime ?? "").Trim();
-            if (t.Length > 0
-                && TimeSpan.TryParse(t, out var parsed)
-                && parsed >= TimeSpan.Zero && parsed < TimeSpan.FromHours(24))
-                return parsed;
-            return TimeSpan.FromHours(Math.Clamp(s.MiyousheSignHour,0,23));
-        }
+        private static TimeSpan SignTimeOfDay(AppSettings s) => MiyousheSignPreferences.TimeOfDay(s);
 
         /// <summary>当前时间是否已过今天的目标签到时刻。</summary>
         private static bool SignTimeReached(AppSettings s)
@@ -96,38 +97,41 @@ namespace SoulLink.Services
             lock (SignDoneLock)
             {
                 var stale = new List<string>();
+                string cutoff = DateTime.Now.AddDays(-2).ToString("yyyy-MM-dd");
                 foreach (var k in SignDoneByDay.Keys)
-                    if (string.CompareOrdinal(k, day) < -2) stale.Add(k);
+                    if (string.CompareOrdinal(k, cutoff) < 0) stale.Add(k);
                 foreach (var k in stale) SignDoneByDay.Remove(k);
             }
         }
 
         private static async Task RunSignOnceAsync(AppConfig config, CancellationToken ct)
         {
-            if (MiyousheService.Running!=0) return;
+            if (MiyousheService.Running != 0 || MiyousheBatchService.Running != 0) return;
             try
             {
                 var accounts = AccountProviderForTest != null
                     ? await AccountProviderForTest(ct).ConfigureAwait(false)
-                    : await MiyousheStore.Shared.ListAccountsAsync(ct).ConfigureAwait(false);
+                    : AccountScope.Accounts(config).Select(item => item.UserName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 foreach (string account in accounts)
                 {
                     if (!SignNotDoneToday(account)) continue;                 // ★ 当天已触发，不再试
-                    if (config.Settings.MiyousheSignAccounts.TryGetValue(account,out bool enabled) && !enabled) continue;
+                    if (!MiyousheSignPreferences.AccountEnabled(config.Settings, account)) continue;
+                    if (!MiyousheSignPreferences.Projects(config.Settings, account).Any(game =>
+                        MiyousheSignPreferences.ProjectEnabled(config.Settings, account, MiyousheSignPreferences.ProjectId(game)))) continue;
                     if (!CanRetrySign(account)) continue;                     // ★ 重试限次
-                    string region = config.Settings.MiyousheAccountRegions.TryGetValue(account,out var regionName)&&regionName=="os"?"os":"cn";
+                    string region = MiyousheSignPreferences.RegionFor(config.Settings, account);
                     var credential = await MiyousheCredentialStore.LoadAsync(account,region,ct).ConfigureAwait(false);
-                    if (credential==null) { MarkSignDone(account); continue; }  // 未登录也算「已处理」，当天不再打扰
+                    if (credential == null) continue;
                     RunCount++;
                     bool ok = false;
                     try
                     {
-                        var result = await MiyousheService.RunForAccountAsync(account,true,false,ct).ConfigureAwait(false);
-                        ok = result != null;
+                        var results = await MiyousheBatchService.RunAsync(account, scheduled: true, ct).ConfigureAwait(false);
+                        ok = !results.Any(result => result.State is "failed" or "risk" or "needs_login" or "queued");
                     }
-                    catch { ok = false; }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { ok = false; }
                     if (ok) MarkSignDone(account);
-                    else RecordSignRetry(account);   // 失败：记一次重试，按 MiyousheRetryMinutes 退避
+                    else RecordSignRetry(account, config.Settings.MiyousheRetryMinutes);
                     if (MiyousheService.DelayForTest==null) await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(2,6)),ct).ConfigureAwait(false);
                 }
             }
@@ -140,60 +144,52 @@ namespace SoulLink.Services
 
         private static bool CanRetrySign(string account)
         {
-            string key = account + "|" + DateTime.Now.ToString("yyyy-MM-dd");
             lock (SignRetryLock)
-            {
-                if (!SignRetryCount.TryGetValue(key, out int n)) { SignRetryCount[key]=0; return true; }
-                return n < 5;   // ★ 最多 5 次重试，避免整天空转
-            }
+                return !SignRetryCount.TryGetValue(account, out var retry) || retry.Day != DateOnly.FromDateTime(DateTime.Today)
+                    || (retry.Attempts < 5 && DateTimeOffset.UtcNow >= retry.RetryAt);
         }
 
-        private static void RecordSignRetry(string account)
+        private static void RecordSignRetry(string account, int retryMinutes)
         {
-            string key = account + "|" + DateTime.Now.ToString("yyyy-MM-dd");
+            var today = DateOnly.FromDateTime(DateTime.Today);
             lock (SignRetryLock)
             {
-                SignRetryCount.TryGetValue(key, out int n);
-                SignRetryCount[key] = n + 1;
+                int attempts = SignRetryCount.TryGetValue(account, out var retry) && retry.Day == today ? retry.Attempts : 0;
+                SignRetryCount[account] = (today, attempts + 1,
+                    DateTimeOffset.UtcNow.AddMinutes(Math.Clamp(retryMinutes, 1, 1440)));
             }
         }
 
-        // ── 摩拉每小时拉取（需求2）──────────────────────────────────
+        internal static int LedgerIntervalHours(int minutes)
+            => minutes >= 60 && minutes <= 360 && minutes % 60 == 0 ? minutes / 60 : 1;
+
+        // ── 摩拉定时拉取 ──────────────────────────────────
 
         private static async Task RunLedgerIfDueAsync(AppConfig config, CancellationToken ct)
         {
             if (MiyousheService.Running!=0) return;
-            int interval = Math.Max(1, config.Settings.MiyousheLedgerIntervalMinutes);
+            var interval = TimeSpan.FromHours(LedgerIntervalHours(config.Settings.MiyousheLedgerIntervalMinutes));
             try
             {
                 var accounts = AccountProviderForTest != null
                     ? await AccountProviderForTest(ct).ConfigureAwait(false)
-                    : await MiyousheStore.Shared.ListAccountsAsync(ct).ConfigureAwait(false);
+                    : config.Settings.MiyousheDefaultRole.Keys.ToArray();
                 foreach (string account in accounts)
                 {
-                    DateTime due;
-                    lock (LedgerLock)
-                    {
-                        if (LastLedgerPull.TryGetValue(account, out var last))
-                        {
-                            if ((DateTime.Now - last).TotalMinutes < interval) continue;   // ★ 未到间隔
-                        }
-                        due = DateTime.Now;
-                    }
-                    string region = config.Settings.MiyousheAccountRegions.TryGetValue(account,out var rn)&&rn=="os"?"os":"cn";
-                    var credential = await MiyousheCredentialStore.LoadAsync(account,region,ct).ConfigureAwait(false);
-                    if (credential==null) continue;
+                    string uid = MiyousheService.GetDefaultRole(account);
+                    string region = MiyousheSignPreferences.RegionFor(config.Settings, account);
+                    if (region != "cn" || uid.Length == 0) continue;
+                    var due = DateTimeOffset.UtcNow;
+                    var last = await LastLedgerAttemptAsync(account, uid, ct).ConfigureAwait(false);
+                    if (due - last < interval) continue;
+
+                    var credential = await MiyousheCredentialStore.LoadAsync(account, region, ct).ConfigureAwait(false);
+                    if (credential == null) continue;
                     LedgerRunCount++;
-                    try
-                    {
-                        await MiyousheService.RunForAccountAsync(account,false,true,ct).ConfigureAwait(false);
-                        lock (LedgerLock) { LastLedgerPull[account] = due; }   // 成功才推进
-                    }
-                    catch
-                    {
-                        // 失败不推进 LastLedgerPull → 下一拍仍「已到间隔」，但受 RunForAccountAsync
-                        // 内部 PausedUntil（MiyousheRetryMinutes 退避）限制，不会紧循环。
-                    }
+                    var result = await MiyousheService.RunForAccountAsync(account, false, true, ct).ConfigureAwait(false);
+                    // A busy gate did not send a request. Real attempts use the configured interval.
+                    if (result.state != "queued")
+                        NoteLedgerAttempt(account, uid, due);
                     if (MiyousheService.DelayForTest==null) await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(2,6)),ct).ConfigureAwait(false);
                 }
             }
@@ -201,6 +197,34 @@ namespace SoulLink.Services
             {
                 if (Interlocked.Exchange(ref _warned,1)==0)
                     App.AppendErrorLog("MiyousheHost.Ledger",new InvalidOperationException("米游社摩拉拉取周期任务失败；未记录请求内容或凭据"));
+            }
+        }
+
+        private static async Task<DateTimeOffset> LastLedgerAttemptAsync(string account, string uid, CancellationToken ct)
+        {
+            var key = (account, uid);
+            lock (LedgerLock)
+            {
+                if (LastLedgerPull.TryGetValue(key, out var cached)) return cached;
+            }
+
+            long? stored = await MiyousheStore.Shared.LatestPullStartAsync(account, uid, ct).ConfigureAwait(false);
+            lock (LedgerLock)
+            {
+                if (LastLedgerPull.TryGetValue(key, out var cached)) return cached;
+                var last = stored.HasValue ? DateTimeOffset.FromUnixTimeMilliseconds(stored.Value) : DateTimeOffset.MinValue;
+                LastLedgerPull[key] = last;
+                return last;
+            }
+        }
+
+        internal static void NoteLedgerAttempt(string account, string uid, DateTimeOffset start)
+        {
+            var key = (account, uid);
+            lock (LedgerLock)
+            {
+                if (!LastLedgerPull.TryGetValue(key, out var last) || start > last)
+                    LastLedgerPull[key] = start;
             }
         }
 

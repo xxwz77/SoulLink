@@ -120,7 +120,7 @@
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
                                     WindowChrome.IsHitTestVisibleInChrome="True">
                             <Border CornerRadius="12" Padding="11,5" Margin="0,0,12,0" Background="{DynamicResource ButtonBackground}" BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1"
-                                    x:Name="EngineBadge">
+                                    x:Name="EngineBadge" MouseLeftButtonUp="EngineBadge_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <!-- ★ 2026-11-24 修「引擎就绪」造假：XAML 默认值改中性态（检测中…+灰点），
                                          真实状态由 EnsureEngineAsync/OnEngineStatus 渲染——启动间隙不再显示假就绪。

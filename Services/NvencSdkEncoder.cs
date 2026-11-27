@@ -661,9 +661,12 @@ namespace SoulLink.Services
             {
                 // CPU NV12 → 已注册 D3D11 纹理（每帧更新）
                 IntPtr p = Marshal.AllocHGlobal(total);
-                Marshal.Copy(nv12, 0, p, total);
-                _context.UpdateSubresource(_nv12Tex, 0, null, p, (uint)_width, (uint)ySize);
-                Marshal.FreeHGlobal(p);
+                try
+                {
+                    Marshal.Copy(nv12, 0, p, total);
+                    _context.UpdateSubresource(_nv12Tex, 0, null, p, (uint)_width, (uint)ySize);
+                }
+                finally { Marshal.FreeHGlobal(p); }
 
                 var map = new NV_ENC_MAP_INPUT_RESOURCE();
                 map.version = StructVersion(4);

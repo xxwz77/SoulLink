@@ -94,13 +94,13 @@ namespace SoulLink.Services
                 var s = SessionService.Find(sessions, acc.UserName);
                 if (s == null || s.Id <= 0) continue;
                 if (string.Equals(s.State, "Disc", StringComparison.OrdinalIgnoreCase)) continue;
-                if (await StartWaitingAsync(s.Id, acc.UserName).ConfigureAwait(false)) started.Add(s.Id);
+                if (await StartWaitingAsync(s.Id, acc.UserName, acc.Id).ConfigureAwait(false)) started.Add(s.Id);
             }
             return started;
         }
 
         /// <summary>为指定会话建立"等待手动代理"，不投送任何进程。</summary>
-        public static async Task<bool> StartWaitingAsync(int sessionId, string userName)
+        public static async Task<bool> StartWaitingAsync(int sessionId, string userName, string? accountId = null)
         {
             if (!Enabled || sessionId <= 0) return false;
 
@@ -115,7 +115,7 @@ namespace SoulLink.Services
             lock (Gate)
             {
                 if (Waiting.ContainsKey(sessionId)) return false;   // 已在等待
-                relay = new RelayClient(userName, sessionId);
+                relay = new RelayClient(userName, sessionId, accountId);
                 Waiting[sessionId] = relay;
                 _cts ??= new CancellationTokenSource();
             }

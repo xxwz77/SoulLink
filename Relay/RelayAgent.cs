@@ -108,11 +108,10 @@ namespace SoulLink.Relay
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<ushort, bool> PressedKeys
             = new System.Collections.Concurrent.ConcurrentDictionary<ushort, bool>();
 
-        /// <summary>最近一次收到 **Web 来源**输入指令的 UTC 时间（Web 前端断连看门狗用）。</summary>
-        private static DateTime _lastWebActivityUtc = DateTime.UtcNow;
-
-        /// <summary>是否有 Web 来源的按键仍在按下（down/keydown 后未 up/releaseall）。</summary>
-        private static bool _webHeldInput;
+        private static long _lastWebActivity = Environment.TickCount64;
+        private static readonly object WebInputGate = new();
+        private static readonly System.Collections.Generic.HashSet<string> WebHeldButtons = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly System.Collections.Generic.HashSet<ushort> WebHeldKeys = new();
 
         // ── 键盘模拟（自动化流程用）──────────────────────────────
 
@@ -465,19 +464,50 @@ namespace SoulLink.Relay
         /// </summary>
         public static void ReleaseAllInputs()
         {
-            ReleaseAllMouseButtons();
-            ReleaseAllKeys();
+            lock (WebInputGate)
+            {
+                ReleaseAllMouseButtons();
+                ReleaseAllKeys();
+                WebHeldButtons.Clear();
+                WebHeldKeys.Clear();
+            }
         }
 
         /// <summary>由 Web 直连层（AgentWebServer.HandleInputAsync）调用：以 Web 来源语义执行一条输入指令。</summary>
         internal static Response ExecuteWeb(Request req)
         {
-            _lastWebActivityUtc = DateTime.UtcNow;
-            var resp = Execute(req);
+            if (!SessionRecorder.RemoteControlEnabled) return Fail("网页远控已关闭");
+            Volatile.Write(ref _lastWebActivity, Environment.TickCount64);
             string cmd = (req.Cmd ?? "").ToLowerInvariant();
-            if (cmd == "down" || cmd == "keydown") _webHeldInput = true;
-            else if (cmd == "up" || cmd == "keyup" || cmd == "releaseall") _webHeldInput = false;
-            return resp;
+            if (cmd is not ("down" or "up" or "keydown" or "keyup" or "releaseall"))
+                return Execute(req);
+
+            lock (WebInputGate)
+            {
+                if (cmd == "releaseall")
+                {
+                    ReleaseWebHeldInputs();
+                    return new Response { Ok = true, Message = "网页按键已释放" };
+                }
+
+                var response = Execute(req);
+                if (!response.Ok) return response;
+                if (cmd == "keydown") WebHeldKeys.Add(ParseVk(req.Button));
+                else if (cmd == "keyup") WebHeldKeys.Remove(ParseVk(req.Button));
+                else if (cmd == "down") WebHeldButtons.Add(req.Button ?? "left");
+                else WebHeldButtons.Remove(req.Button ?? "left");
+                return response;
+            }
+        }
+
+        private static void ReleaseWebHeldInputs()
+        {
+            foreach (string button in WebHeldButtons)
+                if (PressedButtons.ContainsKey(button)) MouseButton(button, false);
+            WebHeldButtons.Clear();
+            foreach (ushort key in WebHeldKeys)
+                if (PressedKeys.TryRemove(key, out _)) SendVk(key, true);
+            WebHeldKeys.Clear();
         }
 
         private const int WebIdleReleaseMs = 5000;   // Web 无输入活动超过此值且仍有按键按下 → 释放
@@ -488,7 +518,7 @@ namespace SoulLink.Relay
         ///
         /// 为什么需要：网页 /api/input 是**无状态 HTTP POST**，没有持久连接；
         /// 前端刷新/关页/切后台时浏览器未必来得及发出 releaseall（keepalive 也有失败窗口）。
-        /// 兜底：仅当 **Web 来源**的按键仍在按下（_webHeldInput）且连续 3 秒无 Web 输入活动时，
+        /// 兜底：当 Web 来源的按键仍在按下且连续 5 秒无 Web 输入活动时，
         /// 判定前端已断开，释放按键。
         /// ★ 只对 Web 来源生效：桌面端（命名管道）长按右键/方向键几秒是正常操作，绝不误释放。
         /// </summary>
@@ -499,13 +529,13 @@ namespace SoulLink.Relay
             {
                 try
                 {
-                    if (!_webHeldInput) return;
-                    if ((DateTime.UtcNow - _lastWebActivityUtc).TotalMilliseconds >= WebIdleReleaseMs)
+                    if (Environment.TickCount64 - Volatile.Read(ref _lastWebActivity) < WebIdleReleaseMs) return;
+                    lock (WebInputGate)
                     {
+                        if (WebHeldButtons.Count == 0 && WebHeldKeys.Count == 0) return;
+                        if (Environment.TickCount64 - Volatile.Read(ref _lastWebActivity) < WebIdleReleaseMs) return;
                         Log("Web 前端断连看门狗：无输入活动超时，释放按键");
-                        ReleaseAllMouseButtons();
-                        ReleaseAllKeys();
-                        _webHeldInput = false;
+                        ReleaseWebHeldInputs();
                     }
                 }
                 catch { }
@@ -584,14 +614,14 @@ namespace SoulLink.Relay
         /// <summary>
         /// 代理启动时按环境变量写用户级启动项策略（路径A）。
         ///
-        /// ★ 环境变量 SOULLINK_USER_POLICY：1=写禁用（默认）；0=删值恢复；缺失=不动作。
+        /// ★ 环境变量 SOULLINK_SLIM_EDGE_POLICY：1=应用；0=撤销本工具的策略；缺失时不读取或修改策略。
         /// ★ 写失败静默降级：策略失败绝不能拖垮注入代理，只能记日志。
         /// </summary>
         private static void ApplyStartupUserPolicy()
         {
             try
             {
-                string raw = Environment.GetEnvironmentVariable("SOULLINK_USER_POLICY") ?? "";
+                string raw = Environment.GetEnvironmentVariable("SOULLINK_SLIM_EDGE_POLICY") ?? "";
                 if (raw.Length == 0) { Log("用户级策略：未下发开关，跳过"); return; }
                 bool enable = raw != "0";
                 SoulLink.Services.EdgeStartupPolicy.ApplyUserPolicy(enable);
@@ -615,6 +645,8 @@ namespace SoulLink.Relay
             {
                 string portText = Environment.GetEnvironmentVariable("SOULLINK_WEB_PORT") ?? "";
                 if (!int.TryParse(portText, out int port) || port <= 0)
+                    int.TryParse(Environment.GetEnvironmentVariable("SOULLINK_WEB_REMOTE_PORT"), out port);
+                if (port <= 0)
                 {
                     Log("网页直连：未配置端口，跳过");
                     return;
@@ -642,6 +674,7 @@ namespace SoulLink.Relay
             public int Count { get; set; } = 1;
             public string Hotkey { get; set; } = "";
             public bool Trace { get; set; }
+            public bool WebInput { get; set; }
             public int VideoBitrateKbps { get; set; }
             public int NvencPreset { get; set; }
             public int VbvBufferIncreasePercent { get; set; }
@@ -726,7 +759,7 @@ namespace SoulLink.Relay
             //   宿主挂载已登录用户的 NTUSER.DAT 会因文件被独占而失败，所以
             //   class=User 的策略（Edge 预启动/后台）改由**代理**在目标会话内
             //   直接写自己的 HKCU —— 天然就是目标账号，绕开挂载死结（路径A）。
-            //   是否执行由主程序投送时的环境变量 SOULLINK_USER_POLICY 决定；
+            //   是否执行由主程序投送时的环境变量 SOULLINK_SLIM_EDGE_POLICY 决定；
             //   写失败静默降级，绝不阻塞代理进入注入循环。
             ApplyStartupUserPolicy();
 
@@ -737,7 +770,7 @@ namespace SoulLink.Relay
             //   主程序完全不参与流量（只提供"账号 → 端口"的映射表）。
             //
             //   端口和口令由主程序投送时通过环境变量下发（见 RelayClient.CaptureEnv）。
-            //   没设 SOULLINK_WEB_PORT 或端口为 0 表示用户没开网页访问，不启动。
+            //   账号远控关闭时使用保留端口，等宿主开启该账号后再允许访问。
             StartWebDirect();
             StartIdleReleaseWatchdog();
 
@@ -861,7 +894,7 @@ namespace SoulLink.Relay
                 try
                 {
                     var req = JsonSerializer.Deserialize<Request>(line, Json);
-                    resp = req == null ? Fail("空指令") : Execute(req);
+                    resp = req == null ? Fail("空指令") : req.WebInput ? ExecuteWeb(req) : Execute(req);
                     noReply = req != null && req.NoReply;
                 }
                 catch (Exception ex)
@@ -901,7 +934,7 @@ namespace SoulLink.Relay
                     catch (Exception ex) { return Fail("配置热键失败：" + ex.Message); }
 
                 case "noop":
-                    // 心跳占位：仅刷新 _lastWebActivityUtc（ExecuteWeb 已做），不注入任何东西。
+                    // Web 心跳只刷新活动时间。
                     return new Response { Ok = true, Message = "noop" };
 
                 case "ping":
@@ -1189,6 +1222,19 @@ namespace SoulLink.Relay
                     SessionRecorder.UpdateCaptureMode(req.CaptureMode);
                     return new Response { Ok = true, Message = "抓屏后端热切已排队，viewer 不重建" };
 
+                case "remotecontrol":
+                    {
+                        bool enabled = req.Count == 1;
+                        bool wasEnabled = SessionRecorder.RemoteControlEnabled;
+                        SessionRecorder.SetRemoteControl(enabled);
+                        if (wasEnabled && !enabled)
+                        {
+                            AgentWebServer.CloseRemoteConnections();
+                            ReleaseAllInputs();
+                        }
+                        return new Response { Ok = true };
+                    }
+
                 case "videoparams":
                     SessionRecorder.UpdateVideoParameters(req.VideoBitrateKbps, req.NvencPreset,
                         req.VbvBufferIncreasePercent, req.StreamFps, req.RecordFps);
@@ -1279,6 +1325,7 @@ namespace SoulLink.Relay
                     };
 
                 case "frame":
+                    if (!SessionRecorder.RemoteControlEnabled) return new Response { Ok = false, Message = "网页远控已关闭" };
                     {
                         // 静态截图：独立一次性取帧，不读 H.264 实时 Ring。
                         int sid = Process.GetCurrentProcess().SessionId;

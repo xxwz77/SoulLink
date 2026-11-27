@@ -176,7 +176,10 @@ namespace SoulLink.Services
         private async Task PullDetailPagesAsync(string account, MiyousheCredential credential, MiyousheRole role,
             string ym, int month, int kind, Func<int,int,CancellationToken,Task> progress, CancellationToken ct)
         {
-            int totalPages=0;
+            int totalPages = 0, totalInserted = 0;
+            var occurrences = new Dictionary<(int ActionId, string Time, string Raw), int>();
+            var daily = new Dictionary<string, long>();
+            bool complete = false;
             for (int page = 1; page <= 100; page++)
             {
                 string query = Query(new[]{("bind_uid",role.GameUid),("bind_region",role.Region),("month",month.ToString()),
@@ -185,34 +188,43 @@ namespace SoulLink.Services
                 AddAuthorized(request,credential,query,null);
                 var reply = await SendAsync(request,ct).ConfigureAwait(false);
                 var data = Data(reply);
-                if (!data.TryGetProperty("list",out var list) || list.ValueKind != JsonValueKind.Array) break;
+                if (!data.TryGetProperty("list", out var list) || list.ValueKind != JsonValueKind.Array)
+                    throw new InvalidDataException("米游社流水分页格式无效");
                 var entries = new List<MiyousheLedgerEntry>();
-                var daily = new Dictionary<string,(long primogem,long mora)>();
-                int ordinal=0;
                 foreach (var item in list.EnumerateArray())
                 {
                     string time = String(item,"time");
                     long? num = Long(item,"num"); int actionId = Int(item,"action_id") ?? 0;
-                    // 不做任何 action/金额过滤。同一分钟多条靠原始 JSON 区分，不用时间去重。
+                    // Count identical facts across the pull. An inserted row on page one must not renumber other facts.
+                    string raw = item.GetRawText();
+                    var identity = (actionId, time, raw);
+                    occurrences.TryGetValue(identity, out int ordinal);
+                    occurrences[identity] = ordinal + 1;
                     entries.Add(new(account,role.GameUid,role.Region,ym,kind,actionId,String(item,"action"),num,
                         Long(item,"single_morale") ?? Long(item,"single_mora"),Int(item,"count"),
-                        time,ParseMinute(time),item.GetRawText(),"ys_ledger/monthDetail",NowMs(),ordinal++));
+                        time,ParseMinute(time),raw,"ys_ledger/monthDetail",NowMs(),ordinal));
                     if (num.HasValue && TryDay(time,out string day))
                     {
-                        daily.TryGetValue(day,out var sum);
-                        daily[day] = kind == 1 ? (sum.primogem+num.Value,sum.mora) : (sum.primogem,sum.mora+num.Value);
+                        daily.TryGetValue(day, out long sum);
+                        daily[day] = sum + num.Value;
                     }
                 }
-                var days = daily.Select(pair => new MiyousheLedgerDay(account,role.GameUid,pair.Key,kind,
-                    kind == 1 ? pair.Value.primogem : null,kind == 2 ? pair.Value.mora : null,
-                    JsonSerializer.Serialize(new { sum = kind == 1 ? pair.Value.primogem : pair.Value.mora }),
-                    "ys_ledger/monthDetail",NowMs())).ToArray();
-                int inserted = await MiyousheStore.Shared.SaveLedgerFactsAsync(entries,days,ct).ConfigureAwait(false);
-                totalPages++;
-                await progress(totalPages,inserted,ct).ConfigureAwait(false);
-                int pageSize = Int(data,"page_size") ?? 100;
-                if (list.GetArrayLength() < pageSize) break;
-                await DelayBetweenRequestsAsync(ct).ConfigureAwait(false);
+                totalInserted += await MiyousheStore.Shared.SaveLedgerFactsAsync(entries,
+                    Array.Empty<MiyousheLedgerDay>(), ct, stableOccurrences: true).ConfigureAwait(false);
+                await progress(++totalPages, totalInserted, ct).ConfigureAwait(false);
+                int pageSize = Math.Max(1, Int(data,"page_size") ?? 100);
+                if (list.GetArrayLength() < pageSize) { complete = true; break; }
+                if (page < 100) await DelayBetweenRequestsAsync(ct).ConfigureAwait(false);
+            }
+
+            // Write a day total only after all pages have been observed; a partial pull leaves previous totals intact.
+            if (complete && daily.Count > 0)
+            {
+                var days = daily.Select(pair => new MiyousheLedgerDay(account, role.GameUid, pair.Key, kind,
+                    kind == 1 ? pair.Value : null, kind == 2 ? pair.Value : null,
+                    JsonSerializer.Serialize(new { sum = pair.Value }), "ys_ledger/monthDetail", NowMs())).ToArray();
+                await MiyousheStore.Shared.SaveLedgerFactsAsync(Array.Empty<MiyousheLedgerEntry>(), days, ct)
+                    .ConfigureAwait(false);
             }
         }
         private async Task<MiyousheReply> SendAsync(HttpRequestMessage request, CancellationToken ct)

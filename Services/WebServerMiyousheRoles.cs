@@ -57,37 +57,23 @@ namespace SoulLink.Services
 
             AppSettings? settings = App.Config?.Settings;
 
-            // 角色列表来自本地库（limit=1：只要 roles 字段，不拉流水）
-            MiyousheArchive archive;
-            try { archive = await MiyousheStore.Shared.QueryAsync(account, 1).ConfigureAwait(false); }
+            IReadOnlyList<MiyousheRole> roles;
+            try { roles = await MiyousheStore.Shared.QueryRolesAsync(account).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 await WriteJson(ctx, new { ok = false, account, error = "读取米游社库失败：" + ex.Message }).ConfigureAwait(false);
                 return;
             }
 
-            IReadOnlyList<MiyousheRole> roles = archive.Roles ?? Array.Empty<MiyousheRole>();
-
             // ── 写入默认角色 ──────────────────────────────────────────
             string? writeError = null;
             if (setToUid != null)
             {
-                if (settings == null) writeError = "配置未加载";
-                else if (setToUid.Length == 0)
-                {
-                    settings.MiyousheDefaultRole.Remove(account);
-                    try { ConfigStore.Save(App.Config!); } catch (Exception ex) { writeError = "保存失败：" + ex.Message; }
-                }
-                else
-                {
-                    bool exists = roles.Any(r => string.Equals(r.GameUid, setToUid, StringComparison.OrdinalIgnoreCase));
-                    if (!exists) writeError = "该 UID 不在此账号的角色列表里";
-                    else
-                    {
-                        settings.MiyousheDefaultRole[account] = setToUid;
-                        try { ConfigStore.Save(App.Config!); } catch (Exception ex) { writeError = "保存失败：" + ex.Message; }
-                    }
-                }
+                if (setToUid.Length > 0 && !roles.Any(r =>
+                    string.Equals(r.GameUid, setToUid, StringComparison.OrdinalIgnoreCase)))
+                    writeError = "该 UID 不在此账号的角色列表里";
+                else if (!MiyousheService.SaveDefaultRole(account, setToUid))
+                    writeError = "配置未加载";
             }
 
             // ── 读当前默认 ────────────────────────────────────────────
@@ -113,8 +99,8 @@ namespace SoulLink.Services
             string reason = "";
             if (roles.Count == 0)
             {
-                string credState = archive.CredentialState?.State ?? "";
-                reason = credState != "ok"
+                string credState = (await MiyousheService.LoginStatusAsync(account, default).ConfigureAwait(false)).State;
+                reason = credState is not ("ok" or "stored")
                     ? "需要重新登录米游社（凭据不可用）"
                     : "凭据有效，但还没有拉取到角色数据（点「立即拉取」或等待定时任务）";
             }

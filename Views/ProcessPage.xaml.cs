@@ -14,32 +14,64 @@ namespace SoulLink.Views
     {
         private readonly ObservableCollection<SessionItem> _users = new ObservableCollection<SessionItem>();
         private List<RemoteProcess> _all = new List<RemoteProcess>();
-        private List<SessionInfo> _sessions = new List<SessionInfo>();
         private SessionInfo? _current;
+        private SessionSlimmer.SessionStat? _summary;
+        private int _sessionRequest, _processRequest;
+        private bool _rebuildingSessions;
+        private bool _loadingSessions;
         private bool _loading;
+        private bool _cleanupInProgress;
 
         public ProcessPage()
         {
             InitializeComponent();
             UserCombo.ItemsSource = _users;
+            CleanupAccounts.ItemsSource = _users;
         }
 
         public void Activate()
         {
+            if (StartupTab.IsChecked == true)
+            {
+                StartupView.Activate();
+                return;
+            }
+            if (SystemTab.IsChecked == true)
+            {
+                RefreshServiceStates();
+                RebuildPolicyRows();
+                RefreshPolicySwitches();
+                return;
+            }
+            if (DefenderTab.IsChecked == true)
+            {
+                RefreshDefenderExclusions();
+                return;
+            }
             RefreshWhitelistText();
-            RebuildPolicyRows();
-            RefreshPolicySwitches();
+            try
+            {
+                _loadingPolicySwitch = true;
+                KillEnabledCheck.IsChecked = App.Config?.Settings?.SessionSlimKillEnabled != false;
+            }
+            finally { _loadingPolicySwitch = false; }
             LoadSessions();
         }
 
-        /// <summary>把三个开关（清理外围进程/机器级/用户级）与当前配置/注册表状态对齐。</summary>
+        private void ProcessGrid_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        {
+            if (Grid.Template.FindName("DG_ScrollViewer", Grid) is ScrollViewer inner
+                && (e.Delta < 0 ? inner.VerticalOffset < inner.ScrollableHeight : inner.VerticalOffset > 0)) return;
+            e.Handled = true;
+            PageScroll.ScrollToVerticalOffset(PageScroll.VerticalOffset - e.Delta / 2.0);
+        }
+
+        /// <summary>将机器级和用户级策略开关与当前配置和注册表状态对齐。</summary>
         private void RefreshPolicySwitches()
         {
             try
             {
                 _loadingPolicySwitch = true;
-                if (KillEnabledCheck != null)
-                    KillEnabledCheck.IsChecked = App.Config?.Settings?.SessionSlimKillEnabled != false;
                 bool machine = App.Config?.Settings?.SessionSlimMachinePolicyEnabled == true
                                || Services.SessionSlimmer.IsMachinePolicyEnabled();
                 if (MachinePolicyCheck != null) MachinePolicyCheck.IsChecked = machine;
@@ -62,8 +94,7 @@ namespace SoulLink.Views
                     App.Config.Settings.SessionSlimKillEnabled = enable;
                     ConfigStore.Save(App.Config);
                 }
-                // 开关变化后刷新「清理」按钮可用性：关闭总开关时不允许点清理。
-                RefreshSlimSummary(_current?.Id ?? 0);
+                UpdateCleanupButtons();
                 Services.LogBus.Write(Services.LogLevel.Ok, "会话瘦身总开关",
                     enable ? "已开启：可清理外围进程" : "已关闭：不再清理任何外围进程");
             }
@@ -73,6 +104,7 @@ namespace SoulLink.Views
         /// <summary>指定要查看的会话（从「在线会话」页跳转过来）。</summary>
         public void FocusSession(SessionInfo s)
         {
+            ProcessTab.IsChecked = true;
             _ = LoadSessionsAsync(s);
         }
 
@@ -80,76 +112,97 @@ namespace SoulLink.Views
 
         private async Task LoadSessionsAsync(SessionInfo? focus)
         {
-            var all = await SessionService.QueryAsync().ConfigureAwait(true);
-
-            // ★ 只列出「配置里填过」的账号，其余一概不显示。
-            //   AccountScope.Sessions 只过滤主用户，会把 A1/A4 这种
-            //   没配置的账号也列出来 —— 本页是会话瘦身，不该让用户
-            //   对着一个不属于自己管理的会话乱点。
-            var configured = (App.Config?.Accounts ?? new List<Models.Account>())
-                .Where(a => a != null && !string.IsNullOrWhiteSpace(a.UserName))
-                .Select(a => a.UserName.Trim())
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            _sessions = AccountScope.Sessions(SessionService.FilterUsers(all))
-                .Where(s => s != null && configured.Contains(s.UserName ?? ""))
-                .ToList();
-
-            _users.Clear();
-            foreach (var s in _sessions)
-                _users.Add(new SessionItem(s));
-
-            if (_sessions.Count == 0)
+            int request = ++_sessionRequest;
+            _loadingSessions = true;
+            UpdateCleanupButtons();
+            List<SessionInfo> all;
+            try { all = await SessionService.QueryAsync().ConfigureAwait(true); }
+            catch (Exception ex)
             {
-                SubText.Text = "当前没有用户登录会话";
-                _all.Clear();
-                Grid.ItemsSource = null;
+                if (request == _sessionRequest)
+                {
+                    _loadingSessions = false;
+                    LogBus.Error("读取会话失败", ex.Message);
+                    UpdateCleanupButtons();
+                }
                 return;
             }
+            if (request != _sessionRequest) return;
+            _loadingSessions = false;
 
-            var pick = focus != null ? _users.FirstOrDefault(u => u.Session.Id == focus.Id) : null;
-            UserCombo.SelectedItem = pick ?? _users.FirstOrDefault();
+            var preferred = focus ?? _current;
+            var checkedSessions = _users.Where(item => item.IsCleanupSelected).Select(item => item.Session).ToArray();
+            _rebuildingSessions = true;
+            try
+            {
+                _users.Clear();
+                foreach (var s in SessionService.FilterUsers(all).Where(SessionSlimmer.CanSelectSession).DistinctBy(s => s.Id))
+                    _users.Add(new SessionItem(s) { IsCleanupSelected = checkedSessions.Any(previous => IsSameSession(previous, s)) });
+
+                UserCombo.SelectedItem = preferred == null
+                    ? _users.FirstOrDefault(u => u.Session.IsActive) ?? _users.FirstOrDefault()
+                    : _users.FirstOrDefault(u => IsSameSession(u.Session, preferred));
+            }
+            finally { _rebuildingSessions = false; }
+            await SelectSessionAsync();
         }
+
+        private static bool IsSameSession(SessionInfo? first, SessionInfo? second)
+            => first != null && second != null && first.Id == second.Id
+                && string.Equals(first.UserName, second.UserName, StringComparison.OrdinalIgnoreCase);
 
         private async void UserCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (UserCombo.SelectedItem is SessionItem item)
-            {
-                _current = item.Session;
-                await LoadProcessesAsync();
-            }
+            if (!_rebuildingSessions && Grid != null) await SelectSessionAsync();
         }
 
-        private async Task LoadProcessesAsync()
+        private Task SelectSessionAsync()
         {
-            if (_current == null) return;
-            _loading = true;
+            _current = (UserCombo.SelectedItem as SessionItem)?.Session;
+            _summary = null;
+            _all.Clear();
+            Grid.ItemsSource = null;
+            ProcessCountText.Text = "";
+            return LoadProcessesAsync();
+        }
+
+        private async Task LoadProcessesAsync(string? cleanupResult = null)
+        {
+            var target = _current;
+            int request = ++_processRequest;
+            _summary = null;
+            _loading = target != null;
+            SubText.Text = target == null
+                ? (_users.Count == 0 ? "当前没有可选的挂机会话" : "请选择要查看的会话")
+                : target.UserName + " · 会话 #" + target.Id;
+            SlimSummary.Text = target == null ? "选择会话后显示可清理的进程" : "正在扫描当前会话…";
+            UpdateCleanupButtons();
+            if (target == null) return;
+
             try
             {
-                var sid = _current.Id;
-                _all = await Task.Run(() => ProcessService.List(sid)).ConfigureAwait(true);
-                ApplyFilter();          // ★ 必须调用：把数据推给 DataGrid，否则列表永远是空的
-                SubText.Text = _current.UserName + " · 会话 #" + _current.Id + " · 共 " + _all.Count + " 个可见进程";
-                RefreshSlimSummary(sid);
-                if (ProcessCountText != null) ProcessCountText.Text = "（共 " + _all.Count + " 个）";
+                var (processes, stats) = await Task.Run(() =>
+                    (ProcessService.List(target.Id, includeMemory: true), SessionSlimmer.Count(target.Id, target.UserName)));
+                if (request != _processRequest || !ReferenceEquals(_current, target)) return;
+                _all = processes;
+                ApplyFilter();
+                ProcessCountText.Text = "（共 " + _all.Count + " 个）";
+                _summary = stats;
+                SlimSummary.Text = FormatSummary(stats, cleanupResult);
             }
             catch (Exception ex)
             {
+                if (request == _processRequest) SlimSummary.Text = "读取进程失败：" + ex.Message;
             }
             finally
             {
-                _loading = false;
+                if (request == _processRequest)
+                {
+                    _loading = false;
+                    UpdateCleanupButtons();
+                }
             }
         }
-
-        // ── 会话瘦身 ────────────────────────────────────────────────────
-        //
-        // 界面上的两块功能：
-        //   ① 清理外围进程：只杀白名单里、且**不会自动重启**的进程
-        //      （msedge / 手机连接 / 游戏栏）。SearchHost、Widgets 会自己回来，
-        //      单纯杀毫无意义，要靠注册表策略。
-        //   ② 启动项优化：对勾选的账号写注册表策略，关闭小组件/Edge 预启动/
-        //      手机连接的自动启动。**只影响勾选的账号**，其余完全不动。
 
         /// <summary>账号策略行（界面绑定）。</summary>
         public sealed class PolicyRow : System.ComponentModel.INotifyPropertyChanged
@@ -157,6 +210,7 @@ namespace SoulLink.Views
             private bool _enabled;
             private string _state = "";
 
+            public string AccountId { get; init; } = "";
             public string UserName { get; set; } = "";
             public bool Enabled
             {
@@ -173,42 +227,11 @@ namespace SoulLink.Views
 
         private readonly System.Collections.ObjectModel.ObservableCollection<PolicyRow> _policyRows = new();
 
-        /// <summary>
-        /// 该账号是否就是"当前正在使用的那个用户"（主用户）。
-        ///
-        /// ★ 判定：与 SoulLink 自身处于同一 Windows 会话号。
-        ///   主用户不参与会话瘦身 —— 他开着桌面、跑着日常程序，
-        ///   动他的启动项会影响正常使用。列表里直接不显示，不给误操作的机会。
-        /// </summary>
-        private static bool IsMainUserAccount(string userName)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(userName)) return false;
-                int mine = System.Diagnostics.Process.GetCurrentProcess().SessionId;
-                var sessions = Services.SessionService.QueryAsync().GetAwaiter().GetResult();
-                foreach (var s in sessions)
-                {
-                    if (s == null || s.Id != mine || s.UserName.Length == 0) continue;
-                    return string.Equals(s.UserName, userName, StringComparison.OrdinalIgnoreCase);
-                }
-                return false;
-            }
-            catch { return false; }
-        }
-
-        /// <summary>
-        /// 白名单展示：把「会清理什么 / 不清理什么」直接写在界面上。
-        /// 用户点清理之前应该清楚会动哪些进程，而不是盲点。
-        /// </summary>
         /// <summary>清理名单一行（界面绑定）。</summary>
         public sealed class KillItem
         {
             public string Name { get; set; } = "";
-            /// <summary>内置 / 自定义。</summary>
             public string SourceText { get; set; } = "";
-            /// <summary>内置项不允许移除（想撤掉请用「恢复默认」，或它本来就在白名单里）。</summary>
-            public System.Windows.Visibility RemoveVisibility { get; set; } = System.Windows.Visibility.Visible;
         }
 
         private readonly System.Collections.ObjectModel.ObservableCollection<KillItem> _killItems = new();
@@ -224,7 +247,6 @@ namespace SoulLink.Views
                 KillListItems.ItemsSource = _killItems;
                 _killItems.Clear();
 
-                var builtIn = Services.SessionSlimmer.BuiltInKillNames;
                 var effective = Services.SessionSlimmer.EffectiveKillNames();
 
                 foreach (var name in effective.OrderBy(x => x))
@@ -233,35 +255,30 @@ namespace SoulLink.Views
                     _killItems.Add(new KillItem
                     {
                         Name = name,
-                        SourceText = isBuiltIn ? "内置" : "自定义",
-                        // ★ 内置项也允许移除：默认勾选的东西不该绑架用户。
-                        //   移除的内置项记入 SessionSlimDisabled，「恢复默认」可还原。
-                        RemoveVisibility = System.Windows.Visibility.Visible
+                        SourceText = isBuiltIn ? "内置" : "自定义"
                     });
                 }
-
-                var sb = new System.Text.StringBuilder();
-                sb.Append("不清理：游戏/挂机进程、SoulLink 自身、输入法、");
-                sb.Append("explorer/桌面、RDP 连接组件，以及所有未列出的进程。");
-                sb.AppendLine();
-                sb.Append("注：开始菜单搜索、小组件属于系统组件，结束后会被系统自动拉起，");
-                sb.Append("需用「启动项优化」从注册表层面关闭。");
-                WhitelistText.Text = sb.ToString();
+                var optional = SessionSlimmer.OptionalProcesses
+                    .Where(item => !effective.Contains(item.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+                OptionalKillChoices.ItemsSource = optional;
+                OptionalKillChoices.Visibility = optional.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             }
             catch { }
         }
 
-        /// <summary>
-        /// 点击账号胶囊切换是否参与优化。
-        /// 用整个 Border 接收点击（圆点开关本身不是独立控件），
-        /// 这样点击面积更大，符合"整行可点"的直觉。
-        /// </summary>
-        private void PolicyRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        private void PolicyAccount_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                if ((sender as System.Windows.FrameworkElement)?.DataContext is PolicyRow row)
-                    row.Enabled = !row.Enabled;
+                if (sender is CheckBox { DataContext: PolicyRow row } box)
+                {
+                    row.Enabled = box.IsChecked == true;
+                    row.StateText = "";
+                    var settings = App.Config.Settings;
+                    settings.SessionSlimEdgeAccounts ??= new();
+                    settings.SessionSlimEdgeAccounts[row.AccountId] = row.Enabled;
+                    ConfigStore.Save(App.Config);
+                }
             }
             catch { }
         }
@@ -277,8 +294,7 @@ namespace SoulLink.Views
                 bool changed = Services.SessionSlimmer.RemoveFromList(name);
                 if (changed)
                     Services.LogBus.Write(Services.LogLevel.Info, "清理名单已更新", "已移除：" + name);
-                RefreshWhitelistText();
-                RefreshSlimSummary(_current?.Id ?? 0);
+                RefreshAfterListChange();
             }
             catch (Exception ex) { Services.LogBus.Error("移除清理项失败", ex.Message); }
         }
@@ -289,7 +305,7 @@ namespace SoulLink.Views
             try
             {
                 var cfg = App.Config;
-                if (cfg?.Settings?.SessionSlimKillList == null) { RefreshWhitelistText(); return; }
+                if (cfg?.Settings == null) return;
                 int custom = cfg.Settings.SessionSlimKillList?.Count ?? 0;
                 int disabled = cfg.Settings.SessionSlimDisabled?.Count ?? 0;
                 if (custom == 0 && disabled == 0)
@@ -305,8 +321,7 @@ namespace SoulLink.Views
                 if (!ok) return;
 
                 Services.SessionSlimmer.ResetList();
-                RefreshWhitelistText();
-                RefreshSlimSummary(_current?.Id ?? 0);
+                RefreshAfterListChange();
                 Services.LogBus.Write(Services.LogLevel.Info, "清理名单已恢复默认", "");
             }
             catch (Exception ex) { Services.LogBus.Error("恢复默认失败", ex.Message); }
@@ -326,92 +341,144 @@ namespace SoulLink.Views
                 foreach (var a in cfg.Accounts)
                 {
                     if (string.IsNullOrWhiteSpace(a.UserName)) continue;
-                    // ★ 主用户（当前控制台会话）**完全不出现在列表里**：
-                    //   他开着桌面、跑着用户自己在用的程序，改他的启动项会影响日常使用。
-                    //   判定依据：与当前进程同一会话号 = 主用户。
-                    if (IsMainUserAccount(a.UserName)) continue;
+                    if (!SessionSlimmer.CanSelectUser(a.UserName)) continue;
+                    bool enabled = cfg.Settings.SessionSlimEdgeAccounts?.TryGetValue(a.Id, out bool selected) == true && selected;
 
                     _policyRows.Add(new PolicyRow
                     {
+                        AccountId = a.Id,
                         UserName = a.UserName,
-                        // 列表里只剩挂机账号，默认全选
-                        Enabled = true,
-                        StateText = "可优化"
+                        Enabled = enabled
                     });
                 }
 
-                if (_policyRows.Count == 0)
-                    PolicyHint.Text = "配置里没有填用户名的账号，无法应用启动项优化。";
+                PolicyHint.Text = _policyRows.Count == 0 ? "没有可配置的挂机账号。"
+                    : "对勾选的账号禁用 Edge 预启动与后台运行。";
             }
             catch { }
         }
 
-        /// <summary>刷新瘦身统计。</summary>
-        private void RefreshSlimSummary(int sessionId)
+        private void RefreshAfterListChange()
         {
-            try
+            RefreshWhitelistText();
+            _ = LoadProcessesAsync();
+        }
+
+        private static string FormatSummary(SessionSlimmer.SessionStat stat, string? cleanupResult)
+        {
+            string total = "共 " + stat.Total + " 个进程 · 专用提交 " + stat.TotalBytes / 1048576 + " MiB";
+            string cleanup = stat.OwnerVerified
+                ? "可清理 " + stat.Killable + " 个 · " + stat.KillableBytes / 1048576 + " MiB"
+                    + (stat.Unverified > 0 ? " · " + stat.Unverified + " 个名单内进程未通过身份或权限核验" : "")
+                : "无法确认会话归属";
+            return total + "　" + cleanup
+                + (stat.PolicyOnly > 0 ? "　搜索和小组件 " + stat.PolicyOnly + " 个" : "")
+                + (cleanupResult != null ? "\n" + cleanupResult : "");
+        }
+
+        private void UpdateCleanupButtons()
+        {
+            if (Grid == null || BtnSlim == null || BtnKillAdvanced == null || BtnAddToList == null) return;
+            string? blocked = _loadingSessions ? "正在刷新会话"
+                : _current == null ? "请选择要清理的会话"
+                : _cleanupInProgress ? "正在清理"
+                : _loading ? "正在扫描当前会话"
+                : App.Config?.Settings?.SessionSlimKillEnabled != true ? "请先启用进程清理"
+                : _summary == null ? "未取得进程扫描结果，请刷新"
+                : !_summary.OwnerVerified ? "当前会话归属未核验"
+                : null;
+            var checkedCount = _users.Count(item => item.IsCleanupSelected);
+            bool usesCurrentSummary = checkedCount == 0
+                || (checkedCount == 1 && _users.Any(item => item.IsCleanupSelected && IsSameSession(item.Session, _current)));
+            string? bulkBlocked = usesCurrentSummary
+                ? blocked ?? (_summary?.Killable > 0 ? null
+                    : _summary?.Unverified > 0 ? "名单内的进程未通过身份或权限核验"
+                    : "当前会话里没有正在运行的名单内进程")
+                : _cleanupInProgress ? "正在清理"
+                    : _loadingSessions ? "正在刷新会话"
+                    : App.Config?.Settings?.SessionSlimKillEnabled != true ? "请先启用进程清理"
+                    : null;
+            bool hasSelection = Grid.SelectedItems.Cast<RemoteProcess>().Any(p => !SessionSlimmer.IsProtected(p.Name));
+            BtnSlim.IsEnabled = bulkBlocked == null;
+            BtnSlim.ToolTip = bulkBlocked ?? "预览并确认要清理的进程";
+            BtnSlim.Content = checkedCount switch
             {
-                if (sessionId <= 0) { SlimSummary.Text = "选择会话后显示进程构成"; return; }
-                var st = Services.SessionSlimmer.Count(sessionId);
-                long totalMb = st.TotalBytes / 1024 / 1024;
-                long killMb = st.KillableBytes / 1024 / 1024;
-                long policyMb = st.PolicyOnlyBytes / 1024 / 1024;
-
-                var parts = new System.Text.StringBuilder();
-                parts.Append("总计 ").Append(st.Total).Append(" 个 / ").Append(totalMb).Append(" MB");
-                parts.Append("　可立即清理 ").Append(st.Killable).Append(" 个 / ").Append(killMb).Append(" MB");
-                if (st.PolicyOnly > 0)
-                    parts.Append("　需启动项优化 ").Append(st.PolicyOnly).Append(" 个 / ").Append(policyMb).Append(" MB");
-                SlimSummary.Text = parts.ToString();
-
-                // ★ 总开关关闭时，「清理」按钮不可点（Slim() 里也会二次拦截）。
-                bool killEnabled = App.Config?.Settings?.SessionSlimKillEnabled != false;
-                BtnSlim.IsEnabled = killEnabled && st.Killable > 0;
+                0 => "清理外围进程",
+                1 => "清理所选会话",
+                _ => "清理所选 " + checkedCount + " 个会话"
+            };
+            BtnKillAdvanced.IsEnabled = blocked == null && hasSelection;
+            BtnAddToList.IsEnabled = !_loadingSessions && !_loading && !_cleanupInProgress && hasSelection;
+            if (KillListItems != null) KillListItems.IsEnabled = !_cleanupInProgress;
+            if (OptionalKillChoices != null) OptionalKillChoices.IsEnabled = !_cleanupInProgress;
+            if (BtnResetList != null) BtnResetList.IsEnabled = !_cleanupInProgress;
+            if (CleanupAccountPicker != null)
+            {
+                CleanupAccountPicker.Visibility = _users.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+                CleanupAccountPicker.IsEnabled = !_loadingSessions && !_cleanupInProgress;
+                CleanupAccountHint.Text = checkedCount == 0
+                    ? "批量清理账号（可多选）。未勾选时仅清理正在查看的会话。"
+                    : "已选 " + checkedCount + " 个会话。进程列表仍显示正在查看的会话。";
+                UserCombo.IsEnabled = !_cleanupInProgress;
+                RefreshSessionsButton.IsEnabled = !_cleanupInProgress;
             }
-            catch (Exception ex) { SlimSummary.Text = "统计失败：" + ex.Message; }
+        }
+
+        private void CleanupAccount_Changed(object sender, RoutedEventArgs e)
+        {
+            if (sender is not CheckBox { DataContext: SessionItem item } box) return;
+            bool selected = box.IsChecked == true;
+            if (item.IsCleanupSelected == selected) return;
+            item.IsCleanupSelected = selected;
+            UpdateCleanupButtons();
         }
 
         private async void Slim_Click(object sender, RoutedEventArgs e)
         {
+            if (!BtnSlim.IsEnabled) return;
+            var targets = _users.Where(item => item.IsCleanupSelected).Select(item => item.Session).ToArray();
+            if (targets.Length == 0 && _current is { } current) targets = [current];
+            if (targets.Length == 0) return;
+            int request = _sessionRequest;
+            _cleanupInProgress = true;
+            UpdateCleanupButtons();
             try
             {
-                if (_current == null || _current.Id <= 0) return;
-                // ★ 总开关关闭时直接拒绝（Slim() 内部也会拦截，这里给用户明确反馈）。
-                if (App.Config?.Settings?.SessionSlimKillEnabled == false)
+                var requested = targets.Select(target => (target.Id, target.UserName)).ToArray();
+                var preview = await Task.Run(() => SessionSlimmer.CountSessions(requested));
+                if (request != _sessionRequest || !IsVisible || ProcessTab.IsChecked != true) return;
+                var details = targets.Select(target =>
                 {
-                    Views.ThemedMessage.Info(Window.GetWindow(this), "会话瘦身已关闭",
-                        "请先在上方开启「清理会话外围进程」开关。");
+                    var stat = preview[target.Id];
+                    string affected = stat.Killable == 0
+                        ? (stat.OwnerVerified ? "当前无可清理进程。" : "无法确认会话归属，将跳过。")
+                        : string.Join("、", stat.KillableDetail.OrderByDescending(item => item.Value.Bytes)
+                            .Select(item => item.Key + " ×" + item.Value.Count));
+                    return target.UserName + " · 会话 #" + target.Id + "\n" + affected;
+                });
+                string summary = string.Join("\n\n", details);
+                if (preview.Values.All(stat => stat.Killable == 0))
+                {
+                    ThemedMessage.Info(Window.GetWindow(this), "没有可清理进程", summary);
+                    await LoadProcessesAsync();
                     return;
                 }
-                int sid = _current.Id;
+                if (!ThemedMessage.Confirm(Window.GetWindow(this), "清理外围进程",
+                    summary + "\n\n匹配的应用可能关闭，未保存内容可能丢失。", true)) return;
+                if (request != _sessionRequest || !IsVisible || ProcessTab.IsChecked != true) return;
 
-                BtnSlim.IsEnabled = false;
-                var before = Services.SessionSlimmer.Count(sid);
-                long beforeMb = before.TotalBytes / 1024 / 1024;
-
-                var r = await Task.Run(() => Services.SessionSlimmer.Slim(sid)).ConfigureAwait(true);
-
-                // 给系统两秒回收
-                await Task.Delay(2000).ConfigureAwait(true);
-                await LoadProcessesAsync().ConfigureAwait(true);
-
-                var after = Services.SessionSlimmer.Count(sid);
-                long afterMb = after.TotalBytes / 1024 / 1024;
-                long freed = beforeMb - afterMb;
-
-                Services.LogBus.Write(r.Any ? Services.LogLevel.Ok : Services.LogLevel.Info,
-                    "会话瘦身 · 会话 " + sid,
-                    r.Message + "　内存 " + beforeMb + " MB → " + afterMb + " MB（" +
-                    (freed >= 0 ? "减少 " : "增加 ") + Math.Abs(freed) + " MB）");
-
-                SlimSummary.Text = r.Message + "　内存 " + beforeMb + " MB → " + afterMb + " MB";
-                BtnSlim.IsEnabled = after.Killable > 0;
+                int ended = 0;
+                foreach (var target in targets.Where(target => preview[target.Id].Killable > 0))
+                {
+                    var result = await Task.Run(() => SessionSlimmer.Slim(target.Id, target.UserName, preview[target.Id].CleanupTargets));
+                    ended += result.Killed;
+                    LogBus.Write(result.Any ? LogLevel.Ok : LogLevel.Info, "会话瘦身 · " + target.UserName, result.Message);
+                }
+                if (IsVisible && ProcessTab.IsChecked == true)
+                    await LoadProcessesAsync("已请求结束 " + ended + " 个外围进程。");
             }
-            catch (Exception ex)
-            {
-                Services.LogBus.Error("会话瘦身失败", ex.Message);
-                BtnSlim.IsEnabled = true;
-            }
+            catch (Exception ex) { LogBus.Error("会话瘦身失败", ex.Message); }
+            finally { _cleanupInProgress = false; UpdateCleanupButtons(); }
         }
 
         private async void Policy_Click(object sender, RoutedEventArgs e)
@@ -433,7 +500,7 @@ namespace SoulLink.Views
                     "将对以下账号关闭「Edge 预启动 / 后台」的自动启动：\n\n"
                     + "  " + names + "\n\n"
                     + "只影响这些账号，其他用户完全不受影响。\n"
-                    + "（小组件 / 搜索是机器级设置，请用下方「全机设置」开关。）");
+                    + "小组件和任务栏搜索使用全机策略。");
                 if (!ok) return;
 
                 BtnPolicy.IsEnabled = false;
@@ -473,8 +540,7 @@ namespace SoulLink.Views
                         "将写入机器级组策略（HKLM，需管理员）：\n\n"
                         + "  · 关闭小组件面板（Win+W 失效、任务栏小组件图标消失）\n"
                         + "  · 关闭任务栏搜索（搜索框消失、开始菜单打字搜索失效）\n\n"
-                        + "影响这台机器的所有用户（含主控制台）。开始菜单本体与资源管理器搜索正常。\n"
-                        + "对已登录会话，杀掉对应进程即不再自动重启。");
+                        + "影响这台机器的所有用户。已有系统策略保留，Windows 可能在重新登录后应用。");
                     if (!ok) { RefreshPolicySwitches(); return; }
 
                     var r = await Task.Run(() => Services.SessionSlimmer.ApplyMachinePolicy(true)).ConfigureAwait(true);
@@ -544,7 +610,7 @@ namespace SoulLink.Views
             //   既难扫读又占满列表。合并后仍保留全部 PID（见 PidText），
             //   「结束进程」按合并前的实例集合执行，行为不变。
             var rows = _all
-                .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(p => p.ExePath, StringComparer.OrdinalIgnoreCase)
                 .Select(g =>
                 {
                     var first = g.First();
@@ -559,11 +625,13 @@ namespace SoulLink.Views
                         ExePath = first.ExePath,
                         Title = first.Title,
                         StartTime = first.StartTime,
+                        PrivateBytes = g.Sum(p => p.PrivateBytes),
                     };
                     merged.DuplicatePids = pids;
                     return merged;
                 })
-                .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(p => p.PrivateBytes)
+                .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             // 用 DataGrid.ItemsSource 迭代会触发“同一个可枚举不能被同时使用”，这里走默认视图
@@ -582,7 +650,7 @@ namespace SoulLink.Views
         }
 
 
-        private void Refresh_Click(object sender, RoutedEventArgs e) => _ = LoadSessionsAsync(_current);
+        private void Refresh_Click(object sender, RoutedEventArgs e) => LoadSessions();
 
         /// <summary>打开「会话瘦身说明」弹窗。</summary>
         private void OpenSlimHelp_Click(object sender, RoutedEventArgs e)
@@ -591,13 +659,20 @@ namespace SoulLink.Views
             catch (Exception ex) { Services.LogBus.Error("打开会话瘦身说明失败", ex.Message); }
         }
 
-        private void Grid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void Grid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateCleanupButtons();
+
+        private void AddOptional_Click(object sender, RoutedEventArgs e)
         {
-            bool has = Grid.SelectedItems.Count > 0;
-            var kill = FindName("BtnKillAdvanced") as System.Windows.Controls.Button;
-            if (kill != null) kill.IsEnabled = has;
-            var add = FindName("BtnAddToList") as System.Windows.Controls.Button;
-            if (add != null) add.IsEnabled = has;
+            if (sender is not FrameworkElement { DataContext: SessionSlimmer.OptionalProcess item }) return;
+            if (SessionSlimmer.EffectiveKillNames().Contains(item.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                ThemedMessage.Info(Window.GetWindow(this), "已在清理名单", item.Label + " 已在清理名单中。");
+                return;
+            }
+            if (!ThemedMessage.Confirm(Window.GetWindow(this), "加入清理名单", item.Label + "\n\n" + item.Impact)) return;
+            if (!SessionSlimmer.AddToList(item.Name)) return;
+            ConfigStore.Save(App.Config);
+            RefreshAfterListChange();
         }
 
         /// <summary>
@@ -619,7 +694,6 @@ namespace SoulLink.Views
 
                 var cfg = App.Config;
                 if (cfg?.Settings == null) return;
-                cfg.Settings.SessionSlimKillList ??= new List<string>();
 
                 // 当前已生效的全部清理项（内置 + 自定义 - 被移除的）
                 var effective = new HashSet<string>(
@@ -646,7 +720,7 @@ namespace SoulLink.Views
                         continue;
                     }
 
-                    cfg.Settings.SessionSlimKillList.Add(name);
+                    if (!SessionSlimmer.AddToList(name)) continue;
                     effective.Add(name);
                     added.Add(name);
                 }
@@ -656,6 +730,7 @@ namespace SoulLink.Views
                     Services.ConfigStore.Save(cfg);
                     Services.LogBus.Write(Services.LogLevel.Ok, "清理名单已更新",
                         "已加入：" + string.Join("、", added));
+                    RefreshAfterListChange();
                 }
 
                 var msg = new System.Text.StringBuilder();
@@ -673,8 +748,6 @@ namespace SoulLink.Views
                 }
                 if (msg.Length == 0) msg.Append("没有可添加的进程。");
 
-                RefreshWhitelistText();
-                RefreshSlimSummary(_current?.Id ?? 0);
                 Views.ThemedMessage.Info(Window.GetWindow(this), "清理名单", msg.ToString());
             }
             catch (Exception ex)
@@ -685,51 +758,31 @@ namespace SoulLink.Views
 
         private async void Kill_Click(object sender, RoutedEventArgs e)
         {
-            if (_current == null || Grid.SelectedItems.Count == 0) return;
+            var session = _current;
+            if (session == null || !BtnKillAdvanced.IsEnabled) return;
+            int request = _processRequest;
+            var pids = Grid.SelectedItems.Cast<RemoteProcess>()
+                .Where(row => !SessionSlimmer.IsProtected(row.Name))
+                .SelectMany(row => row.DuplicatePids.Count > 0 ? (IEnumerable<int>)row.DuplicatePids : new[] { row.Pid })
+                .ToHashSet();
+            var targets = _all.Where(row => pids.Contains(row.Pid)).ToList();
+            if (targets.Count == 0 || !ThemedMessage.Confirm(Window.GetWindow(this), "结束进程",
+                session.UserName + " · 会话 #" + session.Id + "\n\n"
+                + "结束 " + targets.Count + " 个实例 · " + string.Join("、", targets.Select(t => t.Name).Distinct())
+                + "\n\n未保存内容可能丢失。", true)) return;
+            if (request != _processRequest || !ReferenceEquals(session, _current)) return;
 
-            var picked = Grid.SelectedItems.Cast<RemoteProcess>().ToList();
-
-            // ★ 合并行要展开成全部 PID 再杀，否则用户以为清理干净了、
-            //   实际同一个进程还剩十几个实例。
-            var targets = new List<RemoteProcess>();
-            foreach (var p in picked)
+            _cleanupInProgress = true;
+            UpdateCleanupButtons();
+            try
             {
-                if (p.DuplicatePids.Count > 0)
-                {
-                    foreach (var pid in p.DuplicatePids)
-                        targets.Add(new RemoteProcess { Pid = pid, Name = p.Name, ExePath = p.ExePath });
-                }
-                else targets.Add(p);
+                var (count, errors) = await Task.Run(() => SessionSlimmer.EndSelected(session.Id, session.UserName, targets));
+                LogBus.Write(errors.Count == 0 ? LogLevel.Ok : LogLevel.Warn, "结束进程 · " + session.UserName,
+                    "已请求结束 " + count + " 个" + (errors.Count == 0 ? "" : "\n" + string.Join("\n", errors)));
+                if (IsSameSession(session, _current)) await LoadProcessesAsync();
             }
-
-            string names = string.Join("、", picked.Take(3).Select(t => t.Name))
-                         + (picked.Count > 3 ? " 等" : "");
-            string detail = targets.Count != picked.Count
-                ? "\n\n共 " + targets.Count + " 个进程实例（含同名合并项）"
-                : "";
-            if (!Dialogs.Confirm("确定结束 " + targets.Count + " 个进程？\n\n" + names + detail,
-                                 "结束进程", true)) return;
-
-            int ok = 0;
-            var errors = new List<string>();
-            await Task.Run(() =>
-            {
-                foreach (var t in targets)
-                {
-                    try
-                    {
-                        using var p = System.Diagnostics.Process.GetProcessById(t.Pid);
-                        p.Kill();
-                        ok++;
-                    }
-                    catch (Exception ex) { errors.Add(t.Name + "(" + t.Pid + ")：" + ex.Message); }
-                }
-            }).ConfigureAwait(true);
-
-            Services.LogBus.Write(errors.Count == 0 ? Services.LogLevel.Ok : Services.LogLevel.Warn,
-                "结束进程", "成功 " + ok + " 个" + (errors.Count > 0 ? "，失败 " + errors.Count + " 个" : ""));
-
-            await LoadProcessesAsync().ConfigureAwait(true);
+            catch (Exception ex) { LogBus.Error("结束进程失败", ex.Message); }
+            finally { _cleanupInProgress = false; UpdateCleanupButtons(); }
         }
 
         private void OpenNew_Click(object sender, RoutedEventArgs e)
@@ -743,6 +796,7 @@ namespace SoulLink.Views
     {
         public SessionInfo Session { get; }
         public SessionItem(SessionInfo s) { Session = s; }
+        public bool IsCleanupSelected { get; set; }
         public string Label => Session.UserName + "   (#" + Session.Id + " " + Session.Badge + ")";
         public string TagText => "#" + Session.Id + " · " + Session.Badge;
     }

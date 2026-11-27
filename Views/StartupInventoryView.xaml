@@ -1,0 +1,152 @@
+<UserControl x:Class="SoulLink.Views.StartupInventoryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,10,0">
+                    <TextBlock Text="登录与开机启动项" FontSize="15" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimary}" />
+                    <TextBlock Text="只显示 SoulLink 支持移除或迁移的启动项。先选账号，再选一项查看用途和影响。"
+                               Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                </StackPanel>
+                <Button Grid.Column="1" x:Name="RefreshButton" Content="刷新" Style="{StaticResource GhostButton}"
+                        MinWidth="70" Height="34" Click="Refresh_Click" />
+            </Grid>
+
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="账号" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="AccountCombo" Width="190" Height="34"
+                          AutomationProperties.Name="查看及迁移目标账号" SelectionChanged="Account_Changed">
+                    <ComboBox.ItemContainerStyle>
+                        <Style TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+                            <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                        </Style>
+                    </ComboBox.ItemContainerStyle>
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <ComboBox x:Name="ScopeCombo" Width="118" Height="34" Margin="10,0,0,0" SelectedIndex="0"
+                          AutomationProperties.Name="启动项范围" SelectionChanged="Scope_Changed">
+                    <ComboBoxItem Content="所选账号" Tag="account" />
+                    <ComboBoxItem Content="全用户／整机" Tag="machine" />
+                    <ComboBoxItem Content="全部范围" Tag="" />
+                </ComboBox>
+                <TextBlock x:Name="CountLabel" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="10,0,0,0" />
+            </StackPanel>
+
+            <Border Grid.Row="2" Background="{DynamicResource FieldBackground}" BorderBrush="#3A769EB9"
+                    BorderThickness="1" CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Margin="10,8,24,5">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="125" />
+                            <ColumnDefinition Width="112" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="启动项与用途" Style="{StaticResource Label}" />
+                        <TextBlock Grid.Column="1" Text="来源" Style="{StaticResource Label}" />
+                        <TextBlock Grid.Column="2" Text="范围" Style="{StaticResource Label}" />
+                    </Grid>
+                    <ListBox Grid.Row="1" x:Name="EntriesList" Background="Transparent" BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True"
+                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                             SelectionChanged="Entry_Changed">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="AutomationProperties.Name" Value="{Binding Title}" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="ItemBorder" Background="Transparent" CornerRadius="4" Margin="4,1,5,1">
+                                                <ContentPresenter HorizontalAlignment="Stretch" />
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="ItemBorder" Property="Background" Value="#245A8DA9" />
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="ItemBorder" Property="Background" Value="#555481A7" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="6,7,12,7">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="125" />
+                                        <ColumnDefinition Width="112" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,10,0" ToolTip="{Binding Entry.Name}">
+                                        <TextBlock Text="{Binding Title}" Foreground="{DynamicResource TextPrimary}"
+                                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Purpose}" Style="{StaticResource Caption}"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding Entry.Source}" Foreground="{DynamicResource TextSecondary}"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Grid.Column="2" Text="{Binding Entry.Scope}" Foreground="{DynamicResource TextSecondary}"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock Grid.Row="1" x:Name="EmptyListLabel" Style="{StaticResource Caption}" Visibility="Collapsed"
+                               Text="当前范围没有可管理的启动项。" TextWrapping="Wrap"
+                               IsHitTestVisible="False" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="18" />
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="3" Margin="0,9,0,0">
+                <TextBlock x:Name="ImpactLabel" Foreground="{DynamicResource TextPrimary}" TextWrapping="Wrap" />
+                <TextBlock x:Name="SelectionHint" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                <Expander x:Name="TechnicalDetails" Header="原始名称、来源和启动命令" Visibility="Collapsed"
+                          Foreground="{DynamicResource TextSecondary}" Margin="0,4,0,0">
+                    <StackPanel Margin="18,4,0,0">
+                        <TextBlock x:Name="OriginalNameLabel" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="TriggerLabel" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                        <TextBlock x:Name="LocationLabel" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                        <TextBlock x:Name="CommandLabel" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+
+            <Grid Grid.Row="4" Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusLabel" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                           VerticalAlignment="Center" Margin="0,0,12,0" />
+                <Button Grid.Column="1" x:Name="StartupActionButton" Content="移除该账号自启" Style="{StaticResource PrimaryButton}"
+                        Visibility="Collapsed" IsEnabled="False" MinWidth="132" MinHeight="36" Padding="17,8"
+                        VerticalAlignment="Center" UseLayoutRounding="True"
+                        ToolTipService.ShowOnDisabled="True" Click="StartupAction_Click" />
+            </Grid>
+        </Grid>
+</UserControl>

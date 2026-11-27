@@ -53,10 +53,7 @@ internal static class DailyMoraLedger
             long end = start + 60_000;
             while (next < windows.Count && windows[next].Start < end) active.Add(windows[next++]);
             active.RemoveAll(w => w.End <= start);
-            var runs = active.Where(w => w.RouteId.Length == 0).Take(2).ToArray();
-            var run = entry.Eligible && runs.Length == 1 ? runs[0] : null;
-            var routes = active.Where(w => w.RouteId.Length > 0 && w.RunId == run?.RunId).Take(2).ToArray();
-            var route = routes.Length == 1 ? routes[0] : null;
+            var (run, route) = ResolveWindows(active, entry.Eligible);
             var key = (entry.Uid, run?.RunId ?? "", route?.RouteId ?? "");
             if (!bins.TryGetValue(key, out var bin)) bin = new(day, entry.Uid, key.Item2,
                 run?.GroupName ?? "", key.Item3, route?.RouteName ?? "", 0, null, 0);
@@ -65,5 +62,19 @@ internal static class DailyMoraLedger
                 MissingAmountCount = bin.MissingAmountCount + (entry.Amount.HasValue ? 0 : 1) };
         }
         return bins.Values.ToList();
+    }
+
+    internal static (RunRecordStore.LedgerWindow? Run, RunRecordStore.LedgerWindow? Route) ResolveWindows(
+        List<RunRecordStore.LedgerWindow> active, bool eligible)
+    {
+        if (!eligible) return (null, null);
+        var runs = active.Where(w => w.RouteId.Length == 0).Take(2).ToArray();
+        if (runs.Length != 1) return (null, null);
+        var run = runs[0];
+        var routes = active.Where(w => w.RouteId.Length > 0 && w.RunId == run.RunId);
+        var files = routes.Where(w => w.Kind != "cd_line").Take(2).ToArray();
+        if (files.Length > 0) return (run, files.Length == 1 ? files[0] : null);
+        var collectCd = routes.Where(w => w.Kind == "cd_line").Take(2).ToArray();
+        return (run, collectCd.Length == 1 ? collectCd[0] : null);
     }
 }

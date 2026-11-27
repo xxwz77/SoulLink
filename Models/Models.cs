@@ -375,6 +375,7 @@ namespace SoulLink.Models
         /// ★ 默认 false：Edge 预启动在挂机会话里实测收益为 0（msedge 不跑），需用户显式开启。
         /// </summary>
         public bool SessionSlimUserPolicyEnabled { get; set; }
+        public Dictionary<string, bool> SessionSlimEdgeAccounts { get; set; } = new();
 
         /// <summary>允许在找不到会话时回退到当前用户会话</summary>
         public bool AllowCurrentSessionFallback { get; set; } = true;
@@ -445,6 +446,7 @@ namespace SoulLink.Models
         internal const string DefaultMiyousheDsSalt = "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs";
         /// <summary>每账号自动签到独立开关；缺省跟随全局开关。</summary>
         public Dictionary<string, bool> MiyousheSignAccounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string[]> MiyousheSignProjects { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>米游社拉取状态配置（鉴权失败/风控退避分钟数，默认 60）。</summary>
         public int MiyousheRetryMinutes { get; set; } = 60;
         /// <summary>国际服 DS salt 独立配置。t20 仅确认其极简请求不需 DS，未找到独立 x4 值，故不伪造默认 salt；需要时可覆盖。</summary>
@@ -642,6 +644,16 @@ namespace SoulLink.Models
 
         /// <summary>开启录制的账号 Id 列表（用户多选）。空 = 不录任何账号。</summary>
         public List<string> RecordAccountIds { get; set; } = new();
+
+        /// <summary>旧版网页远控开关，仅在读取旧配置时用于迁移。</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool RemoteControlEnabled { get; set; }
+
+        /// <summary>允许网页远控的账号 ID。null 表示尚未迁移，空列表表示全部关闭。</summary>
+        public List<string>? RemoteControlAccountIds { get; set; }
+
+        public bool IsRemoteControlEnabledFor(string? accountId)
+            => !string.IsNullOrWhiteSpace(accountId) && RemoteControlAccountIds?.Contains(accountId) == true;
 
         /// <summary>录制帧率：10 / 15 / 30，用户可选。</summary>
         public int RecordFps { get; set; } = 5;
@@ -1032,6 +1044,9 @@ namespace SoulLink.Models
 
         public string Display => string.IsNullOrEmpty(Title) ? Name + "  (" + Pid + ")" : Title + "  (" + Pid + ")";
 
+        public long StartFileTime { get; set; }
+        public long PrivateBytes { get; set; }
+        public string PrivateMemoryText => (PrivateBytes / 1048576.0).ToString("0.0") + " MiB";
         /// <summary>
         /// 中文友好名。进程名（CrossDeviceService.exe 之类）普通用户看不懂，
         /// 会话瘦身页要让人一眼知道"这是什么东西、能不能关"。

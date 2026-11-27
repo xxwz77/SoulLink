@@ -259,7 +259,6 @@ namespace SoulLink.Views
             RebuildBgiPathList();
             _ = DetectAsync();
             _ = RefreshAutoStartAsync();
-            RefreshSystemOptimize();
         }
 
         // ── BetterGI 路径（每账号一行） ──────────────────────────────────
@@ -509,19 +508,18 @@ namespace SoulLink.Views
         private async void RepairAgent_Click(object sender, RoutedEventArgs e)
         {
             if (BtnRepairAgent != null) BtnRepairAgent.IsEnabled = false;
-            EngineState.Text = "正在更新注入代理…";
+            EngineState.Text = "正在更新引擎组件…";
             try
             {
                 var (ok, msg) = await AgentSync.RepairAsync().ConfigureAwait(true);
-                EngineState.Text = ok ? "注入代理已就绪" : "注入代理更新失败";
-                EnginePath.Text = msg;
-                EngineDot.Color = ok ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0xFF, 0x6B, 0x6B);
-                if (ok) LogBus.Ok("注入代理已修复", msg);
-                else LogBus.Error("注入代理修复失败", msg);
+                await DetectAsync();
+                EnginePath.Text = msg + " · " + EnginePath.Text;
+                if (ok) LogBus.Ok("引擎组件", msg);
+                else LogBus.Info("引擎组件", msg);
             }
             catch (Exception ex)
             {
-                EngineState.Text = "注入代理更新失败";
+                EngineState.Text = "引擎组件更新失败";
                 EnginePath.Text = ex.Message;
                 EngineDot.Color = Color.FromRgb(0xFF, 0x6B, 0x6B);
             }
@@ -545,15 +543,15 @@ namespace SoulLink.Views
             EngineState.Text = "检测中…";
             // （字段名与枚举同名：5 态判断用 EngState 别名，控件操作用 EngineState 字段）
             bool elevated = SystemLauncher.IsElevated;
-            if (App.Config.Settings.UseBrokerChannel && elevated)
+            if (App.Config.Settings.UseBrokerChannel)
             {
-                var health = await BrokerProtocol.SendAsync(new BrokerProtocol.Request { Command = "health" }, 2500);
+                var health = elevated ? await BrokerProtocol.SendAsync(new BrokerProtocol.Request { Command = "health" }, 2500) : null;
 
                 // ★ 版本不一致时：**照常可用，但要明说**。
                 //   用户实测：服务跑 2.11.0、客户端 2.17.11，协议都是 v1，
                 //   所以这里原本显示"服务可用"，可投送全部失败，非常误导。
                 //   用户选择「只提示、不拦截」。
-                string? versionNote = health.Ok
+                string? versionNote = health?.Ok == true
                     ? BrokerProtocol.DescribeAppVersionMismatch(health)
                     : null;
                 if (versionNote != null)
@@ -571,14 +569,13 @@ namespace SoulLink.Views
                     return s;
                 });
 
-                string healthNote = !health.Ok
-                    ? health.Message
-                    : versionNote ?? "服务健康；账号通道仍需单独投送";
+                string healthNote = health == null ? "当前程序未以管理员身份运行"
+                    : !health.Ok ? health.Message : versionNote ?? "服务健康；账号通道仍需单独投送";
 
                 // health 探测失败（管道/超时）而服务管理器说 Running → 引擎异常（可能是
                 // 服务假死），这是 Inspect 覆盖不到的维度，只有这里能发现。
                 EngState finalState = state;
-                if (!health.Ok && state == EngState.Ready)
+                if (health?.Ok == false && state == EngState.Ready)
                     finalState = EngState.Error;
 
                 EngineDot.Color = finalState switch
@@ -586,7 +583,7 @@ namespace SoulLink.Views
                     EngState.Ready => Color.FromRgb(0x41, 0xF0, 0xC0),
                     EngState.NotInstalled => Color.FromRgb(0xFF, 0xC4, 0x6B),
                     EngState.NotRunning => Color.FromRgb(0xFF, 0xC4, 0x6B),
-                    EngState.AgentNeedsUpdate => Color.FromRgb(0xFF, 0x9B, 0x4D),
+                    EngState.AgentNeedsUpdate or EngState.ServiceNeedsUpdate or EngState.ComponentsNeedUpdate => Color.FromRgb(0xFF, 0x9B, 0x4D),
                     EngState.ChannelDown => Color.FromRgb(0xFF, 0xC4, 0x6B),   // ★ P0-A：通道断非绿
                     _ => Color.FromRgb(0xFF, 0x6B, 0x6B),
                 };
@@ -597,6 +594,8 @@ namespace SoulLink.Views
                     EngState.NotInstalled => "引擎待安装（Broker 未安装）",
                     EngState.NotRunning => "引擎未运行（服务已安装未启动）",
                     EngState.AgentNeedsUpdate => "注入代理待更新",
+                    EngState.ServiceNeedsUpdate => "Windows 服务待更新",
+                    EngState.ComponentsNeedUpdate => "服务与代理待更新",
                     EngState.ChannelDown => "引擎运行中 · 通道未建立",
                     _ => "引擎异常",
                 };
@@ -604,6 +603,7 @@ namespace SoulLink.Views
                 EnginePath.Text = finalState == EngState.Ready
                     ? (versionNote ?? healthNote)
                     : (agentDetail.Length > 0 ? agentDetail + " · " + healthNote : healthNote);
+                BtnRepairAgent.Visibility = AgentSync.RequiresUpdate(state) ? Visibility.Visible : Visibility.Collapsed;
 
                 // ★ P0-2：三方版本行 + Tooltip（数据源 = AgentSync，不另算口径）。
                 RenderEngineVerFromVerdict(verLine);
@@ -621,6 +621,7 @@ namespace SoulLink.Views
                 return (elevated, msg);
             });
 
+            BtnRepairAgent.Visibility = Visibility.Collapsed;
             EngineDot.Color = ok ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0xFF, 0xC4, 0x6B);
             EngineState.Text = ok ? "可用" : "需要管理员权限";
             EnginePath.Text = detail;
@@ -1492,255 +1493,6 @@ namespace SoulLink.Views
             LogBus.Entries.Clear();
         }
 
-        // ══════════ 系统优化（可关服务 + Defender 排除）══════════
-
-        /// <summary>刷新系统优化面板：6 项服务状态 + Defender 排除列表。</summary>
-        /// ★ 2026-11-23 卡顿修复：QueryServices(6×sc.exe) 与 GetDefenderExclusions
-        ///   (powershell Get-MpPreference) 都是子进程同步等待，原来在 Activate() 进页时
-        ///   直接阻塞 UI 线程（归因见 docs/research/SETTINGS-PAGE-LAG-20261123.md）。
-        ///   现改为后台 Task.Run 取数 + ConfigureAwait(true) 回 UI 线程回填，进页不再卡。
-        private async void RefreshSystemOptimize()
-        {
-            try
-            {
-                // 慢查询全部后台执行，不阻塞 UI 线程（Activate / 点击刷新 / 服务开关）
-                var (services, defender) = await Task.Run(() =>
-                {
-                    var svc = Services.SystemOptimizer.QueryServices();
-                    var def = Services.SystemOptimizer.GetDefenderExclusions();
-                    return (svc, def);
-                }).ConfigureAwait(true);
-
-                if (ServiceList != null)
-                {
-                    ServiceList.Children.Clear();
-                    foreach (var s in services)
-                        ServiceList.Children.Add(BuildServiceRow(s));
-                }
-
-                if (DefenderExclusionList != null && DefenderStatus != null)
-                {
-                    DefenderExclusionList.Children.Clear();
-                    var (ok, msg, paths) = defender;
-                    if (!ok)
-                    {
-                        DefenderStatus.Text = msg;
-                    }
-                    else
-                    {
-                        DefenderStatus.Text = "当前共 " + paths.Count + " 个目录排除项。";
-                        foreach (var p in paths)
-                            DefenderExclusionList.Children.Add(BuildDefenderRow(p));
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                if (DefenderStatus != null) DefenderStatus.Text = "刷新失败：" + ex.Message;
-            }
-        }
-
-        /// <summary>服务行：中文名 + 状态 + 停止/恢复按钮。</summary>
-        private UIElement BuildServiceRow(SystemOptimizer.ServiceState s)
-        {
-            var grid = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            var title = new TextBlock
-            {
-                Text = s.DisplayName,
-                FontSize = 11.5,
-                Foreground = (Brush)FindResource("TextPrimary"),
-                TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            var state = new TextBlock
-            {
-                Text = s.Running ? "运行中" : ("已停止（" + s.StateText + "）"),
-                FontSize = 10,
-                Margin = new Thickness(0, 2, 0, 0),
-                Foreground = s.Running
-                    ? new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0))
-                    : (Brush)FindResource("TextMuted"),
-                ToolTip = s.Reason
-            };
-            text.Children.Add(title);
-            text.Children.Add(state);
-            Grid.SetColumn(text, 0);
-            grid.Children.Add(text);
-
-            var btn = new Button
-            {
-                Content = s.Running ? "停止" : "恢复",
-                FontSize = 10.5,
-                Padding = new Thickness(10, 4, 10, 4),
-                Margin = new Thickness(8, 0, 0, 0),
-                Style = s.Running ? (Style)FindResource("GhostButton") : (Style)FindResource("PrimaryButton"),
-                Tag = s,
-                ToolTip = s.Reason + (s.RestartsOnDemand ? "\n（系统需要时会自动重启）" : "")
-            };
-            btn.Click += ServiceToggle_Click;
-            Grid.SetColumn(btn, 1);
-            grid.Children.Add(btn);
-
-            // 提示：需要管理员才可操作
-            var adminNote = new TextBlock
-            {
-                Text = SystemLauncher.IsElevated ? "" : "需管理员",
-                FontSize = 9.5,
-                Margin = new Thickness(8, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xC4, 0x6B))
-            };
-            Grid.SetColumn(adminNote, 2);
-            grid.Children.Add(adminNote);
-
-            return grid;
-        }
-
-        /// <summary>Defender 排除行：路径 + 移除按钮。</summary>
-        private UIElement BuildDefenderRow(string path)
-        {
-            var grid = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var text = new TextBlock
-            {
-                Text = path,
-                FontSize = 11,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = (Brush)FindResource("TextSecondary"),
-                ToolTip = path
-            };
-            Grid.SetColumn(text, 0);
-            grid.Children.Add(text);
-
-            var btn = new Button
-            {
-                Content = "移除",
-                FontSize = 10.5,
-                Padding = new Thickness(10, 4, 10, 4),
-                Margin = new Thickness(8, 0, 0, 0),
-                Style = (Style)FindResource("GhostButton"),
-                Tag = path
-            };
-            btn.Click += RemoveDefenderExclusion_Click;
-            Grid.SetColumn(btn, 1);
-            grid.Children.Add(btn);
-
-            return grid;
-        }
-
-        private void RefreshSystemOptimize_Click(object sender, RoutedEventArgs e)
-            => RefreshSystemOptimize();
-
-        /// <summary>停止 / 恢复一项白名单服务。</summary>
-        private async void ServiceToggle_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is not Button b || b.Tag is not SystemOptimizer.ServiceState s) return;
-            try
-            {
-                bool stop = s.Running;
-                if (stop)
-                {
-                    bool ok = ThemedMessage.Confirm(Window.GetWindow(this),
-                        "停止服务",
-                        "将停止「" + s.DisplayName + "」。\n\n"
-                        + s.Reason + "\n\n"
-                        + "· 仅本次停止，不改启动类型，重启后自动恢复\n"
-                        + "· 需要管理员权限",
-                        true);
-                    if (!ok) return;
-                }
-
-                b.IsEnabled = false;
-                var r = stop
-                    ? await Services.SystemOptimizer.StopServiceAsync(s.ServiceName).ConfigureAwait(true)
-                    : await Services.SystemOptimizer.StartServiceAsync(s.ServiceName).ConfigureAwait(true);
-
-                Services.LogBus.Write(r.ok ? Services.LogLevel.Ok : Services.LogLevel.Error,
-                    (stop ? "停止服务" : "恢复服务") + " " + s.DisplayName, r.message);
-
-                if (!r.ok)
-                    ThemedMessage.Error(Window.GetWindow(this), stop ? "停止失败" : "恢复失败", r.message);
-            }
-            catch (Exception ex)
-            {
-                Services.LogBus.Error("服务操作失败", ex.Message);
-            }
-            finally
-            {
-                if (sender is Button bb) bb.IsEnabled = true;
-                RefreshSystemOptimize();
-            }
-        }
-
-        /// <summary>把 SoulLink 数据目录加入 Defender 排除（二次确认 + 权限提示）。</summary>
-        private void AddDefenderExclusion_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                string dir = AppIdentity.DataDir;
-                Directory.CreateDirectory(dir);
-
-                bool ok = ThemedMessage.Confirm(Window.GetWindow(this),
-                    "加入 Defender 排除",
-                    "将把以下目录加入 Windows Defender 排除：\n\n"
-                    + "  " + dir + "\n\n"
-                    + "· 只排除该目录，不关闭实时保护\n"
-                    + "· 需要管理员权限\n"
-                    + "· 排除后 Defender 不再扫描该目录下的日志/缓存，可降低挂机 I/O\n\n"
-                    + "确定继续吗？",
-                    true);
-                if (!ok) return;
-
-                var r = Services.SystemOptimizer.AddDefenderExclusion(dir);
-                Services.LogBus.Write(r.ok ? Services.LogLevel.Ok : Services.LogLevel.Error,
-                    "Defender 排除", r.message);
-                if (!r.ok)
-                    ThemedMessage.Error(Window.GetWindow(this), "加入排除失败", r.message);
-            }
-            catch (Exception ex)
-            {
-                ThemedMessage.Error(Window.GetWindow(this), "加入排除失败", ex.Message);
-            }
-            finally
-            {
-                RefreshSystemOptimize();
-            }
-        }
-
-        /// <summary>从 Defender 排除中移除一个目录。</summary>
-        private void RemoveDefenderExclusion_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is not Button b || b.Tag is not string path) return;
-            try
-            {
-                bool ok = ThemedMessage.Confirm(Window.GetWindow(this),
-                    "移除 Defender 排除",
-                    "将把以下目录从 Windows Defender 排除中移除：\n\n  " + path + "\n\n需要管理员权限。",
-                    true);
-                if (!ok) return;
-
-                var r = Services.SystemOptimizer.RemoveDefenderExclusion(path);
-                Services.LogBus.Write(r.ok ? Services.LogLevel.Ok : Services.LogLevel.Error,
-                    "移除 Defender 排除", r.message);
-                if (!r.ok)
-                    ThemedMessage.Error(Window.GetWindow(this), "移除排除失败", r.message);
-            }
-            catch (Exception ex)
-            {
-                ThemedMessage.Error(Window.GetWindow(this), "移除排除失败", ex.Message);
-            }
-            finally
-            {
-                RefreshSystemOptimize();
-            }
-        }
     }
 
     public class AccountVm

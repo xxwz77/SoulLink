@@ -31,6 +31,8 @@ internal static class Program
         }
 
         int failures = 0;
+        if (Environment.GetEnvironmentVariable("RUN_COLLECT_ISOLATION_ONLY") == "1")
+            return await ScenarioInterleavedAccountsAndDays();
         if (Environment.GetEnvironmentVariable("T44_ONLY") == "1")
         { return await T44Bench.Run(); }
         if (Environment.GetEnvironmentVariable("T35_ONLY") == "1")
@@ -40,6 +42,7 @@ internal static class Program
         failures += await T6Scenarios.RunAll();   // t6 全套（每场景独立隔离 DB）
         await RunRecordStore.UseIsolatedForTest(db, (tag, ex) => { if (ex != null) Console.WriteLine("[store-diag] " + tag); });
         RunRecordCollector.ResetForTest();
+        failures += await ScenarioInterleavedAccountsAndDays();
         failures += await ScenarioCrossDay();
         failures += await ScenarioCrossDayRestart();
         failures += await ScenarioRealLog();
@@ -47,6 +50,45 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "ALL-PASS" : "FAILURES=" + failures);
         return failures == 0 ? 0 : 1;
+    }
+
+    private static async Task<int> ScenarioInterleavedAccountsAndDays()
+    {
+        Console.WriteLine("=== Realtime and historical logs interleaved across accounts and days ===");
+        const string firstAccount = "audit-a", secondAccount = "audit-b", group = "audit-shared";
+        var today = DateTime.Today;
+        var yesterday = today.AddDays(-1);
+        string todayFile = $"better-genshin-impact{today:yyyyMMdd}.log";
+        string yesterdayFile = $"better-genshin-impact{yesterday:yyyyMMdd}.log";
+        string Header(string time, string logger) => $"[{time}.000] [INF] [Primary:S3:P1:T1] {logger}\n";
+        string start = Header("00:00:01", "ScriptService") + $"配置组 {Q(group)} 加载完成，共1个脚本，开始执行\n";
+        string pick = Header("00:00:02", "TemplatePickupService") + $"交互或拾取：{Q("游医")}\n";
+        string laterPick = Header("00:00:03", "TemplatePickupService") + $"交互或拾取：{Q("幸运儿")}\n";
+        string end = Header("00:00:04", "ScriptService") + $"配置组 {Q(group)} 执行结束\n";
+
+        RunRecordCollector.OnFileChanged(firstAccount, todayFile);
+        RunRecordCollector.Feed(firstAccount, start + pick, todayFile);
+        using (RunRecordCollector.EnterBackfillMode())
+        {
+            RunRecordCollector.OnFileChanged(firstAccount, yesterdayFile);
+            RunRecordCollector.Feed(firstAccount, start + pick + end, yesterdayFile);
+            RunRecordCollector.CloseOpenForBackfill(firstAccount, yesterdayFile);
+        }
+        RunRecordCollector.OnFileChanged(secondAccount, todayFile);
+        RunRecordCollector.Feed(secondAccount, start + pick + end, todayFile);
+        RunRecordCollector.Feed(firstAccount, laterPick + end, todayFile);
+        await RunRecordStore.FlushAsync();
+
+        var firstRuns = (await RunRecordStore.QueryRunsAsync(firstAccount, 7)).Where(r => r.GroupName == group).ToArray();
+        var secondRuns = (await RunRecordStore.QueryRunsAsync(secondAccount, 7)).Where(r => r.GroupName == group).ToArray();
+        bool IsRun(RunRecord row, DateTime day, int picks) =>
+            row.StartDay == $"{day:yyyy-MM-dd}" && row.EndDay == row.StartDay && row.Picks == picks && row.State == "Finished";
+        bool passed = firstRuns.Length == 2 && firstRuns.Any(r => IsRun(r, yesterday, 1))
+            && firstRuns.Any(r => IsRun(r, today, 2)) && secondRuns.Length == 1 && IsRun(secondRuns[0], today, 1);
+        Console.WriteLine(passed ? "PASS: account/day isolation" : "FAIL: account/day isolation");
+        if (!passed)
+            foreach (var row in firstRuns.Concat(secondRuns)) Console.WriteLine($"{row.Account} {Describe(row)}");
+        return passed ? 0 : 1;
     }
 
     // ── 手工跨天样本 ─────────────────────────────────────────────

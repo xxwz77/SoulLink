@@ -30,18 +30,23 @@ namespace SoulLink.Views
 
         private readonly List<UserRowVm> _rows = new List<UserRowVm>();
         private CancellationTokenSource? _cts;
+        private BgiGitHubRelease.Package? _githubRelease;
         private bool _running;
         private readonly List<string> _logLines = new List<string>();
 
         public BgiUpdatePage()
         {
             InitializeComponent();
+            UpdateSourceBox.SelectionChanged += (_, _) => RefreshUpdateSource();
             Loaded += (_, __) => Reload();
             BgiDataCenter.AccountDataChanged += OnSharedDataChanged;
             Unloaded += (_, __) => BgiDataCenter.AccountDataChanged -= OnSharedDataChanged;
         }
 
-        private void OnSharedDataChanged(string userName) { if (IsVisible) Dispatcher.InvokeAsync(Reload); }
+        private void OnSharedDataChanged(string userName)
+        {
+            Dispatcher.InvokeAsync(() => { if (IsVisible) Reload(); });
+        }
 
         // ══════════ 加载 ══════════
 
@@ -275,8 +280,64 @@ namespace SoulLink.Views
 
         // ══════════ 选包 ══════════
 
+        private bool UsesGitHub => UpdateSourceBox.SelectedIndex == 1;
+
+        private void RefreshUpdateSource()
+        {
+            LocalSourcePanel.Visibility = UsesGitHub ? Visibility.Collapsed : Visibility.Visible;
+            GitHubSourcePanel.Visibility = UsesGitHub ? Visibility.Visible : Visibility.Collapsed;
+            SubText.Text = UsesGitHub
+                ? "从 LCB 的 GitHub Releases 下载并校验便携包，请先退出目标 BGI"
+                : "把本地更新包解压覆盖到各账号的 BGI 目录";
+        }
+
+        private async Task<BgiGitHubRelease.Package> CheckGitHubReleaseAsync(CancellationToken ct)
+        {
+            _githubRelease = null;
+            GitHubReleaseText.Text = "正在查询 GitHub 发行版…";
+            try
+            {
+                _githubRelease = await BgiGitHubRelease.CheckAsync(ct);
+                GitHubReleaseText.Text = $"{_githubRelease.Version} · {_githubRelease.Size / 1048576.0:F0} MB";
+                return _githubRelease;
+            }
+            catch
+            {
+                GitHubReleaseText.Text = "尚未取得可用的 GitHub 发行版";
+                throw;
+            }
+        }
+
+        private async void CheckGitHubRelease_Click(object sender, RoutedEventArgs e)
+        {
+            if (_running || !UsesGitHub) return;
+            using var cancellation = new CancellationTokenSource();
+            _cts = cancellation;
+            SetRunning(true);
+            try
+            {
+                await CheckGitHubReleaseAsync(cancellation.Token);
+                SetStatus("已取得 GitHub 发行版");
+            }
+            catch (OperationCanceledException)
+            {
+                SetStatus(cancellation.IsCancellationRequested ? "已取消" : "查询 GitHub 超时");
+            }
+            catch (Exception ex)
+            {
+                SetStatus("GitHub 发行版查询失败");
+                ThemedMessage.Error(Window.GetWindow(this), "查询 LCB 失败", ex.Message);
+            }
+            finally
+            {
+                _cts = null;
+                SetRunning(false);
+            }
+        }
+
         private void PickZip_Click(object sender, RoutedEventArgs e)
         {
+            if (_running) return;
             var dlg = new OpenFileDialog
             {
                 Title = "选择 BGI 更新包",
@@ -294,8 +355,9 @@ namespace SoulLink.Views
         {
             if (_running) return;
 
+            bool usesGitHub = UsesGitHub;
             string zip = (ZipBox.Text ?? "").Trim();
-            if (zip.Length == 0 || !File.Exists(zip))
+            if (!usesGitHub && (zip.Length == 0 || !File.Exists(zip)))
             {
                 ThemedMessage.Info(Window.GetWindow(this), "缺少更新包", "请先选择一个更新包（zip / 7z / rar）。");
                 return;
@@ -325,12 +387,13 @@ namespace SoulLink.Views
                 if (targets.Count == 0) return;
             }
 
-            _cts = new CancellationTokenSource();
+            using var cancellation = new CancellationTokenSource();
+            _cts = cancellation;
             _logLines.Clear();
             if (LogText != null) LogText.Text = "";
             SetRunning(true);
             AppendLog("═══ 开始更新 ═══");
-            AppendLog("更新包：" + Path.GetFileName(zip));
+            AppendLog(usesGitHub ? "更新源：LCB / NexusBGI（GitHub Releases）" : "更新包：" + Path.GetFileName(zip));
             AppendLog("目标账号：" + string.Join("、", targets.Select(t => t.UserName)));
             AppendLog("");
 
@@ -351,25 +414,71 @@ namespace SoulLink.Views
                 if (p.Text.Length > 0) SetStatus(p.Text);
             });
 
-            var results = await BgiUpdater.UpdateBatchAsync(
-                list, zip, backupUser,
-                s => AppendLog(s),
-                progress, _cts.Token).ConfigureAwait(true);
+            DirectoryInfo? downloadDirectory = null;
+            try
+            {
+                if (usesGitHub)
+                {
+                    var release = _githubRelease ?? await CheckGitHubReleaseAsync(cancellation.Token);
+                    string accounts = string.Join("、", targets.Select(target => target.UserName));
+                    if (!ThemedMessage.Confirm(Window.GetWindow(this), "确认应用 LCB 发行版",
+                            $"下载并应用 {release.Version} 到 {accounts} 的 BetterGI 目录？请先退出目标 BGI。"))
+                    {
+                        SetStatus("已取消");
+                        return;
+                    }
 
-            int ok = results.Count(r => r.Ok);
-            int fail = results.Count - ok;
+                    await Task.Run(() => BgiUpdater.EnsureUpdateTargetsClosed(list), cancellation.Token);
+                    downloadDirectory = Directory.CreateTempSubdirectory("SoulLinkBgi-");
+                    AppendLog("下载：" + release.Name);
+                    SetProgress(0, "正在下载并校验 LCB 便携包…");
+                    zip = await BgiGitHubRelease.DownloadAsync(release, downloadDirectory.FullName,
+                        new Progress<int>(percent => SetProgress(percent, "下载并校验 LCB 便携包 · " + percent + "%")),
+                        cancellation.Token);
+                    AppendLog("便携包大小和 SHA-256 校验通过");
+                }
 
-            SetRunning(false);
-            SetProgress(100, "完成");
-            SetStatus("成功 " + ok + " 个，失败 " + fail + " 个");
-            AppendLog("═══ 结束：成功 " + ok + "，失败 " + fail + " ═══");
+                IProgress<string> log = new Progress<string>(AppendLog);
+                var results = await BgiUpdater.UpdateBatchAsync(list, zip, backupUser,
+                    log.Report, progress, cancellation.Token, requireClosedBgi: usesGitHub);
 
-            if (fail == 0 && ok > 0)
-                ThemedMessage.Info(Window.GetWindow(this), "更新完成",
-                    ok + " 个账号更新成功。可以重新启动 BGI 了。");
-            else if (fail > 0)
-                ThemedMessage.Info(Window.GetWindow(this), "更新结束",
-                    "成功 " + ok + " 个，失败 " + fail + " 个。\n\n详情看右侧日志。");
+                int ok = results.Count(r => r.Ok);
+                int fail = results.Count - ok;
+                SetProgress(100, cancellation.IsCancellationRequested ? "已停止" : "完成");
+                SetStatus("成功 " + ok + " 个，失败 " + fail + " 个");
+                AppendLog("═══ 结束：成功 " + ok + "，失败 " + fail + " ═══");
+
+                if (fail == 0 && ok > 0)
+                    ThemedMessage.Info(Window.GetWindow(this), "更新完成",
+                        ok + " 个账号更新成功。可以重新启动 BGI 了。");
+                else if (fail > 0)
+                    ThemedMessage.Info(Window.GetWindow(this), "更新结束",
+                        "成功 " + ok + " 个，失败 " + fail + " 个。\n\n详情看右侧日志。");
+            }
+            catch (OperationCanceledException)
+            {
+                string message = cancellation.IsCancellationRequested ? "已停止" : "连接 GitHub 或下载超时";
+                SetProgress(0, message);
+                SetStatus(message);
+                AppendLog(message);
+            }
+            catch (Exception ex)
+            {
+                SetProgress(0, "更新失败");
+                SetStatus("更新失败");
+                AppendLog("✕ 失败：" + ex.Message);
+                ThemedMessage.Error(Window.GetWindow(this), "BGI 更新失败", ex.Message);
+            }
+            finally
+            {
+                if (downloadDirectory != null)
+                {
+                    try { downloadDirectory.Delete(recursive: true); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
+                _cts = null;
+                SetRunning(false);
+            }
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
@@ -406,7 +515,9 @@ namespace SoulLink.Views
             _running = running;
             BtnUpdate.IsEnabled = !running;
             BtnCancel.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
-            ZipBox.IsEnabled = !running;
+            UpdateSourceBox.IsEnabled = !running;
+            LocalSourcePanel.IsEnabled = !running;
+            GitHubSourcePanel.IsEnabled = !running;
         }
 
         private void SetStatus(string text)

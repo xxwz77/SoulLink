@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using SoulLink.Models;
@@ -76,10 +78,11 @@ namespace SoulLink.Controls
     var s = App.Config?.Settings;
     if (s == null) return;
 
-    var recIds = s.RecordAccountIds ?? new System.Collections.Generic.List<string>();
+    var recIds = s.RecordAccountIds ?? new List<string>();
     if (recIds.Count == 0)
     {
-     BackendStatusText.Text = "当前没有账号开启录制 —— 代理不抓屏，抓屏方式暂不生效。";
+     bool hasRemoteControl = App.Config.Accounts.Any(a => s.IsRemoteControlEnabledFor(a.Id));
+     BackendStatusText.Text = hasRemoteControl ? "当前没有账号开启录像。观看远控时才会启动采集。" : "录像和网页远控均已关闭。";
      return;
     }
 
@@ -208,7 +211,7 @@ namespace SoulLink.Controls
   //  用户需求：「在 RDP 通用配置里增加一个设置栏目，对目标用户（RDP 配置里有的
   //            用户，可多选）开启录像功能，然后用户可以设置录像时长」。
 
-  /// <summary>把账号列表渲染成一排复选框，勾选状态来自配置。</summary>
+  /// <summary>读取录像与直播参数，以及每个账号各自的两个开关。</summary>
   private void LoadRecordSettings()
   {
    try
@@ -236,36 +239,33 @@ namespace SoulLink.Controls
     //   录制依赖目标会话里的注入代理，而代理**从不投送到主账号**（那是操作者自己的桌面），
     //   所以主账号出现在这里只会让用户勾了却没效果 —— 直接不显示。
     //   判定用 AccountScope.IsPrimaryUser（与"仅管理挂机账号"同一套口径）。
-    RecordAccountPanel.Children.Clear();
+    CaptureAccountPanel.Children.Clear();
     var accounts = App.Config.Accounts
-        .Where(a => !string.IsNullOrWhiteSpace(a.UserName))
+        .Where(a => !string.IsNullOrWhiteSpace(a.Id) && !string.IsNullOrWhiteSpace(a.UserName))
         .Where(a => !AccountScope.IsPrimaryUser(a.UserName))
         .ToList();
-    if (accounts.Count == 0)
-    {
-     RecordAccountPanel.Children.Add(new TextBlock
-     {
-      Text = "没有可录制的账号（主账号不投送代理，无法录制）",
-      Style = (Style)FindResource("Caption"),
-      TextWrapping = TextWrapping.Wrap
-     });
-     return;
-    }
+    CaptureAccountsEmpty.Visibility = accounts.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     foreach (var acc in accounts)
     {
-     var cb = new CheckBox
+     var row = new Grid { MinHeight = 26 };
+     row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+     row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, SharedSizeGroup = "RecordOption" });
+     row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, SharedSizeGroup = "RemoteOption" });
+     string label = string.IsNullOrWhiteSpace(acc.DisplayName) ? acc.UserName : acc.DisplayName + "（" + acc.UserName + "）";
+     row.Children.Add(new TextBlock
      {
-      Style = (Style)FindResource("GlassCheckBox"),
-      Content = string.IsNullOrWhiteSpace(acc.DisplayName) ? acc.UserName : acc.DisplayName + "（" + acc.UserName + "）",
-      IsChecked = settings.RecordAccountIds.Contains(acc.Id),
-      Tag = acc.Id,
-      FontSize = 10,
-      Margin = new Thickness(0, 2, 0, 2)
-     };
-     cb.Checked += RecordAccount_Changed;
-     cb.Unchecked += RecordAccount_Changed;
-     RecordAccountPanel.Children.Add(cb);
+      Text = label,
+      Style = (Style)FindResource("Caption"),
+      VerticalAlignment = VerticalAlignment.Center,
+      TextTrimming = TextTrimming.CharacterEllipsis,
+      ToolTip = label
+     });
+     AddAccountOption(row, 1, acc.Id, label + " · 屏幕录制",
+        settings.RecordAccountIds.Contains(acc.Id), RecordAccount_Changed);
+     AddAccountOption(row, 2, acc.Id, label + " · 网页远控",
+        settings.IsRemoteControlEnabledFor(acc.Id), RemoteControl_Changed);
+     CaptureAccountPanel.Children.Add(row);
     }
 
     // ★ 顺手清理历史配置里可能残留的主账号勾选（旧版本允许勾选它）
@@ -283,6 +283,42 @@ namespace SoulLink.Controls
     UpdateRecordHint();
    }
    catch (Exception ex) { App.AppendErrorLog("LoadRecordSettings", ex); }
+  }
+
+  private void AddAccountOption(Grid row, int column, string id, string name, bool isChecked, RoutedEventHandler changed)
+  {
+   var option = new CheckBox
+   {
+    Style = (Style)FindResource("GlassCheckBox"),
+    IsChecked = isChecked,
+    Tag = id,
+    ToolTip = name,
+    HorizontalAlignment = HorizontalAlignment.Center,
+    VerticalAlignment = VerticalAlignment.Center
+   };
+   AutomationProperties.SetName(option, name);
+   option.Checked += changed;
+   option.Unchecked += changed;
+   Grid.SetColumn(option, column);
+   row.Children.Add(option);
+  }
+
+  private void RemoteControl_Changed(object sender, RoutedEventArgs e)
+  {
+   if (_loading || sender is not CheckBox option || option.Tag is not string id) return;
+
+   var settings = App.Config.Settings;
+   var ids = settings.RemoteControlAccountIds?.ToList() ?? new List<string>();
+   if (option.IsChecked == true)
+   {
+    if (!ids.Contains(id)) ids.Add(id);
+   }
+   else ids.RemoveAll(accountId => accountId == id);
+   settings.RemoteControlAccountIds = ids;
+   ConfigStore.Save(App.Config);
+   RelayClient.PushRemoteControlToConnectedAgents(id);
+   ShowSaved();
+   _ = RefreshBackendStatusAsync();
   }
 
   private static void SelectComboByTag(ComboBox? combo, int value)
@@ -607,7 +643,12 @@ namespace SoulLink.Controls
    try { SoulLink.Views.ConsolePage.NotifyRecordingSettingsChanged(); } catch { }
    foreach (Window window in Application.Current.Windows)
     foreach (var console in FindConsoles(window)) console.ApplyGlobalSettings();
-   if (SavedText != null) SavedText.Text = "已保存 · 所有用户共用 · " + DateTime.Now.ToString("HH:mm:ss");
+   ShowSaved();
+  }
+
+  private void ShowSaved()
+  {
+   if (SavedText != null) SavedText.Text = "已保存 · " + DateTime.Now.ToString("HH:mm:ss");
   }
  }
 }

@@ -810,6 +810,7 @@ namespace SoulLink.Services
 
             // ② 没有待办 → 结束
             if (bs.FileIndex >= bs.Pending.Count) return false;
+            if (!RunRecordStore.IsHealthy || RunRecordStore.PendingWriteCount > 2000) return false;
 
             string current = bs.Pending[bs.FileIndex];
             var sliceSw = System.Diagnostics.Stopwatch.StartNew();
@@ -878,23 +879,6 @@ namespace SoulLink.Services
                     return false;
                 }
 
-                // ★★ t63（architect 审查 P0-2，卡死元凶之二）：
-                //   队列背压检查**必须提前到 Feed 之前**。若在 Feed 之后才检查，队列积压时
-                //   本 tick 直接 return、offset 未推进，下一拍会重读同一块 —— 而 raw_event 的
-                //   去重键一旦含 chunk_offset（进程内自增），重读即重复入库。前置后：
-                //   「队列满 → 本 tick 不读不喂 → 下一拍从同一 offset 续读」，天然幂等。
-                int qDepth = RunRecordStore.PendingWriteCount;
-                if (qDepth > 2000)
-                {
-                    return true;   // 不推进游标，下一拍重读这一块（幂等）
-                }
-                if (!RunRecordStore.IsHealthy)
-                {
-                    LogBus.Warn("采集·历史回填中止", e.UserName + " 写队列不健康，暂停回填");
-                    bs.FileIndex = bs.Pending.Count;
-                    return false;
-                }
-
                 // ④ 首次进这个文件时建立该文件的时钟基线（每份文件独立）
                 if (bs.Offset == 0)
                 {
@@ -936,7 +920,8 @@ namespace SoulLink.Services
                     if (!isToday)
                     {
                         bool isLast = bs.FileIndex >= bs.Pending.Count - 1;
-                        RunRecordCollector.CloseOpenForBackfill(e.UserName, current, isLast);
+                        using (RunRecordCollector.EnterBackfillMode())
+                            RunRecordCollector.CloseOpenForBackfill(e.UserName, current, isLast);
                     }
 
                     bs.FileIndex++; bs.Offset = 0;
@@ -1033,6 +1018,15 @@ namespace SoulLink.Services
                 e.BgiPid = 0;
                 e.Backfill = new BackfillState();
             }
+            if (!rebound && expected.Length > 0 && e.LogFile.Length > 0
+                && !string.Equals(e.LogFile, expected, StringComparison.OrdinalIgnoreCase)
+                && BgiLogWatcher.ProbeDailyPath(e.LogFile, out _) is FileInfo previous && previous.Length > e.Cursor)
+            {
+                // Drain the previous day's outstanding bytes through its live parser before splitting the run.
+                // Keep the existing per-step byte budget and switch files on a later tick.
+                Interlocked.Exchange(ref e.Dirty, 1);
+                return Pump(e, previous);
+            }
             if (file == null)
             {
                 bool changed;
@@ -1080,14 +1074,12 @@ namespace SoulLink.Services
                 e.Error = "";
                 if (!string.Equals(e.LogFile, logFile, StringComparison.OrdinalIgnoreCase))
                 {
+                    if (e.LogFile.Length > 0)
+                        IngestCursorStore.Flush(e.AccountId, e.LogFile, Math.Max(0, e.Cursor - e.PendingLen), e.FileLength, e.LastWrite.Ticks);
                     e.ResetForNewFile(logFile);
                     ReportBacklog(e, file.Length);
 
-                    // ★ 3.3.41 跨天补全入口（契约 §4.4）：文件滚动 / 新一天日志开始文件时，
-                    //   让运行记录采集器判断「内存里的 open 窗口还算不算同一次运行」——
-                    //   gap ≤ 5 分钟 = 续跑（保留 start 时刻，跨天仍旧 1 条）；
-                    //   gap > 5 分钟 = close(Interrupted) 兜底，绝不虚构成跨天完成。
-                    //   纯内存判定（无 IO、无锁竞争、不碰文件），异常吞掉不影响日志解析。
+                    // 先收尾上一文件的运行，再等当天日志确认是否要建立续跑段。
                     try { RunRecordCollector.OnFileChanged(e.UserName, logFile); } catch { }
                 }
             }
@@ -1130,6 +1122,13 @@ namespace SoulLink.Services
 
             long budget = Math.Min(len - e.Cursor, MaxBytesPerTick);
             if (budget <= 0) { lock (Sync) e.LastWrite = write; return false; }
+
+            // Let the writer catch up before consuming more real-time input. Retry the same offset.
+            if (!RunRecordStore.IsHealthy || RunRecordStore.PendingWriteCount > 2000)
+            {
+                Interlocked.Exchange(ref e.Dirty, 1);
+                return false;
+            }
 
             var buf = new byte[Math.Min(budget, 4 * 1024 * 1024)];
             bool changed = false;
@@ -1187,13 +1186,15 @@ namespace SoulLink.Services
                     pos += got;
                     _ = carry;
                 }
-                lock (Sync) { e.Cursor = end; e.FileLength = len; e.LastWrite = write; }
-                // ★ t45/t52 断点续传：持久化「行对齐游标」= end - 残行字节。
-                //   内存 e.Cursor 仍 = end（残行 bytes 在 e.Pending 里，下次 Pump 拼回）；
+                // The file can shrink after we sample its size. Persist only bytes actually read.
+                lock (Sync) { e.Cursor = pos; e.FileLength = len; e.LastWrite = write; }
+                if (pos < len) Interlocked.Exchange(ref e.Dirty, 1);
+                // ★ t45/t52 断点续传：持久化「行对齐游标」= 实际读到的位置 - 残行字节。
+                //   内存 e.Cursor 保留实际读取位置（残行 bytes 在 e.Pending 里，下次 Pump 拼回）；
                 //   持久化必须回到上一个完整换行之后，否则重启后 cursor 落在半行中间，
                 //   从半行起读会解析出乱码/错锚点。ResetForNewFile 时 PendingLen=0，
                 //   重新从行首读这半行，天然对齐。
-                long aligned = Math.Max(0, end - e.PendingLen);
+                long aligned = Math.Max(0, pos - e.PendingLen);
                 IngestCursorStore.Advance(e.AccountId, e.LogFile, aligned, len, write.Ticks);
                 bool wasPrimed = e.Primed;
                 e.Primed = true;

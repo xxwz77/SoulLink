@@ -68,6 +68,32 @@ namespace SoulLink.Services
         /// </summary>
         private static readonly AsyncLocal<bool> BackfillMode = new();
 
+        // Historic files and the current file may alternate on successive ticks for the same account.
+        // Keep their open runs, date cursors and pending events separate without changing the stored account.
+        private static readonly CollectorState LiveState = new();
+        private static readonly CollectorState HistoryState = new();
+        private static CollectorState CurrentState => BackfillMode.Value ? HistoryState : LiveState;
+
+        private sealed class CollectorState
+        {
+            internal readonly Dictionary<string, PendingDaySplit> PendingSplits = new(StringComparer.OrdinalIgnoreCase);
+            internal readonly Dictionary<string, OpenRun> OpenRuns = new(StringComparer.OrdinalIgnoreCase);
+            internal readonly Dictionary<string, long> FirstLineTs = new(StringComparer.OrdinalIgnoreCase);
+            internal readonly Dictionary<string, int[]> OrphanPicks = new(StringComparer.OrdinalIgnoreCase);
+            internal readonly Dictionary<string, DayClock> Clocks = new(StringComparer.OrdinalIgnoreCase);
+            internal readonly Dictionary<string, ErrAccum> ErrBlocks = new(StringComparer.OrdinalIgnoreCase);
+
+            internal void Clear()
+            {
+                PendingSplits.Clear();
+                OpenRuns.Clear();
+                FirstLineTs.Clear();
+                OrphanPicks.Clear();
+                Clocks.Clear();
+                ErrBlocks.Clear();
+            }
+        }
+
         /// <summary>进入/退出回填模式（成对使用；只能用 using 或 try/finally 保证恢复）。</summary>
         public static IDisposable EnterBackfillMode()
         {
@@ -83,8 +109,7 @@ namespace SoulLink.Services
             public void Dispose() { BackfillMode.Value = _prev; }
         }
 
-        private static readonly Dictionary<string, PendingDaySplit> PendingSplits
-            = new(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, PendingDaySplit> PendingSplits => CurrentState.PendingSplits;
 
         /// <summary>BGI 状态时段三态跟踪（per account；只在切换时开/闭段）。</summary>
         private sealed class SpanState
@@ -294,19 +319,16 @@ namespace SoulLink.Services
         }
 
         private static readonly Lock StateLock = new();
-        private static readonly Dictionary<string, OpenRun> OpenRuns
-            = new(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, OpenRun> OpenRuns => CurrentState.OpenRuns;
 
         /// <summary>t6：每账号最近一个 chunk 的首行时间戳（惰性开窗 start=次日日志首行时刻用）。</summary>
-        private static readonly Dictionary<string, long> FirstLineTs
-            = new(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, long> FirstLineTs => CurrentState.FirstLineTs;
 
         /// <summary>
         /// t6 H)：无 run 窗口时的三类「孤儿」计数（不静默吞掉——用于守恒对账：
         /// pick_event 总数 + 孤儿数 == 日志三类行数）。按 (account, kind) 累计，只增不减。
         /// </summary>
-        private static readonly Dictionary<string, int[]> OrphanPicks
-            = new(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, int[]> OrphanPicks => CurrentState.OrphanPicks;
 
         /// <summary>测试/自检：读某账号的三类孤儿计数 [picked,skipped,no_target]。</summary>
         internal static (int picked, int skipped, int noTarget) GetOrphanPicksForTest(string user)
@@ -334,8 +356,7 @@ namespace SoulLink.Services
             public long LastMs;          // 最近一个解析出的绝对时刻（单调基线）
             public long LastRawMs;       // 最近一行的“当日时刻”用于跨日判定
         }
-        private static readonly Dictionary<string, DayClock> Clocks
-            = new(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, DayClock> Clocks => CurrentState.Clocks;
 
         /// <summary>跨 chunk 的 [ERR] 块累积器（key=account）。</summary>
         private sealed class ErrAccum
@@ -357,8 +378,7 @@ namespace SoulLink.Services
             /// <summary>块起始行在 chunk 内的位置（事件排序用）。</summary>
             public int StartPos;
         }
-        private static readonly Dictionary<string, ErrAccum> ErrBlocks
-            = new(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, ErrAccum> ErrBlocks => CurrentState.ErrBlocks;
         // ── 时间戳工具 ──────────────────────────────────────────────────
 
         private static readonly DateTime UnixEpoch = new(1970, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
@@ -477,9 +497,6 @@ namespace SoulLink.Services
             string currentChunkText, int currentChunkLength, long fileSize, long fileWriteTicks)
         {
             string line = raw.TrimEnd('\r');
-            string hash = RawHashOf(line);
-            long collected = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            string rawId = string.Join('\u001f', user, BaseName(srcFile), "chunk", chunkOffset, lineStart);
             int terminatorBytes = 0;
             if (lineStart + raw.Length < currentChunkLength)
             {
@@ -488,13 +505,20 @@ namespace SoulLink.Services
                     && currentChunkText[lineStart + raw.Length + 1] == '\n';
                 terminatorBytes = crlf ? 2 : 1;
             }
+            int byteLength = Encoding.UTF8.GetByteCount(raw) + terminatorBytes;
             long byteOffset;
             lock (StateLock)
             {
                 string key = user + "\u001f" + BaseName(srcFile);
                 byteOffset = RawByteOffsets.TryGetValue(key, out long prior) ? prior : 0;
-                RawByteOffsets[key] = byteOffset + Encoding.UTF8.GetByteCount(raw) + terminatorBytes;
+                RawByteOffsets[key] = byteOffset + byteLength;
             }
+            // Even discarded lines consume bytes, but they do not need a content hash or logger.
+            if (anchor.Length == 0 && level is not ("ERR" or "WRN" or "FTL")) return;
+
+            string hash = RawHashOf(line);
+            long collected = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            string rawId = string.Join('\u001f', user, BaseName(srcFile), "chunk", chunkOffset, lineStart);
             string logger = "";
             var m = RxLineTs.Match(line);
             if (m.Success)
@@ -503,12 +527,6 @@ namespace SoulLink.Services
                 if (close > m.Index + m.Length)
                     logger = line[(m.Index + m.Length)..close].Trim();
             }
-            // ★ t49 存储策略A：raw_event 只存「有锚点的行 + 错误/警告行」。
-            //   RawByteOffsets 已在上面 lock(StateLock) 里推进，即使本行不入库也绝不能 return。
-            //   否则被过滤行的字节数不累加 → 后续行 byte_offset 全部偏移（静默错数据）。
-            bool keep = !string.IsNullOrEmpty(anchor) || level is "ERR" or "WRN" or "FTL";
-            if (keep)
-            {
             output.Add(new RawEvent
             {
                 RawId = rawId, Account = user, SrcFile = BaseName(srcFile),
@@ -518,14 +536,12 @@ namespace SoulLink.Services
                 //   11.7 万条 A1 事件全不可诊断）。存原文并按 RawLineCharLimit 截断。
                 RawText = line.Length > RawLineCharLimit ? line[..RawLineCharLimit] : line,
                 RawChars = line.Length, RawTruncated = line.Length > RawLineCharLimit,
-                ByteOffset = byteOffset, ByteLength = Encoding.UTF8.GetByteCount(raw) + terminatorBytes,
+                ByteOffset = byteOffset, ByteLength = byteLength,
                 FileSizeAtCollection = fileSize, FileWriteAtCollectionTicks = fileWriteTicks,
                 Anchor = anchor, CollectedAtMs = collected, ContentHash = hash, Occurrence = 0,
                 SourceDay = TryFileDay(srcFile, out long rawFileDay) ? DayOf(rawFileDay) : ""
             });
-            }
         }
-
 
         private static string AnchorOf(string line)
         {
@@ -778,7 +794,7 @@ namespace SoulLink.Services
                     }
                 }
                 // t6 P)：有产出 = running（状态时段观测；不额外记段）
-                ObserveBgiState(userName, clockLastMs(userName), null, srcFile);
+                if (!BackfillMode.Value) ObserveBgiState(userName, clockLastMs(userName), null, srcFile);
 
                 // ★ t6 H/L 守恒自检：sum(route.picked)+run级 picked == run.picks（pick 口径）。
                 //   三类之和守恒在验证工程对 pick_event 表断言（行数=日志行数）。
@@ -796,8 +812,6 @@ namespace SoulLink.Services
             public EvApply? Apply;
             /// <summary>t6：事件时刻（惰性开窗取首事件 ts 用）。</summary>
             public long TsMs;
-            /// <summary>t9/raw分级：命中的锚点类别，只决定原文保留档位。</summary>
-            public string Anchor = "";
         }
 
         /// <summary>扫一个 chunk：逐行解析时间戳 + 错误块 + 全部锚点匹配。</summary>
@@ -817,7 +831,12 @@ namespace SoulLink.Services
             }
 
             DayClock clock;
-            lock (StateLock) { clock = GetClock(user); }
+            ErrAccum errors;
+            lock (StateLock)
+            {
+                clock = GetClock(user);
+                errors = GetErrAccum(user);
+            }
 
             // ★★ t77 修复（实测：今天的日志里出现 11-24 的时间戳，导致数据串天）：
             //
@@ -847,24 +866,21 @@ namespace SoulLink.Services
 
             long lastMs = clock.LastMs;
             var lines = SplitLines(logText);
-            var lineMsByStart = new Dictionary<int, long>(lines.Count);
-            // ★ t44：每行的锚点（行首 → AnchorOf 结果）。事件在**行循环结束时一次性**盖章，
-            //   替代原先「每处理一行就遍历全部历史事件」的 O(n²) 写法（4MB chunk 61s → 1.3s 的元凶）。
-            var lineAnchorByStart = new Dictionary<int, string>(lines.Count);
-            int pos = 0;
-            bool firstTsLineCaptured = false;
+            long? firstLineMs = null;
 
             foreach (var (raw, lineStart) in lines)
             {
                 string line = raw.TrimEnd('\r');
                 long lineMs = lastMs;
                 string level = "";
+                bool hasTsHead = false;
 
                 if (line.Length > 0)
                 {
                     var m = RxLineTs.Match(line);
                     if (m.Success)
                     {
+                        hasTsHead = line[0] == '[';
                         level = m.Groups["level"].Value;
                         if (ResolveTs(clock, m.Groups["time"].Value, out long ms))
                         {
@@ -874,62 +890,31 @@ namespace SoulLink.Services
                                 lock (StateLock) { RawChunkSequences[rawFileKey] = 0; RawByteOffsets[rawFileKey] = 0; }
                             }
                             lineMs = ms; lastMs = ms;
-                            if (!firstTsLineCaptured)
-                            {
-                                firstTsLineCaptured = true;
-                                // t6：chunk 首行时间戳（供惰性开窗取「次日日志首行时刻」）
-                                FirstLineTs[user] = ms;
-                            }
+                            firstLineMs ??= ms;
                         }
                     }
                 }
 
-                lineMsByStart[lineStart] = lineMs;
-                lineAnchorByStart[lineStart] = AnchorOf(line);
-
                 // t8：同一行原文先入归档；无锚点、异常样式组名、无有效结果均不丢。
-                ArchiveRawLine(user, raw, lineStart, lineMs, level, srcFile, rawEvents, rawChunkOffset, lineAnchorByStart[lineStart], logText, logText.Length, fileSize, fileWriteTicks);
+                ArchiveRawLine(user, raw, lineStart, lineMs, level, srcFile, rawEvents, rawChunkOffset, AnchorOf(line), logText, logText.Length, fileSize, fileWriteTicks);
                 // [ERR] 块累积：头行开块，续行（无时间戳头）附加
-                ScanErrBlock(user, line, lineMs, level, srcFile, lineStart, events);
+                ScanErrBlock(user, errors, line, lineMs, level, hasTsHead, srcFile, lineStart, events);
 
                 // 其余锚点：单行匹配 → 生成事件
+                int firstEvent = events.Count;
                 ScanAnchors(user, line, lineMs, lineStart, srcFile, events, rawChunkOffset);
-
-                // ★ t44 修复：原写法 foreach(ev in events) ev.Anchor=AnchorOf(line) 在**行循环内**
-                //   遍历全部历史事件（O(n²)，4MB 真实 A1 chunk 实测 61s，34MB 首扫≈9 分钟 CPU 满载）；
-                //   且语义错误——把先前事件的锚点改写为当前行。改为循环后按事件自身行盖章。
-                pos = lineStart + raw.Length;
+                for (int i = firstEvent; i < events.Count; i++) events[i].TsMs = lineMs;
             }
 
-            clock.LastMs = lastMs;
+            lock (StateLock)
+            {
+                clock.LastMs = lastMs;
+                // 次日续跑段从该文件的首个时间戳开始。
+                if (firstLineMs.HasValue) FirstLineTs[user] = firstLineMs.Value;
+            }
             // 单 chunk 批量入队：后台线程单事务写入；原始事实不经过状态机筛选。
             RunRecordStore.AddRawEvents(rawEvents);
-            // t6：给每个事件标时刻（事件 Pos → 所在行的 lineMs；供惰性开窗取首事件 ts）
-            // t44：锚点同帧盖章——事件按自身所在行取 anchor（O(事件数)，替代 O(行×事件)）
-            foreach (var ev in events)
-            {
-                ev.TsMs = TimestampOf(ev, lineMsByStart);
-                ev.Anchor = AnchorOfLine(ev.Pos, lineAnchorByStart);
-            }
             return events;
-        }
-
-        /// <summary>t44：按事件 Pos 反查所在行的锚点（与 TimestampOf 同一思路，O(事件数)）。</summary>
-        private static string AnchorOfLine(int pos, Dictionary<int, string> lineAnchorByStart)
-        {
-            int best = -1;
-            foreach (var kv in lineAnchorByStart)
-                if (kv.Key <= pos && kv.Key > best) best = kv.Key;
-            return best >= 0 && lineAnchorByStart.TryGetValue(best, out string? a) ? a : "";
-        }
-
-        private static long TimestampOf(Ev ev, Dictionary<int, long> lineMsByStart)
-        {
-            // 用事件的 Pos 反查所在行起点；找不到（err 块 Pos 为块起点，也在行内）取最近的行时刻
-            int best = -1;
-            foreach (var kv in lineMsByStart)
-                if (kv.Key <= ev.Pos && kv.Key > best) best = kv.Key;
-            return best >= 0 && lineMsByStart.TryGetValue(best, out long ms) ? ms : 0;
         }
 
         private static List<(string raw, int start)> SplitLines(string text)
@@ -1234,12 +1219,9 @@ namespace SoulLink.Services
         ///   直到出现下一个带时间戳头的行（任意级别）或块超过 512 行 / 64 KB 兜底。
         ///   块结束（换块/换文件/收尾）时一次性投递 ErrorRecord（含完整 detail）。
         /// </summary>
-        private static void ScanErrBlock(string user, string line, long lineMs, string level,
-            string srcFile, int lineStart, List<Ev> events)
+        private static void ScanErrBlock(string user, ErrAccum acc, string line, long lineMs, string level,
+            bool hasTsHead, string srcFile, int lineStart, List<Ev> events)
         {
-            bool hasTsHead = line.Length > 0 && line[0] == '[' && RxLineTs.Match(line).Success;
-            var acc = GetErrAccum(user);
-
             if (hasTsHead)
             {
                 // 新头行：先结算旧块（如果有）
@@ -1360,6 +1342,7 @@ namespace SoulLink.Services
             events.Add(new Ev
             {
                 Pos = pos,
+                TsMs = ts,
                 Apply = () => EmitError(user, ts, exceptionType, message, builder.ToString(), source, file)
             });
         }
@@ -2255,15 +2238,11 @@ namespace SoulLink.Services
         {
             lock (StateLock)
             {
-                OpenRuns.Clear();
+                LiveState.Clear();
+                HistoryState.Clear();
                 RawChunkSequences.Clear();
                 RawByteOffsets.Clear();
-                Clocks.Clear();
-                ErrBlocks.Clear();
-                PendingSplits.Clear();
                 SpanStates.Clear();
-                FirstLineTs.Clear();
-                OrphanPicks.Clear();
             }
         }
 

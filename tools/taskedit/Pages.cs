@@ -19,7 +19,7 @@ namespace SoulLink.TaskEdit
         internal static string Login(string error)
             => "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">" +
                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
-               "<title>SoulLink · 访问口令</title><style>" + Shell +
+               "<title>SoulLink · 访问口令</title>" + Services.WebFavicon.Link + "<style>" + Shell +
                ".card{width:340px;padding:28px 30px;background:#171a21;border:1px solid #262b36;border-radius:14px}" +
                "h1{margin:0 0 16px;font-size:18px}input{width:100%;box-sizing:border-box;padding:10px 12px;" +
                "border-radius:9px;border:1px solid #2c3240;background:#0d0f14;color:#e6e8ee;font-size:14px}" +
@@ -39,7 +39,7 @@ namespace SoulLink.TaskEdit
         internal static string Placeholder()
             => "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">" +
                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
-               "<title>SoulLink · 任务编辑</title><style>" + Shell +
+               "<title>SoulLink · 任务编辑</title>" + Services.WebFavicon.Link + "<style>" + Shell +
                ".card{max-width:600px;padding:30px 34px;background:#171a21;border:1px solid #262b36;border-radius:14px}" +
                "h1{margin:0 0 14px;font-size:19px}p{margin:9px 0;color:#a8b0c0}" +
                "code{background:#0d0f14;padding:2px 6px;border-radius:5px;color:#8ad1ff;font-size:13px}" +
@@ -62,7 +62,7 @@ namespace SoulLink.TaskEdit
         internal static string BackendDown(string detail)
             => "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">" +
                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
-               "<title>SoulLink · 主程序未运行</title><style>" + Shell +
+               "<title>SoulLink · 主程序未运行</title>" + Services.WebFavicon.Link + "<style>" + Shell +
                ".card{max-width:560px;padding:28px 32px;background:#171a21;border:1px solid #262b36;border-radius:14px}" +
                "h1{margin:0 0 12px;font-size:19px;color:#ffb454}p{margin:8px 0;color:#a8b0c0}" +
                "code{background:#0d0f14;padding:2px 6px;border-radius:5px;color:#8ad1ff;font-size:13px}" +

@@ -12,6 +12,7 @@ namespace SoulLink.TaskEdit
             sb.Append("<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">");
             sb.Append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
             sb.Append("<title>SoulLink · 任务编辑</title>");
+            sb.Append(Services.WebFavicon.Link);
             sb.Append("<link rel=\"stylesheet\" href=\"").Append(StylesheetHref).Append("\">");
             sb.Append("</head><body>");
 

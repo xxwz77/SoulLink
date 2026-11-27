@@ -5,6 +5,12 @@
 
 ---
 
+## 下载与更新
+
+在 [GitHub Releases](https://github.com/xxwz77/SoulLink/releases) 下载 `SoulLink-版本-win-x64.zip`，解压后运行 `SoulLink.exe`。需要 .NET 11 Windows Desktop Runtime x64。首次从旧版更新时手动下载完整包，之后点击窗口中的版本号即可检查更新。
+
+在 RDP 通用设置的录像选项下可开启网页远控。网页远控默认关闭。开启后，有观众时才启动直播，独立的录像设置继续生效。
+
 ## 目录
 
 1. [安装与启动](#1-安装与启动)

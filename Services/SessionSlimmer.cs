@@ -28,13 +28,11 @@ namespace SoulLink.Services
     ///      只能靠注册表根治，单纯杀毫无意义（实测）。
     ///   6. 本类**不引用 System.Management**（项目未引入该包），
     ///      所有进程信息走 Process API，注册表走 reg.exe 子进程。
-    public static class SessionSlimmer
+    public static partial class SessionSlimmer
     {
         /// <summary>可安全结束、且不会自动重启的进程名。</summary>
         private static readonly string[] SafeToKill =
         {
-            // Edge 浏览器本体 —— 单会话实测 8 个 / 391 MB，是最大的一块，且不会自动重启
-            "msedge",
             // 手机连接 / 跨设备（实测不会立刻重启）
             "PhoneExperienceHost",
             "CrossDeviceService",
@@ -43,12 +41,14 @@ namespace SoulLink.Services
             "GameBar",
             "GameBarFTServer",
             "GameBarPresenceWriter",
-            // 触摸键盘（实测杀掉不重启，约 65 MB/会话）
-            "TabTip",
-            // Windows 首次登录引导（登录完成后就没用了，约 11 MB）
-            "UserOOBEBroker",
-            // OneDrive 文件协作授权（挂机用不到，约 21 MB/会话）
-            "FileCoAuth",
+        };
+
+        public sealed record OptionalProcess(string Name, string Label, string Impact);
+        public static IReadOnlyList<OptionalProcess> OptionalProcesses { get; } = new[]
+        {
+            new OptionalProcess("msedge", "Edge 浏览器", "会关闭该账号的 Edge 标签页及后台任务。"),
+            new OptionalProcess("OneDrive", "OneDrive", "会中断该账号正在进行的文件同步。"),
+            new OptionalProcess("ms-teams", "Microsoft Teams", "会退出该账号的 Teams，通话和通知会中断。"),
         };
 
         // ★★ 实测「杀了会自动重启」—— 清理无效，只能靠注册表策略 ★★
@@ -106,47 +106,24 @@ namespace SoulLink.Services
         /// ★ 内置项也允许移除 —— 用户明确要求"默认选中的东西也要能去掉"。
         ///   原来内置项在界面上没有移除按钮，等于绑架用户。
         /// </summary>
-        public static List<string> EffectiveKillNames()
+        public static List<string> EffectiveKillNames() => EffectiveKillNameSet().ToList();
+
+        private static readonly Lock KillListGate = new();
+
+        private static HashSet<string> EffectiveKillNameSet()
         {
-            var set = new List<string>();
-            var disabled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            try
+            lock (KillListGate)
             {
-                var cfg = App.Config?.Settings;
-                if (cfg?.SessionSlimDisabled != null)
-                    foreach (var raw in cfg.SessionSlimDisabled)
-                    {
-                        string d = Normalize(raw);
-                        if (d.Length > 0) disabled.Add(d);
-                    }
+                var settings = App.Config?.Settings;
+                IEnumerable<string> custom = settings?.SessionSlimKillList ?? Enumerable.Empty<string>();
+                var effective = SafeToKill.Concat(custom)
+                    .Select(Normalize)
+                    .Where(name => name.Length > 0 && !IsProtected(name))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (settings?.SessionSlimDisabled != null)
+                    effective.ExceptWith(settings.SessionSlimDisabled.Select(Normalize));
+                return effective;
             }
-            catch { }
-
-            foreach (var name in SafeToKill)
-            {
-                if (disabled.Contains(name)) continue;
-                if (NeverKill.Contains(name)) continue;
-                set.Add(name);
-            }
-
-            try
-            {
-                var cfg = App.Config?.Settings;
-                if (cfg?.SessionSlimKillList != null)
-                {
-                    foreach (var raw in cfg.SessionSlimKillList)
-                    {
-                        string name = Normalize(raw);
-                        if (name.Length == 0) continue;
-                        if (NeverKill.Contains(name)) continue;     // 保护名单优先
-                        if (disabled.Contains(name)) continue;      // 用户已移除
-                        if (!set.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
-                            set.Add(name);
-                    }
-                }
-            }
-            catch { }
-            return set;
         }
 
         /// <summary>该项是否属于内置（仅供界面标注，判断的是"原始名单"）。</summary>
@@ -163,27 +140,23 @@ namespace SoulLink.Services
             if (n.Length == 0) return false;
             try
             {
-                var cfg = App.Config?.Settings;
-                if (cfg == null) return false;
-
-                bool changed = false;
-                // 自定义项：直接删
-                int removed = cfg.SessionSlimKillList?.RemoveAll(
-                    x => string.Equals(Normalize(x), n, StringComparison.OrdinalIgnoreCase)) ?? 0;
-                if (removed > 0) changed = true;
-
-                // 内置项：记入 disabled，避免下次又被加回来
-                if (IsBuiltIn(n))
+                bool changed;
+                lock (KillListGate)
                 {
-                    cfg.SessionSlimDisabled ??= new List<string>();
-                    if (!cfg.SessionSlimDisabled.Any(
-                            x => string.Equals(Normalize(x), n, StringComparison.OrdinalIgnoreCase)))
+                    var cfg = App.Config?.Settings;
+                    if (cfg == null) return false;
+                    changed = cfg.SessionSlimKillList?.RemoveAll(
+                        x => string.Equals(Normalize(x), n, StringComparison.OrdinalIgnoreCase)) > 0;
+                    if (IsBuiltIn(n))
                     {
-                        cfg.SessionSlimDisabled.Add(n);
-                        changed = true;
+                        cfg.SessionSlimDisabled ??= new List<string>();
+                        if (!cfg.SessionSlimDisabled.Any(x => string.Equals(Normalize(x), n, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            cfg.SessionSlimDisabled.Add(n);
+                            changed = true;
+                        }
                     }
                 }
-
                 if (changed) ConfigStore.Save(App.Config);
                 return changed;
             }
@@ -195,10 +168,13 @@ namespace SoulLink.Services
         {
             try
             {
-                var cfg = App.Config?.Settings;
-                if (cfg == null) return;
-                cfg.SessionSlimKillList?.Clear();
-                cfg.SessionSlimDisabled?.Clear();
+                lock (KillListGate)
+                {
+                    var cfg = App.Config?.Settings;
+                    if (cfg == null) return;
+                    cfg.SessionSlimKillList = new List<string>();
+                    cfg.SessionSlimDisabled = new List<string>();
+                }
                 ConfigStore.Save(App.Config);
             }
             catch { }
@@ -216,7 +192,27 @@ namespace SoulLink.Services
 
         /// <summary>这个名字是否受保护（不允许清理）。</summary>
         public static bool IsProtected(string name)
-            => NeverKill.Contains(Normalize(name));
+        {
+            string normalized = Normalize(name);
+            if (NeverKill.Contains(normalized) || NeedsPolicyFixes.Contains(normalized, StringComparer.OrdinalIgnoreCase)) return true;
+            return App.Config?.Settings?.BgiPaths?.Values.Any(path =>
+                string.Equals(Normalize(Path.GetFileName(path)), normalized, StringComparison.OrdinalIgnoreCase)) == true;
+        }
+
+        public static bool AddToList(string name)
+        {
+            string normalized = Normalize(name);
+            lock (KillListGate)
+            {
+                var settings = App.Config?.Settings;
+                if (settings == null || normalized.Length == 0 || IsProtected(normalized)) return false;
+                settings.SessionSlimDisabled?.RemoveAll(item => string.Equals(Normalize(item), normalized, StringComparison.OrdinalIgnoreCase));
+                if (EffectiveKillNameSet().Contains(normalized)) return true;
+                settings.SessionSlimKillList ??= new List<string>();
+                settings.SessionSlimKillList.Add(normalized);
+                return true;
+            }
+        }
 
         /// <summary>
         /// 会自动重启、杀进程无意义的外围组件。
@@ -235,13 +231,17 @@ namespace SoulLink.Services
             // 系统关键
             "explorer", "dwm", "csrss", "winlogon", "wininit", "services", "lsass",
             "svchost", "System", "Idle", "smss", "fontdrvhost",
+            "ShellExperienceHost", "StartMenuExperienceHost", "sihost", "runtimebroker", "taskhostw",
+            "dllhost", "conhost", "LockApp", "LogonUI", "WmiPrvSE",
+            "UserOOBEBroker", "FileCoAuth", "AppActions", "msedgewebview2", "WidgetsPlatformRuntime",
+            "nvcontainer", "NVDisplay.Container", "RtkAudUService64", "audiodg", "MsMpEng", "NisSrv",
             // RDP 基础设施
             "rdpclip", "rdpinput", "RdpInput", "TermSrv",
             // 本程序
-            "SoulLink", "SoulLink.Agent", "SoulLink-Stable", "SoulLink.Updater",
-            // 输入法核心（用户随时要打字，这两个绝不能杀）
-            // ★ TextInputHost / TabTip（触摸键盘）**不在此列**：
-            //   挂机场景用不到触摸键盘，已移入可清理名单（用户可自行移除）。
+            "SoulLink", "SoulLink.Agent", "SoulLink-Stable", "SoulLink.Updater", "SoulLink.Broker",
+            "SoulLink.TaskEdit", "sl-watchdog", "sl-rescue",
+            "BetterGI", "BetterGenshinImpact", "ABGI", "YuanShen", "GenshinImpact", "YuanShenCloudGame",
+            "ctfmon", "TabTip", "InputApp", "ChsIME", "ChtIME",
         };
 
         /// <summary>瘦身结果。</summary>
@@ -260,125 +260,18 @@ namespace SoulLink.Services
         public sealed class SessionStat
         {
             public int SessionId { get; set; }
+            public bool OwnerVerified { get; set; }
             public int Total { get; set; }
             public long TotalBytes { get; set; }
             /// <summary>可立即清理（白名单内、不会重启）。</summary>
             public int Killable { get; set; }
             public long KillableBytes { get; set; }
+            public int Unverified { get; set; }
             /// <summary>需注册表策略才能优化的（会重启）。</summary>
             public int PolicyOnly { get; set; }
             public long PolicyOnlyBytes { get; set; }
             public Dictionary<string, (int Count, long Bytes)> KillableDetail { get; } = new(StringComparer.OrdinalIgnoreCase);
-        }
-
-        /// <summary>统计指定会话的进程构成（不杀任何进程）。</summary>
-        public static SessionStat Count(int sessionId)
-        {
-            var s = new SessionStat { SessionId = sessionId };
-            var killSet = EffectiveKillNames();
-            foreach (var p in Process.GetProcesses())
-            {
-                try
-                {
-                    if (p.SessionId != sessionId) continue;
-                    string name = p.ProcessName;
-                    long mem = 0;
-                    try { mem = p.WorkingSet64; } catch { }
-
-                    s.Total++;
-                    s.TotalBytes += mem;
-
-                    if (killSet.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        s.Killable++;
-                        s.KillableBytes += mem;
-                        if (!s.KillableDetail.TryGetValue(name, out var d)) d = (0, 0);
-                        s.KillableDetail[name] = (d.Count + 1, d.Bytes + mem);
-                    }
-                    else if (NeedsPolicyFixes.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        s.PolicyOnly++;
-                        s.PolicyOnlyBytes += mem;
-                    }
-                }
-                catch { }
-                finally { try { p.Dispose(); } catch { } }
-            }
-            return s;
-        }
-
-        // ── 清理 ────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// 结束指定会话里的外围进程。失败不抛异常。
-        /// </summary>
-        /// <param name="dryRun">true = 只统计不杀。</param>
-        public static Result Slim(int sessionId, bool dryRun = false)
-        {
-            var r = new Result();
-            if (sessionId <= 0) { r.Message = "无效的会话号"; return r; }
-
-            // ★ 总开关：SessionSlimKillEnabled=false 时直接跳过，不杀任何进程。
-            //   用户关闭「清理会话外围进程」后，这里必须真的不动作，而不是只在界面置灰。
-            try
-            {
-                if (App.Config?.Settings != null && !App.Config.Settings.SessionSlimKillEnabled)
-                {
-                    r.Message = "会话瘦身总开关已关闭，未清理任何进程";
-                    return r;
-                }
-            }
-            catch { }
-
-            try
-            {
-                var killSet = EffectiveKillNames();
-                var targets = new List<Process>();
-                foreach (var p in Process.GetProcesses())
-                {
-                    try
-                    {
-                        if (p.SessionId != sessionId) { p.Dispose(); continue; }
-                        string name = p.ProcessName;
-                        if (NeverKill.Contains(name)) { p.Dispose(); continue; }
-                        if (!killSet.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            p.Dispose();
-                            continue;
-                        }
-                        targets.Add(p);
-                    }
-                    catch { try { p.Dispose(); } catch { } }
-                }
-
-                if (targets.Count == 0)
-                {
-                    r.Message = "会话 " + sessionId + " 没有可立即清理的外围进程";
-                    return r;
-                }
-
-                foreach (var p in targets)
-                {
-                    try
-                    {
-                        long mem = p.WorkingSet64;
-                        string name = p.ProcessName;
-                        if (!dryRun) p.Kill(entireProcessTree: false);
-                        r.Killed++;
-                        r.FreedBytes += mem;
-                        if (!r.Names.Contains(name)) r.Names.Add(name);
-                    }
-                    catch { }
-                    finally { try { p.Dispose(); } catch { } }
-                }
-
-                string mb = Math.Round(r.FreedBytes / 1024.0 / 1024.0).ToString();
-                r.Message = dryRun
-                    ? "会话 " + sessionId + " 可清理 " + r.Killed + " 个进程，约 " + mb + " MB"
-                    : "会话 " + sessionId + " 已清理 " + r.Killed + " 个外围进程，释放约 " + mb + " MB";
-            }
-            catch (Exception ex) { r.Message = "清理失败：" + ex.Message; }
-            return r;
+            internal List<SoulLink.Models.RemoteProcess> CleanupTargets { get; } = new();
         }
 
         // ── 注册表策略（仅限配置中的账号）────────────────────────────────
@@ -391,121 +284,51 @@ namespace SoulLink.Services
             public string Message { get; set; } = "";
         }
 
-        /// <summary>
-        /// 对指定用户应用「关闭外围组件自动启动」的注册表策略。
-        ///
-        /// ★★ 只影响该用户，绝不影响其他账户。★★
-        ///   做法：临时挂载该用户的 NTUSER.DAT 到 HKUSoulLink_&lt;user&gt;，
-        ///   只写这个分支下的 Policies 键，然后立即卸除。
-        ///
-        /// ★ 用户正在登录时 NTUSER.DAT 被独占，无法挂载 —— 此时直接跳过并提示，
-        ///   不做任何强制操作。
-        ///
-        /// ★★ 2026-11-22 修正（SESSION-POLICY-FIX）：★★
-        ///   这里原来写了 4 个值，其中 2 个是 class=Machine（写用户分支无效）：
-        ///     · Dsh\AllowNewsAndInterests   —— 已移入 ApplyMachinePolicy（HKLM）
-        ///     · Windows\System\EnableMmx    —— class=Machine，与小组件/搜索无关，删除
-        ///   现在这里**只保留 class=User 的 Edge 策略**（StartupBoostEnabled /
-        ///   BackgroundModeEnabled，HKCU 有效）。
-        ///   已登录用户无法挂载 hive，其 Edge 策略改由**代理在会话内写 HKCU**（路径A，
-        ///   见 ApplyUserPolicy 与 RelayAgent），不再依赖本方法的挂载路径。
-        /// </summary>
         public static PolicyResult ApplyStartupPolicy(string userName)
         {
-            var res = new PolicyResult { UserName = userName };
-            if (string.IsNullOrWhiteSpace(userName))
+            var result = new PolicyResult { UserName = userName };
+            if (!CanSelectUser(SessionService.BareName(userName)) || !SystemLauncher.IsElevated)
             {
-                res.Message = "用户名为空";
-                return res;
+                result.Message = "需要管理员权限和已配置的挂机账号。";
+                return result;
             }
-
-            string hivePath = Path.Combine(@"C:\Users", userName, "NTUSER.DAT");
-            if (!File.Exists(hivePath))
-            {
-                res.Message = "找不到用户配置单元（可能从未登录过此账户）";
-                return res;
-            }
-
-            // 已登录用户的 NTUSER.DAT 被独占，不能挂载
-            if (IsUserLoggedOn(userName))
-            {
-                res.Message = "该用户正在登录，请先注销后再应用";
-                return res;
-            }
-
-            string mountName = "SoulLink_" + userName;
-            string mountKey = @"HKU\" + mountName;
-
-            // 清理可能残留的挂载
-            TryUnload(mountKey);
 
             try
             {
-                var load = RunReg(new[] { "load", mountKey, hivePath });
-                if (load.ExitCode != 0)
+                string bare = SessionService.BareName(userName);
+                if (IsUserLoggedOn(bare))
                 {
-                    res.Message = "挂载注册表失败：" + load.Output;
-                    return res;
+                    result.Message = "账号已登录。启用自动应用后，下次代理启动时生效。";
+                    return result;
                 }
-            }
-            catch (Exception ex)
-            {
-                res.Message = "挂载注册表异常：" + ex.Message;
-                return res;
-            }
 
-            try
-            {
-                // ★ 只保留 class=User、写用户分支有效的 Edge 策略（2026-11-22 修正）。
-                //   小组件/搜索是 class=Machine，已移至 ApplyMachinePolicy（HKLM）。
-                WriteDword(mountKey + @"\SOFTWARE\Policies\Microsoft\Edge",
-                           "StartupBoostEnabled", 0);
-                WriteDword(mountKey + @"\SOFTWARE\Policies\Microsoft\Edge",
-                           "BackgroundModeEnabled", 0);
+                var account = userName.Contains('\\') ? new NTAccount(userName) : new NTAccount(Environment.MachineName, bare);
+                var sid = (SecurityIdentifier)account.Translate(typeof(SecurityIdentifier));
+                using var profile = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + sid.Value);
+                if (profile?.GetValue("ProfileImagePath") is not string directory)
+                {
+                    result.Message = "未找到该账号的本机配置文件。";
+                    return result;
+                }
 
-                res.Ok = true;
-                res.Message = "已关闭 Edge 预启动/后台的自动启动（下次登录生效）";
+                string hiveFile = Path.Combine(directory, "NTUSER.DAT");
+                string mount = "SoulLink_" + Guid.NewGuid().ToString("N");
+                string mountKey = @"HKU\" + mount;
+                var status = RunReg(new[] { "load", mountKey, hiveFile });
+                if (status.ExitCode != 0) { result.Message = "读取用户配置失败：" + status.Output; return result; }
+                try
+                {
+                    using var hive = Microsoft.Win32.Registry.Users.OpenSubKey(mount, writable: true)
+                        ?? throw new IOException("无法打开已挂载的配置。");
+                    int changed = EdgeStartupPolicy.ApplyForUser(hive, true);
+                    result.Ok = true;
+                    result.Message = changed > 0 ? "已设置 Edge 启动策略，下次登录生效。" : "已有策略保持原值。";
+                }
+                finally { TryUnload(mountKey); }
             }
-            catch (Exception ex)
-            {
-                res.Message = "写入策略失败：" + ex.Message;
-            }
-            finally
-            {
-                // 必须卸除，否则配置单元一直挂在那里
-                try { TryUnload(mountKey); } catch { }
-            }
-
-            return res;
-        }
-
-        /// <summary>撤销上面应用过的策略（恢复系统默认）。</summary>
-        public static PolicyResult RevertStartupPolicy(string userName)
-        {
-            var res = new PolicyResult { UserName = userName };
-            string hivePath = Path.Combine(@"C:\Users", userName, "NTUSER.DAT");
-            if (!File.Exists(hivePath)) { res.Message = "找不到用户配置单元"; return res; }
-            if (IsUserLoggedOn(userName)) { res.Message = "该用户正在登录，请先注销后再操作"; return res; }
-
-            string mountKey = @"HKU\SoulLink_" + userName;
-            TryUnload(mountKey);
-            try
-            {
-                var load = RunReg(new[] { "load", mountKey, hivePath });
-                if (load.ExitCode != 0) { res.Message = "挂载注册表失败：" + load.Output; return res; }
-            }
-            catch (Exception ex) { res.Message = "挂载注册表异常：" + ex.Message; return res; }
-
-            try
-            {
-                DeleteValue(mountKey + @"\SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled");
-                DeleteValue(mountKey + @"\SOFTWARE\Policies\Microsoft\Edge", "BackgroundModeEnabled");
-                res.Ok = true;
-                res.Message = "已撤销策略，恢复系统默认";
-            }
-            catch (Exception ex) { res.Message = "撤销失败：" + ex.Message; }
-            finally { try { TryUnload(mountKey); } catch { } }
-            return res;
+            catch (Exception ex) { result.Message = "应用失败：" + ex.Message; }
+            return result;
         }
 
         /// <summary>
@@ -536,51 +359,25 @@ namespace SoulLink.Services
 
         // ── 机器级策略（HKLM，class=Machine，全机生效）──────────────────
 
-        /// <summary>
-        /// 机器级「关闭小组件面板 + 任务栏搜索」策略。写 HKLM，全机生效（含主控制台）。
-        ///
-        /// ★★ 为什么必须写 HKLM：★★
-        ///   实测（2026-11-22，SESSION-SLIM-DEEP）这两个策略的 ADMX 定义是
-        ///   class=Machine，写 HKCU / 挂载用户 hive 写用户分支**系统不读、完全无效**：
-        ///     · DisableWidgetsBoard     key=SOFTWARE\Policies\Microsoft\Dsh（NewsAndInterests.admx）
-        ///     · AllowNewsAndInterests   key=SOFTWARE\Policies\Microsoft\Dsh（只关新闻流，不关面板本体）
-        ///     · DisableSearch           key=SOFTWARE\Policies\Microsoft\Windows\Windows Search（Search.admx）
-        ///   写 HKLM 后**杀掉对应进程即不再自动重启**（perfmeasure 实测，已回滚）。
-        ///
-        /// ★ 影响范围（必须写进 UI 警告）：全机所有用户，包括主控制台；
-        ///   开始菜单打字搜索会失效，但开始菜单本体正常、资源管理器内搜索正常。
-        /// ★ 回滚只删值不删键（Dsh 键删完值后会保留空键，reg delete /f 会 Access denied）。
-        /// </summary>
-        /// <param name="enable">true=写入禁用策略；false=删值恢复系统默认。</param>
         public static PolicyResult ApplyMachinePolicy(bool enable)
         {
-            var res = new PolicyResult { UserName = "(本机)" };
+            var result = new PolicyResult { UserName = "(本机)" };
+            if (!SystemLauncher.IsElevated) { result.Message = "需要管理员权限。"; return result; }
             try
             {
-                // ★ 幂等：写同样的值不会报错（reg add /f），删不存在的值由 DeleteValue 静默忽略。
-                if (enable)
-                {
-                    WriteDword(@"HKLM\SOFTWARE\Policies\Microsoft\Dsh", "DisableWidgetsBoard", 1);
-                    WriteDword(@"HKLM\SOFTWARE\Policies\Microsoft\Dsh", "AllowNewsAndInterests", 0);
-                    WriteDword(@"HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search", "DisableSearch", 1);
-                    res.Ok = true;
-                    res.Message = "已写入机器级策略：关闭小组件面板 + 任务栏搜索（对已登录会话，杀掉对应进程即生效）";
-                }
-                else
-                {
-                    // ★ 回滚只删值，不删键（删键会 Access denied，属正常现象）。
-                    DeleteValue(@"HKLM\SOFTWARE\Policies\Microsoft\Dsh", "DisableWidgetsBoard");
-                    DeleteValue(@"HKLM\SOFTWARE\Policies\Microsoft\Dsh", "AllowNewsAndInterests");
-                    DeleteValue(@"HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search", "DisableSearch");
-                    res.Ok = true;
-                    res.Message = "已删除机器级策略值，恢复系统默认";
-                }
+                var machine = Microsoft.Win32.Registry.LocalMachine;
+                const string marker = @"SOFTWARE\SoulLink\SessionSlim\Machine";
+                int changed = EdgeStartupPolicy.ApplyOwned(machine, @"SOFTWARE\Policies\Microsoft\Dsh",
+                    marker, new[] { ("DisableWidgetsBoard", 1), ("AllowNewsAndInterests", 0) }, enable);
+                changed += EdgeStartupPolicy.ApplyOwned(machine, @"SOFTWARE\Policies\Microsoft\Windows\Windows Search",
+                    marker, new[] { ("DisableSearch", 1) }, enable);
+                result.Ok = true;
+                result.Message = changed == 0 ? "已有系统策略保持原值。"
+                    : enable ? "已写入小组件与搜索策略。Windows 可能在重新登录后应用。"
+                    : "已撤销本工具写入且未被修改的策略。";
             }
-            catch (Exception ex)
-            {
-                res.Message = (enable ? "写入" : "回滚") + "机器级策略失败：" + ex.Message;
-            }
-            return res;
+            catch (Exception ex) { result.Message = "设置机器策略失败：" + ex.Message; }
+            return result;
         }
 
         /// <summary>机器级策略当前是否已启用（只读探测 DisableWidgetsBoard）。</summary>
@@ -617,16 +414,6 @@ namespace SoulLink.Services
         private static void TryUnload(string mountKey)
         {
             try { RunReg(new[] { "unload", mountKey }); } catch { }
-        }
-
-        private static void WriteDword(string keyFullPath, string name, int value)
-        {
-            RunReg(new[] { "add", keyFullPath, "/v", name, "/t", "REG_DWORD", "/d", value.ToString(), "/f" });
-        }
-
-        private static void DeleteValue(string keyFullPath, string name)
-        {
-            RunReg(new[] { "delete", keyFullPath, "/v", name, "/f" });
         }
 
         private sealed class RegOut { public int ExitCode; public string Output = ""; }

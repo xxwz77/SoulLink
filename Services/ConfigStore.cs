@@ -280,6 +280,7 @@ namespace SoulLink.Services
                         }
                     }
                 }
+                bool remoteControlMigrated = MigrateRemoteControl(cfg);
                 if (migrated)
                 {
                     // 备份成功后才允许保存新格式；写盘失败抛给外层，禁止把整套配置重置成默认。
@@ -287,10 +288,8 @@ namespace SoulLink.Services
                     if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                     string backup = Path.Combine(dir ?? "", "config-before-flow-migration.json");
                     File.WriteAllText(backup, originalJson, new UTF8Encoding(false));
-                    // ★ 迁移是启动期一次性路径（非 UI 线程），Save 内部会等写盘完成再返回，
-                    //   调用方返回后立即读盘校验新格式也拿得到新内容。
-                    Save(cfg);
                 }
+                if (migrated || remoteControlMigrated) Save(cfg);
                 return cfg;
             }
             catch (Exception ex)
@@ -298,9 +297,33 @@ namespace SoulLink.Services
                 // 迁移/保存失败不是配置损坏：保留原内容并继续旧格式，绝不覆盖原文件或重置账号。
                 App.AppendErrorLog("ConfigStore.LoadOrMigrate", ex);
                 if (originalJson.Length > 0)
-                    try { return JsonSerializer.Deserialize<AppConfig>(originalJson, Opt) ?? Defaults(); } catch { }
+                {
+                    try
+                    {
+                        var cfg = JsonSerializer.Deserialize<AppConfig>(originalJson, Opt) ?? Defaults();
+                        MigrateRemoteControl(cfg);
+                        return cfg;
+                    }
+                    catch { }
+                }
                 return Defaults();
             }
+        }
+
+        private static bool MigrateRemoteControl(AppConfig cfg)
+        {
+            var settings = cfg.Settings;
+            if (settings == null) return false;
+            bool wasEnabled = settings.RemoteControlEnabled;
+            bool needsSave = wasEnabled || settings.RemoteControlAccountIds == null;
+            settings.RemoteControlAccountIds ??= wasEnabled
+                ? (cfg.Accounts ?? new List<Account>())
+                    .Where(a => a != null && !string.IsNullOrWhiteSpace(a.Id) && !string.IsNullOrWhiteSpace(a.UserName)
+                        && !AccountScope.IsPrimaryUser(a.UserName))
+                    .Select(a => a.Id).Distinct().ToList()
+                : new List<string>();
+            settings.RemoteControlEnabled = false;
+            return needsSave;
         }
 
         public static void Save(AppConfig cfg)
@@ -365,6 +388,7 @@ namespace SoulLink.Services
         public static AppConfig Defaults()
         {
             var cfg = new AppConfig();
+            cfg.Settings.RemoteControlAccountIds = new List<string>();
 
             return cfg;
         }

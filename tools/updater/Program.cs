@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Threading;
 using System.Windows.Forms;
 
 namespace SoulLink.Updater
@@ -32,6 +31,7 @@ namespace SoulLink.Updater
         private static int Main(string[] args)
         {
             string? pidText = null, rootDir = null, package = null;
+            string exeName = "SoulLink.exe";
             for (int i = 0; i < args.Length - 1; i++)
             {
                 switch (args[i])
@@ -39,6 +39,7 @@ namespace SoulLink.Updater
                     case "--pid": pidText = args[++i]; break;
                     case "--root": rootDir = args[++i]; break;
                     case "--package": package = args[++i]; break;
+                    case "--exe": exeName = args[++i]; break;
                 }
             }
 
@@ -47,118 +48,31 @@ namespace SoulLink.Updater
             if (!File.Exists(package))
                 return ShowError("找不到已下载的更新包。");
 
-            rootDir = Path.GetFullPath(rootDir);
+            rootDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDir));
             if (!Directory.Exists(rootDir))
                 return ShowError("找不到程序安装目录。");
+            if (Path.GetFileName(exeName) != exeName || exeName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                || !exeName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                return ShowError("无法识别要更新的程序文件。");
 
-            // 等主程序退出。
-            // ★ 超时后必须**强制结束**，不能只是放弃等待：
-            //   WPF 的 Shutdown() 有时会被窗口关闭流程拖住，主程序迟迟不退；
-            //   这时如果直接往下走，覆盖 SoulLink.exe 会因文件被锁而失败，
-            //   整个更新回滚、用户看到"更新了但版本没变"（实测踩过）。
-            if (int.TryParse(pidText, out int pid))
-            {
-                if (!WaitForExit(pid, TimeSpan.FromSeconds(20)))
-                {
-                    try
-                    {
-                        using var victim = System.Diagnostics.Process.GetProcessById(pid);
-                        victim.Kill(entireProcessTree: true);
-                    }
-                    catch { }
-                    // 等文件句柄真正释放
-                    Thread.Sleep(1500);
-                }
-            }
-
-            // 文件锁释放有延迟（实测约 1~2 秒）
-            Thread.Sleep(1500);
-
-            string work = Path.Combine(Path.GetTempPath(), "SoulLinkUpdate", "stage");
-            var replaced = new List<string>();
-            var renamed = new List<(string Old, string New)>();
+            if (!int.TryParse(pidText, out int pid) || pid <= 0 || !WaitForExit(pid, TimeSpan.FromSeconds(30)))
+                return ShowError("SoulLink 尚未退出，请关闭主程序后重新检查更新。");
 
             try
             {
-                // 1. 解压到暂存目录
-                if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
-                Directory.CreateDirectory(work);
-                ZipFile.ExtractToDirectory(package, work, overwriteFiles: true);
-
-                // 2. 逐个覆盖
-                var files = Directory.GetFiles(work, "*", SearchOption.AllDirectories);
-                if (files.Length == 0)
-                    throw new IOException("更新包是空的");
-
-                foreach (var src in files)
-                {
-                    string rel = Path.GetRelativePath(work, src);
-                    string dst = Path.GetFullPath(Path.Combine(rootDir, rel));
-
-                    // ★ zip-slip 防护：解析后的绝对路径必须仍在安装目录内
-                    if (!dst.StartsWith(rootDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                        && !string.Equals(dst, rootDir, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new IOException("更新包含有非法路径：" + rel);
-                    }
-
-                    string? dir = Path.GetDirectoryName(dst);
-                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-
-                    // 目标若是正在使用的文件，先改名（Windows 允许重命名运行中的 exe）
-                    if (File.Exists(dst))
-                    {
-                        try
-                        {
-                            File.Copy(src, dst, overwrite: true);
-                        }
-                        catch (IOException)
-                        {
-                            string bak = dst + ".old";
-                            try { if (File.Exists(bak)) File.Delete(bak); } catch { }
-                            File.Move(dst, bak);
-                            renamed.Add((dst, bak));
-                            File.Copy(src, dst, overwrite: true);
-                        }
-                        catch (UnauthorizedAccessException)
-                        {
-                            string bak = dst + ".old";
-                            try { if (File.Exists(bak)) File.Delete(bak); } catch { }
-                            File.Move(dst, bak);
-                            renamed.Add((dst, bak));
-                            File.Copy(src, dst, overwrite: true);
-                        }
-                    }
-                    else
-                    {
-                        File.Copy(src, dst, overwrite: true);
-                    }
-                    replaced.Add(rel);
-                }
-
-                // 3. 校验：主程序必须存在且非空
-                string mainExe = Path.Combine(rootDir, "SoulLink.exe");
-                var fi = new FileInfo(mainExe);
-                if (!fi.Exists || fi.Length == 0)
-                    throw new IOException("更新后主程序无效");
+                ApplyPackage(package, rootDir, exeName);
             }
             catch (Exception ex)
             {
-                Rollback(replaced, renamed, rootDir);
                 return ShowError("更新失败，已尝试回滚。\n\n" + ex.Message);
             }
 
             // 4. 清理备份与临时文件
             try
             {
-                foreach (var (dst, bak) in renamed)
-                {
-                    try { if (File.Exists(bak)) File.Delete(bak); } catch { }
-                }
-                Directory.Delete(work, recursive: true);
                 File.Delete(package);
                 string pkgDir = Path.GetDirectoryName(package) ?? "";
-                if (pkgDir.EndsWith("SoulLinkUpdate", StringComparison.OrdinalIgnoreCase)
+                if (Path.GetFileName(pkgDir).StartsWith("SoulLinkUpdate-", StringComparison.Ordinal)
                     && Directory.Exists(pkgDir) && !Directory.EnumerateFileSystemEntries(pkgDir).Any())
                     Directory.Delete(pkgDir);
             }
@@ -167,7 +81,7 @@ namespace SoulLink.Updater
             // 5. 重启
             try
             {
-                string mainExe = Path.Combine(rootDir, "SoulLink.exe");
+                string mainExe = Path.Combine(rootDir, exeName);
                 Process.Start(new ProcessStartInfo(mainExe)
                 {
                     UseShellExecute = true,
@@ -182,21 +96,50 @@ namespace SoulLink.Updater
             return 0;
         }
 
-        /// <summary>尽量把已覆盖的文件恢复原状。</summary>
-        private static void Rollback(List<string> replaced, List<(string Old, string New)> renamed, string rootDir)
+        private static void ApplyPackage(string package, string rootDir, string exeName)
         {
-            foreach (var (dst, bak) in renamed)
+            var work = Directory.CreateTempSubdirectory("SoulLinkUpdateStage-");
+            var changed = new List<(string Destination, string? Backup)>();
+            string suffix = ".old-" + Guid.NewGuid().ToString("N");
+            try
             {
+                using var installLock = new FileStream(Path.Combine(rootDir, ".soullink-update.lock"),
+                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+                ZipFile.ExtractToDirectory(package, work.FullName);
+                var main = new FileInfo(Path.Combine(work.FullName, "SoulLink.exe"));
+                if (!main.Exists || main.Length == 0) throw new IOException("更新包缺少主程序。");
                 try
                 {
-                    if (File.Exists(bak))
+                    foreach (var source in Directory.EnumerateFiles(work.FullName, "*", SearchOption.AllDirectories))
                     {
-                        if (File.Exists(dst)) File.Delete(dst);
-                        File.Move(bak, dst);
+                        string relative = Path.GetRelativePath(work.FullName, source);
+                        string destination = Path.Combine(rootDir, relative.Equals("SoulLink.exe", StringComparison.OrdinalIgnoreCase)
+                            ? exeName : relative);
+                        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                        string? backup = File.Exists(destination) ? destination + suffix : null;
+                        if (backup != null) File.Move(destination, backup);
+                        changed.Add((destination, backup));
+                        File.Copy(source, destination);
                     }
                 }
-                catch { }
+                catch
+                {
+                    for (int i = changed.Count - 1; i >= 0; i--)
+                    {
+                        var (destination, backup) = changed[i];
+                        try
+                        {
+                            File.Delete(destination);
+                            if (backup != null) File.Move(backup, destination);
+                        }
+                        catch { }
+                    }
+                    throw;
+                }
+                foreach (var (_, backup) in changed)
+                    if (backup != null) try { File.Delete(backup); } catch { }
             }
+            finally { try { work.Delete(recursive: true); } catch { } }
         }
 
         /// <summary>等待指定进程退出。返回 true = 已退出（或本就不存在）。</summary>

@@ -305,11 +305,16 @@ CREATE TABLE IF NOT EXISTS my_mora_summary(
         ///   ⑤ 重算该账号该版本全部 my_mora_summary（先删后写，程序算好查询零减法）。
         /// 全部在 MiyousheStore.RunAsync 的串行 gate 内，参数化 SQL。
         /// </summary>
-        internal static Task<MoraClassRunResult> ClassifyAsync(string account,
+        internal static async Task<MoraClassRunResult> ClassifyAsync(string account,
             CancellationToken ct = default)
-            => MiyousheStore.Shared.RunAsync(db => ClassifyCore(db, account), MoraClassRunResult.Failed, ct);
+        {
+            var (projects, routes) = await Task.Run(() => BuildWindows(account), ct).ConfigureAwait(false);
+            return await MiyousheStore.Shared.RunAsync(db => ClassifyCore(db, account, projects, routes),
+                MoraClassRunResult.Failed, ct).ConfigureAwait(false);
+        }
 
-        private static MoraClassRunResult ClassifyCore(SqliteConnection db, string account)
+        private static MoraClassRunResult ClassifyCore(SqliteConnection db, string account,
+            IReadOnlyList<ProjectWindow> projects, IReadOnlyList<RouteWindow> routes)
         {
             long started = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (!EnsureTables(db)) return MoraClassRunResult.Failed;
@@ -332,9 +337,6 @@ FROM my_ledger_entry WHERE account=$a AND kind=2 ORDER BY COALESCE(ts_ms,0),rowi
             }
             if (entries.Count == 0)
                 return new MoraClassRunResult(true, RuleVersion, account, 0, 0, 0, 0, 0, 0, started, started);
-
-            // ② 归属窗口（读文件 IO 已在 RunAsync 串行段外完成——见 BuildWindows）
-            var (projects, routes) = BuildWindows(account);
 
             // ③ 分类 + 归属
             var rows = new List<ClassRow>(entries.Count);

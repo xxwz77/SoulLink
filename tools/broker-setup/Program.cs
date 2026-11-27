@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -7,11 +8,12 @@ using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text;
 using System.Threading;
+using SoulLink.Services;
 
 public static class Program
 {
-    private const string ServiceName = "SoulLink.DevBroker";
-    private const string InstallRoot = "C:\\Program Files\\SoulLinkDev";
+    private const string ServiceName = EngineComponentVersions.BrokerServiceName;
+    private static string InstallRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SoulLinkDev");
     private const uint ScmAll = 0xF003F, ServiceAll = 0xF01FF, ServiceChange = 0x0002;
     private const uint OwnProcess = 0x10, AutoStart = 0x2, ErrorNormal = 0x1;
     private static string LogPath => Path.Combine(Path.GetTempPath(), "SoulLink-Broker-install-current.log");
@@ -30,9 +32,13 @@ public static class Program
                 return 0;
             }
             if (args.Length == 1 && args[0] == "--uninstall") return Uninstall();
-            if (args.Length == 1 && args[0] == "--uninstall") return Uninstall();
-            if (args.Length != 2 || args[0] != "--install") return 2;
+            if (args.Length != 2 || args[0] is not ("--install" or "--update")) return 2;
             string source = Path.GetFullPath(args[1]);
+            if (args[0] == "--update")
+            {
+                if (!IsAdministrator()) return 5;
+                return UpdateExisting(Path.GetDirectoryName(source) ?? "");
+            }
 
             // ★ 2.17.45：不再写死 "SoulLink.exe"。
             //
@@ -48,38 +54,31 @@ public static class Program
             string baseName = Path.GetFileNameWithoutExtension(source);
             if (!baseName.Equals("SoulLink", StringComparison.OrdinalIgnoreCase)
                 && !baseName.Equals("SoulLink-Stable", StringComparison.OrdinalIgnoreCase)) return 3;
-            if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) return 5;
-            StopExisting();
+            if (!IsAdministrator()) return 5;
+            string sourceDir = Path.GetDirectoryName(source) ?? "";
+            string standaloneBroker = Path.Combine(sourceDir, "SoulLink.Broker.exe");
+            string standaloneAgent = Path.Combine(sourceDir, "SoulLink.Agent.exe");
+            if (EngineComponentVersions.Read(standaloneBroker, EngineComponentVersions.BrokerFile) == null
+                || EngineComponentVersions.Read(standaloneAgent, EngineComponentVersions.AgentFile) == null)
+            {
+                Log("COMPONENTS_MISSING_OR_INVALID");
+                return 3;
+            }
             Directory.CreateDirectory(InstallRoot);
+            using var updateLock = LockInstallation();
+            StopExisting();
             // 文件锁由旧服务释放；不在此写死等待。
             SecureDirectory();
             string service = Path.Combine(InstallRoot, "SoulLink.exe");
             string agent = Path.Combine(InstallRoot, "SoulLink.Agent.exe");
-            CopyFile(source, service); Log("SERVICE_COPIED");
-            // ★ t7a（3.3.40）：注入代理已是独立无 UI 工程产物（dist\SoulLink.Agent.exe，约 2.7 MB，无 WPF 依赖）。
-            //   优先用它；找不到才回退「复制主程序 + 改清单为 asInvoker」的老办法（兼容老发布包）。
-            //   老办法会把整套 WPF 塞进每个会话的代理进程（实测 47MB×N），是拆分要消灭的东西。
-            string sourceDir = Path.GetDirectoryName(source) ?? "";
-            string standaloneAgent = Path.Combine(sourceDir, "SoulLink.Agent.exe");
-            if (File.Exists(standaloneAgent))
-            {
-                CopyFile(standaloneAgent, agent);
-                Log("AGENT_STANDALONE " + Path.GetFileName(standaloneAgent));
-                // 独立 agent 工程自带 asInvoker 清单。PatchManifest(file, null) 的语义：
-                //   已在 asInvoker → 返回 true（无需改写）；仍是 requireAdministrator → 就地改写并返回 true；
-                //   两者都不是（清单缺失/异常）→ 返回 false。所以 false 才是需要警惕的情况。
-                if (!PatchManifest(agent, null)) Log("AGENT_MANIFEST_UNVERIFIED " + agent);
-            }
-            else
-            {
-                // 兼容老发布包（没有独立 agent 产物）
-                if (!File.Exists(agent) || !PatchManifest(agent, source)) { CopyFile(source, agent); PatchManifest(agent, null); }
-                Log("AGENT_FALLBACK_FROM_MAIN");
-            }
+            // Keep the registered path compatible with existing installations.
+            CopyFile(standaloneBroker, service); Log("SERVICE_COPIED");
+            CopyFile(standaloneAgent, agent);
+            if (!PatchManifest(agent, null)) Log("AGENT_MANIFEST_UNVERIFIED " + agent);
             Log("AGENT_READY");
-            // ★ 部署链路修复（2026-11-23）：只复制 exe 会缺旁挂运行库，
-            //   见 SyncRuntimeFiles。必须在建服务前把 DLL / 网页 / tools 补齐。
-            SyncRuntimeFiles(Path.GetDirectoryName(source) ?? "", InstallRoot);
+            // Both components are standalone. The installed Broker needs only the version markers beside them.
+            foreach (string marker in new[] { "SoulLink.Agent.version", "SoulLink.Agent.required.version" })
+                CopyFile(Path.Combine(sourceDir, marker), Path.Combine(InstallRoot, marker));
             EnsureService(service); Log("SERVICE_CREATED");
             using (var controller = new ServiceController(ServiceName))
             {
@@ -89,6 +88,148 @@ public static class Program
             return 0;
         }
         catch (Exception ex) { Log("FAILED " + ex); return 1; }
+    }
+
+    private static bool IsAdministrator()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static FileStream LockInstallation() => new(Path.Combine(InstallRoot, ".component-update.lock"),
+        FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+
+    private static int UpdateExisting(string sourceDirectory)
+    {
+        string service = Path.Combine(InstallRoot, "SoulLink.exe");
+        string agent = Path.Combine(InstallRoot, EngineComponentVersions.AgentFile);
+        if (!Directory.Exists(InstallRoot)) return 8;
+        using var updateLock = LockInstallation();
+        if (!EngineComponentVersions.IsRegisteredBroker(service)) return 8;
+
+        string sourceService = Path.Combine(sourceDirectory, EngineComponentVersions.BrokerFile);
+        string sourceAgent = Path.Combine(sourceDirectory, EngineComponentVersions.AgentFile);
+        var brokerVersion = EngineComponentVersions.Read(sourceService, EngineComponentVersions.BrokerFile);
+        var agentVersion = EngineComponentVersions.Read(sourceAgent, EngineComponentVersions.AgentFile);
+        bool updateBroker = brokerVersion != null && (EngineComponentVersions.ReadInstalledBroker(service) is not { } installedBroker
+            || installedBroker < brokerVersion);
+        string required = Path.Combine(InstallRoot, "SoulLink.Agent.required.version");
+        var minimum = EngineComponentVersions.ReadMarker(required);
+        var installedAgent = EngineComponentVersions.Read(agent, EngineComponentVersions.AgentFile);
+        bool updateAgent = agentVersion != null && (minimum == null || agentVersion >= minimum)
+            && (installedAgent == null || installedAgent < agentVersion);
+        string targetMarker = Path.Combine(InstallRoot, "SoulLink.Agent.version");
+        string sourceMarker = Path.Combine(sourceDirectory, "SoulLink.Agent.version");
+        bool repairMarker = !updateAgent && installedAgent != null
+            && EngineComponentVersions.ReadMarker(targetMarker) != installedAgent;
+        if (updateAgent && EngineComponentVersions.ReadMarker(sourceMarker) != agentVersion) return 7;
+
+        using var controller = new ServiceController(ServiceName);
+        bool waitForBroker = false;
+        bool running = false;
+        if (updateBroker)
+        {
+            var status = controller.Status;
+            running = status == ServiceControllerStatus.Running;
+            waitForBroker = AgentInUse(agent) || (!running && status != ServiceControllerStatus.Stopped);
+            updateBroker = !waitForBroker;
+        }
+        if (!updateBroker && !updateAgent && !repairMarker) return waitForBroker ? 6 : 0;
+
+        var changed = new List<(string Target, string? Backup)>();
+        string nonce = Guid.NewGuid().ToString("N");
+        string markerDraft = targetMarker + ".repair-" + nonce;
+        try
+        {
+            if (updateBroker && running)
+            {
+                controller.Stop();
+                controller.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(15));
+            }
+            if (updateBroker) Replace(sourceService, service, nonce, changed);
+            if (updateAgent)
+            {
+                // 运行中的进程保留旧映像，后续投送从原路径启动新版。
+                Replace(sourceAgent, agent, nonce, changed, moveRunningImage: true);
+                Replace(sourceMarker, targetMarker, nonce, changed);
+                string sourceMinimum = Path.Combine(sourceDirectory, "SoulLink.Agent.required.version");
+                if (EngineComponentVersions.ReadMarker(sourceMinimum) is { } requested
+                    && requested <= agentVersion && (minimum == null || requested > minimum))
+                    Replace(sourceMinimum, required, nonce, changed);
+            }
+            else if (repairMarker && installedAgent != null)
+            {
+                File.WriteAllText(markerDraft, installedAgent.ToString(3) + Environment.NewLine);
+                Replace(markerDraft, targetMarker, nonce, changed);
+            }
+            if (updateBroker && running) StartAndWait(controller);
+        }
+        catch
+        {
+            if (updateBroker && running)
+                try { if (controller.Status != ServiceControllerStatus.Stopped) { controller.Stop(); controller.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(15)); } } catch { }
+            for (int i = changed.Count - 1; i >= 0; i--)
+            {
+                var (target, backup) = changed[i];
+                try { File.Delete(target); if (backup != null) File.Move(backup, target); }
+                catch (Exception ex) { Log("ROLLBACK_FAILED " + ex.Message); }
+            }
+            if (updateBroker && running)
+                try { StartAndWait(controller); } catch (Exception ex) { Log("RESTART_FAILED " + ex.Message); }
+            throw;
+        }
+        finally { try { File.Delete(markerDraft); } catch { } }
+        foreach (var (_, backup) in changed) if (backup != null) try { File.Delete(backup); } catch { }
+        Log("COMPONENTS_UPDATED broker=" + updateBroker + " agent=" + updateAgent);
+        return waitForBroker ? 6 : 0;
+    }
+
+    private static bool AgentInUse(string target)
+    {
+        bool active = false;
+        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(target)))
+        {
+            using (process)
+            {
+                try
+                {
+                    if (!process.HasExited && (process.MainModule?.FileName is not { } path
+                        || string.Equals(path, target, StringComparison.OrdinalIgnoreCase))) active = true;
+                }
+                catch (InvalidOperationException) { }
+                catch { active = true; }
+            }
+        }
+        return active;
+    }
+
+    private static void Replace(string source, string target, string nonce,
+        List<(string Target, string? Backup)> changed, bool moveRunningImage = false)
+    {
+        string staged = target + ".new-" + nonce;
+        try
+        {
+            File.Copy(source, staged);
+            string? backup = File.Exists(target) ? target + ".old-" + nonce : null;
+            if (moveRunningImage && backup != null)
+            {
+                File.Move(target, backup);
+                changed.Add((target, backup));
+                File.Move(staged, target);
+                return;
+            }
+            if (backup == null) File.Move(staged, target);
+            else File.Replace(staged, target, backup);
+            changed.Add((target, backup));
+        }
+        finally { try { File.Delete(staged); } catch { } }
+    }
+
+    private static void StartAndWait(ServiceController service)
+    {
+        service.Refresh();
+        if (service.Status == ServiceControllerStatus.Stopped) service.Start();
+        service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(20));
     }
 
     private static void StopExisting()

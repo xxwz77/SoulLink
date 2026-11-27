@@ -18,6 +18,8 @@ namespace SoulLink.Services
         NotRunning,
         /// <summary>注入代理缺失或版本不一致。</summary>
         AgentNeedsUpdate,
+        ServiceNeedsUpdate,
+        ComponentsNeedUpdate,
         /// <summary>
         /// 引擎本身（服务 + 注入代理版本）正常，但**投送通道没有连着**。
         /// ★ 2026-11-24 P0-A：用户实测「界面一片绿，啥也用不了」——服务在跑、agent 版本对、
@@ -30,25 +32,11 @@ namespace SoulLink.Services
     }
 
     /// <summary>
-    /// 注入代理（C:\Program Files\SoulLinkDev\SoulLink.Agent.exe）的版本自检与自动修复。
-    ///
-    /// ★ 背景（用户痛点）：主程序升级后，安装目录里的 SoulLink.Agent.exe 仍是旧版
-    ///   （解压覆盖时 agent 进程占用文件、覆盖失败），Broker 投送前 ValidAgent 校验
-    ///   版本不符 → 投送全部失败，但界面却显示「引擎就绪」。普通用户无法理解。
-    ///
-    /// ★ 本类职责：
-    ///   · Inspect：按随包 version 文件（AgentVersion）比较「服务要求」与「安装目录 agent 版本」，
-    ///     给出 5 态结论（纯读取，零写入）；
-    ///   · RepairAsync：版本不一致/缺失时，把发布包目录（主程序同目录）里的
-    ///     SoulLink.Agent.exe 复制到安装目录，复制后复校验；
-    ///   · 版本一致时**零写入、零提权**（硬要求，避免每次启动改写 Program Files）。
-    ///
-    /// ★ 只替换 agent 文件，**不重建/重装 Broker 服务**（用户明确要求：升级不碰服务）。
-    ///   服务本体（SoulLink.exe）的日常版本同步由更新器整包覆盖完成，与本类无关。
+    /// 检查已安装的 Broker 与注入代理，并通过独立安装器应用组件更新。
     /// </summary>
     public static class AgentSync
     {
-        public const string ServiceName = "SoulLink.DevBroker";
+        public const string ServiceName = EngineComponentVersions.BrokerServiceName;
         public const string AgentFileName = "SoulLink.Agent.exe";
 
         /// <summary>
@@ -112,7 +100,17 @@ namespace SoulLink.Services
 
         /// <summary>安装目录 agent 版本是否满足服务要求（服务 Running 前提下，缺失/不足 = false）。</summary>
         public static bool IsAgentCurrent => File.Exists(TargetAgent)
-            && BrokerInstall.ValidAgent(BrokerInstall.ServiceExe, TargetAgent);
+            && BrokerInstall.ValidAgent(BrokerInstall.ServiceExe, TargetAgent)
+            && BrokerInstall.ValidAgent(SelfExe, TargetAgent)
+            && (EngineComponentVersions.Read(TargetAgent, EngineComponentVersions.AgentFile) is not { } installed
+                || EngineComponentVersions.ReadMarker(BrokerInstall.VersionFileFor(TargetAgent)) == installed)
+            && (EngineComponentVersions.Read(SourceAgent, EngineComponentVersions.AgentFile) is not { } offered
+                || !EngineComponentVersions.NeedsUpdate(TargetAgent, EngineComponentVersions.AgentFile, offered));
+
+        private static string SourceBroker => Path.Combine(Path.GetDirectoryName(SourceAgent)!, EngineComponentVersions.BrokerFile);
+
+        public static bool RequiresUpdate(EngineState state)
+            => state is EngineState.AgentNeedsUpdate or EngineState.ServiceNeedsUpdate or EngineState.ComponentsNeedUpdate;
 
         /// <summary>最近一次 Inspect 的判据结果（默认 false）。t2 只读，不自行重算。</summary>
         public static AgentVerdict LastVerdict = new AgentVerdict();
@@ -137,43 +135,45 @@ namespace SoulLink.Services
         public static EngineState Inspect(out string detail, out string tooltip)
         {
             string selfVer = SelfVersion;
-            string? serviceRaw = BrokerInstall.TryReadAgentVersion(BrokerInstall.ServiceExe, out string serviceSrc);
+            string serviceVer = BrokerProtocol.ServerExeVersion();
             string? requiredRaw = BrokerInstall.ReadRequiredAgentVersion(BrokerInstall.ServiceExe);
+            string? sourceRequired = BrokerInstall.ReadRequiredAgentVersion(SelfExe);
+            if (BrokerProtocol.ParseVersion(sourceRequired) is { } sourceVersion
+                && (BrokerProtocol.ParseVersion(requiredRaw) is not { } serviceMinimum || sourceVersion > serviceMinimum))
+                requiredRaw = sourceRequired;
             string? agentRaw = BrokerInstall.TryReadAgentVersion(TargetAgent, out string agentSrc);
-            string serviceVer = serviceRaw ?? "";
             string requiredVer = requiredRaw ?? "";
             string agentVer = agentRaw ?? "";
-            bool verdict = BrokerInstall.ValidAgent(BrokerInstall.ServiceExe, TargetAgent);
+            bool verdict = IsAgentCurrent;
+            var offeredBroker = EngineComponentVersions.Read(SourceBroker, EngineComponentVersions.BrokerFile);
+            var offeredAgent = EngineComponentVersions.Read(SourceAgent, EngineComponentVersions.AgentFile);
+            bool brokerOld = !File.Exists(BrokerInstall.ServiceExe) || !BrokerProtocol.CheckServiceVersion(serviceVer).ok
+                || (offeredBroker != null && (EngineComponentVersions.ReadInstalledBroker(BrokerInstall.ServiceExe) is not { } installedBroker
+                    || installedBroker < offeredBroker));
+            LastVerdict = new AgentVerdict { Passed = verdict && !brokerOld, ServiceVersion = serviceVer, AgentVersion = agentVer, Source = "文件版本/" + agentSrc };
             tooltip = "当前程序 " + (selfVer.Length > 0 ? selfVer : "?")
-                    + " · 服务 " + (serviceVer.Length > 0 ? serviceVer : "缺失")
-                    + " · 要求代理 " + (requiredVer.Length > 0 ? requiredVer : "?")
-                    + " · 注入代理 " + (agentVer.Length > 0 ? agentVer : "缺失")
-                    + " · 判据 " + (verdict ? "通过" : "不通过")
-                    + "（依据：" + serviceSrc + "/" + agentSrc + "）";
+                    + " · 服务 " + (serviceVer.Length > 0 ? serviceVer : "缺失") + " / 随包 " + (offeredBroker?.ToString(3) ?? "缺失")
+                    + " · 注入代理 " + (agentVer.Length > 0 ? agentVer : "缺失") + " / 随包 " + (offeredAgent?.ToString(3) ?? "缺失")
+                    + " · 最低代理版本 " + (requiredVer.Length > 0 ? requiredVer : "?");
 
             if (!TryGetServiceStatus(out var status))
             {
                 detail = "首次使用，请安装服务";
                 return EngineState.NotInstalled;
             }
+            if (brokerOld || !verdict)
+            {
+                detail = brokerOld && !verdict ? "Windows 服务与注入代理需要更新"
+                    : brokerOld ? "Windows 服务需要更新" : "注入代理需要更新";
+                if (!SystemLauncher.IsElevated) detail += "。请在设置中选择「更新引擎组件」并确认管理员授权。";
+                return brokerOld && !verdict ? EngineState.ComponentsNeedUpdate
+                    : brokerOld ? EngineState.ServiceNeedsUpdate : EngineState.AgentNeedsUpdate;
+            }
             if (status != ServiceControllerStatus.Running)
             {
                 detail = "服务已安装，但未运行（" + status + "）";
                 return EngineState.NotRunning;
             }
-            if (!File.Exists(TargetAgent))
-            {
-                detail = "注入代理缺失";
-                return EngineState.AgentNeedsUpdate;
-            }
-            if (!verdict)
-            {
-                LastVerdict = new AgentVerdict { Passed = false, ServiceVersion = requiredVer, AgentVersion = agentVer, Source = serviceSrc + "/" + agentSrc };
-                detail = "注入代理版本低于主程序要求：要求 " + (requiredVer.Length > 0 ? requiredVer : "?")
-                       + "，代理 " + (agentVer.Length > 0 ? agentVer : "缺失");
-                return EngineState.AgentNeedsUpdate;
-            }
-            LastVerdict = new AgentVerdict { Passed = true, ServiceVersion = serviceVer, AgentVersion = agentVer, Source = serviceSrc + "/" + agentSrc };
 
             // ★ P0-A（2026-11-24）：「引擎就绪」必须同时反映「通道是否真的连着」。
             //   判据 = 服务 Running + agent 文件存在 + 版本通过（上面已全过）+ **至少一个已投送账号的 relay 通道 IsConnected**。
@@ -205,127 +205,61 @@ namespace SoulLink.Services
             catch { return false; }
         }
 
-        /// <summary>自动修复（后台线程执行，不阻塞 UI）。</summary>
-        public static Task<(bool ok, string message)> RepairAsync()
-            => Task.Run<(bool ok, string message)>(RepairCore);
+        public static Task<(bool ok, string message)> RepairAsync(bool allowElevation = true)
+            => Task.Run(() => UpdateComponentsAsync(allowElevation));
 
-        private static (bool ok, string message) RepairCore()
+        private static int _updating;
+
+        private static async Task<(bool ok, string message)> UpdateComponentsAsync(bool allowElevation)
         {
-            string source = SourceAgent;
-            string target = TargetAgent;
-
-            // ★ 版本一致 → 零写入，立即返回。
-            if (IsAgentCurrent)
-                return (true, "注入代理已是最新（" + AgentVersionOf(target) + "），无需修复。");
-
-            if (!File.Exists(source))
-                return (false, "发布目录缺少注入代理 SoulLink.Agent.exe，请重新解压完整程序包。");
-
-            if (!SystemLauncher.IsElevated)
-                return (false, "需要管理员权限才能更新注入代理。请以管理员身份运行本程序后再试。");
-
-            try { Directory.CreateDirectory(Path.GetDirectoryName(target) ?? BrokerInstall.Root); }
-            catch (Exception ex) { return (false, "无法创建安装目录：" + ex.Message); }
-
-            string? lastError = null;
-            bool copied = false;
-            for (int attempt = 0; attempt < 5 && !copied; attempt++)
-            {
-                try
-                {
-                    File.Copy(source, target, true);
-                    copied = true;
-                }
-                catch (IOException ex) { lastError = ex.Message; }
-                catch (UnauthorizedAccessException ex) { lastError = ex.Message; }
-
-                if (copied) break;
-
-                // 目标文件被占用：按精确 PID 停掉占用它的 agent 进程，等待解锁后重试。
-                // ★ 只停路径与本 target 完全一致的进程，不误伤其它版本（如稳定版）的代理。
-                int stopped = StopAgentsLocking(target);
-                if (attempt == 0) lastError += "（已尝试停止 " + stopped + " 个占用中的注入代理进程）";
-                Thread.Sleep(600);
-            }
-
-            if (!copied)
-                return (false, "注入代理文件被占用，多次重试仍无法替换。请关闭所有正在投送的账号后重试。"
-                    + (lastError != null ? "（" + lastError + "）" : ""));
-
-            // ★ P0-1：version 文件必须跟着 agent 走，否则装完仍读不到 AgentVersion。
-            CopyAgentVersionMarker(source, target);
-
-            // 复校验：按 version 文件判据，版本不满足不算成功。
-            if (!BrokerInstall.ValidAgent(BrokerInstall.ServiceExe, target))
-                return (false, "注入代理替换后版本校验失败：主程序要求 "
-                    + (BrokerInstall.ReadRequiredAgentVersion(BrokerInstall.ServiceExe) ?? "?")
-                    + "，实际 " + AgentVersionOf(target));
-
-            return (true, "注入代理已更新到 " + AgentVersionOf(target) + "，无需重装服务。");
-        }
-
-        /// <summary>把发布包里的 version 标记文件随 agent 一并复制到安装目录（P0-1 + t7a 补 required）。</summary>
-        private static void CopyAgentVersionMarker(string sourceAgent, string targetAgent)
-        {
-            // ① agent 自身版本标记（跟着 agent exe 走）
-            string src = BrokerInstall.VersionFileFor(sourceAgent);
-            string dst = BrokerInstall.VersionFileFor(targetAgent);
-            if (!File.Exists(src))
-            {
-                LogBus.Warn("注入代理 version 标记缺失", "源 " + src + " 不存在，回退到 FileVersion 判据");
-            }
-            else
-            {
-                try { File.Copy(src, dst, true); }
-                catch (Exception ex)
-                {
-                    // ★ G3：静默失败必须留痕（本类 P0 的同类病）。
-                    LogBus.Warn("注入代理 version 标记复制失败", "源 " + src + " → 目标 " + dst + " :: " + ex.Message);
-                }
-            }
-
-            // ② 主程序要求的 agent 最低版本标记（跟着服务本体 SoulLink.exe 走，t7a 补）
-            string srcReq = BrokerInstall.RequiredVersionFileFor(sourceAgent);
-            string dstReq = BrokerInstall.RequiredVersionFileFor(targetAgent);
-            if (!File.Exists(srcReq))
-            {
-                LogBus.Warn("要求的代理版本标记缺失", "源 " + srcReq + " 不存在，将按「无要求 → 放行」处理");
-                return;
-            }
-            try { File.Copy(srcReq, dstReq, true); }
-            catch (Exception ex)
-            {
-                LogBus.Warn("要求的代理版本标记复制失败", "源 " + srcReq + " → 目标 " + dstReq + " :: " + ex.Message);
-            }
-        }
-
-        /// <summary>停止占用指定 agent 文件的进程（按精确 PID；只匹配同一路径的进程）。</summary>
-        private static int StopAgentsLocking(string target)
-        {
-            int stopped = 0;
+            if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0)
+                return (false, "正在更新引擎组件。");
             try
             {
-                string full = Path.GetFullPath(target);
-                string procName = Path.GetFileNameWithoutExtension(AgentFileName);
-                foreach (var p in Process.GetProcessesByName(procName))
+                var state = Inspect(out _, out _);
+                if (!RequiresUpdate(state)) return (true, "引擎组件已是最新。");
+                bool elevated = SystemLauncher.IsElevated;
+                if (!elevated && !allowElevation) return (false, "需要管理员权限才能更新引擎组件。");
+                var previousBroker = EngineComponentVersions.ReadInstalledBroker(BrokerInstall.ServiceExe);
+                string exe = SelfExe;
+                string setup = Path.Combine(Path.GetDirectoryName(exe)!, "tools", "SoulLink.BrokerSetup.exe");
+                if (!File.Exists(setup)) return (false, "缺少引擎更新工具，请使用完整程序包。");
+                var start = new ProcessStartInfo(setup)
                 {
-                    try
-                    {
-                        string? path = null;
-                        try { path = p.MainModule?.FileName; } catch { }
-                        // 读到路径且不是本目标 → 别的版本/目录的代理，不碰。
-                        if (path != null && !string.Equals(Path.GetFullPath(path), full, StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        p.Kill();
-                        try { p.WaitForExit(3000); } catch { }
-                        stopped++;
-                    }
-                    catch { }
-                    finally { try { p.Dispose(); } catch { } }
+                    UseShellExecute = true,
+                    Verb = elevated ? "" : "runas",
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                start.ArgumentList.Add("--update");
+                start.ArgumentList.Add(exe);
+                using var process = Process.Start(start);
+                if (process == null) return (false, "无法启动引擎更新工具。");
+                await process.WaitForExitAsync().ConfigureAwait(false);
+                if (process.ExitCode == 6) return (false, "Windows 服务暂时无法重启，稍后会重试。");
+                if (process.ExitCode == 7) return (false, "代理包的版本标记无效，请重新下载完整程序包。");
+                if (process.ExitCode == 8) return (false, "服务安装路径需要修复，请打开「安装 / 管理服务」。");
+                if (process.ExitCode != 0) return (false, "引擎组件更新失败（退出码 " + process.ExitCode + "），稍后会重试。");
+                var currentBroker = EngineComponentVersions.ReadInstalledBroker(BrokerInstall.ServiceExe);
+                if (previousBroker != currentBroker)
+                {
+                    BrokerProtocol.InvalidateServiceVersionCache();
+                    BrokerProtocol.NotifyServiceUpdated();
                 }
+                if (RequiresUpdate(Inspect(out _, out _))) return (false, "当前程序目录中的组件版本不足，请先更新主程序。");
+                return (true, state == EngineState.AgentNeedsUpdate
+                    ? "注入代理已更新，下次投送时启用新版。"
+                    : "引擎组件已更新。");
             }
-            catch { }
-            return stopped;
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                return (false, "已取消管理员授权。");
+            }
+            catch (Exception ex)
+            {
+                LogBus.Warn("引擎组件更新失败", ex.Message);
+                return (false, "暂时无法更新引擎组件，稍后会重试。");
+            }
+            finally { Interlocked.Exchange(ref _updating, 0); }
         }
     }
 }

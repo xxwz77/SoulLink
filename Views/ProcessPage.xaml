@@ -1,21 +1,47 @@
 <UserControl x:Class="SoulLink.Views.ProcessPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:SoulLink.Views"
              FontFamily="{StaticResource UiFont}">
+    <UserControl.Resources>
+        <Style x:Key="SectionOption" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+            <Setter Property="Padding" Value="14,7" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="OptionBorder" Background="Transparent" BorderBrush="Transparent"
+                                BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="OptionBorder" Property="Background" Value="{DynamicResource ButtonBackground}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="OptionBorder" Property="Background" Value="#3053BBD7" />
+                                <Setter TargetName="OptionBorder" Property="BorderBrush" Value="#706DD1E7" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
 
     <Border Style="{StaticResource GlassCardStrong}" Padding="18,16">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <!-- 标题 -->
-            <Grid Grid.Row="0" Margin="2,0,2,12">
+            <Grid Margin="2,0,2,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -33,15 +59,28 @@
                 </Button>
             </Grid>
 
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
+                <RadioButton x:Name="ProcessTab" Content="进程清理" Style="{StaticResource SectionOption}"
+                             IsChecked="True" Checked="InventorySection_Changed" />
+                <RadioButton x:Name="StartupTab" Content="启动项" Style="{StaticResource SectionOption}"
+                             Margin="6,0,0,0" Checked="InventorySection_Changed" />
+                <RadioButton x:Name="SystemTab" Content="系统与启动策略" Style="{StaticResource SectionOption}"
+                             Margin="6,0,0,0" Checked="InventorySection_Changed" />
+                <RadioButton x:Name="DefenderTab" Content="目录排除" Style="{StaticResource SectionOption}"
+                             Margin="6,0,0,0" Checked="InventorySection_Changed" />
+            </StackPanel>
+
+            <ScrollViewer Grid.Row="2" x:Name="PageScroll" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
+            <StackPanel>
+
             <!-- 工具条 -->
-            <Grid Grid.Row="1" Margin="0,0,0,12">
+            <Grid Margin="0,0,0,12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="200" />
                     <ColumnDefinition Width="10" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="10" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="8" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
@@ -58,180 +97,63 @@
                 </ComboBox>
 
 
-                <Button Grid.Column="4" Style="{StaticResource GhostButton}" Height="40" Padding="16,0" Click="Refresh_Click">
+                <Button Grid.Column="4" x:Name="RefreshSessionsButton" Style="{StaticResource GhostButton}"
+                        Height="40" Padding="16,0" Click="Refresh_Click">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" />
                         <TextBlock Text="刷新" Margin="7,0,0,0" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
 
-                
             </Grid>
 
-            <!-- 进程表 -->
-            <!-- ★ 会话瘦身面板：统计 + 清理 + 按账号勾选的启动项优化 -->
-            <Border Grid.Row="2" CornerRadius="12" Margin="0,0,0,12" Padding="14,12"
+            <Border CornerRadius="12" Margin="0,0,0,12" Padding="14,12"
                     Background="{DynamicResource FieldBackground}" BorderBrush="#28FFFFFF" BorderThickness="1">
-                <StackPanel>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="会话瘦身" FontSize="13" FontWeight="SemiBold"
-                                       Foreground="{DynamicResource TextPrimary}" />
-                            <TextBlock x:Name="SlimSummary" FontSize="11" Margin="0,4,0,0"
-                                       Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"
-                                       Text="选择会话后显示进程构成" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button x:Name="BtnSlim" Style="{StaticResource PrimaryButton}"
-                                    Padding="16,7" Margin="0,0,8,0" Click="Slim_Click">
-                                <TextBlock Text="清理外围进程" FontSize="12" />
-                            </Button>
-                            <Button x:Name="BtnPolicy" Style="{StaticResource GhostButton}"
-                                    Padding="14,7" Click="Policy_Click">
-                                <TextBlock Text="应用启动项优化" FontSize="12" />
-                            </Button>
-                        </StackPanel>
-                    </Grid>
-
-                    <TextBlock x:Name="PolicyHint" FontSize="10.5" Margin="0,9,0,0"
-                               Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap"
-                               Text="启动项优化只作用于下方勾选的账号，未勾选的完全不受影响。" />
-
-                    <ItemsControl x:Name="PolicyList" Margin="0,9,0,0">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border CornerRadius="8" Padding="10,6" Margin="0,0,8,6"
-                                        Background="{DynamicResource ButtonBackground}"
-                                        MouseLeftButtonUp="PolicyRow_Click" Cursor="Hand"
-                                        ToolTip="点击切换该账号是否参与优化">
-                                    <StackPanel Orientation="Horizontal">
-                                        <!-- ★ 用圆点开关代替系统 CheckBox：
-                                             默认勾选框在深色玻璃主题里是白底方块，很扎眼。
-                                             这里做成「空心圆 = 关 / 实心圆 = 开」，
-                                             跟随主题色，点击整行都能切换。 -->
-                                        <Grid Width="16" Height="16" VerticalAlignment="Center">
-                                            <Ellipse x:Name="DotOff" Width="14" Height="14"
-                                                     Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2"
-                                                     Fill="Transparent">
-                                                <Ellipse.Style>
-                                                    <Style TargetType="Ellipse">
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding Enabled}" Value="True">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Ellipse.Style>
-                                            </Ellipse>
-                                            <Ellipse Width="14" Height="14" Fill="{StaticResource CyanBrush}">
-                                                <Ellipse.Style>
-                                                    <Style TargetType="Ellipse">
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding Enabled}" Value="True">
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Ellipse.Style>
-                                            </Ellipse>
-                                        </Grid>
-                                        <TextBlock Text="{Binding UserName}" FontSize="12"
-                                                   Margin="7,0,0,0" VerticalAlignment="Center"
-                                                   Foreground="{DynamicResource TextPrimary}" />
-                                        <TextBlock Text="{Binding StateText}" FontSize="10"
-                                                   Margin="7,0,0,0" VerticalAlignment="Center"
-                                                   Foreground="{DynamicResource TextMuted}" />
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-
-                    <!-- ★ 三个开关：清理外围进程 / 全机设置 / Edge 预启动 -->
-                    <Border CornerRadius="8" Padding="12,9" Margin="0,10,0,0"
-                            Background="{DynamicResource FieldBackground}" BorderBrush="#28FFFFFF" BorderThickness="1">
-                        <StackPanel>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="清理会话外围进程（按账号）" FontSize="11.5"
-                                               FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
-                                    <TextBlock FontSize="10" Margin="0,3,0,0" TextWrapping="Wrap" LineHeight="15"
-                                               Foreground="{DynamicResource TextMuted}"
-                                               Text="结束浏览器窗口、手机连接、跨设备、游戏栏、触摸键盘、OneDrive 授权等不会自动重启的外围进程。只影响挂机账号。" />
-                                </StackPanel>
-                                <CheckBox Grid.Column="1" x:Name="KillEnabledCheck" Content="启用"
-                                          VerticalAlignment="Center"
-                                          Style="{StaticResource GlassCheckBox}"
-                                          Checked="KillEnabledCheck_Changed"
-                                          Unchecked="KillEnabledCheck_Changed" />
-                            </Grid>
-                            <Separator Margin="0,8" Background="#1EFFFFFF" />
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="全机设置（影响所有用户，需管理员）" FontSize="11.5"
-                                               FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
-                                    <TextBlock x:Name="MachinePolicyHint" FontSize="10" Margin="0,3,0,0"
-                                                TextWrapping="Wrap" LineHeight="15"
-                                                Foreground="{DynamicResource TextMuted}"
-                                                Text="关闭小组件面板 + 任务栏搜索。作用于整台机器（含主控制台）；开始菜单打字搜索会失效，但开始菜单本体与资源管理器搜索正常。" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <CheckBox x:Name="MachinePolicyCheck" Content="启用"
-                                              VerticalAlignment="Center" Margin="0,0,10,0"
-                                              Style="{StaticResource GlassCheckBox}"
-                                              Checked="MachinePolicyCheck_Changed"
-                                              Unchecked="MachinePolicyCheck_Changed" />
-                                    <Button x:Name="BtnRevertMachine" Style="{StaticResource GhostButton}"
-                                            Padding="10,4" Click="RevertMachine_Click">
-                                        <TextBlock Text="恢复默认" FontSize="10.5" />
-                                    </Button>
-                                </StackPanel>
-                            </Grid>
-                            <Separator Margin="0,8" Background="#1EFFFFFF" />
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="Edge 预启动/后台（按账号，代理启动时写入）" FontSize="11.5"
-                                               FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
-                                    <TextBlock FontSize="10" Margin="0,3,0,0" TextWrapping="Wrap" LineHeight="15"
-                                               Foreground="{DynamicResource TextMuted}"
-                                               Text="由注入代理在目标会话内写入该账号的 HKCU，绕开「已登录无法挂载配置单元」的限制。挂机会话里 Edge 通常不运行，收益有限。" />
-                                </StackPanel>
-                                <CheckBox Grid.Column="1" x:Name="UserPolicyCheck" Content="启用"
-                                          VerticalAlignment="Center"
-                                          Style="{StaticResource GlassCheckBox}"
-                                          Checked="UserPolicyCheck_Changed"
-                                          Unchecked="UserPolicyCheck_Changed" />
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,14,0">
+                        <TextBlock Text="正在查看的会话" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimary}" />
+                        <TextBlock x:Name="SlimSummary" FontSize="11" Margin="0,4,0,0"
+                                   Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"
+                                   Text="选择会话后显示可清理的进程" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <CheckBox x:Name="KillEnabledCheck" Content="启用进程清理" Margin="0,0,14,0"
+                                  VerticalAlignment="Center" Style="{StaticResource GlassCheckBox}"
+                                  Checked="KillEnabledCheck_Changed" Unchecked="KillEnabledCheck_Changed" />
+                        <Button x:Name="BtnSlim" Style="{StaticResource PrimaryButton}" Content="清理外围进程"
+                                IsEnabled="False" ToolTipService.ShowOnDisabled="True"
+                                Padding="16,7" FontSize="12" Click="Slim_Click" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="1" Grid.ColumnSpan="2" x:Name="CleanupAccountPicker" Margin="0,10,0,0">
+                        <TextBlock x:Name="CleanupAccountHint" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                   Text="批量清理账号（可多选）。未勾选时仅清理正在查看的会话。" />
+                        <ItemsControl x:Name="CleanupAccounts" Margin="0,5,0,0">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <CheckBox Style="{StaticResource GlassCheckBox}" Content="{Binding Label}"
+                                              IsChecked="{Binding IsCleanupSelected, Mode=OneWay}"
+                                              Margin="0,0,14,4" Checked="CleanupAccount_Changed" Unchecked="CleanupAccount_Changed" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Grid>
             </Border>
 
             <!-- ★ 白名单透明化：明确告诉用户会动哪些、不会动哪些 -->
-            <Border Grid.Row="3" CornerRadius="10" Margin="0,0,0,10" Padding="12,9"
+            <Border CornerRadius="10" Margin="0,0,0,10" Padding="12,9"
                     Background="{DynamicResource ButtonBackground}">
                 <StackPanel>
                     <Grid>
@@ -239,7 +161,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="清理范围" FontSize="11" FontWeight="SemiBold"
+                        <TextBlock Grid.Column="0" Text="清理名单" FontSize="11" FontWeight="SemiBold"
                                    VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextSecondary}" />
                         <Button Grid.Column="1" x:Name="BtnResetList" Style="{StaticResource GhostButton}"
@@ -266,7 +188,6 @@
                                                    Foreground="{DynamicResource TextMuted}" />
                                         <Button Style="{StaticResource GhostButton}"
                                                 Padding="4,0" Margin="6,0,0,0"
-                                                Visibility="{Binding RemoveVisibility}"
                                                 Click="RemoveOne_Click" Tag="{Binding Name}">
                                             <TextBlock Text="✕" FontSize="9" />
                                         </Button>
@@ -276,14 +197,24 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <TextBlock x:Name="WhitelistText" FontSize="10.5" Margin="0,6,0,0"
+                    <ItemsControl x:Name="OptionalKillChoices" Margin="0,6,0,0">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource GhostButton}" Content="{Binding Label}" ContentStringFormat="加入 {0}"
+                                        ToolTip="{Binding Impact}" Click="AddOptional_Click" Padding="8,4" Margin="0,0,6,4" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="清理只匹配当前会话中的名单项。游戏、挂机工具、输入法、桌面与 RDP 组件受保护。"
+                               FontSize="10.5" Margin="0,6,0,0"
                                TextWrapping="Wrap" LineHeight="17"
                                Foreground="{DynamicResource TextMuted}" />
                 </StackPanel>
             </Border>
 
-            <!-- ★ 高级区：默认折叠。需要看/杀单个进程时展开 -->
-            <Expander Grid.Row="4" x:Name="AdvancedPanel" Margin="0,0,0,10"
+            <Expander x:Name="AdvancedPanel" Margin="0,0,0,10"
                       Foreground="{DynamicResource TextSecondary}"
                       IsExpanded="True">
                 <Expander.Header>
@@ -303,11 +234,12 @@
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                <Border Grid.Row="0" MinHeight="180" CornerRadius="12" Background="#0CFFFFFF" BorderBrush="#1EFFFFFF" BorderThickness="1" Padding="2">
+                <Border Height="320" CornerRadius="12" Background="#0CFFFFFF" BorderBrush="#1EFFFFFF" BorderThickness="1" Padding="2">
                     <DataGrid x:Name="Grid" AutoGenerateColumns="False" IsReadOnly="True"
                               HeadersVisibility="Column" GridLinesVisibility="None" Background="Transparent"
-                              BorderThickness="0" SelectionMode="Extended"
-                              SelectionChanged="Grid_SelectionChanged">
+                              BorderThickness="0" SelectionMode="Extended" EnableRowVirtualization="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling"
+                              SelectionChanged="Grid_SelectionChanged" PreviewMouseWheel="ProcessGrid_PreviewMouseWheel">
                     <DataGrid.Resources>
                         <Style TargetType="DataGridColumnHeader">
                             <Setter Property="Background" Value="Transparent" />
@@ -364,14 +296,13 @@
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
                         <DataGridTextColumn Header="PID" Binding="{Binding PidText}" Width="88" />
+                        <DataGridTextColumn Header="专用提交" Binding="{Binding PrivateMemoryText}" SortMemberPath="PrivateBytes" Width="92" />
                         <DataGridTextColumn Header="路径" Binding="{Binding ExePath}" Width="*" />
                         
                     </DataGrid.Columns>
                 </DataGrid>
                 </Border>
                 <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-                    <TextBlock Text="可多选后结束选中进程" FontSize="10.5" VerticalAlignment="Center"
-                               Margin="0,0,10,0" Foreground="{DynamicResource TextMuted}" />
                     <Button x:Name="BtnAddToList" Style="{StaticResource GhostButton}"
                             Padding="14,6" Margin="0,0,8,0" IsEnabled="False" Click="AddToList_Click">
                         <TextBlock Text="加入清理名单" FontSize="11.5" />
@@ -384,6 +315,118 @@
                 </Grid>
             </Expander>
 
+            </StackPanel>
+            </ScrollViewer>
+            <views:StartupInventoryView Grid.Row="2" x:Name="StartupView" Visibility="Collapsed" />
+
+            <ScrollViewer Grid.Row="2" x:Name="SystemScroll" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
+            <StackPanel>
+                <TextBlock Text="启动策略" Style="{StaticResource Label}" Margin="0,0,0,6" />
+                <Border Style="{StaticResource GlassPanel}" Padding="12,10">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,12,0">
+                                <TextBlock Text="Edge 预启动与后台运行" Style="{StaticResource Label}" Margin="0" />
+                                <TextBlock x:Name="PolicyHint" Style="{StaticResource Caption}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                <CheckBox x:Name="UserPolicyCheck" Content="代理启动时应用" VerticalAlignment="Center"
+                                          Style="{StaticResource GlassCheckBox}" Margin="0,0,10,0"
+                                          Checked="UserPolicyCheck_Changed" Unchecked="UserPolicyCheck_Changed" />
+                                <Button x:Name="BtnPolicy" Content="立即应用" Style="{StaticResource GhostButton}"
+                                        Padding="10,4" Click="Policy_Click" />
+                            </StackPanel>
+                        </Grid>
+
+                        <ItemsControl x:Name="PolicyList" Margin="0,8,0,0">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,14,4">
+                                        <CheckBox Content="{Binding UserName}" IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                                  Style="{StaticResource GlassCheckBox}" Click="PolicyAccount_Click" />
+                                        <TextBlock Text="{Binding StateText}" Style="{StaticResource Caption}"
+                                                   Margin="5,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Separator Margin="0,8" Background="#1EFFFFFF" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,12,0">
+                                <TextBlock Text="小组件和任务栏搜索（全机）" Style="{StaticResource Label}" Margin="0" />
+                                <TextBlock Text="影响所有账号，需要管理员权限。已有系统策略会保留。"
+                                           Style="{StaticResource Caption}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <CheckBox x:Name="MachinePolicyCheck" Content="启用策略" VerticalAlignment="Center"
+                                          Margin="0,0,10,0" Style="{StaticResource GlassCheckBox}"
+                                          Checked="MachinePolicyCheck_Changed" Unchecked="MachinePolicyCheck_Changed" />
+                                <Button Content="恢复默认" Style="{StaticResource GhostButton}" Padding="10,4"
+                                        Click="RevertMachine_Click" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            <TextBlock Text="系统优化" Style="{StaticResource Label}" Margin="0,18,0,6" />
+            <Border Style="{StaticResource GlassPanel}" Padding="14,12">
+                <StackPanel>
+                    <TextBlock Text="本机后台服务"
+                               FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimary}" />
+                    <TextBlock Text="服务操作影响整台电脑，需管理员权限。只修改当前运行状态，重启后的状态由 Windows 决定。"
+                               Style="{StaticResource Caption}" Margin="0,4,0,8" TextWrapping="Wrap" />
+
+                    <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,0,0,10">
+                        <StackPanel x:Name="ServiceList" />
+                    </Border>
+                    <TextBlock x:Name="ServiceStatus" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer Grid.Row="2" x:Name="DefenderScroll" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
+            <Border Style="{StaticResource GlassPanel}" Padding="14,12" VerticalAlignment="Top">
+                <StackPanel>
+                    <TextBlock Text="Windows Defender 目录排除" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimary}" />
+                    <TextBlock Text="这里显示 Windows Defender 的目录排除。排除项会影响整个目录的扫描，并在重启后继续生效。"
+                               Style="{StaticResource Caption}" Margin="0,4,0,8" TextWrapping="Wrap" />
+
+                    <Border Style="{StaticResource GlassPanel}" Padding="10,8" Margin="0,0,0,8">
+                        <StackPanel x:Name="DefenderExclusionList" />
+                    </Border>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Button Style="{StaticResource PrimaryButton}" Padding="14,7"
+                                Click="AddDefenderExclusion_Click">
+                            <TextBlock Text="把数据目录加入排除" FontSize="11.5" FontWeight="SemiBold" />
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Padding="14,7" Margin="8,0,0,0"
+                                Click="RefreshDefenderExclusions_Click">
+                            <TextBlock Text="刷新" FontSize="11.5" />
+                        </Button>
+                    </StackPanel>
+                    <TextBlock x:Name="DefenderStatus" Style="{StaticResource Caption}"
+                               Margin="0,8,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            </ScrollViewer>
         </Grid>
     </Border>
 </UserControl>

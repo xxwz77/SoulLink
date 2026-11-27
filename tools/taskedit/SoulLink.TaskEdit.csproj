@@ -77,6 +77,7 @@
          · WebFirewall：单端口防火墙放行（主程序侧同名规则，删的时候能一起清干净）。 -->
     <Compile Include="../../Services/AppIdentity.cs" Link="Shared/AppIdentity.cs" />
     <Compile Include="../../Services/WebFirewall.cs" Link="Shared/WebFirewall.cs" />
+    <Compile Include="../../Services/WebFavicon.cs" Link="Shared/WebFavicon.cs" />
   </ItemGroup>
 
   <Target Name="WriteTaskEditVersionToOutput" AfterTargets="AfterBuild">
