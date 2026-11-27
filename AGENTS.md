@@ -1,5 +1,11 @@
 # 项目规则
 
+## Git 仓库分流
+
+- 桌面端改动在 SoulLink 仓库提交，推送目标为 `https://github.com/xxwz77/SoulLink.git`。暂存桌面改动时排除 `Android/`。
+- Android 改动在独立的 [ATM-GI-Android 仓库](https://github.com/xxwz77/ATM-GI-Android) 提交和推送。当前独立工作树为 `E:/Documents/deepseek-harness/default-workspace/ATM-GI`，应用项目位于其中的 `ATM-GI-Android/`。SoulLink 工作树中已有的 `Android/` 改动应移植到独立项目对应实现，保留原工作区改动，禁止把 Android 改动提交或推送到桌面仓库。
+- 两端联动时各自暂存和提交，推送前核对两边的远端 URL 与暂存范围。
+
 ## 云端发布（必读 docs/RELEASE-RULES.md）
 
 1. **所有发布只走 `scripts/publish-release.ps1`**，不手工上传 COS。
