@@ -39,6 +39,7 @@ namespace SoulLink.TaskEdit
             ["dragon.js"] = new("application/javascript; charset=utf-8", () => DragonJs),
             ["dragonsections.js"] = new("application/javascript; charset=utf-8", () => DragonSectionsJs),
             ["dragonweek.js"] = new("application/javascript; charset=utf-8", () => DragonWeekJs),
+            ["dragonops.js"] = new("application/javascript; charset=utf-8", () => DragonOpsJs),
             ["dragonbind.js"] = new("application/javascript; charset=utf-8", () => DragonBindJs),
             ["jssettings.js"] = new("application/javascript; charset=utf-8", () => JsSettingsJs),
             ["pick.js"] = new("application/javascript; charset=utf-8", () => PickJs),
@@ -48,7 +49,7 @@ namespace SoulLink.TaskEdit
         /// <summary>页面里引用的资源清单（顺序敏感：core 必须在最前）。</summary>
         internal static readonly string[] Scripts =
             { "core.js", "tree.js", "group.js", "grouptable.js", "groupschema.js", "groupsettings.js", "groupops.js",
-              "dragon.js", "dragonsections.js", "dragonweek.js", "dragonbind.js",
+              "dragon.js", "dragonsections.js", "dragonweek.js", "dragonbind.js", "dragonops.js",
               "jssettings.js", "pick.js", "app.js" };
 
         internal static string StylesheetHref => "/taskedit/static/shell.css";

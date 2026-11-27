@@ -26,8 +26,7 @@ TE.attr = function (s) { return TE.esc(s).replace(/"/g, '&quot;'); };
 TE.el = function (id) { return document.getElementById(id); };
 TE.$$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 TE.qs = function (k) {
-  var m = new RegExp('[?&]' + k + '=([^&]*)').exec(location.search);
-  return m ? decodeURIComponent(m[1]) : '';
+  return new URLSearchParams(location.search).get(k) || '';
 };
 
 /* ── API 封装 ─────────────────────────────────────────────── */
@@ -35,12 +34,12 @@ TE.qs = function (k) {
 TE.api = {
   base: '/taskedit/api',
   bgi: function () { return TE.qs('bgi'); },
-  account: function () { return TE.qs('account') || localStorage.getItem('te.account') || ''; },
+  account: function () { return TE.qs('account'); },
 
   url: function (p) {
     var u = TE.api.base + p;
     var q = [];
-    var bgi = TE.api.bgi();
+    var bgi = TE.api.account() ? '' : TE.api.bgi();
     if (bgi) q.push('bgi=' + encodeURIComponent(bgi));
     var acc = TE.api.account();
     if (acc) q.push('account=' + encodeURIComponent(acc));
@@ -63,7 +62,7 @@ TE.api = {
         try { data = t ? JSON.parse(t) : null; } catch (e) { data = { ok: false, error: t }; }
         if (!r.ok && data && !data.errors && !data.error) data.error = 'HTTP ' + r.status;
         data = data || {};
-        data._status = r.status;
+        Object.defineProperty(data, '_status', { value: r.status, configurable: true });
         return data;
       });
     });
@@ -73,7 +72,11 @@ TE.api = {
 /* ── 脏状态（未保存保护）───────────────────────────────────── */
 TE.dirty = {
   map: {},
-  mark: function (key) { TE.dirty.map[key] = true; TE.dirty.paint(); },
+  mark: function (key) {
+    TE.dirty.map[key] = true;
+    if (key.startsWith('dragon:')) TE.draft.save(key, TE.dragon.data);
+    TE.dirty.paint();
+  },
   clear: function (key) { delete TE.dirty.map[key]; TE.dirty.paint(); },
   any: function () { return Object.keys(TE.dirty.map).length > 0; },
   keys: function () { return Object.keys(TE.dirty.map); },
@@ -82,7 +85,7 @@ TE.dirty = {
     if (!b) return;
     var d = TE.dirty.any();
     b.classList.toggle('pri', d);
-    b.disabled = !d;
+    b.disabled = !d || !!TE.app.saving || (TE.tabs.cur === 'dragon' && TE.dragonOps.state !== 'stopped');
     b.textContent = d ? '保存 *' : '保存';
     /* ★ 离开页面时拦一下（浏览器只允许这个文案，不能自定义） */
     window.onbeforeunload = d ? function () { return '有未保存的修改'; } : null;
@@ -122,7 +125,7 @@ TE.modal = function (opts) {
 TE.confirm = function (title, msg, onOk, danger) {
   return TE.modal({
     title: title,
-    bodyHtml: '<p style="margin:4px 0;color:#a8b0c0">' + TE.esc(msg) + '</p>',
+    bodyHtml: '<p style="margin:4px 0;color:var(--fg2)">' + TE.esc(msg) + '</p>',
     okText: danger ? '仍然继续' : '确定',
     onOk: function (close) { close(); if (onOk) onOk(); }
   });
@@ -182,7 +185,7 @@ TE.menu = function (x, y, items) {
 
 /* ── localStorage 草稿（断线/刷新不丢）────────────────────── */
 TE.draft = {
-  key: function (k) { return 'te.draft.' + (TE.api.bgi() || '-') + '.' + k; },
+  key: function (k) { return 'te.draft.' + JSON.stringify([TE.api.account(), TE.api.bgi(), k]); },
   save: function (k, v) { try { localStorage.setItem(TE.draft.key(k), JSON.stringify({ at: Date.now(), v: v })); } catch (e) { } },
   load: function (k) {
     try {

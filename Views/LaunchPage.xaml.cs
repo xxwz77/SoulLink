@@ -102,8 +102,7 @@ namespace SoulLink.Views
             // 只在本页可见时刷新，切走就跳过，省开销
             if (!IsVisible) return;
             RefreshSessions();
-            // 自动化卡片也跟随刷新，否则必须切页才能看到状态/名称变化。
-            RefreshAutomationList();
+            // 自动化卡片由下面的 1 秒节拍和账号选择事件刷新。
             // 右侧原始日志：跟随点击的会话
             // ★ 架构修正后没有本地 LogFollower 了，改用"是否订阅数据中心"判断。
             //   内容更新由 OnLogCenterChanged 推送，这里只负责"换了会话要重新绑"。
@@ -122,23 +121,10 @@ namespace SoulLink.Views
                 StartStatusFollowFor(_logSession);
             }
             });
-            // ★★ 2.17.27：状态灯需要更快的刷新节奏 ★★
-            //
-            //   会话列表 3 秒一轮够用，但"执行成功闪绿 → 回蓝"这件事如果也按 3 秒来，
-            //   绿色可能整个保鲜期（6 秒）里只被采样到 1~2 次，甚至刚好错过。
-            //   这里单独开一个 1 秒的**轻量**刷新：只重建自动化卡片，
-            //   不查会话、不查进程（开销只是一次 WPF 元素重建，卡片数很少）。
-            // ★ 改用统一节拍（TickHub）：1 秒一跳，只重建自动化卡片。
+            // 业务日和结果灯会随时间变化，即便流程字段没有被写入，也要比较显示状态。
             _automationSub = Services.TickHub.Register("LaunchPage.Automation", 1, () =>
             {
-            if (!IsVisible) return;
-            // ★ 2.17.45：内容没变就不重建卡片。
-            //   原来每秒无条件 Children.Clear() + 重建全部卡片，
-            //   WPF 每秒都要重新测量/排版/生成字形，即使流程状态一个字都没变。
-            string sig = AutomationSignature();
-            if (sig == _automationSignature) return;
-            _automationSignature = sig;
-            RefreshAutomationList();
+                if (IsVisible) RefreshAutomationList();
             });
             Loaded += (_, __) => { };
             Unloaded += (_, __) => { };
@@ -1184,15 +1170,9 @@ namespace SoulLink.Views
                 parts.Add(route);
             }
 
-            // ② 今日收益汇总（2026-11-26 用户要求：主界面**只要汇总**，不要逐组明细）
-            //
-            //   ★ 修掉的错误：原来显示「经验 +61,740 · 其他组 经验 +148,680」，
-            //     而后面的「其他组」其实是**含这一组在内的总数** → 看起来像重复计数/自相矛盾。
-            //     主界面只要「今日总收益」这一个数；逐组明细在数据中心页的狗粮分区。
-            //   ★ 汇总口径：records 那组（DogfoodExp/Mora）+ run.db 里其他组
-            //     （DogfoodOtherExp/Mora）。两处已互斥，不会重复累加。
-            long totalExp = st.DogfoodExp + st.Today.DogfoodOtherExp;
-            long totalMora = st.DogfoodMora + st.Today.DogfoodOtherMora;
+            var totals = st.CollectedDogfood;
+            long totalExp = totals?.Day == DateTime.Today ? totals.Exp : 0;
+            long totalMora = totals?.Day == DateTime.Today ? totals.Mora : 0;
             if (totalExp > 0 || totalMora > 0)
             {
                 var gain = new List<string>();
@@ -1986,83 +1966,51 @@ namespace SoulLink.Views
             }
         }
 
-        /// <summary>
-
-        /// <summary>
-
-        // ══════════ 自动化流程 ══════════
-
-        /// <summary>刷新当前账号的自动化流程列表。</summary>
-        /// <summary>上一轮自动化卡片的渲染签名。</summary>
-        private string _automationSignature = "";
-
-        /// <summary>
-        /// 压出"卡片上会显示的所有东西"。相同就不必重建视觉树。
-        /// </summary>
-        private string AutomationSignature()
-        {
-            var sb = new System.Text.StringBuilder(256);
-            try
-            {
-                var sess = _logSession;
-                sb.Append(sess?.UserName ?? "").Append('|');
-                if (sess != null)
-                {
-                    foreach (var f in App.Config.Automations)
-                    {
-                        sb.Append(f.Id).Append(f.Enabled ? '1' : '0')
-                          .Append(f.Paused ? 'P' : '-')
-                          .Append(f.LastRunAt?.Ticks ?? 0)
-                          .Append(f.RunDayKey).Append(';');
-                    }
-                }
-            }
-            catch { }
-            return sb.ToString();
-        }
+        // Compare the rendered values, including command targets (configuration objects can be replaced).
+        private readonly record struct CardState(AutomationFlow Flow, string Name, string Summary,
+            bool Paused, bool Waiting, bool Done, bool? FreshResult, int Ok, int Fail);
+        private Account? _renderedAccount;
+        private List<CardState>? _renderedCards;
 
         private void RefreshAutomationList()
         {
             try
             {
                 if (AutomationList == null) return;
+                var session = _logSession;
+                var account = session == null ? null : App.Config.Accounts.FirstOrDefault(a =>
+                    string.Equals(a.UserName, session.UserName, StringComparison.OrdinalIgnoreCase));
+                var cards = new List<CardState>();
+                if (account != null)
+                {
+                    var now = DateTime.Now;
+                    foreach (var f in App.Config.Automations)
+                    {
+                        if (f.AccountId != account.Id) continue;
+                        var (ok, fail) = f.TodayCounts(now);
+                        bool fresh = f.LastActionResultAt is DateTime at && (now - at).TotalMilliseconds <= LastResultHoldMs;
+                        bool done = f.IsDailyComplete;
+                        cards.Add(new(f, f.DisplayName, AutomationSummary(f, fresh, done), f.Paused || !f.Enabled,
+                            !string.IsNullOrEmpty(f.WaitingChannel), done, fresh ? f.LastRunOk : null, ok, fail));
+                    }
+                }
+                var meta = session == null ? "（先选一个账号）" : account == null ? "该账号还没有配置"
+                    : cards.Count == 0 ? "" : "共 " + cards.Count + " 个流程";
+                if (ReferenceEquals(account, _renderedAccount) && AutomationMeta.Text == meta
+                    && _renderedCards != null && cards.SequenceEqual(_renderedCards)) return;
+
+                _renderedCards = null; // Retry on the next tick if building a card fails.
                 AutomationList.Children.Clear();
-
-                var sess = _logSession;
-                if (sess == null)
+                AutomationMeta.Text = meta;
+                if (account != null)
                 {
-                    AutomationMeta.Text = "（先选一个账号）";
-                    return;
+                    if (cards.Count == 0)
+                        AutomationList.Children.Add(new TextBlock { Text = "暂无自动化任务", FontSize = 10.5, Foreground = (Brush)FindResource("TextMuted"), Margin = new Thickness(4,5,4,5) });
+                    foreach (var card in cards)
+                        AutomationList.Children.Add(BuildAutomationCard(card, account));
                 }
-
-                // ★ 不要按 AccountScope 过滤掉主用户的自动化。
-                //   用户明确要求：「自动化应该要的，不然怎么控制，只是不显示运行数据之类的」
-                //   这里是**控制入口**，流程必须列出来；要限制的是执行目标与运行数据展示。
-                //   （曾误删过一次，会导致主用户根本看不到自己的自动化流程。）
-
-                // 找到该账号（按用户名匹配配置里的账号）
-                Account? account = null;
-                foreach (var a in App.Config.Accounts)
-                    if (string.Equals(a.UserName, sess.UserName, StringComparison.OrdinalIgnoreCase))
-                    { account = a; break; }
-
-                if (account == null)
-                {
-                    AutomationMeta.Text = "该账号还没有配置";
-                    return;
-                }
-
-                // 该账号的所有流程
-                var flows = new List<AutomationFlow>();
-                foreach (var f in App.Config.Automations)
-                    if (f.AccountId == account.Id) flows.Add(f);
-
-                AutomationMeta.Text = flows.Count == 0 ? "" : ("共 " + flows.Count + " 个流程");
-                if (flows.Count == 0)
-                    AutomationList.Children.Add(new TextBlock { Text = "暂无自动化任务", FontSize = 10.5, Foreground = (Brush)FindResource("TextMuted"), Margin = new Thickness(4,5,4,5) });
-
-                foreach (var f in flows)
-                    AutomationList.Children.Add(BuildAutomationCard(f, account));
+                _renderedAccount = account;
+                _renderedCards = cards;
             }
             catch { }
         }
@@ -2115,14 +2063,10 @@ namespace SoulLink.Views
             }
         }
 
-        /// <summary>执行结果是否还在"保鲜期"内（决定灯显示绿/红还是蓝）。</summary>
-        private static bool IsResultFresh(AutomationFlow f)
-            => f.LastActionResultAt.HasValue
-               && (DateTime.Now - f.LastActionResultAt.Value).TotalMilliseconds <= LastResultHoldMs;
-
-        private Border BuildAutomationCard(AutomationFlow f, Account account)
+        private Border BuildAutomationCard(CardState state, Account account)
         {
-            bool paused = f.Paused || !f.Enabled;
+            var f = state.Flow;
+            bool paused = state.Paused;
 
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -2140,21 +2084,17 @@ namespace SoulLink.Views
             //   ★ 橙色的优先级最高（次于暂停）：它表示"今天到此为止"这个**确定的**事实，
             //     比"刚刚执行成功"更该被看到 —— 否则用户会以为还在跑、干等一天。
             //   ★ 橙色灯与暂停灯**形变不同**（见 dot 的旋转/描边），避免黄橙混淆。
-            bool excluded = !AccountScope.Allows(OwnerUserNameOf(f));
-            var today = f.TodayRunState();
-            bool resultFresh = f.LastActionResultAt.HasValue
-                && (DateTime.Now - f.LastActionResultAt.Value).TotalMilliseconds <= LastResultHoldMs;
-            bool doneToday = f.IsDailyComplete;
+            bool doneToday = state.Done;
             // ★ 2.17.30：正在等注入通道 → 黄灯（等待中），并且保持提示不消失。
             //   用户要求："执行要加个判断，需要等待通道建立，标黄灯，保持提示，
             //   等到通道真正建立。" 等待期间绝不能显示成红色失败。
-            bool waitingChannel = !string.IsNullOrEmpty(f.WaitingChannel);
+            bool waitingChannel = state.Waiting;
             Color dotColor =
                 paused ? Color.FromRgb(0xFF, 0xC4, 0x6B)                            // 黄 = 暂停 / 未启用
                 : waitingChannel ? Color.FromRgb(0xFF, 0xC4, 0x6B)                    // 黄 = 等待通道建立
                 : doneToday ? Color.FromRgb(0xFF, 0x9F, 0x43)                        // 橙 = 今日完成（END 已锁存）
-                : (resultFresh && f.LastRunOk == false) ? Color.FromRgb(0xFF, 0x6B, 0x8B)  // 红 = 刚失败
-                : (resultFresh && f.LastRunOk == true) ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 绿 = 刚成功
+                : (state.FreshResult == false) ? Color.FromRgb(0xFF, 0x6B, 0x8B)  // 红 = 刚失败
+                : (state.FreshResult == true) ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 绿 = 刚成功
                 : Color.FromRgb(0x4F, 0xE3, 0xFF);                                  // 蓝 = 等待（常态）
 
             var dot = new Ellipse
@@ -2187,7 +2127,7 @@ namespace SoulLink.Views
             var nameLine = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             nameLine.Children.Add(new TextBlock
             {
-                Text = f.DisplayName,
+                Text = state.Name,
                 FontSize = 11.5,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = (Brush)FindResource("TextPrimary"),
@@ -2196,7 +2136,7 @@ namespace SoulLink.Views
             });
             //   ★ 顺序固定为「成功 → 失败」，数字用等宽感更强的小字号；
             //     两个都是 0 时不显示（避免新流程一上来就挂两个 0 显得像报错）。
-            var (todayOk, todayFail) = f.TodayCounts(DateTime.Now);   // 按业务日读取，过期视为 0
+            var (todayOk, todayFail) = (state.Ok, state.Fail);   // 按业务日读取，过期视为 0
             if (todayOk > 0 || todayFail > 0)
             {
                 nameLine.Children.Add(new TextBlock
@@ -2219,7 +2159,7 @@ namespace SoulLink.Views
             sp.Children.Add(nameLine);
             sp.Children.Add(new TextBlock
             {
-                Text = AutomationSummary(f),
+                Text = state.Summary,
                 FontSize = 9.5,
                 Foreground = (Brush)FindResource("TextMuted"),
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -2409,7 +2349,7 @@ namespace SoulLink.Views
         ///   用户明确要求：「自动化应该要的，不然怎么控制，只是不显示运行数据之类的」
         ///   —— 流程列表是控制入口必须保留，但主用户不该被呈现成挂机目标。
         /// </summary>
-        private static string AutomationSummary(AutomationFlow f)
+        private static string AutomationSummary(AutomationFlow f, bool fresh, bool done)
         {
             int contacts = f.Nodes.Count(n => n.IsContact);
             int outs = f.Nodes.Count(n => n.Kind == FlowNodeKind.Action);
@@ -2417,7 +2357,7 @@ namespace SoulLink.Views
 
             // ★ 2.17.23：摘要第一优先显示"上次执行结果"，与灯色一一对应：
             //   绿=成功 / 红=失败 / 蓝=等待（还没执行过）/ 黄=暂停。
-            string state = DescribeLastRun(f);
+            string state = DescribeLastRun(f, fresh, done);
 
             // 主用户（被全局排除）不显示**触点实时满足数**（那是挂机目标的运行数据），
             // 但"上次执行成功还是失败"是控制状态，必须给出来。
@@ -2473,7 +2413,7 @@ namespace SoulLink.Views
         /// 用一句话描述"上一次执行是什么结果"，措辞与状态灯颜色严格对应：
         /// 绿=执行成功 / 红=执行失败 / 蓝=等待 / 黄=暂停。
         /// </summary>
-        private static string DescribeLastRun(AutomationFlow f)
+        private static string DescribeLastRun(AutomationFlow f, bool fresh, bool done)
         {
             // ★ 2.17.30：等待通道的提示优先级最高 —— 用户要求"保持提示"，
             //   否则这条信息会被"执行成功/等待下一次"盖掉。
@@ -2487,7 +2427,6 @@ namespace SoulLink.Views
 
             // ★ 2.17.27：与灯一致 —— 结果只在保鲜期内显示，之后回到"等待"，
             //   这样灯和文字会随每一轮执行交替变化，而不是焊死在某一次结果上。
-            bool fresh = IsResultFresh(f);
             if (fresh && f.LastRunOk == true)
                 return "执行成功" + action + (when.Length > 0 ? " · " + when : "");
             if (fresh && f.LastRunOk == false)
@@ -2496,7 +2435,7 @@ namespace SoulLink.Views
 
             // ★ 2.17.29：今日已完成（橙灯）必须明说，否则用户会以为还在等条件。
             //   有 END 的流程完成后当天不再自动扫描，这是**确定**的终止态。
-            if (f.IsDailyComplete)
+            if (done)
                 return "今日已完成 · 点击橙点可清除标记，今天重新运行";
 
             // 有过结果但已过期：说明刚刚跑过一轮，现在又在等下一轮

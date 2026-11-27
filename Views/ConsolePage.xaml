@@ -52,9 +52,12 @@
                             </Button.ContextMenu>
                         </Button>
 
-                        <!-- 自由视角：只做状态指示，不可点击。
-                             ★ 原来是个按钮，和"锁定/解锁"混在一起容易误触，
-                               而且它会真的切换输入模式，误点后视角会乱。 -->
+                        <Button x:Name="BtnGameMode" Style="{StaticResource GhostButton}" Padding="10,5"
+                                Margin="8,0,0,0" Click="BtnGameMode_Click"
+                                ToolTip="显式开启/关闭游戏自由视角">
+                            <TextBlock x:Name="BtnGameModeLabel" Text="游戏模式" FontSize="11" />
+                        </Button>
+                        <!-- 自由视角状态指示；快捷键仍可随时退出。 -->
                         <Border x:Name="ModeIndicator" Background="#14FFFFFF"
                                 BorderBrush="#28FFFFFF" BorderThickness="1" CornerRadius="9"
                                 Padding="10,5" Margin="8,0,0,0" VerticalAlignment="Center"
@@ -428,7 +431,9 @@
 
                         <!-- 右：退出全屏 -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-
+                            <Button x:Name="BtnFullScreenGameMode" Content="游戏模式"
+                                    Style="{StaticResource GhostButton}" Padding="12,5" Margin="0,0,8,0"
+                                    Click="BtnGameMode_Click" ToolTip="切换自由视角；也可用已配置热键退出" />
                             <Button x:Name="BtnExitFullScreen" Content="退出全屏"
                                     Style="{StaticResource PrimaryButton}" Padding="16,6"
                                     Click="BtnExitFullScreen_Click" />

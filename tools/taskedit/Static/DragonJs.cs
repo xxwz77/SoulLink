@@ -17,67 +17,57 @@ namespace SoulLink.TaskEdit
     open: function (name) {
       TE.dragon.name = name;
       TE.busy(true, '加载一条龙「' + name + '」…');
-      TE.api.get('/onedragons/' + encodeURIComponent(name)).then(function (d) {
+      return TE.tree.readDetail('/onedragons/' + encodeURIComponent(name), function (d) {
         if (!d || d._status >= 400 || d.ok === false) {
-          TE.el('canvas').innerHTML = '<div class="banner err">读取失败：' + TE.esc(d.error || '未知错误') + '</div>';
+          TE.el('canvas').innerHTML = '<div class="banner err">读取失败：' + TE.esc((d && d.error) || '未知错误') + '</div>';
           return;
         }
-        TE.dragon.data = d;
+        var draft = TE.draft.load('dragon:' + name);
+        TE.dragon.data = draft || d;
+        if (draft) { TE.dirty.mark('dragon:' + name); TE.toast('已恢复本账号的未保存草稿', 'warn'); }
         TE.dragon.render();
-      }).catch(function (e) {
+      }, function (e) {
         TE.el('canvas').innerHTML = '<div class="banner err">读取失败：' + TE.esc(e.message) + '</div>';
       });
     },
 
     render: function () {
       var d = TE.dragon.data || {};
-      var html = '';
+      var html = TE.dragonOps.bar();
 
-      html += '<div class="head"><h2>' + TE.esc(TE.dragon.name) + '</h2>' +
-        '<span class="meta">一条龙</span><span class="grow"></span>' +
-        '<button class="btn" id="dRun">运行</button>' +
-        '<button class="btn" id="dAdd">添加任务</button></div>';
-
-      html += '<div class="banner info" style="font-size:12px">' +
-        '任务顺序可在左侧列表拖拽调整；右侧分区按下表顺序渲染，字段校验错误会标红到具体输入框。</div>';
-
-      /* 两栏：左任务列表 / 右分区卡片 */
-      html += '<div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">';
-      html += '<div style="flex:0 0 300px;min-width:240px">' + TE.dragon.taskListHtml(d) + '</div>';
-      html += '<div style="flex:1;min-width:340px">' + TE.dragon.sectionsHtml(d) + '</div>';
+      html += '<div class="dragon-layout"><section>' + TE.dragon.taskListHtml(d) + '</section>';
+      html += '<section><div class="native-tools"><h2>配置</h2>' +
+        '<button class="btn config-choice" id="dChoose" aria-label="切换一条龙配置">' + TE.esc(TE.dragon.name) + ' ▾</button>' +
+        '<button class="btn" id="dCreate">新建</button>' +
+        '<button class="btn" id="dRename">改名</button>' +
+        '<button class="btn" id="dDelete">删除</button></div>' +
+        TE.dragon.sectionsHtml(d) + '</section>';
       html += '</div>';
 
       TE.el('canvas').innerHTML = html;
       TE.dragon.bind(d);
+      TE.dragonOps.bind();
     },
 
-    /* 左：任务列表（拖拽 + 开关） */
+    taskIds: function (d) {
+      var order = TE.dragon.arr(TE.dragon.read(d, 'TaskOrder'));
+      var definitions = TE.dragon.defsMap(TE.dragon.read(d, 'TaskDefinitions'));
+      var enabled = TE.dragon.arr(TE.dragon.read(d, 'TaskEnabledList'));
+      return Array.from(new Set(order.concat(Object.keys(definitions), enabled)));
+    },
+
     taskListHtml: function (d) {
-      /* ★★ 实测订正（2026-11-25，Captain 复核 + 本人二次实测 A2 全部 4 个一条龙）★★
-         这三个字段全部是 **PascalCase**（设计文档 §4.1 的 camelCase 示例是错的）。
-         **TaskDefinitions 是 GUID → 中文名 的字典（对象），不是数组、也不总是空**：
-             实测：测试测试测试=9 项 / 联机=4 项 / 启动=2 项 / 炸车=4 项
-             例：{"1bba35cb-…":"异常处理", "758467e1-…":"进入莫酱-循环上线", …}
-         TaskOrder 是这些 GUID 的有序数组，TaskEnabledList 是启用的 GUID 子集。
-         → 任务中文名**优先从 TaskDefinitions 取**（用户自定义名只存在于那里，
-           例如「进入莫酱-循环上线」内置表里根本没有）；
-           只有 TaskDefinitions 缺该项时才降级到内置常量对照表。 */
-      var defsMap = TE.dragon.defsMap(d.TaskDefinitions || d.taskDefinitions);
-      var enabled = TE.dragon.arr(d.TaskEnabledList || d.taskEnabledList);
-      var order = TE.dragon.arr(d.TaskOrder || d.taskOrder);
+      var defsMap = TE.dragon.defsMap(TE.dragon.read(d, 'TaskDefinitions'));
+      var enabled = TE.dragon.read(d, 'TaskEnabledList') || {};
+      var ids = TE.dragon.taskIds(d);
+      var next = TE.dragon.read(d, 'NextTaskId');
 
-      /* 按 TaskOrder 排序；TaskDefinitions 里多出来的（未编排）追加在后 */
-      var ids = order.slice();
-      var defKeys = Object.keys(defsMap);
-      for (var k = 0; k < defKeys.length; k++) {
-        if (ids.indexOf(defKeys[k]) < 0) ids.push(defKeys[k]);
-      }
-
-      var html = '<details class="card" open><summary>任务列表 <span class="badge tag">' +
-        ids.length + '</span></summary><div class="body" style="padding:6px">';
+      var html = '<div class="native-tools"><h2>任务列表</h2>' +
+        '<button class="btn" id="dRun">保存并执行</button>' +
+        '<button class="btn" id="dAdd" title="添加配置组">添加</button></div><div class="task-list">';
       if (!ids.length) {
         html += '<div class="hint">该一条龙没有编排任务（TaskOrder 与 TaskDefinitions 均为空）。</div>' +
-          '</div></details>';
+          '</div>';
         return html;
       }
       html += '<table class="grid" id="dTable"><tbody>';
@@ -85,14 +75,16 @@ namespace SoulLink.TaskEdit
         var id = String(ids[j]);
         /* ★ 中文名：TaskDefinitions 优先（含用户自定义名），取不到才用内置对照表 */
         var nm = defsMap[id] || TE.dragon.taskLabel(id);
-        var on = enabled.indexOf(ids[j]) >= 0 || enabled.indexOf(id) >= 0;
+        var on = Array.isArray(enabled) ? enabled.includes(id) : enabled[id] === true;
         html += '<tr data-id="' + TE.attr(id) + '" data-i="' + j + '" draggable="true">' +
           '<td class="grip" style="width:20px">≡</td>' +
-          '<td title="' + TE.attr(nm) + '">' + TE.esc(nm) + '</td>' +
+          '<td title="' + TE.attr(nm) + '">' + TE.esc(nm) + (next === id ? ' <strong>起点</strong>' : '') + '</td>' +
+          '<td><button class="btn" data-start="' + TE.attr(id) + '"' + (on && next !== id ? '' : ' disabled') + '>从此执行</button></td>' +
           '<td style="width:48px"><label class="sw"><input type="checkbox" data-den="' + TE.attr(id) + '"' +
           (on ? ' checked' : '') + '><i></i></label></td></tr>';
       }
-      html += '</tbody></table></div></details>';
+      html += '</tbody></table></div><button class="btn sm" id="dClear"' +
+        (next ? '' : ' disabled') + '>清除起点</button>';
       return html;
     },
 
@@ -110,7 +102,7 @@ namespace SoulLink.TaskEdit
      * 也兼容两种退化形状：数组 [{id,name}] 与纯字符串数组。
      */
     defsMap: function (v) {
-      var out = {};
+      var out = Object.create(null);
       if (!v) return out;
       if (Array.isArray(v)) {
         for (var i = 0; i < v.length; i++) {

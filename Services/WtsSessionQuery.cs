@@ -88,12 +88,13 @@ namespace SoulLink.Services
             public string UserName { get; set; } = "";
             public string State { get; set; } = "";
             public string Station { get; set; } = "";
+            public string Domain { get; set; } = "";
         }
 
         /// <summary>
         /// 枚举本机全部交互式会话。失败返回 null（调用方据此退回 query.exe）。
         /// </summary>
-        internal static List<RawSession>? Enumerate()
+        internal static List<RawSession>? Enumerate(bool includeDomain = false)
         {
             var result = new List<RawSession>();
             IntPtr buf = IntPtr.Zero;
@@ -118,6 +119,7 @@ namespace SoulLink.Services
                     {
                         Id = info.SessionId,
                         UserName = user,
+                        Domain = includeDomain ? QueryString(info.SessionId, WTSDomainName) : "",
                         State = StateText(info.State),
                         // ★★ 必须用 Ansi 读，不能用 Unicode ★★
                         //

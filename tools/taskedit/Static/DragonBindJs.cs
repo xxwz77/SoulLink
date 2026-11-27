@@ -13,14 +13,23 @@ namespace SoulLink.TaskEdit
 
     bind: function (d) {
       var c = TE.el('canvas');
-
-      TE.el('dRun').onclick = function () {
-        TE.confirm('运行一条龙', '将请求主程序启动「' + TE.dragon.name + '」。（本页不直接启停 BGI）',
-          function () { TE.toast('已通知主程序（控制面通道在 P2 接入）', 'warn', 3200); });
+      function markStart(id) {
+        TE.dragon.write(d, 'NextTaskId', id);
+        TE.dirty.mark('dragon:' + TE.dragon.name);
+        TE.dragon.render();
+      }
+      TE.el('dAdd').onclick = function () { TE.dragon.pickGroups(d); };
+      var clear = TE.el('dClear');
+      if (clear) clear.onclick = function () { markStart(''); };
+      TE.el('dChoose').onclick = function () {
+        var picker = TE.el('objectPicker');
+        picker.open = true;
+        picker.querySelector('summary').focus();
+        picker.scrollIntoView({ block: 'nearest' });
       };
-      TE.el('dAdd').onclick = function () {
-        TE.toast('任务定义由 BGI 内置 + 脚本注册提供，P2 接入', 'warn', 3000);
-      };
+      TE.$$('[data-start]', c).forEach(function (btn) {
+        btn.onclick = function () { markStart(btn.dataset.start); };
+      });
 
       /* 字段改动 → 写回 + 校验 */
       TE.$$('[data-dk]', c).forEach(function (inp) {
@@ -33,13 +42,16 @@ namespace SoulLink.TaskEdit
       TE.$$('[data-den]', c).forEach(function (cb) {
         cb.onchange = function () {
           var raw = cb.getAttribute('data-den');
-          var list = TE.dragon.arr(d.TaskEnabledList);
-          var at = -1;
-          for (var i = 0; i < list.length; i++) if (String(list[i]) === raw) { at = i; break; }
-          if (cb.checked && at < 0) list.push(raw);
-          if (!cb.checked && at >= 0) list.splice(at, 1);
-          if ('TaskEnabledList' in d || !('taskEnabledList' in d)) d.TaskEnabledList = list;
-          else d.taskEnabledList = list;
+          var list = TE.dragon.read(d, 'TaskEnabledList') || Object.create(null);
+          if (Array.isArray(list)) {
+            list = list.filter(function (id) { return id !== raw; });
+            if (cb.checked) list.push(raw);
+          } else {
+            Object.defineProperty(list, raw, { value: cb.checked, enumerable: true, configurable: true, writable: true });
+          }
+          TE.dragon.write(d, 'TaskEnabledList', list);
+          if (!cb.checked && TE.dragon.read(d, 'NextTaskId') === raw) markStart('');
+          else TE.dragon.render();
           TE.dirty.mark('dragon:' + TE.dragon.name);
         };
       });
@@ -49,6 +61,41 @@ namespace SoulLink.TaskEdit
       /* 任务拖拽排序 */
       var tbody = TE.el('dTable') && TE.el('dTable').querySelector('tbody');
       if (tbody) TE.dragon.bindDrag(tbody, d);
+    },
+
+    pickGroups: function (d) {
+      var groups = TE.tree.groups;
+      if (!groups.length) { TE.toast('当前没有可添加的配置组', 'warn'); return; }
+      var defs = TE.dragon.read(d, 'TaskDefinitions');
+      if (Array.isArray(defs)) { TE.toast('此版本的任务定义格式不支持添加配置组', 'warn'); return; }
+      TE.modal({ title: '选择要添加的配置组', okText: '添加', bodyHtml:
+        '<div class="pick">' + groups.map(function (name, i) {
+          return '<label class="row"><input type="checkbox" data-add-group="' + i + '">' + TE.esc(name) + '</label>';
+        }).join('') + '</div>', onOk: function () {
+          var selected = TE.$$('[data-add-group]:checked', TE.el('modalBody'));
+          if (!selected.length) { TE.toast('请选择至少一个配置组', 'warn'); return false; }
+          var ids = TE.dragon.taskIds(d);
+          var enabled = TE.dragon.read(d, 'TaskEnabledList') || Object.create(null);
+          var definitions = Object.assign(Object.create(null), defs);
+          // 原生旧格式以任务名作键；转入定义字典时保留原任务名和顺序。
+          ids.forEach(function (id) { if (!(id in definitions)) definitions[id] = id; });
+          selected.forEach(function (cb) {
+            // getRandomValues also works on HTTP LAN origins where randomUUID is unavailable.
+            var bytes = crypto.getRandomValues(new Uint8Array(16));
+            bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+            var hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+            var id = hex.replace(/^(........)(....)(....)(....)(............)$/, '$1-$2-$3-$4-$5');
+            definitions[id] = groups[+cb.dataset.addGroup];
+            ids.push(id);
+            if (Array.isArray(enabled)) enabled.push(id); else enabled[id] = true;
+          });
+          TE.dragon.write(d, 'TaskDefinitions', definitions);
+          TE.dragon.write(d, 'TaskOrder', ids);
+          TE.dragon.write(d, 'TaskEnabledList', enabled);
+          TE.dirty.mark('dragon:' + TE.dragon.name);
+          TE.dragon.render();
+        }
+      });
     },
 
     applyField: function (d, inp) {
@@ -104,11 +151,7 @@ namespace SoulLink.TaskEdit
         if (e.clientY >= r.top + r.height / 2) to++;
         if (to > from) to--;
         if (from < 0 || to === from) return;
-        var ids = TE.dragon.arr(d.TaskOrder || d.taskOrder);
-        var defKeys = Object.keys(TE.dragon.defsMap(d.TaskDefinitions || d.taskDefinitions));
-        for (var k = 0; k < defKeys.length; k++) {
-          if (ids.indexOf(defKeys[k]) < 0) ids.push(defKeys[k]);
-        }
+        var ids = TE.dragon.taskIds(d);
         var item = ids.splice(from, 1)[0];
         ids.splice(to, 0, item);
         if ('TaskOrder' in d || !('taskOrder' in d)) d.TaskOrder = ids;

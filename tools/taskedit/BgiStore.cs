@@ -33,7 +33,7 @@ namespace SoulLink.TaskEdit
 
         internal static List<string> ListOneDragons(string root)
         {
-            return ListJson(OneDragonDir(root));
+            return ListJson(DragonFiles.CheckPath(OneDragonDir(root)));
         }
 
         private static List<string> ListJson(string dir)
@@ -54,14 +54,14 @@ namespace SoulLink.TaskEdit
 
         internal static JsonNode ReadGroup(string root, string name)
         {
-            string file = Path.Combine(ScriptGroupDir(root), name + ".json");
+            string file = DragonFiles.FilePath(ScriptGroupDir(root), name);
             if (!File.Exists(file)) throw new FileNotFoundException("配置组不存在：" + name);
             return BgiJson.Read(file);
         }
 
         internal static JsonNode ReadOneDragon(string root, string name)
         {
-            string file = Path.Combine(OneDragonDir(root), name + ".json");
+            string file = DragonFiles.FilePath(OneDragonDir(root), name);
             if (!File.Exists(file)) throw new FileNotFoundException("一条龙不存在：" + name);
             return BgiJson.Read(file);
         }
@@ -152,16 +152,10 @@ namespace SoulLink.TaskEdit
 
         internal static string WriteGroup(string root, string name, JsonNode node, string backupDir)
         {
-            string file = Path.Combine(ScriptGroupDir(root), name + ".json");
+            string file = DragonFiles.FilePath(ScriptGroupDir(root), name);
             string json = BgiJson.Serialize(node);
             return BgiJson.WriteAtomic(file, json, backupDir);
         }
 
-        internal static string WriteOneDragon(string root, string name, JsonNode node, string backupDir)
-        {
-            string file = Path.Combine(OneDragonDir(root), name + ".json");
-            string json = BgiJson.Serialize(node);
-            return BgiJson.WriteAtomic(file, json, backupDir);
-        }
     }
 }

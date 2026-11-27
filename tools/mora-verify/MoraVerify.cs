@@ -18,7 +18,7 @@ public static class MoraVerify
         if (!ok) _fail++;
     }
 
-    public static int Main()
+    public static int Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         string dbDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
@@ -32,6 +32,11 @@ public static class MoraVerify
         // ★ 指向隔离 DB：MiyousheStore.Shared 可 set
         MiyousheStore.Shared = new MiyousheStore(() => System.IO.Path.Combine(dbDir, "miyoushe", "miyoushe.db"));
 
+        if (args.Contains("--daily"))
+        {
+            if (!string.Equals(AppIdentity.DataDir, dbDir, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("测试库未隔离");
+            return ScenarioDaily().GetAwaiter().GetResult();
+        }
         int failures = 0;
         failures += ScenarioRules();       // 3) 边界用例 + 4) NULL→unknown
         failures += ScenarioEndToEnd();    // 2) 逐条列单 + 5) 归属两档 + unattributed
@@ -43,6 +48,40 @@ public static class MoraVerify
         return failures == 0 ? 0 : 1;
     }
 
+
+    private static async Task<int> ScenarioDaily()
+    {
+        var day = new DateTime(2026, 11, 24);
+        long d = new DateTimeOffset(day).ToUnixTimeMilliseconds();
+        const string account = "ledger-test";
+        void Run(string id, long from, long to) => RunRecordStore.AddRun(new() { Account = account,
+            RunId = id, GroupName = "same-name", StartAtMs = d+from, EndAtMs = d+to, State="Finished" });
+        void Route(string id,long from,long to) => RunRecordStore.AddRoute(new() { RunId="early", RouteId=id,
+            Name = "same-route", Kind="route", StartAtMs=d+from,EndAtMs=d+to });
+        Run("late",360000,86460000); Run("previous",-60000,60000); Run("early",60000,360000);
+        Route("first",60000,150000); Route("second",150000,360000);
+        var runs = await RunRecordStore.QueryRunDayAsync(account, day);
+        Check(runs.Select(r=>r.RunId).SequenceEqual(new[]{"early","late"}), "开始日隔离，升序，同名组保留独立运行");
+        var next = await RunRecordStore.QueryRunDayAsync(account,day.AddDays(1));
+        Check(next.Count==0,"跨日轮次不在次日重复列出");
+        var entries = new List<MiyousheLedgerEntry>();
+        void Fact(long offset,long? amount,string action="精英怪",string uid="u1") => entries.Add(new(account,uid,"r","2026-11",2,
+            entries.Count+1,action,amount,999,17,"",d+offset,"{}","test",d,entries.Count));
+        Fact(-60000,10000); Fact(0,5); Fact(60000,31); Fact(120000,17); Fact(180000,null); Fact(240000,7,"任务"); Fact(86400000,9000);
+        await MiyousheStore.Shared.SaveLedgerFactsAsync(entries,Array.Empty<MiyousheLedgerDay>(),default);
+        var bins = await DailyMoraLedger.QueryAsync(account,day);
+        Check(bins.Sum(b=>b.RecordCount)==5 && bins.Sum(b=>b.TotalMorale)==60,"只对当天 5 笔流水，已知金额守恒 60");
+        Check(bins.Single(b=>b.RunId=="previous").TotalMorale==5,"凌晨流水可归属前日开始的窗口");
+        Check(bins.Single(b=>b.RouteId=="first").TotalMorale==31,"唯一具体路线，使用原始 num");
+        Check(bins.Single(b=>b.RunId=="early" && b.RouteId=="").TotalMorale==17,"同分钟换路线，只保留组归属");
+        Check(bins.Single(b=>b.RouteId=="second") is {TotalMorale:null,MissingAmountCount:1},"缺失金额保留 null");
+        Check(bins.Single(b=>b.RunId=="").TotalMorale==7,"非击杀收入保留为未归属");
+        entries.Clear(); Fact(180000,23,"精英怪","u2");
+        await MiyousheStore.Shared.SaveLedgerFactsAsync(entries,Array.Empty<MiyousheLedgerDay>(),default);
+        var multi = await DailyMoraLedger.QueryAsync(account,day);
+        Check(multi.Count==2 && multi.All(b=>b.RunId=="") && multi.Sum(b=>b.TotalMorale)==83,"多角色不串账，依 UID 对账 60+23");
+        return _fail;
+    }
 
     // ── 场景 1：规则 v4.1 边界用例（含 NULL → unknown）────────────
     private static int ScenarioRules()

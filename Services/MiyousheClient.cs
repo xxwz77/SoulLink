@@ -17,6 +17,8 @@ namespace SoulLink.Services
     internal sealed class MiyousheRequestException : Exception
     {
         internal int Retcode { get; }
+        internal bool RequiresLogin => IsLoginError(Retcode);
+        internal static bool IsLoginError(int code) => code is -100 or -10001;
         internal MiyousheRequestException(int code, string message) : base(message) { Retcode = code; }
     }
 
@@ -75,7 +77,7 @@ namespace SoulLink.Services
             {
                 LToken = Get(cookies,Profile.LTokenName), LtUid = Get(cookies,Profile.LtUidName),
                 LtMid = Get(cookies,"ltmid_v2"), CookieToken = Get(cookies,Profile.CookieTokenName),
-                AccountId = Get(cookies,Profile.AccountIdName), SToken = Get(cookies,Profile.StokenName),
+                AccountId = Get(cookies,Profile.AccountIdName), AccountMid = Get(cookies,"account_mid_v2"), SToken = Get(cookies,Profile.StokenName),
                 StUid = Get(cookies,"stuid"), Mid = Get(cookies,"mid"), Region=_region,
                 DeviceId = prior.DeviceId, LastOkAt = DateTimeOffset.Now
             };
@@ -315,6 +317,9 @@ namespace SoulLink.Services
             if (!raw || !HasRaw(c, "ltuid_v2", "ltuid")) Put(Profile.LtUidName, c.LtUid);
             if (!raw || !HasRaw(c, "cookie_token_v2", "cookie_token")) Put(Profile.CookieTokenName, c.CookieToken);
             if (!raw || !HasRaw(c, "account_id_v2", "account_id", "ltuid_v2", "ltuid")) Put(Profile.AccountIdName, c.AccountId);
+            if (!raw && _region == "cn")
+                Put("account_mid_v2", !string.IsNullOrEmpty(c.AccountMid) ? c.AccountMid :
+                    !string.IsNullOrEmpty(c.Mid) ? c.Mid : c.LtMid);
             if (!raw || !HasRaw(c, "ltmid_v2", "mid")) Put("ltmid_v2", c.LtMid);
             if (!raw || !HasRaw(c, "stoken_v2", "stoken")) Put(Profile.StokenName, c.SToken);
             Put("stuid", c.StUid);
@@ -410,7 +415,7 @@ namespace SoulLink.Services
         private static string SafeServerMessage(string message,int code)
         {
             if (code == -5003) return "今日已签到";
-            if (code == -10001) return "登录已失效，请重新扫码";
+            if (MiyousheRequestException.IsLoginError(code)) return "米游社拒绝了当前登录凭据，请重新扫码";
             if (code is 1034 or 10035 or 5003 or 10041) return "触发服务端风控，请人工处理并重新扫码";
             // 不回显可能包含票据/URL 的服务端文本，只保留有限长度的通用失败描述。
             return "米游社请求失败（retcode="+code+"）";

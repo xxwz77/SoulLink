@@ -334,7 +334,6 @@ namespace SoulLink.Services
                     // ★ 2026-11-26：直接读 BgiLogCenter 的版本缓存快照（约 1 秒新鲜度），
                     //   不再读 AccountState 里 30 秒才同步一次的副本。详见 LiveLog。
                     var live = LiveLog(accountId, user);
-                    string text = live?.TailText ?? state?.RecentLog ?? "";
                     int within = Math.Max(1, n.GetInt("withinSeconds", n.Type == FlowNodeType.TrigLogMatch ? 10 : 120));
 
                     // ★★ 事件锁存（用户方案）：TrigLogMatch 改成「出现即锁存，动作消费后清空」，
@@ -344,11 +343,15 @@ namespace SoulLink.Services
                     {
                         var tail0 = live?.Tail ?? state?.LogTail ?? Array.Empty<BgiLogLine>();
                         long lastSeq = live?.LastSeq ?? state?.LogTailSeq ?? 0;
+                        // 游标已到尾部时无需投影整个尾窗；已完成的 END 仍优先。
+                        if (flow.LogTriggers.TryGetValue(n.Id, out var latch) && latch.Cursor == lastSeq)
+                            return latch.Events.Count > 0 && !PlcLogic.IsDailyComplete(flow, now);
                         var refs = new LogLineRef[tail0.Count];
                         for (int i = 0; i < tail0.Count; i++) refs[i] = new LogLineRef(tail0[i].Seq, tail0[i].Level, tail0[i].Text);
                         return LogLatch.Scan(flow, n, refs, lastSeq, now, mutable);
                     }
 
+                    string text = live?.TailText ?? state?.RecentLog ?? "";
                     if (text.Length == 0 || !PlcLogMatcher.ValidPattern(n.Get("pattern"), n.GetBool("isRegex", false))) return new PlcSignal(false,false);
                     bool hit = PlcLogMatcher.Contains(text, n.Get("pattern"), n.GetBool("isRegex", false), n.Get("level"), within, now);
                     return n.Type == FlowNodeType.CondLogMissing ? !hit : hit;

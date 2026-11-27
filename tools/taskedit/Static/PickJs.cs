@@ -1,220 +1,170 @@
 using System;
-
 namespace SoulLink.TaskEdit
 {
-    // 拾取名单（独立 Tab）：白/黑名单模式、基础拾取、排除项、导入导出。
+    // BGI native AutoPick page. List/category controls are view aids; rules are all BGI's.
     internal static partial class TaskEditStatic
     {
         private const string PickJs = """
 'use strict';
 (function (TE) {
-
   TE.pick = {
-    data: null,
-
+    data: null, model: null, filter: { q: '', category: 'all', color: 'all' },
     open: function () {
-      TE.busy(true, '加载拾取名单…');
-      /* 真实端点（t27 接入）：读 User/config.json 的 autoPickConfig
-         + User/pick_black_lists.txt + User/pick_fuzzy_black_lists.txt */
-      TE.api.get('/picklists').then(function (d) {
-        if (!d || d.ok === false) {
-          TE.el('canvas').innerHTML = '<div class="banner err">读取失败：' +
-            TE.esc((d && d.error) || '未知错误') + '</div>';
+      TE.busy(true, '读取 BGI 自动拾取设置…');
+      var request=TE.api.get('/picklists');
+      TE.pick.request=request;
+      request.then(function (m) {
+        if(TE.tabs.cur!=='pick'||TE.pick.request!==request)return;
+        if (!m || m.ok === false) throw new Error((m && m.error) || '读取自动拾取设置失败');
+        TE.pick.model=m; TE.pick.data=m.autoPickConfig||{};
+        TE.pick.scope=""; TE.pick.templateMode="blackList"; TE.pick.groupLists=null;
+        TE.pick.acceptSaved();
+        TE.pick.filter={q:'',category:'all',color:'all'};
+        TE.pick.render();
+      }).catch(function(e){if(TE.tabs.cur!=='pick'||TE.pick.request!==request)return;TE.el('canvas').innerHTML='<div class="banner err">读取失败：'+TE.esc(e.message)+'</div>';});
+    },
+    arr:function(v){return Array.isArray(v)?v.slice():[];},
+    templateList:function(){
+      var p=TE.pick;
+      return p.scope?(p.groupLists && p.groupLists[p.templateMode]):p.model.templateBlackList;
+    },
+    groupPath:function(name){return '/picklists?group='+encodeURIComponent(name);},
+    openScope:function(scope){
+      var p=TE.pick;
+      if(Object.keys(p.groupPayload()).length){
+        TE.el('pTemplateScope').value=p.scope;
+        TE.toast('请先保存当前配置组的模板名单','warn');
+        return;
+      }
+      p.scope=scope;p.groupLists=null;p.templateMode='blackList';p.render();
+      if(!scope)return;
+      var request=TE.api.get(p.groupPath(scope));
+      p.scopeRequest=request;
+      request.then(function(data){
+        if(TE.tabs.cur!=='pick'||scope!==p.scope||request!==p.scopeRequest)return;
+        if(!data||data.ok!==true)throw new Error((data&&data.error)||'读取配置组模板名单失败');
+        p.groupLists={blackList:p.arr(data.blackList),whiteList:p.arr(data.whiteList)};
+        p.savedGroup=JSON.stringify(p.groupLists);
+        p.render();
+      }).catch(function(e){
+        if(TE.tabs.cur!=='pick'||scope!==p.scope||request!==p.scopeRequest)return;
+        TE.el('pTemplates').textContent=e.message;
+      });
+    },
+    filteredTemplates:function(){var m=TE.pick.model,f=TE.pick.filter;return (m.templates||[]).filter(function(x){var n=String(x.itemName||x.name||'');return(!f.q||n.toLowerCase().includes(f.q.toLowerCase()))&&(f.category==='all'||(x.category||'未知')===f.category)&&(f.color==='all'||x.color===f.color);});},
+    render: function(){
+      var m=TE.pick.model||{}, d=TE.pick.data||{}, white=String(m.mode||d.mode||'Blacklist').toLowerCase()==='whitelist';
+      var colors=Array.from(new Set((m.templates||[]).map(function(x){return x.color;}).filter(Boolean))).sort();
+      var cats=Array.from(new Set((m.templates||[]).map(function(x){return x.category||'未知';}))).sort();
+      var html='<div class="head"><h2>自动拾取</h2><span class="meta">BGI · '+TE.esc(m.root||'')+'</span><span class="grow"></span></div>';
+      html+='<div class="banner info">按 '+TE.esc(white?'白名单模式':'黑名单模式')+' 展示配置；全部开关与名单均为此 BGI fork 原生设置。分类仅筛选模板列表，不改变 BGI 判定。</div>';
+      html+='<details class="card" open><summary>拾取设置</summary><div class="body">';
+      html+='<div class="field"><label>启用自动拾取</label><div class="ctl"><label class="sw"><input id="pEnabled" type="checkbox"'+(d.enabled===true?' checked':'')+'><i></i></label></div></div>';
+      html+='<div class="field"><label>自动拾取名单模式</label><div class="ctl"><select id="pMode"><option value="Blacklist"'+(!white?' selected':'')+'>黑名单模式</option><option value="Whitelist"'+(white?' selected':'')+'>白名单模式</option></select><div class="desc">两种模式各自保存名单；切换不会合并或覆盖另一模式。</div></div></div>';
+      html+='<div class="field"><label>OCR 识别引擎</label><div class="ctl"><select id="pOcr"><option value="Paddle"'+(d.ocrEngine==='Paddle'?' selected':'')+'>Paddle</option><option value="Yap"'+(d.ocrEngine==='Yap'?' selected':'')+'>Yap</option></select></div></div>';
+      html+='<div class="field"><label>快速模式</label><div class="ctl"><label class="sw"><input id="pFast" type="checkbox"'+(d.fastModeEnabled===true?' checked':'')+'><i></i></label><div class="desc">忽略文字识别结果，直接拾取。</div></div></div>';
+      html+='<div class="field"><label>拾取按键</label><div class="ctl"><input id="pKey" maxlength="1" value="'+TE.attr(d.pickKey||'F')+'"></div></div>';
+      html+='<div class="grid2">'+TE.pick.numberField('图标左偏移','itemIconLeftOffset',d,0,800)+TE.pick.numberField('文字左偏移','itemTextLeftOffset',d,0,800)+TE.pick.numberField('文字右偏移','itemTextRightOffset',d,0,1200)+TE.pick.numberField('交互延迟 (ms)','interactionDelay',d,0,2000)+TE.pick.numberField('重复按键间隔 (ms)','repeatFInterval',d,0,5000)+TE.pick.numberField('确认间隔 (ms)','confirmInterval',d,0,5000)+TE.pick.numberField('滚动距离','scrollDistance',d,0,2000)+TE.pick.numberField('滚动间隔 (ms)','scrollInterval',d,0,5000)+TE.pick.numberField('滚动后等待 (ms)','scrollAfterInterval',d,0,5000)+TE.pick.numberField('日志级别','pickLogLevel',d,0,5)+'</div>';
+      html+='<div class="field"><label>模板匹配</label><div class="ctl"><label class="sw"><input id="pMojang" type="checkbox"'+(d.mojangMatchEnabled===true?' checked':'')+'><i></i></label><div class="desc">使用 BGI 内置及 User/mojang_templates 模板；此设置由 BGI 原生逻辑生效。</div></div></div>';
+      html+='<div class="field"><label>模板匹配阈值</label><div class="ctl"><input id="pThreshold" type="number" min="0" max="1" step="0.01" value="'+TE.attr(d.mojangMatchThreshold==null?'0.85':d.mojangMatchThreshold)+'"></div></div>';
+      html+='<div class="field"><label>测试模式</label><div class="ctl"><label class="sw"><input id="pTest" type="checkbox"'+(d.testModeEnabled===true?' checked':'')+'><i></i></label></div></div>';
+      html+=TE.pick.numberField('连续识别失败截图次数','autoScreenshotStreak',d,0,10000);
+      html+='</div></details>';
+      html+='<details class="card" open><summary>原版拾取名单</summary><div class="body">';
+      if(white){html+='<h3>拾取（用户补充）</h3>'+TE.pick.listHtml(m.whiteModeAllowList,'whiteModeAllowList');html+='<h3>不拾取（精确及模糊排除）</h3><label class="sw"><input id="pWhiteExcludeEnabled" type="checkbox"'+(d.whitelistModeDoNotPickEnabled===true?' checked':'')+'><i></i></label> 启用排除规则<h4>精确匹配</h4>'+TE.pick.listHtml(m.whiteModeExcludeList,'whiteModeExcludeList')+'<h4>模糊匹配</h4>'+TE.pick.listHtml(m.whiteModeFuzzyExcludeList,'whiteModeFuzzyExcludeList');}
+      else{html+='<h3>不拾取（精确）</h3>'+TE.pick.listHtml(m.blackList,'blackList');html+='<h3>不拾取（模糊）</h3>'+TE.pick.listHtml(m.fuzzyBlackList,'fuzzyBlackList');html+='<h3>拾取（优先放行）</h3><label class="sw"><input id="pBlackAllowEnabled" type="checkbox"'+(d.blacklistModePickEnabled===true?' checked':'')+'><i></i></label> 启用拾取规则'+TE.pick.listHtml(m.blackModeAllowList,'blackModeAllowList');}
+      html+='</div></details>';
+      var scopeOptions=(TE.tree.groups||[]).map(function(name){
+        return '<option value="'+TE.attr(name)+'"'+(TE.pick.scope===name?' selected':'')+'>'+TE.esc(name)+'</option>';
+      }).join('');
+      var scopeControls='<div class="field"><label for="pTemplateScope">名单范围</label><div class="ctl"><select id="pTemplateScope"><option value="">全局模板黑名单</option>'+scopeOptions+'</select></div></div>';
+      if(TE.pick.scope){
+        scopeControls+='<div class="row" role="group" aria-label="配置组模板名单">'+[['whiteList','模板白名单'],['blackList','模板黑名单']].map(function(pair){
+          return '<button type="button" class="btn sm" data-template-mode="'+pair[0]+'" aria-pressed="'+(TE.pick.templateMode===pair[0])+'">'+pair[1]+'</button>';
+        }).join('')+'</div>';
+      }
+      html+='<details class="card" open><summary>模板拾取</summary><div class="body">'+scopeControls+'<div class="row"><input id="pSearch" aria-label="搜索模板物品" type="search" placeholder="搜索模板物品" value="'+TE.attr(TE.pick.filter.q)+'"><select id="pCategory" aria-label="物品种类"><option value="all">全部种类</option>'+cats.map(function(c){return '<option value="'+TE.attr(c)+'"'+(TE.pick.filter.category===c?' selected':'')+'>'+TE.esc(c)+'</option>';}).join('')+'</select><select id="pColor" aria-label="物品颜色"><option value="all">全部颜色</option>'+colors.map(function(c){return '<option value="'+TE.attr(c)+'"'+(TE.pick.filter.color===c?' selected':'')+'>'+TE.esc(c)+'</option>';}).join('')+'</select><span id="pCount" class="meta"></span></div><div class="desc">搜索、物品种类和颜色仅用于筛选模板。勾选代表加入当前模板名单。</div><div id="pTemplates" class="object-grid"></div></div></details>';
+      if(m.warning) html='<div class="banner warn">'+TE.esc(m.warning)+'</div>'+html;
+      TE.el('canvas').innerHTML=html; TE.pick.bind(); TE.pick.renderTemplates();
+    },
+    renderTemplates:function(){
+      var list=TE.pick.templateList();
+      if(!list){TE.el('pCount').textContent='';TE.el('pTemplates').textContent='正在读取配置组模板名单…';return;}
+      var rows=TE.pick.filteredTemplates(), exact=new Set(list);
+      TE.el('pCount').textContent=rows.length+' / '+TE.pick.model.templates.length;
+      TE.el('pTemplates').innerHTML=rows.map(function(x){
+        var n=x.itemName||x.name;
+        return '<label class="object-option"><input type="checkbox" data-template="'+TE.attr(n)+'"'+(exact.has(n)?' checked':'')+'>'+TE.esc(n)+' <span class="badge tag">'+TE.esc(x.category||'未知')+' · '+TE.esc(x.color||'')+'</span></label>';
+      }).join('') || '<div class="desc">没有匹配的模板</div>';
+    },
+    listKeys:['blackList','fuzzyBlackList','blackModeAllowList','whiteModeAllowList','whiteModeExcludeList','whiteModeFuzzyExcludeList','templateBlackList'],
+    acceptSaved:function(){
+      var m=TE.pick.model;
+      if(TE.pick.groupLists)TE.pick.savedGroup=JSON.stringify(TE.pick.groupLists);
+      TE.pick.savedConfig=Object.assign({},TE.pick.data);
+      TE.pick.savedLists={};
+      m.templates=TE.pick.arr(m.templates);
+      TE.pick.listKeys.forEach(function(k){m[k]=TE.pick.arr(m[k]);TE.pick.savedLists[k]=JSON.stringify(m[k]);});
+    },
+    numberField:function(label,key,d,min,max){return '<div class="field"><label>'+label+'</label><div class="ctl"><input type="number" data-number="'+key+'" min="'+min+'" max="'+max+'" value="'+TE.attr(d[key]==null?0:d[key])+'"></div></div>';},
+    listHtml:function(items,key){items=TE.pick.arr(items);var placeholder=/fuzzy/i.test(key)?'输入模糊匹配关键词':'输入物品名称';return '<div class="row"><input type="text" id="add-'+key+'" placeholder="'+placeholder+'"><button class="btn sm" data-add="'+key+'">添加</button></div><div class="object-grid">'+items.map(function(n,i){return '<span class="object-option">'+TE.esc(n)+' <button class="btn sm danger" data-del="'+key+'" data-index="'+i+'">移除</button></span>';}).join('')+'</div>';},
+    toPayload:function(){
+      var payload={}, auto={}, d=TE.pick.data, m=TE.pick.model;
+      Object.keys(d).forEach(function(k){if(d[k]!==TE.pick.savedConfig[k])auto[k]=d[k];});
+      if(Object.keys(auto).length)payload.autoPickConfig=auto;
+      TE.pick.listKeys.forEach(function(k){if(JSON.stringify(m[k])!==TE.pick.savedLists[k])payload[k]=m[k];});
+      return payload;
+    },
+    groupPayload:function(){
+      var p=TE.pick;
+      if(!p.groupLists)return {};
+      var saved=JSON.parse(p.savedGroup), patch={};
+      ['whiteList','blackList'].forEach(function(key){
+        if(JSON.stringify(saved[key])!==JSON.stringify(p.groupLists[key]))patch[key]=p.groupLists[key];
+      });
+      return patch;
+    },
+    save:function(){
+      var p=TE.pick, global=p.toPayload(), lists=p.groupPayload(), path=p.groupPath(p.scope);
+      var first=Object.keys(global).length?TE.api.post('/picklists',global):Promise.resolve({ok:true});
+      return first.then(function(result){
+        if(!result||result.ok!==true||!Object.keys(lists).length)return result;
+        return TE.api.post(path,lists);
+      });
+    },
+    bind:function(){var d=TE.pick.data,m=TE.pick.model;function dirty(){TE.dirty.mark('pick');}
+      TE.el('pEnabled').onchange=function(){d.enabled=this.checked;dirty();};TE.el('pMode').onchange=function(){d.mode=this.value;m.mode=this.value;TE.pick.render();dirty();};TE.el('pOcr').onchange=function(){d.ocrEngine=this.value;dirty();};TE.el('pFast').onchange=function(){d.fastModeEnabled=this.checked;dirty();};TE.el('pKey').onchange=function(){d.pickKey=this.value.toUpperCase().slice(0,1)||'F';TE.pick.render();dirty();};TE.el('pMojang').onchange=function(){d.mojangMatchEnabled=this.checked;dirty();};TE.el('pThreshold').onchange=function(){setNumber(this,'mojangMatchThreshold');};TE.el('pTest').onchange=function(){d.testModeEnabled=this.checked;dirty();};
+      function setNumber(input,key){
+        if(!input.value || !input.checkValidity()){
+          input.value=d[key]==null?input.defaultValue:d[key];
+          TE.toast('请输入有效的数值','warn');
           return;
         }
-        TE.pick.data = {
-          enabled: d.enabled,
-          mode: d.mode || 'Blacklist',
-          blacklistModePickEnabled: d.blacklistModePickEnabled,
-          whitelistModeDoNotPickEnabled: d.whitelistModeDoNotPickEnabled,
-          blackList: TE.pick.arr(d.blackList),
-          fuzzyBlackList: TE.pick.arr(d.fuzzyBlackList)
-        };
-        TE.pick.render();
-      }).catch(function (e) {
-        TE.el('canvas').innerHTML = '<div class="banner err">读取失败：' + TE.esc(e.message) + '</div>';
-      });
-    },
-
-    arr: function (v) { return Array.isArray(v) ? v.slice() : []; },
-
-    render: function () {
-      var d = TE.pick.data || {};
-      var isWhitelist = String(d.mode || '').toLowerCase() === 'whitelist';
-      var list = d.blackList || [];
-      var fuzzy = d.fuzzyBlackList || [];
-      var html = '';
-
-      html += '<div class="head"><h2>拾取名单</h2>' +
-        '<span class="meta">mode = ' + TE.esc(d.mode || '') + '</span>' +
-        '<span class="grow"></span>' +
-        '<button class="btn" id="pExport">导出 JSON</button>' +
-        '<button class="btn" id="pImport">导入 JSON</button></div>';
-
-      html += '<div class="banner info" style="font-size:12px">' +
-        '写入 <code>User/config.json</code> 的 <code>autoPickConfig</code> + ' +
-        '<code>pick_black_lists.txt</code> + <code>pick_fuzzy_black_lists.txt</code>；' +
-        '保存前会自动备份。黑白名单语义由 BGI 决定，本页只负责数据。</div>';
-
-      /* ── 模式与开关 ── */
-      html += '<div class="card"><div class="body">';
-      html += '<div class="field"><label>名单模式</label><div class="ctl">' +
-        '<select id="pMode">' +
-        '<option value="Blacklist"' + (isWhitelist ? '' : ' selected') +
-        '>黑名单（列表内★不★拾取）</option>' +
-        '<option value="Whitelist"' + (isWhitelist ? ' selected' : '') +
-        '>白名单（只拾取列表内）</option>' +
-        '</select>' +
-        '<div class="desc">对应 autoPickConfig.mode，取值 Blacklist / Whitelist</div></div></div>';
-
-      html += '<div class="field"><label>基础拾取</label><div class="ctl">' +
-        '<label class="sw"><input type="checkbox" id="pBase"' +
-        (d.enabled === true ? ' checked' : '') + '><i></i></label>' +
-        '<div class="desc">关闭后所有拾取都停用（autoPickConfig.enabled）</div></div></div>';
-
-      html += '<div class="field"><label>黑名单模式下仍拾取</label><div class="ctl">' +
-        '<label class="sw"><input type="checkbox" id="pBlPick"' +
-        (d.blacklistModePickEnabled === true ? ' checked' : '') + '><i></i></label>' +
-        '<div class="desc">autoPickConfig.blacklistModePickEnabled</div></div></div>';
-
-      html += '<div class="field"><label>白名单模式下不拾取</label><div class="ctl">' +
-        '<label class="sw"><input type="checkbox" id="pWhNo"' +
-        (d.whitelistModeDoNotPickEnabled === true ? ' checked' : '') + '><i></i></label>' +
-        '<div class="desc">autoPickConfig.whitelistModeDoNotPickEnabled</div></div></div>';
-      html += '</div></div>';
-
-      /* ── 精确名单 ── */
-      html += '<details class="card" open><summary>' +
-        (isWhitelist ? '白名单（只拾取这些）' : '黑名单（这些不拾取）') +
-        ' <span class="badge tag">' + list.length + '</span></summary><div class="body">';
-      html += TE.pick.addRowHtml('pAddName', 'pAdd', '输入物品名后回车添加');
-      html += TE.pick.listHtml(list, 'pdel');
-      html += '</div></details>';
-
-      /* ── 模糊名单 ── */
-      html += '<details class="card"><summary>模糊黑名单（关键字匹配）' +
-        ' <span class="badge tag">' + fuzzy.length + '</span></summary><div class="body">';
-      html += TE.pick.addRowHtml('pAddFuzzy', 'pAddFuzzyBtn', '输入关键字后回车添加');
-      html += TE.pick.listHtml(fuzzy, 'fdel');
-      html += '</div></details>';
-
-      TE.el('canvas').innerHTML = html;
-      TE.pick.bind(d);
-    },
-
-    addRowHtml: function (inputId, btnId, placeholder) {
-      return '<div class="row" style="margin-bottom:9px">' +
-        '<input type="text" id="' + inputId + '" placeholder="' + TE.attr(placeholder) + '" ' +
-        'style="max-width:260px"><button class="btn sm" id="' + btnId + '">添加</button></div>';
-    },
-
-    listHtml: function (items, delAttr) {
-      /* ★ 分页渲染：超过 100 条只渲染前 100 条，避免远程卡死（§17.4） */
-      var MAX = 100;
-      var html = '<table class="grid"><thead><tr><th class="idx">#</th><th>名称</th>' +
-        '<th style="width:80px">操作</th></tr></thead><tbody>';
-      if (!items.length) {
-        html += '<tr><td colspan="3" style="padding:18px;text-align:center;color:#7d8798">' +
-          '列表为空</td></tr>';
+        d[key]=input.valueAsNumber;dirty();
       }
-      var n = Math.min(items.length, MAX);
-      for (var i = 0; i < n; i++) {
-        html += '<tr><td class="idx">' + (i + 1) + '</td>' +
-          '<td>' + TE.esc(items[i]) + '</td>' +
-          '<td><button class="btn sm danger" data-' + delAttr + '="' + i + '">移除</button></td></tr>';
-      }
-      html += '</tbody></table>';
-      if (items.length > MAX) {
-        html += '<div class="desc" style="margin-top:8px;color:#ffb454">' +
-          '共 ' + items.length + ' 项，当前只显示前 ' + MAX + ' 项（远程访问保护）。</div>';
-      }
-      return html;
-    },
-
-    bind: function (d) {
-      var c = TE.el('canvas');
-
-      TE.el('pMode').onchange = function () {
-        d.mode = TE.el('pMode').value;
-        TE.dirty.mark('pick');
-        TE.pick.render();
-        TE.toast('已切换为' + (d.mode === 'Whitelist' ? '白' : '黑') + '名单（需保存生效）', 'ok');
-      };
-      TE.el('pBase').onchange = function () { d.enabled = TE.el('pBase').checked; TE.dirty.mark('pick'); };
-      TE.el('pBlPick').onchange = function () { d.blacklistModePickEnabled = TE.el('pBlPick').checked; TE.dirty.mark('pick'); };
-      TE.el('pWhNo').onchange = function () { d.whitelistModeDoNotPickEnabled = TE.el('pWhNo').checked; TE.dirty.mark('pick'); };
-
-      TE.el('pAdd').onclick = function () { TE.pick.add(d.blackList, 'pAddName'); };
-      TE.el('pAddName').onkeydown = function (e) { if (e.key === 'Enter') TE.pick.add(d.blackList, 'pAddName'); };
-      TE.el('pAddFuzzyBtn').onclick = function () { TE.pick.add(d.fuzzyBlackList, 'pAddFuzzy'); };
-      TE.el('pAddFuzzy').onkeydown = function (e) { if (e.key === 'Enter') TE.pick.add(d.fuzzyBlackList, 'pAddFuzzy'); };
-
-      TE.$$('[data-pdel]', c).forEach(function (b) {
-        b.onclick = function () {
-          d.blackList.splice(+b.getAttribute('data-pdel'), 1);
-          TE.dirty.mark('pick'); TE.pick.render();
+      TE.$$('[data-number]').forEach(function(e){e.onchange=function(){setNumber(e,e.getAttribute('data-number'));};});
+      if(TE.el('pBlackAllowEnabled'))TE.el('pBlackAllowEnabled').onchange=function(){d.blacklistModePickEnabled=this.checked;dirty();};if(TE.el('pWhiteExcludeEnabled'))TE.el('pWhiteExcludeEnabled').onchange=function(){d.whitelistModeDoNotPickEnabled=this.checked;dirty();};
+      TE.el('pTemplateScope').onchange=function(){TE.pick.openScope(this.value);};
+      TE.$$('[data-template-mode]').forEach(function(button){
+        button.onclick=function(){
+          TE.pick.templateMode=button.getAttribute('data-template-mode');
+          TE.$$('[data-template-mode]').forEach(function(b){b.setAttribute('aria-pressed',String(b===button));});
+          TE.pick.renderTemplates();
         };
       });
-      TE.$$('[data-fdel]', c).forEach(function (b) {
-        b.onclick = function () {
-          d.fuzzyBlackList.splice(+b.getAttribute('data-fdel'), 1);
-          TE.dirty.mark('pick'); TE.pick.render();
-        };
-      });
-
-      TE.el('pExport').onclick = function () {
-        var json = JSON.stringify(d, null, 2);
-        TE.modal({
-          title: '导出 JSON', wide: true,
-          bodyHtml: '<textarea id="pOut" style="min-height:260px">' + TE.esc(json) + '</textarea>' +
-            '<div class="desc">复制保存即可；导入时整份替换。</div>',
-          okText: '复制到剪贴板',
-          onOk: function () {
-            var el = TE.el('pOut'); el.select();
-            try { document.execCommand('copy'); TE.toast('已复制', 'ok'); }
-            catch (e) { TE.toast('复制失败，请手动选择', 'warn'); }
-          }
-        });
+      TE.el('pSearch').oninput=function(){TE.pick.filter.q=this.value;TE.pick.renderTemplates();};
+      TE.el('pCategory').onchange=function(){TE.pick.filter.category=this.value;TE.pick.renderTemplates();};
+      TE.el('pColor').onchange=function(){TE.pick.filter.color=this.value;TE.pick.renderTemplates();};
+      TE.el('pTemplates').onchange=function(event){
+        var n=event.target.getAttribute('data-template');
+        if(n===null)return;
+        var a=TE.pick.templateList(), i=a.indexOf(n);
+        if(event.target.checked && i<0)a.push(n);
+        if(!event.target.checked && i>=0)a.splice(i,1);
+        TE.$$('[data-template]',this).forEach(function(box){if(box.getAttribute('data-template')===n)box.checked=event.target.checked;});
+        dirty();
       };
-
-      TE.el('pImport').onclick = function () {
-        TE.modal({
-          title: '导入 JSON', wide: true,
-          bodyHtml: '<textarea id="pIn" placeholder="粘贴之前导出的 JSON" style="min-height:260px"></textarea>' +
-            '<div class="desc">导入会替换当前名单，保存后生效。</div>',
-          okText: '导入',
-          onOk: function (close) {
-            try {
-              var v = JSON.parse(TE.el('pIn').value);
-              TE.pick.data = {
-                enabled: v.enabled === true,
-                mode: v.mode || 'Blacklist',
-                blacklistModePickEnabled: v.blacklistModePickEnabled === true,
-                whitelistModeDoNotPickEnabled: v.whitelistModeDoNotPickEnabled === true,
-                blackList: TE.pick.arr(v.blackList),
-                fuzzyBlackList: TE.pick.arr(v.fuzzyBlackList)
-              };
-              TE.dirty.mark('pick');
-              close(); TE.pick.render();
-              TE.toast('已导入（需保存生效）', 'ok');
-            } catch (e) {
-              TE.toast('JSON 格式错误：' + e.message, 'err');
-              return false;
-            }
-          }
-        });
-      };
-    },
-
-    add: function (list, inputId) {
-      var inp = TE.el(inputId);
-      var v = (inp.value || '').trim();
-      if (!v) { TE.toast('请输入内容', 'warn'); return; }
-      if (list.indexOf(v) >= 0) { TE.toast('已存在：' + v, 'warn'); return; }
-      list.push(v);
-      inp.value = '';
-      TE.dirty.mark('pick');
-      TE.pick.render();
+      TE.$$('[data-add]').forEach(function(b){b.onclick=function(){var key=b.getAttribute('data-add'),id='add-'+key,arr=m[key],v=TE.el(id).value.trim();if(v&&!arr.includes(v)){arr.push(v);TE.pick.render();dirty();}};});TE.$$('[data-del]').forEach(function(b){b.onclick=function(){m[b.getAttribute('data-del')].splice(+b.getAttribute('data-index'),1);TE.pick.render();dirty();};});
     }
   };
 })(window.TE);

@@ -42,7 +42,7 @@ namespace SoulLink.TaskEdit
           var nm = it.name || it.Name || it;
           var fd = it.folderName || it.folder || '';
           html += '<div class="row" data-name="' + TE.attr(nm) + '" data-folder="' + TE.attr(fd) + '">' +
-            TE.esc(nm) + (fd ? ' <span class="mono" style="margin-left:auto;color:#7d8798">' +
+            TE.esc(nm) + (fd ? ' <span class="mono" style="margin-left:auto;color:var(--fg3)">' +
               TE.esc(fd) + '</span>' : '') + '</div>';
         }
         box.innerHTML = html;
@@ -61,13 +61,13 @@ namespace SoulLink.TaskEdit
 
     addProject: function (kind, name, folder) {
       var d = TE.group.data;
-      var arr = d.projects || (d.projects = []);
+      var arr = d.projects || d.Projects || (d.projects = []);
       var item;
-      if (kind === 'js') item = { type: 'Javascript', name: name, folderName: folder || name, enabled: true };
-      else if (kind === 'pathing') item = { type: 'Pathing', name: name, folderName: folder || '', enabled: true };
-      else if (kind === 'solotask') item = { type: 'SoloTask', name: name, folderName: name, enabled: true };
-      else if (kind === 'keymouse') item = { type: 'KeyMouse', name: name, folderName: name, enabled: true };
-      else item = { type: 'Shell', name: name, enabled: true };
+      if (kind === 'js') item = { type: 'Javascript', name: name, folderName: folder || name, status: 'Enabled' };
+      else if (kind === 'pathing') item = { type: 'Pathing', name: name, folderName: folder || '', status: 'Enabled' };
+      else if (kind === 'solotask') item = { type: 'SoloTask', name: name, folderName: name, status: 'Enabled' };
+      else if (kind === 'keymouse') item = { type: 'KeyMouse', name: name, folderName: name, status: 'Enabled' };
+      else item = { type: 'Shell', name: name, status: 'Enabled' };
       arr.push(item);
       TE.dirty.mark('group:' + TE.group.name);
       TE.group.render();
@@ -130,8 +130,8 @@ namespace SoulLink.TaskEdit
     toggleNext: function (i) {
       var arr = (TE.group.data.projects || TE.group.data.Projects || []);
       for (var k = 0; k < arr.length; k++) {
-        if (k === i) arr[k].nextFlag = true;
-        else if ('nextFlag' in arr[k]) arr[k].nextFlag = false;
+        if (k === i || TE.group.fv(arr[k], 'nextFlag') !== undefined)
+          TE.group.fvSet(arr[k], 'nextFlag', k === i);
       }
       TE.dirty.mark('group:' + TE.group.name);
       TE.toast('已设置「下次从此处执行」：' + (arr[i].name || ''), 'ok');
@@ -141,18 +141,42 @@ namespace SoulLink.TaskEdit
     showDir: function () {
       TE.modal({
         title: '本地目录',
-        bodyHtml: '<p style="color:#a8b0c0;margin:4px 0">BGI 根目录（由服务端解析，前端不拼接路径）：</p>' +
-          '<pre class="mono" style="background:#0d0f14;padding:10px;border-radius:8px;overflow:auto">' +
+        bodyHtml: '<p style="color:var(--fg2);margin:4px 0">BGI 根目录（由服务端解析，前端不拼接路径）：</p>' +
+          '<pre class="mono" style="background:var(--panel2);padding:10px;border-radius:8px;overflow:auto">' +
           TE.esc(TE.api.bgi() || '(未指定 ?bgi=，由服务端按 config.json 解析)') + '</pre>' +
-          '<p style="color:#7d8798;font-size:12px">配置组目录：User/ScriptGroup/&lt;组名&gt;.json</p>',
+          '<p style="color:var(--fg3);font-size:12px">配置组目录：User/ScriptGroup/&lt;组名&gt;.json</p>',
         okText: null
       });
     },
 
     openSoloSettings: function (i) {
-      TE.toast('独立任务配置表单在 P1-b 接入（数据层已就绪）', 'warn', 3000);
+      var arr = (TE.group.data.projects || TE.group.data.Projects || []), p = arr[i] || {};
+      var key = ['soloTaskSettingsObject','SoloTaskSettingsObject','soloTaskSettings','SoloTaskSettings'].find(function(k){ return Object.hasOwn(p,k); }) || 'soloTaskSettingsObject';
+      var value = p[key] || {};
+      var html = '<div class="banner info">独立任务配置（' + TE.esc(p.name || p.Name || '') + '）。逐字段编辑，未知字段保留。</div><div class="card"><div class="body">';
+      var labels = {route:'路线',routeName:'路线名称',path:'路径',avatar:'角色',avatarName:'角色名称',character:'角色',characterName:'角色名称',enabled:'启用',count:'次数',timeout:'超时时间',strategy:'策略',difficulty:'难度'};
+      (TE.group.SECTIONS || []).forEach(section => section.fields.forEach(([key,label]) => { labels[key.toLowerCase()] = label; }));
+      Object.keys(value).forEach(function (field) { var v=value[field], fid='solo-'+Object.keys(value).indexOf(field); html += '<div class="field"><label for="'+fid+'">'+TE.esc(labels[field] || labels[field.toLowerCase()] || field)+'</label><div class="ctl">'; if(typeof v==='boolean') html+='<label class="sw"><input type="checkbox" data-solo="'+TE.attr(field)+'"'+(v?' checked':'')+'><i></i></label>'; else if(typeof v==='number') html+='<input type="number" data-solo="'+TE.attr(field)+'" value="'+TE.attr(v)+'">'; else html+='<input type="text" data-solo="'+TE.attr(field)+'" value="'+TE.attr(typeof v==='string'?v:JSON.stringify(v))+'">'; html+='</div></div>'; });
+      html += '<details><summary>高级：完整配置 JSON（含未知字段）</summary><textarea id="soloRaw" style="min-height:220px;width:100%">' + TE.esc(JSON.stringify(value, null, 2)) + '</textarea></details><div id="soloErr" class="desc"></div></div></div>';
+      return TE.modal({ title: '修改独立任务配置', bodyHtml: html, okText: '应用到配置组', onOk: function (close) {
+        var raw = TE.el('soloRaw'), parsed;
+        try { parsed = JSON.parse(raw.value); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('必须是 JSON 对象'); }
+        catch (e) { TE.el('soloErr').textContent = 'JSON 格式错误：' + e.message; raw.classList.add('bad'); return false; }
+          try {
+            TE.$$('[data-solo]').forEach(function (el) {
+              var field = el.getAttribute('data-solo'), original = value[field];
+              if (el.type === 'checkbox') { if (el.checked !== original) parsed[field] = el.checked; return; }
+              var initial = typeof original === 'string' ? original : JSON.stringify(original);
+              if (el.value === initial) return;
+              if (typeof original === 'number') {
+                if (el.value.trim() === '' || !Number.isFinite(Number(el.value))) throw Error(field + ' 需要有效数字');
+                parsed[field] = Number(el.value);
+              } else parsed[field] = typeof original === 'string' ? el.value : JSON.parse(el.value);
+            });
+          } catch (e) { TE.el('soloErr').textContent = e.message; return false; }
+        p[key] = parsed; TE.dirty.mark('group:' + TE.group.name); close(); TE.group.render(); TE.toast('独立任务配置已修改，点击保存后写入', 'ok');
+      }});
     }
-  };
   });
 
 })(window.TE);

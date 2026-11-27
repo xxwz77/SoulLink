@@ -405,112 +405,46 @@ namespace SoulLink.Services
             }, Array.Empty<RawEvent>(), ct);
         }
 
-    /// <summary>网页原始片段：text 只有真实回读成功才有值，缺失/替换/仍在写入均显式标记。</summary>
-    public sealed record RawLogExcerpt(RawEvent Event, string Text, string Status, string Detail);
-    public sealed record RawLogExcerptResult(IReadOnlyList<RawLogExcerpt> Items, int ElapsedMs, int FileOpens);
+        internal sealed record RunLogLine(long tsMs, string srcFile, long lineNo, string text, string status, string detail);
 
-    /// <summary>
-    /// 按需回读原始日志（后台线程，一次开文件+排序 seek，连续区间合并读取）。
-    /// 日常结构化查询不依赖此 API；只服务用户点开日志详情。
-    /// </summary>
-    public static async Task<RawLogExcerptResult> ReadRawLogExcerptsAsync(
-        string account, string? srcFile = null, string? runId = null,
-        string? routeId = null, int limit = 500, CancellationToken ct = default)
-    {
-        IReadOnlyList<RawEvent> events;
-        if (runId == null && routeId == null) events = await QueryRawEventsAsync(account, srcFile, limit, ct).ConfigureAwait(false);
-        else events = await Core.Value.EnqueueQuery(db =>
-        {
-            using var cmd = db.CreateCommand();
-            cmd.CommandText = @"SELECT DISTINCT e.raw_id,e.account,e.src_file,e.chunk_offset,e.line_offset,e.line_no,
- e.ts_ms,e.level,e.logger,e.raw_text,e.raw_chars,e.raw_truncated,e.anchor,e.collected_at_ms,e.content_hash,e.occurrence,
- e.source_day,e.byte_offset,e.byte_length,e.file_size_at_collection,e.file_write_at_ticks
-FROM raw_event e JOIN run r ON r.account=e.account
-WHERE r.account=$account
-AND (($run<>'' AND r.run_id=$run AND (e.src_file=r.src_file_start OR e.src_file=r.src_file_end))
- OR ($route<>'' AND EXISTS(SELECT 1 FROM route x WHERE x.run_id=r.run_id AND x.route_id=$route AND x.src_file=e.src_file)))
-ORDER BY e.chunk_offset,e.line_offset LIMIT $limit;";
-            cmd.Parameters.AddWithValue("$account",account); cmd.Parameters.AddWithValue("$run",runId??"");
-            cmd.Parameters.AddWithValue("$route",routeId??""); cmd.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,5000));
-            var rows=new List<RawEvent>(); using var reader=cmd.ExecuteReader();
-            while(reader.Read()) rows.Add(ReadRawEvent(reader));
-            return (IReadOnlyList<RawEvent>)rows;
-        }, Array.Empty<RawEvent>(), ct).ConfigureAwait(false);
-        return await Task.Run(() => ReadExcerpts(events, account, ct), ct).ConfigureAwait(false);
-    }
-
-    private static RawEvent ReadRawEvent(SqliteDataReader reader) => new()
-    {
-        RawId=reader.GetString(0),Account=reader.GetString(1),SrcFile=reader.GetString(2),
-        ChunkOffset=reader.GetInt64(3),LineOffset=reader.GetInt32(4),LineNo=reader.GetInt64(5),
-        TsMs=reader.IsDBNull(6)?null:reader.GetInt64(6),Level=reader.GetString(7),Logger=reader.GetString(8),
-        RawText=reader.GetString(9),RawChars=reader.GetInt32(10),RawTruncated=reader.GetInt64(11)!=0,
-        Anchor=reader.GetString(12),CollectedAtMs=reader.GetInt64(13),ContentHash=reader.GetString(14),Occurrence=reader.GetInt32(15),
-        SourceDay=reader.IsDBNull(16)?"":reader.GetString(16),ByteOffset=reader.GetInt64(17),ByteLength=reader.GetInt32(18),
-        FileSizeAtCollection=reader.GetInt64(19),FileWriteAtCollectionTicks=reader.GetInt64(20)
-    };
-
-    private static RawLogExcerptResult ReadExcerpts(IReadOnlyList<RawEvent> events, string account, CancellationToken ct)
-    {
-        var sw=System.Diagnostics.Stopwatch.StartNew(); var output=new List<RawLogExcerpt>(events.Count); int opens=0;
-        foreach(var fileGroup in events.GroupBy(e=>e.SrcFile,StringComparer.OrdinalIgnoreCase))
-        {
-            string file=fileGroup.Key;
-            if(file.Contains('/')||file.Contains('\\')||file==".."||file=="."||file.Length==0)
-            { foreach(var e in fileGroup) output.Add(new(e,"","unavailable","原始日志路径无效，仅保留索引信息")); continue; }
-            string exe=BgiPathResolver.GetBoundPath(account);
-            string path=string.IsNullOrWhiteSpace(exe)?"":Path.Combine(Path.GetDirectoryName(exe)??"","log",file);
-            FileInfo info;
-            try{info=new FileInfo(path);}catch{info=null!;}
-            if(info==null||!info.Exists)
-            { foreach(var e in fileGroup) output.Add(new(e,"","missing","原始日志已被清理；索引和结构化事实仍可用")); continue; }
-            try
+        // raw_event has no run_id. Attribute a snapshot only when its file, timestamp and
+        // account agree with exactly one run. Adjacent same-timestamp boundaries are ambiguous.
+        internal static Task<IReadOnlyList<RunLogLine>?> ReadRunLogAsync(string account, string runId,
+            string? routeId, string day, string file, long fromMs, long untilMs, int offset, int limit)
+            => Core.Value.EnqueueQuery<IReadOnlyList<RunLogLine>?>(db =>
             {
-                using var fs=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete); opens++;
-                bool changed=(info.Length!=fileGroup.First().FileSizeAtCollection && fileGroup.First().FileSizeAtCollection>0)
-                    || (info.LastWriteTimeUtc.Ticks!=fileGroup.First().FileWriteAtCollectionTicks && fileGroup.First().FileWriteAtCollectionTicks>0);
-                var pending=new List<(RawEvent Event,long Start,int Length)>(); long pendingEnd=-1;
-                void FlushPending()
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = @"SELECT e.ts_ms,e.src_file,e.line_no,e.raw_text,e.raw_truncated
+FROM run r JOIN raw_event e ON e.account=r.account
+LEFT JOIN route x ON x.run_id=r.run_id AND x.route_id=$route
+WHERE r.run_id=$run AND r.account=$user AND e.source_day=$day AND e.src_file=$file
+  AND e.ts_ms >= $from AND e.ts_ms < $until
+  AND e.ts_ms BETWEEN r.start_at_ms AND COALESCE(r.end_at_ms,$now)
+  AND (e.src_file IN (r.src_file_start,r.src_file_end) OR EXISTS (
+      SELECT 1 FROM route s WHERE s.run_id=r.run_id AND s.src_file=e.src_file
+        AND e.ts_ms BETWEEN s.start_at_ms AND COALESCE(s.end_at_ms,$now)))
+  AND NOT EXISTS (SELECT 1 FROM run other WHERE other.account=r.account AND other.run_id<>r.run_id
+      AND e.ts_ms BETWEEN other.start_at_ms AND COALESCE(other.end_at_ms,$now))
+  AND ($route='' OR (x.src_file=e.src_file AND e.ts_ms BETWEEN x.start_at_ms AND COALESCE(x.end_at_ms,$now)
+      AND NOT EXISTS (SELECT 1 FROM route sibling WHERE sibling.run_id=r.run_id
+          AND sibling.kind=x.kind AND sibling.route_id<>x.route_id AND sibling.src_file=e.src_file
+          AND e.ts_ms BETWEEN sibling.start_at_ms AND COALESCE(sibling.end_at_ms,$now))))
+ORDER BY e.ts_ms,e.chunk_offset,e.line_offset,e.raw_id LIMIT $take OFFSET $skip;";
+                Add(cmd, "$user", account); Add(cmd, "$run", runId); Add(cmd, "$route", routeId ?? "");
+                Add(cmd, "$day", day); Add(cmd, "$file", file); Add(cmd, "$from", fromMs); Add(cmd, "$until", untilMs);
+                Add(cmd, "$now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()); Add(cmd, "$take", limit+1); Add(cmd, "$skip", offset);
+                using var reader = cmd.ExecuteReader();
+                var rows = new List<RunLogLine>();
+                while (reader.Read())
                 {
-                    if(pending.Count==0)return;
-                    long start=pending[0].Start;
-                    byte[] bytes=new byte[pendingEnd-start]; fs.Seek(start,SeekOrigin.Begin); int total=0;
-                    while(total<bytes.Length){int n=fs.Read(bytes,total,bytes.Length-total);if(n==0)break;total+=n;}
-                    foreach(var (item,itemStart,itemLength) in pending)
-                    {
-                        int available=Math.Max(0,Math.Min(itemLength,total-(int)(itemStart-start)));
-                        string status=changed?"changed":available<itemLength?"growing":"ok";
-                        string detail=status=="ok"?"":status=="changed"?"日志文件已变更，原文可能不对应":"日志仍在写入，已读取当前文件末尾";
-                        output.Add(new(item,Encoding.UTF8.GetString(bytes,(int)(itemStart-start),available),status,detail));
-                    }
-                    pending.Clear();
+                    string text = reader.GetString(3);
+                    bool partial = reader.GetInt64(4) != 0;
+                    string status = text.Length == 0 ? "unavailable" : partial ? "truncated" : "ok";
+                    string detail = status == "unavailable" ? "旧索引未保存原文" : partial ? "采集时仅保留了行首" : "";
+                    rows.Add(new(reader.GetInt64(0), reader.GetString(1), reader.GetInt64(2), text, status, detail));
                 }
-                foreach(var e in fileGroup.OrderBy(x=>x.ByteOffset))
-                {
-                    ct.ThrowIfCancellationRequested();
-                    if(e.ByteLength<=0 && e.RawText.Length>0){output.Add(new(e,e.RawText,"legacy","旧库原文（迁移前记录）"));continue;}
-                    if(e.ByteOffset<0||e.ByteLength<=0)
-                    { output.Add(new(e,"","growing","日志仍在写入或偏移已失效，无法回读该行")); continue; }
-                    if(e.ByteOffset>fs.Length)
-                    {
-                        // 超出当前文件长度：明确降级，但保留当前末尾可见内容，不把它冒充目标行。
-                        int tail=(int)Math.Min(256,fs.Length); byte[] tailBytes=new byte[tail];
-                        fs.Seek(fs.Length-tail,SeekOrigin.Begin); fs.ReadExactly(tailBytes);
-                        output.Add(new(e,Encoding.UTF8.GetString(tailBytes),"growing","日志仍在写入，目标偏移超界；以下为当前末尾片段"));
-                        continue;
-                    }
-                    int count=(int)Math.Min(e.ByteLength,fs.Length-e.ByteOffset);
-                    if(pending.Count>0 && e.ByteOffset==pendingEnd){pending.Add((e,e.ByteOffset,count));pendingEnd=e.ByteOffset+count;continue;}
-                    FlushPending();
-                    pending.Add((e,e.ByteOffset,count));pendingEnd=e.ByteOffset+count;
-                }
-                FlushPending();
-            }
-            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException)
-            { foreach(var e in fileGroup) output.Add(new(e,"","unavailable","原始日志暂不可读；索引和结构化事实仍可用")); }
-        }
-        sw.Stop(); return new(output,(int)sw.ElapsedMilliseconds,opens);
-    }
+                return rows;
+            }, null, default);
 
         private static void WriteRawEvents(SqliteConnection db, IReadOnlyList<RawEvent> rows)
         {
@@ -604,25 +538,26 @@ ORDER BY e.chunk_offset,e.line_offset LIMIT $limit;";
     public static Task<IReadOnlyList<PickEvent>> QueryPickFactsAsync(
         string? runId = null, string? routeId = null, string? kind = null,
         string? account = null, int days = 7, int offset = 0, int limit = 1000,
-        CancellationToken ct = default)
+        CancellationToken ct = default, DateTime? day = null)
     {
         if (string.IsNullOrWhiteSpace(runId) && string.IsNullOrWhiteSpace(account))
             return Task.FromResult<IReadOnlyList<PickEvent>>(Array.Empty<PickEvent>());
         string normalizedKind = kind is "picked" or "no_target" or "skipped" ? kind : "";
-        long cutoff = DateTimeOffset.UtcNow.AddDays(-Math.Clamp(days, 1, 365)).ToUnixTimeMilliseconds();
+        long cutoff = day.HasValue ? ToMs(day.Value.Date) : DateTimeOffset.UtcNow.AddDays(-Math.Clamp(days, 1, 365)).ToUnixTimeMilliseconds();
         return Core.Value.EnqueueQuery(db =>
         {
             using var cmd = db.CreateCommand();
             cmd.CommandText = @"SELECT p.run_id,p.route_id,p.kind,p.item,p.ts_ms,p.line_no,p.line_offset,p.src_file
 FROM pick_event p JOIN run r ON r.run_id=p.run_id
 WHERE ($run='' OR p.run_id=$run) AND ($route='' OR p.route_id=$route)
-AND ($kind='' OR p.kind=$kind) AND ($account='' OR r.account=$account) AND p.ts_ms>=$cutoff
+AND ($kind='' OR p.kind=$kind) AND ($account='' OR r.account=$account) AND p.ts_ms>=$cutoff AND p.ts_ms<$until
 ORDER BY p.ts_ms,p.pick_id LIMIT $limit OFFSET $offset;";
             cmd.Parameters.AddWithValue("$run", runId ?? "");
             cmd.Parameters.AddWithValue("$route", routeId ?? "");
             cmd.Parameters.AddWithValue("$kind", normalizedKind);
             cmd.Parameters.AddWithValue("$account", account ?? "");
             cmd.Parameters.AddWithValue("$cutoff", cutoff);
+            cmd.Parameters.AddWithValue("$until", day.HasValue ? ToMs(day.Value.Date.AddDays(1)) : long.MaxValue);
             cmd.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 10000));
             cmd.Parameters.AddWithValue("$offset", Math.Max(0, offset));
             var rows = new List<PickEvent>();
@@ -640,11 +575,11 @@ ORDER BY p.ts_ms,p.pick_id LIMIT $limit OFFSET $offset;";
     /// <summary>按 run 或 route 取三类事实计数；route 行同时给出投影列用于对账。</summary>
     public static Task<PickFactCounts> QueryPickCountsAsync(
         string? runId = null, string? routeId = null, string? account = null, int days = 7,
-        CancellationToken ct = default)
+        CancellationToken ct = default, DateTime? day = null)
     {
         if (string.IsNullOrWhiteSpace(runId) && string.IsNullOrWhiteSpace(routeId) && string.IsNullOrWhiteSpace(account))
             return Task.FromResult(new PickFactCounts(0, 0, 0));
-        long cutoff = DateTimeOffset.UtcNow.AddDays(-Math.Clamp(days, 1, 365)).ToUnixTimeMilliseconds();
+        long cutoff = day.HasValue ? ToMs(day.Value.Date) : DateTimeOffset.UtcNow.AddDays(-Math.Clamp(days, 1, 365)).ToUnixTimeMilliseconds();
         return Core.Value.EnqueueQuery(db =>
         {
             using var cmd = db.CreateCommand();
@@ -654,11 +589,12 @@ ORDER BY p.ts_ms,p.pick_id LIMIT $limit OFFSET $offset;";
  COALESCE(SUM(CASE WHEN p.kind='skipped' THEN 1 ELSE 0 END),0)
 FROM pick_event p JOIN run r ON r.run_id=p.run_id
 WHERE ($run='' OR p.run_id=$run) AND ($route='' OR p.route_id=$route)
-AND ($account='' OR r.account=$account) AND p.ts_ms>=$cutoff;";
+AND ($account='' OR r.account=$account) AND p.ts_ms>=$cutoff AND p.ts_ms<$until;";
             cmd.Parameters.AddWithValue("$run", runId ?? "");
             cmd.Parameters.AddWithValue("$route", routeId ?? "");
             cmd.Parameters.AddWithValue("$account", account ?? "");
             cmd.Parameters.AddWithValue("$cutoff", cutoff);
+            cmd.Parameters.AddWithValue("$until", day.HasValue ? ToMs(day.Value.Date.AddDays(1)) : long.MaxValue);
             using var reader = cmd.ExecuteReader();
             return reader.Read() ? new PickFactCounts(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2))
                 : new PickFactCounts(0, 0, 0);
@@ -1057,6 +993,52 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
                 using var reader = cmd.ExecuteReader();
                 return reader.Read() ? ReadRun(reader) : null;
             }, null, ct);
+        }
+
+        internal static Task<IReadOnlyList<RunRecord>> QueryRunDayAsync(string account, DateTime day)
+            => Core.Value.EnqueueQuery<IReadOnlyList<RunRecord>>(db =>
+            {
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = RunColumns + @" WHERE account=$a COLLATE NOCASE AND start_at_ms >= $lo AND start_at_ms < $hi
+                    ORDER BY start_at_ms,run_id;";
+                Add(cmd,"$a",account); Add(cmd,"$lo",ToMs(day.Date)); Add(cmd,"$hi",ToMs(day.Date.AddDays(1)));
+                return ReadRunList(cmd);
+            }, Array.Empty<RunRecord>(), default);
+
+        internal sealed record LedgerWindow(string RunId, string GroupName, string RouteId, string RouteName, long Start, long End);
+
+        // Only closed, observed windows are eligible. Both sides of midnight can own a ledger minute.
+        internal static Task<List<LedgerWindow>?> QueryLedgerWindowsAsync(string account, long lo, long hi)
+            => Core.Value.EnqueueQuery<List<LedgerWindow>?>(db =>
+            {
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = @"SELECT run_id,group_name,'','',start_at_ms,end_at_ms FROM run
+                    WHERE account=$a COLLATE NOCASE AND start_at_ms<$hi AND end_at_ms>$lo
+                    UNION ALL SELECT r.run_id,r.group_name,t.route_id,t.name,t.start_at_ms,t.end_at_ms FROM route t
+                    JOIN run r ON r.run_id=t.run_id WHERE r.account=$a COLLATE NOCASE AND t.kind='route'
+                    AND t.start_at_ms<$hi AND t.end_at_ms>$lo ORDER BY 5,1,3;";
+                Add(cmd,"$a",account); Add(cmd,"$lo",lo); Add(cmd,"$hi",hi);
+                using var reader = cmd.ExecuteReader();
+                var rows = new List<LedgerWindow>();
+                while (reader.Read()) rows.Add(new(reader.GetString(0),reader.GetString(1),reader.GetString(2),
+                    reader.GetString(3),reader.GetInt64(4),reader.GetInt64(5)));
+                return rows;
+            }, null, default);
+
+        internal static Task<Dictionary<string, (long Exp, long Mora)>?> QueryDogfoodTotalsAsync(DateTime day)
+        {
+            return Core.Value.EnqueueQuery<Dictionary<string, (long Exp, long Mora)>?>(db =>
+            {
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = @"SELECT account,SUM(dogfood_exp),SUM(dogfood_mora) FROM run
+                    WHERE COALESCE(end_at_ms,start_at_ms) >= $from AND (dogfood_exp>0 OR dogfood_mora>0)
+                    GROUP BY account COLLATE NOCASE";
+                cmd.Parameters.AddWithValue("$from", new DateTimeOffset(day.Date).ToUnixTimeMilliseconds());
+                var totals = new Dictionary<string, (long, long)>(StringComparer.OrdinalIgnoreCase);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read()) totals[reader.GetString(0)] = (reader.GetInt64(1), reader.GetInt64(2));
+                return totals;
+            }, null, default);
         }
 
         public static Task<IReadOnlyList<RunRecord>> QueryRunsAsync(
@@ -1829,6 +1811,7 @@ CREATE INDEX IF NOT EXISTS ix_pick_kind_ts ON pick_event(kind,ts_ms);
 CREATE INDEX IF NOT EXISTS ix_span_account ON state_span(account,start_at_ms);
 CREATE INDEX IF NOT EXISTS ix_day_span_day ON day_span(account,day);
 CREATE INDEX IF NOT EXISTS ix_raw_account_file ON raw_event(account,src_file);
+CREATE INDEX IF NOT EXISTS ix_raw_scope ON raw_event(account,src_file,source_day,ts_ms,chunk_offset,line_offset,raw_id);
 CREATE INDEX IF NOT EXISTS ix_raw_ts ON raw_event(ts_ms);
 CREATE INDEX IF NOT EXISTS ix_raw_source_day ON raw_event(source_day);
 PRAGMA user_version=1;";

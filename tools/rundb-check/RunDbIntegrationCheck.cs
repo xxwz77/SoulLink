@@ -41,6 +41,7 @@ public static class RunDbIntegrationCheck
         string mode = args.Length > 0 ? args[0] : "hostonly";
         try
         {
+            if (mode == "missing-log") return MissingLog();
             if (mode == "hostonly") return HostOnly();
             if (mode == "feed") return Feed(args[1], args[2],
                 args.Length > 3 && args[3].Equals("expectPicks", StringComparison.OrdinalIgnoreCase));
@@ -57,6 +58,53 @@ public static class RunDbIntegrationCheck
     }
 
     // ── ① 宿主启动 + 配置归一 ───────────────────────────────────────
+    // Run from a fresh process: product config, SQLite and the fake install all stay under TEMP.
+    static int MissingLog()
+    {
+        var root = Directory.CreateTempSubdirectory("SoulLink-Ingest-");
+        Environment.SetEnvironmentVariable("SOULLINK_DATA_DIR", root.FullName);
+        Environment.SetEnvironmentVariable("SOULLINK_CONFIG", Path.Combine(root.FullName, "config.json"));
+        const string user = "offline-log-fixture";
+        UseConfig(user, 7);
+        var cfg = App.Config;
+        var acc = cfg.Accounts[0];
+        string exe = Path.Combine(root.FullName, "BetterGI.exe");
+        cfg.Settings.BgiPaths[user] = exe;
+        cfg.Settings.BgiPinnedUsers.Add(user);
+        string log = Path.Combine(root.FullName, "log", "better-genshin-impact" + DateTime.Today.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture) + ".log");
+        int changes = 0;
+        BgiLogCenter.Changed += () => changes++;
+        void Tick() => BgiLogCenter.Tick(new[] { acc });
+        try
+        {
+            for (int i = 0; i < 30; ++i) Tick();
+            Check(changes == 1 && BgiLogCenter.Snapshot(acc.Id)?.LogFile == "", "30 missing ticks: only initial state change");
+            Directory.CreateDirectory(Path.GetDirectoryName(log)!);
+            File.WriteAllText(log, "[01:02:03] [INF] offline fixture first line\n");
+            Thread.Sleep(30_100); // exercise real backoff via the normal entry point
+            Tick();
+            var first = BgiLogCenter.Snapshot(acc.Id);
+            Check(first?.LogFile == log && first.Cursor == new FileInfo(log).Length && first.Tail.Count == 1, "recovered file parsed to EOF");
+            File.Delete(log);
+            Tick();
+            Check(BgiLogCenter.Snapshot(acc.Id)?.LogFile == "", "deletion detaches active file");
+            File.WriteAllText(log, "[02:03:04] [INF] new file prefix\n[02:03:05] [INF] new file suffix\n");
+            Thread.Sleep(30_100);
+            Tick();
+            var rebuilt = BgiLogCenter.Snapshot(acc.Id);
+            Check(rebuilt?.Tail.Count == 2 && rebuilt.Tail[0].Text.Contains("new file prefix"), "larger same-name replacement parsed from byte zero");
+            Tick();
+            Check(BgiLogCenter.Snapshot(acc.Id)?.LastSeq == rebuilt?.LastSeq, "unchanged file does not replay lines");
+            return fails;
+        }
+        finally
+        {
+            BgiLogCenter.StopServiceTick();
+            BgiLogCenter.Clear();
+            try { root.Delete(true); } catch (IOException) { Console.WriteLine("temp fixture: " + root.FullName); }
+        }
+    }
+
     static int HostOnly()
     {
         UseConfig("A4", 7);

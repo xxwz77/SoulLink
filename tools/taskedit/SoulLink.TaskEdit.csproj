@@ -45,6 +45,7 @@
     <Compile Include="TaskEditLogin.cs" />
     <Compile Include="TaskEditProbe.cs" />
     <Compile Include="BgiPickList.cs" />
+    <Compile Include="BgiTemplatePick.cs" />
     <Compile Include="BgiBackup.cs" />
     <!-- 任务编辑页前端（CSS/JS 以 C# 原始字符串编译进程序集，单文件发布下最稳） -->
     <Compile Include="TaskEditStatic.cs" />
@@ -61,6 +62,7 @@
     <Compile Include="Static/DragonSectionsJs.cs" />
     <Compile Include="Static/DragonWeekJs.cs" />
     <Compile Include="Static/DragonBindJs.cs" />
+    <Compile Include="Static/DragonOpsJs.cs" />
     <Compile Include="Static/JsSettingsJs.cs" />
     <Compile Include="Static/PickJs.cs" />
     <Compile Include="Static/AppJs.cs" />
@@ -69,6 +71,7 @@
     <Compile Include="BgiStore.cs" />
     <Compile Include="BgiValidator.cs" />
     <Compile Include="TaskEditApi.cs" />
+    <Compile Include="DragonFiles.cs" />
     <!-- 只引用「纯逻辑、零 WPF 依赖」的两个既有文件（不复制，避免双份维护）：
          · AppIdentity：数据目录/exe 目录/互斥体名的**单一来源**，保证与主程序同一套路径规则；
          · WebFirewall：单端口防火墙放行（主程序侧同名规则，删的时候能一起清干净）。 -->

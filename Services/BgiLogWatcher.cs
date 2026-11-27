@@ -211,7 +211,8 @@ namespace SoulLink.Services
             try
             {
                 var all = Discover();
-                return all.TryGetValue(sessionId, out var hit) ? hit : null;
+                return all.TryGetValue(sessionId, out var hit) &&
+                    string.Equals(hit.ExePath, exePath, StringComparison.OrdinalIgnoreCase) ? hit : null;
             }
             catch { return null; }
         }
@@ -348,28 +349,15 @@ namespace SoulLink.Services
                         string exe = p.MainModule?.FileName ?? "";
                         if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) continue;
 
-                        string logDir = Path.Combine(Path.GetDirectoryName(exe) ?? "", "log");
-                        if (!Directory.Exists(logDir)) continue;
-
-                        // 取该目录下最新的日志文件（BGI 按天滚动）
-                        string? newest = null;
-                        DateTime newestTime = DateTime.MinValue;
-                        foreach (var f in Directory.GetFiles(logDir, "better-genshin-impact*.log"))
-                        {
-                            var t = File.GetLastWriteTime(f);
-                            if (t > newestTime) { newestTime = t; newest = f; }
-                        }
-                        if (newest == null) continue;
-
-                        var fi = new FileInfo(newest);
+                        var fi = TodayFile(exe);
                         var one = new Instance
                         {
                             SessionId = p.SessionId,
                             Pid = p.Id,
                             ExePath = exe,
-                            LogFile = newest,
-                            Length = fi.Length,
-                            LastWrite = fi.LastWriteTime,
+                            LogFile = fi?.FullName ?? "",
+                            Length = fi?.Length ?? 0,
+                            LastWrite = fi?.LastWriteTime ?? DateTime.MinValue,
                             StartTime = SafeStartTime(p)
                         };
 
@@ -408,27 +396,15 @@ namespace SoulLink.Services
                         string exe = p.MainModule?.FileName ?? "";
                         if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) continue;
 
-                        string logDir = Path.Combine(Path.GetDirectoryName(exe) ?? "", "log");
-                        if (!Directory.Exists(logDir)) continue;
-
-                        string? newest = null;
-                        DateTime newestTime = DateTime.MinValue;
-                        foreach (var f in Directory.GetFiles(logDir, "better-genshin-impact*.log"))
-                        {
-                            var t = File.GetLastWriteTime(f);
-                            if (t > newestTime) { newestTime = t; newest = f; }
-                        }
-                        if (newest == null) continue;
-
-                        var fi = new FileInfo(newest);
+                        var fi = TodayFile(exe);
                         list.Add(new Instance
                         {
                             SessionId = p.SessionId,
                             Pid = p.Id,
                             ExePath = exe,
-                            LogFile = newest,
-                            Length = fi.Length,
-                            LastWrite = fi.LastWriteTime,
+                            LogFile = fi?.FullName ?? "",
+                            Length = fi?.Length ?? 0,
+                            LastWrite = fi?.LastWriteTime ?? DateTime.MinValue,
                             StartTime = SafeStartTime(p)
                         });
                     }
@@ -454,9 +430,8 @@ namespace SoulLink.Services
         {
             try
             {
-                if (!File.Exists(path)) return ("", DateTime.MinValue);
-
-                var fi = new FileInfo(path);
+                var fi = ProbeDailyPath(path);
+                if (fi == null) return ("", DateTime.MinValue);
                 // ★ 按请求行数估算读取量：BGI 中文日志每行约 120~200 字节，
                 //   还有大量空行，所以按 400 字节/行保守估算。
                 //   原来固定 64KB，请求 400 行时实际只覆盖 ~150 行，
@@ -509,9 +484,8 @@ namespace SoulLink.Services
         {
             try
             {
-                if (!File.Exists(path)) return "";
-
-                var fi = new FileInfo(path);
+                var fi = ProbeDailyPath(path);
+                if (fi == null) return "";
                 long budget = Math.Min(fi.Length, totalBudget);
                 long seg = 512 * 1024;
                 long pos = fi.Length;                 // 从尾部开始
@@ -617,7 +591,7 @@ namespace SoulLink.Services
             string current = "";
             try
             {
-                if (!File.Exists(path)) return (byGroup, "");
+                if (ProbeDailyPath(path) == null) return (byGroup, "");
 
                 using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
@@ -664,64 +638,23 @@ namespace SoulLink.Services
         /// 在指定 BGI 安装目录里找"今天"的日志文件。
         /// 用于区分"今天跑过但已退出" 和 "今天还没启动过"。
         /// </summary>
-        public static string FindTodayLog(string bgiExePath)
+        public static string FindTodayLog(string bgiExePath) => TodayFile(bgiExePath)?.FullName ?? "";
+
+        private static readonly BgiDailyLogProbe DailyLogs = new(historyFile: Path.Combine(AppIdentity.DataDir, "missing-history-logs.txt"));
+
+        internal static FileInfo? TodayFile(string exe) => ProbeDailyPath(BgiDailyLogProbe.ExpectedPath(exe, DateTime.Today));
+
+        internal static FileInfo? ProbeDailyPath(string path) => ProbeDailyPath(path, out _);
+
+        internal static FileInfo? ProbeDailyPath(string path, out bool missing)
         {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(bgiExePath)) return "";
-                string? dir = Path.GetDirectoryName(bgiExePath);
-                if (string.IsNullOrEmpty(dir)) return "";
-
-                string logDir = Path.Combine(dir, "log");
-                if (!Directory.Exists(logDir)) return "";
-
-                string today = Path.Combine(logDir,
-                    "better-genshin-impact" + DateTime.Now.ToString("yyyyMMdd") + ".log");
-                return File.Exists(today) ? today : "";
-            }
-            catch { return ""; }
+            try { return DailyLogs.Find(path, Environment.TickCount64, DateTime.Today, out missing); }
+            catch { missing = false; return null; }
         }
 
-
-        /// <summary>
-        /// 【t55 历史回填】列出某账号 BGI 日志目录下最近 N 天的日志文件（含今天），按日期从旧到新。
-        ///
-        /// 为什么需要：数据中心要求「留存 7 天」，但采集器原本只跟随**今天**那份日志
-        /// （FindTodayLog）—— 清空库/首次接入时，历史日志里已有的运行记录永远补不回来。
-        /// 用户明确要求：同一份日志就是同一天，所以按文件名日期回填是安全且确定的。
-        /// </summary>
-        /// <param name="bgiExePath">BetterGI.exe 路径（取其同级 log 目录）</param>
-        /// <param name="days">回看天数（含今天），默认 7，与 RunDbRetentionDays 对齐</param>
-        public static List<string> ListRecentLogs(string bgiExePath, int days = 7)
-        {
-            var result = new List<string>();
-            try
-            {
-                if (string.IsNullOrWhiteSpace(bgiExePath)) return result;
-                string? dir = Path.GetDirectoryName(bgiExePath);
-                if (string.IsNullOrEmpty(dir)) return result;
-                string logDir = Path.Combine(dir, "log");
-                if (!Directory.Exists(logDir)) return result;
-
-                if (days <= 0) days = 7;
-                var today = DateTime.Now.Date;
-                var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                for (int i = 0; i < days; i++)
-                    wanted.Add("better-genshin-impact" + today.AddDays(-i).ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".log");
-
-                var found = new List<(string Path, string Name)>();
-                foreach (string f in Directory.EnumerateFiles(logDir, "better-genshin-impact*.log", SearchOption.TopDirectoryOnly))
-                {
-                    string n = Path.GetFileName(f);
-                    if (wanted.Contains(n)) found.Add((f, n));
-                }
-                // 按文件名（含 yyyyMMdd）升序 = 从旧到新，保证回填顺序确定
-                found.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
-                foreach (var x in found) result.Add(x.Path);
-            }
-            catch { }
-            return result;
-        }
+        /// <summary>历史回填窗口包含今天，但今天只由实时采集器接管。</summary>
+        internal static List<FileInfo> RecentHistory(string exe, int days)
+            => DailyLogs.RecentHistory(exe, days, Environment.TickCount64, DateTime.Today);
 
         /// <summary>从一行日志里读配置组名（兼容三种写法），没有则返回 null。</summary>
         private static string? TryReadGroup(string line)
@@ -782,7 +715,7 @@ namespace SoulLink.Services
             int errors = 0, warns = 0, fails = 0;
             try
             {
-                if (!File.Exists(path)) return (0, 0, 0);
+                if (ProbeDailyPath(path) == null) return (0, 0, 0);
 
                 using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
@@ -861,7 +794,7 @@ namespace SoulLink.Services
             }
             if (!string.IsNullOrEmpty(text)) onNewLines(text);
 
-            try { _offset = new FileInfo(path).Length; } catch { _offset = 0; }
+            _offset = BgiLogWatcher.ProbeDailyPath(path)?.Length ?? 0;
 
             string dir = Path.GetDirectoryName(path) ?? "";
             _watcher = new FileSystemWatcher(dir)
@@ -893,8 +826,9 @@ namespace SoulLink.Services
             _busy = true;
             try
             {
-                long len;
-                try { len = new FileInfo(_path).Length; } catch { return; }
+                var file = BgiLogWatcher.ProbeDailyPath(_path);
+                if (file == null) return;
+                long len = file.Length;
 
                 // 文件变短 = 被轮转/重建，从头重读
                 if (len < _offset)

@@ -16,6 +16,7 @@ namespace SoulLink.Services
         public string LtMid { get; set; } = "";
         public string CookieToken { get; set; } = "";
         public string AccountId { get; set; } = "";
+        public string AccountMid { get; set; } = "";
         public string SToken { get; set; } = "";
         public string StUid { get; set; } = "";
         public string Mid { get; set; } = "";

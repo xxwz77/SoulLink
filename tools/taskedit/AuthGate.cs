@@ -199,7 +199,7 @@ namespace SoulLink.TaskEdit
         }
 
         /// <summary>cookie 凭据匹配：soullink_te（本服务）或 soullink_sid（主程序）。</summary>
-        private bool MatchesAnyCookie(HttpListenerContext ctx)
+        internal bool MatchesAnyCookie(HttpListenerContext ctx)
         {
             try
             {

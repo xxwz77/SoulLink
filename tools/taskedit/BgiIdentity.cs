@@ -35,33 +35,22 @@ namespace SoulLink.TaskEdit
             = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
-        /// 解析 BGI 根目录。优先级：
-        ///   ① account 参数本身是路径（含分隔符/盘符/以 BetterGI 结尾）→ 直接用；
-        ///   ② config.json 的 settings.bgiPaths[account]（值是 BetterGI.exe 完整路径）→ 取目录；
-        ///   ③ 无配置时，按候选路径列表依次探测（见 <see cref="ProbeCandidateRoots"/>）。
-        /// 全部失败返回空串。
+        /// 显式账号只使用配置中的绑定；未指定账号的旧入口保留本机发现逻辑。
+        /// 绑定不可用时返回空串。
         /// </summary>
         internal static string ResolveRoot(string account, string configJsonPath)
         {
             string root = "";
             try
             {
-                // ① 显式路径
-                if (!string.IsNullOrWhiteSpace(account) &&
-                    (account.IndexOf('\\', StringComparison.Ordinal) >= 0 ||
-                     account.IndexOf(':', StringComparison.Ordinal) >= 0 ||
-                     account.EndsWith("BetterGI", StringComparison.OrdinalIgnoreCase)))
-                {
-                    root = account;
-                }
 
                 // ② config.json 的 BgiPaths[账号]
                 if (root.Length == 0 && !string.IsNullOrWhiteSpace(account) && File.Exists(configJsonPath))
                 {
                     string json = File.ReadAllText(configJsonPath, Encoding.UTF8);
                     using var doc = System.Text.Json.JsonDocument.Parse(json);
-                    if (doc.RootElement.TryGetProperty("settings", out var s) &&
-                        s.TryGetProperty("bgiPaths", out var paths))
+                    if ((doc.RootElement.TryGetProperty("Settings", out var s) || doc.RootElement.TryGetProperty("settings", out s)) &&
+                        (s.TryGetProperty("BgiPaths", out var paths) || s.TryGetProperty("bgiPaths", out paths)))
                     {
                         foreach (var p in paths.EnumerateObject())
                             if (string.Equals(p.Name, account, StringComparison.OrdinalIgnoreCase))
@@ -82,7 +71,7 @@ namespace SoulLink.TaskEdit
             catch { }
 
             // ③ 候选路径探测（父目录推导）
-            return ProbeCandidateRoots(account, configJsonPath);
+            return string.IsNullOrWhiteSpace(account) ? ProbeCandidateRoots(account, configJsonPath) : "";
         }
 
         /// <summary>

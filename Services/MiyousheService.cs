@@ -26,9 +26,16 @@ namespace SoulLink.Services
         internal static Func<string,MiyousheClient>? ClientFactoryForTest;
         internal static Func<string,string,MiyousheClient>? RegionClientFactoryForTest;
         internal static Func<int,Task>? DelayForTest;
+        internal static string EffectiveDsSalt(AppSettings? settings, string region)
+            => region == "os"
+                ? settings?.MiyousheOsDsSalt ?? ""
+                : string.IsNullOrWhiteSpace(settings?.MiyousheDsSalt)
+                    ? AppSettings.DefaultMiyousheDsSalt
+                    : settings!.MiyousheDsSalt.Trim();
+
         internal static MiyousheClient Client(string? salt = null, string region="cn")
         {
-            string configured = region=="os" ? App.Config?.Settings?.MiyousheOsDsSalt??"" : App.Config?.Settings?.MiyousheDsSalt??"";
+            string configured = EffectiveDsSalt(App.Config?.Settings, region);
             return RegionClientFactoryForTest?.Invoke(salt ?? configured,region) ?? ClientFactoryForTest?.Invoke(salt ?? configured) ?? new(salt ?? configured, null, region);
         }
 
@@ -67,8 +74,15 @@ namespace SoulLink.Services
             { QrSessions.TryRemove(id,out _); throw new InvalidOperationException(ex.Retcode == -3501 ? "二维码已过期，请重新生成" : "用户已取消扫码"); }
         }
 
-        internal static Task<MiyousheLoginStatus> LoginStatusAsync(string account,CancellationToken ct)
-            => MiyousheCredentialStore.StatusAsync(account,ct);
+        internal static async Task<MiyousheLoginStatus> LoginStatusAsync(string account,CancellationToken ct)
+        {
+            var status = await MiyousheCredentialStore.StatusAsync(account,ct).ConfigureAwait(false);
+            if (status.State != "stored") return status;
+            var lastCheck = await MiyousheStore.Shared.GetCredentialStateAsync(account,ct).ConfigureAwait(false);
+            return lastCheck is { State: "needs_login" } && lastCheck.UpdatedAtMs >= status.UpdatedAtMs
+                ? status with { State = lastCheck.State, Detail = lastCheck.Detail }
+                : status;
+        }
 
         // ── t59：角色列表与默认角色（主程序数据中心要用）─────────────────
         //
@@ -135,12 +149,16 @@ namespace SoulLink.Services
         }
 
 
-        internal static async Task<object> RunForAccountAsync(string account,bool sign,bool ledger,CancellationToken ct)
+        internal static async Task<object> RunForAccountAsync(string account,bool sign,bool ledger,CancellationToken ct,bool retryLogin = false)
         {
             RequireAccount(account);
             var credential = await MiyousheCredentialStore.LoadAsync(account,ct).ConfigureAwait(false);
             if (credential == null) return new { ok=false,error="未登录，请先扫码" };
-            if (PausedUntil.TryGetValue(account,out var until) && until > DateTime.Now)
+            var lastCheck = await MiyousheStore.Shared.GetCredentialStateAsync(account,ct).ConfigureAwait(false);
+            bool rejected = lastCheck is { State: "needs_login" } && lastCheck.UpdatedAtMs >= credential.UpdatedAt.ToUnixTimeMilliseconds();
+            if (rejected && !retryLogin)
+                return new { ok=false,error=lastCheck!.Detail,state="needs_login" };
+            if (!(rejected && retryLogin) && PausedUntil.TryGetValue(account,out var until) && until > DateTime.Now)
                 return new { ok=false,error="账号处于退避期，请稍后重试或重新扫码",retryAfter=until };
             if (!await NetworkGate.WaitAsync(0,ct).ConfigureAwait(false))
                 return new { ok=false,error="另一账号任务进行中，请稍后重试",state="queued" };
@@ -151,6 +169,11 @@ namespace SoulLink.Services
                 var client = Client();
                 var roles = await client.GetRolesAsync(account,credential,ct).ConfigureAwait(false);
                 if (roles.Count == 0) return new { ok=false,error="米游社账号未绑定原神角色" };
+                string ledgerUid = ledger ? GetDefaultRole(account) : "";
+                string ledgerError = "";
+                if (ledger && !roles.Any(r => r.GameUid == ledgerUid && ledgerUid.Length > 0))
+                    ledgerError = ledgerUid.Length == 0 ? "请先为此账号设置默认原神角色" : "默认角色已不在该账号的角色列表，请重新选择";
+                if (!sign && ledgerError.Length > 0) return new { ok=false, error=ledgerError };
                 int signed=0, entries=0;
                 foreach (var role in roles)
                 {
@@ -175,7 +198,8 @@ namespace SoulLink.Services
                             await MiyousheStore.Shared.SaveSignAsync(result,ct).ConfigureAwait(false); signed++;
                         }
                     }
-                    if (ledger)
+                    if (!sign && role.GameUid != ledgerUid) continue;
+                    if (ledger && ledgerError.Length == 0 && role.GameUid == ledgerUid)
                         entries += await PullWithStatusAsync(client,account,credential,role,DateTime.Now.Month,ct).ConfigureAwait(false);
                     await DelayAsync(ct).ConfigureAwait(false);
                 }
@@ -186,13 +210,19 @@ namespace SoulLink.Services
                     try { _ = MoraClassifier.ClassifyAsync(account, ct); }
                     catch { /* 分类失败不影响拉取；下次拉取/手动触发会补 */ }
                 }
-                credential.LastOkAt=DateTimeOffset.Now;
-                await MiyousheCredentialStore.SaveAsync(account,credential,ct).ConfigureAwait(false);
+                PausedUntil.TryRemove(account,out _);
+                // 查询期间可能已重新登录；这里只记任务状态，避免用旧 Cookie 覆写新凭据。
                 await MiyousheStore.Shared.SetCredentialStateAsync(account,"ok","最近请求成功",NowMs(),ct).ConfigureAwait(false);
+                if (ledgerError.Length > 0) return new { ok=false,account,signed,entries,error=ledgerError };
                 return new { ok=true,account,roles=roles.Count,signed,entries };
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            { await HandleFailureAsync(account,ex,ct).ConfigureAwait(false); return new { ok=false,error=SafeError(ex) }; }
+            {
+                var latest = await MiyousheCredentialStore.LoadAsync(account,ct).ConfigureAwait(false);
+                if (latest?.UpdatedAt == credential.UpdatedAt)
+                    await HandleFailureAsync(account,ex,ct).ConfigureAwait(false);
+                return new { ok=false,error=SafeError(ex) };
+            }
             finally { NetworkGate.Release(); Interlocked.Exchange(ref _running,0); }
         }
 
@@ -215,9 +245,10 @@ namespace SoulLink.Services
                 },ct).ConfigureAwait(false);
                 status=status with { State=status.Inserted>0?"inserted":"skipped",Detail=status.Inserted>0?"分页原始流水已入库":"接口无新增原始流水",UpdatedAtMs=NowMs() };
             }
-            catch
+            catch (Exception ex)
             {
-                status=status with { State="failed",Detail="拉取中断；已完成页面保留",UpdatedAtMs=NowMs() };
+                string detail = ex is MiyousheRequestException request ? request.Message : "拉取中断，已完成页面保留";
+                status=status with { State="failed",Detail=detail,UpdatedAtMs=NowMs() };
                 PullStatuses[account+"\u001f"+role.GameUid]=status;
                 await MiyousheStore.Shared.SavePullStatusAsync(status,CancellationToken.None).ConfigureAwait(false);
                 throw;
@@ -240,7 +271,7 @@ namespace SoulLink.Services
             int minutes=Math.Clamp(App.Config?.Settings?.MiyousheRetryMinutes??60,1,1440);
             if (ex is MiyousheRequestException request)
             {
-                if (request.Retcode == -10001) { state="needs_login";detail="凭据失效，请重新扫码"; }
+                if (request.RequiresLogin) { state="needs_login";detail=request.Message; }
                 else if (request.Retcode is 1034 or 10035 or 5003 or 10041)
                 { state="risk";detail="触发风控，自动任务已暂停，请人工处理";minutes=Math.Max(minutes,1440); }
                 else detail="接口返回失败（retcode="+request.Retcode+"）";

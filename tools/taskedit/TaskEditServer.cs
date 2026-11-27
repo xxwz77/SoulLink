@@ -144,6 +144,19 @@ namespace SoulLink.TaskEdit
                     await WriteUnauthorizedAsync(ctx, reason).ConfigureAwait(false);
                     return;
                 }
+                if (path.StartsWith("/api/bgi/editor/", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_auth.MatchesAnyCookie(ctx))
+                    {
+                        await WriteUnauthorizedAsync(ctx, "请先登录后再操作账号 BGI").ConfigureAwait(false);
+                        return;
+                    }
+                    if (ctx.Request.HttpMethod == "POST" && !TaskEditApi.SameOrigin(ctx.Request))
+                    {
+                        await WriteTextAsync(ctx, 403, "需要同源请求").ConfigureAwait(false);
+                        return;
+                    }
+                }
                 await _proxy.ForwardAsync(ctx, ct).ConfigureAwait(false);
             }
             catch (Exception)
@@ -212,7 +225,7 @@ namespace SoulLink.TaskEdit
 
             // P1 数据面 API（/taskedit/api/*）；其它 /taskedit/* 仍 404
             string qBgi = ctx.Request.QueryString["bgi"] ?? "";
-            if (TaskEditApi.TryHandle(ctx, path, qBgi, _config.ConfigPath))
+            if (TaskEditApi.TryHandle(ctx, path, qBgi, _config.ConfigPath, _auth, _proxy.EditorState))
                 return;
             await WriteTextAsync(ctx, 404, "未知的任务编辑路径").ConfigureAwait(false);
         }

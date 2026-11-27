@@ -26,7 +26,8 @@ namespace SoulLink.Relay
         private sealed class Viewer
         {
             public readonly object Sync = new();
-            public readonly Queue<(byte[] Nal, DateTime At)> Pending = new();   // ★ P0：带帧时间戳，供队列等待（帧龄）观测
+            public readonly ViewerFrameQueue<(byte[] Nal, DateTime At)> Pending;
+            public Viewer(bool hasInitialIdr) => Pending = new(ViewerQueueDepthValue, hasInitialIdr);
             /// <summary>★ P0（事件驱动等帧）：入队后 Set，唤醒该观众的等帧线程；替代 WriteStreamAsync 的 10ms 轮询。</summary>
             public readonly AutoResetEvent FrameReady = new(false);
             public bool Closed;
@@ -99,12 +100,7 @@ namespace SoulLink.Relay
             return int.TryParse(raw, out int v) ? Math.Clamp(v, 1, 2000) : 250;
         }
         private const int ZeroCopyFailDisableThreshold = 3;   // P0-E：零拷贝连续失败 ≥3 禁用 GPU 直通（防吞帧）
-        /// <summary>
-        /// ★ P0 队列延迟优化（2026-11-24）：观众待发队列深度上限（丢旧保新，关键帧头永不被丢）。
-        /// 从 4 降到 2：服务端队列延迟 = 深度 × 帧间隔，50fps 下 4 帧 ≈ 80ms、2 帧 ≈ 40ms。
-        /// 关键帧保护：队列头是 IDR 时不丢（宁可短暂超深，绝不丢关键帧导致花屏）。
-        /// 可配置：SOULLINK_VIEWER_QUEUE 环境变量覆盖（1~8），用于 A/B 实测与现场调优。
-        /// </summary>
+        /// <summary>每个观众的积压上限。超过上限后，下一段数据从完整 IDR 开始。</summary>
         private const int ViewerQueueDepth = 2;
         private static readonly int ViewerQueueDepthValue = ReadQueueDepth();
 
@@ -882,22 +878,7 @@ namespace SoulLink.Relay
                                                         + " queueDrops=" + _viewerQueueDrops + " queueDepthMax=" + _viewerQueueDepthMax);
                                                 DateTime cutoff = zFrame.At.AddSeconds(-keepSec);
                                                 while (Ring.Count > 0 && (Ring[0].At < cutoff || Ring.Count > Math.Max(300, fps * keepSec * 2))) Ring.RemoveAt(0);
-                                                int maxDepth = 0; long drops = 0;
-                                                foreach (var viewer in Viewers.Values)
-                                                {
-                                                    lock (viewer.Sync)
-                                                    {
-                                                        if (viewer.Closed) continue;
-                                                        if (zFrame.KeyFrame) viewer.Pending.Clear();
-                                                        // ★ P0 队列优化：丢旧保新——队列头是 IDR 时绝不丢（宁超深不花屏）
-                                                        while (viewer.Pending.Count >= ViewerQueueDepthValue && !IsKeyFrame(viewer.Pending.Peek().Nal)) { viewer.Pending.Dequeue(); drops++; }
-                                                        viewer.Pending.Enqueue((zFrame.Nal, zFrame.At));
-                                                        viewer.FrameReady.Set();   // ★ P0 事件驱动等帧：唤醒该观众的等帧线程
-                                                        if (viewer.Pending.Count > maxDepth) maxDepth = viewer.Pending.Count;
-                                                    }
-                                                }
-                                                if (maxDepth > _viewerQueueDepthMax) _viewerQueueDepthMax = maxDepth;
-                                                _viewerQueueDrops += drops;
+                                                PublishToViewers(zFrame);
                                             }
                                             // ★ 零拷贝首帧 PSNR 诊断（只跑一次）：GPU NV12 vs CPU 路径 NV12 同帧对比
                                             if (!zeroCopyPsnrDone)
@@ -1118,22 +1099,7 @@ namespace SoulLink.Relay
                                     + " queueAge=" + _queueAgeMs + " queueAgeMax=" + _queueAgeMaxMs);
                             DateTime cutoff = frame.At.AddSeconds(-keepSec);
                             while (Ring.Count > 0 && (Ring[0].At < cutoff || Ring.Count > Math.Max(300, fps * keepSec * 2))) Ring.RemoveAt(0);
-                            long drops = 0; int maxDepth = 0;
-                            foreach (var viewer in Viewers.Values)
-                            {
-                                lock (viewer.Sync)
-                                {
-                                    if (viewer.Closed) continue;
-                                    if (frame.KeyFrame) viewer.Pending.Clear();
-                                    // ★ P0 队列优化：丢旧保新——队列头是 IDR 时绝不丢（宁超深不花屏）
-                                    while (viewer.Pending.Count >= ViewerQueueDepthValue && !IsKeyFrame(viewer.Pending.Peek().Nal)) { viewer.Pending.Dequeue(); drops++; }
-                                    viewer.Pending.Enqueue((frame.Nal, frame.At));
-                                    viewer.FrameReady.Set();   // ★ P0 事件驱动等帧：唤醒该观众的等帧线程
-                                    if (viewer.Pending.Count > maxDepth) maxDepth = viewer.Pending.Count;
-                                }
-                            }
-                            if (maxDepth > _viewerQueueDepthMax) _viewerQueueDepthMax = maxDepth;
-                            _viewerQueueDrops += drops;
+                            PublishToViewers(frame);
                         }
                     }
                     if (nal == null || nal.Length == 0)
@@ -1182,6 +1148,32 @@ namespace SoulLink.Relay
             }
         }
 
+        private static long _lastViewerRecoveryMs;
+
+        // Both capture pipelines call this with Gate held. Only the slow viewer waits for resync.
+        private static void PublishToViewers(VideoFrame frame)
+        {
+            bool needsRecovery = false;
+            foreach (var viewer in Viewers.Values)
+            {
+                lock (viewer.Sync)
+                {
+                    if (viewer.Closed) continue;
+                    bool queued = viewer.Pending.Offer((frame.Nal, frame.At), frame.KeyFrame, out int drops, out bool request);
+                    _viewerQueueDrops += drops;
+                    needsRecovery |= request;
+                    if (queued) viewer.FrameReady.Set();
+                    _viewerQueueDepthMax = Math.Max(_viewerQueueDepthMax, viewer.Pending.Count);
+                }
+            }
+            long now = Environment.TickCount64;
+            if (needsRecovery && (_lastViewerRecoveryMs == 0 || now - _lastViewerRecoveryMs >= 1000))
+            {
+                _lastViewerRecoveryMs = now;
+                _forceKeyFrame = true;
+            }
+        }
+
         /// <summary>订阅共享 NAL。返回失败时调用方必须给出错误，不允许退回 JPEG 轮询。</summary>
         public static bool TrySubscribe(out int viewerId, out byte[]? initial, out string error)
         {
@@ -1195,16 +1187,11 @@ namespace SoulLink.Relay
                     _lastError = ""; _status = "idle";
                 }
                 viewerId = ++_nextViewerId;
-                Viewers[viewerId] = new Viewer();
-                // 新 MFT 的首帧必为 IDR；这是无 ICodecAPI 的跨厂商按需关键帧。
+                // An older cached IDR cannot be followed by a live P-frame: the intervening references are missing.
+                if (Ring.Count > 0 && Ring[^1].KeyFrame) initial = Ring[^1].Nal;
+                Viewers[viewerId] = new Viewer(initial != null);
                 _forceKeyFrame = true;
                 RecomputeLifecycle();
-                if (Ring.Count > 0)
-                {
-                    int start = Ring.Count - 1;
-                    for (int i = Ring.Count - 1; i >= 0; i--) if (Ring[i].KeyFrame) { start = i; break; }
-                    initial = Ring[start].Nal;
-                }
             }
             if (!StartCore(StreamFps, _quality, _keepSeconds, Process.GetCurrentProcess().SessionId, out error))
             {

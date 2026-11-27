@@ -68,6 +68,8 @@ namespace SoulLink.Services
             public string UserName = "";
             public string BgiExe = "";
             public string LogFile = "";
+            public string MissingPath = "";
+            public readonly object StepGate = new();
             public long Cursor;
             public long FileLength;
             public DateTime LastWrite = DateTime.MinValue;
@@ -136,8 +138,8 @@ namespace SoulLink.Services
             /// <summary>是否已经做过首次全量扫描。</summary>
             public bool Primed;
 
-            /// <summary>t55：本进程内是否已尝试过历史回填（每账号一次）。</summary>
-            public bool HistoryBackfilled;
+            /// <summary>当前绑定的回填队列。与该账号的 Step 共用 StepGate。</summary>
+            public BackfillState Backfill = new();
             /// <summary>t52：本次启动是否因持久化游标跳过了全量重扫（可观测）。</summary>
             public bool SkippedRescan;
             /// <summary>t52：跳过重扫时起跳的游标字节数（本次启动零读取的历史字节）。</summary>
@@ -446,7 +448,11 @@ namespace SoulLink.Services
                             //   → Step 永不执行 → 回填永远停在原地（实测卡在 11-21 的 7.3MB/39.1MB）。
                             //   改为：**先推进回填**（低优先级、限量），再 continue。
                             //   PumpBackfill 内部只读 1MB/tick，且会自行判断是否还有待办，开销可忽略。
-                            try { PumpBackfill(e, e.BgiExe); } catch { }
+                            lock (e.StepGate)
+                            {
+                                if (string.Equals(e.BgiExe, BgiPathResolver.GetBoundPath(e.UserName), StringComparison.OrdinalIgnoreCase))
+                                    try { PumpBackfill(e, e.BgiExe); } catch { }
+                            }
                             continue;
                         }
                         if (e.BgiPid > 0)
@@ -523,10 +529,9 @@ namespace SoulLink.Services
         public static void Tick(IEnumerable<Account> accounts)
         {
             var list = accounts?.Where(a => a != null).ToList() ?? new List<Account>();
-            if (list.Count == 0) return;
 
             // 首次调用时启动 1 秒合并窗口（幂等）
-            EnsureServiceTick();
+            if (list.Count > 0) EnsureServiceTick();
 
             // ★ 不再枚举进程：日志路径由配置推导，PID 缓存在 Entry 里。
             bool any = false;
@@ -534,7 +539,6 @@ namespace SoulLink.Services
             {
                 try
                 {
-                    MissCheck(acc);   // ★ t45 遗漏检查（读游标+文件长度，无 IO 放大）
                     if (Step(acc)) any = true;
                 }
                 catch (Exception ex)
@@ -567,35 +571,22 @@ namespace SoulLink.Services
         }
 
         /// <summary>
-        /// t45 启动/每轮遗漏检查：对比持久化 cursor 与当前文件长度，计算未读区间。
+        /// 接入文件时复用已加载的游标和长度，报告未读区间。
         /// 结果写入 LogBus（可观测）；补采由 Pump 按 MaxBytesPerTick 预算分批消化，不阻塞启动。
         /// </summary>
-        private static void MissCheck(Account acc)
+        private static void ReportBacklog(Entry e, long len)
         {
-            if (!BgiPathResolver.IsPinned(acc.UserName ?? "")) return;
-            string exe = BgiPathResolver.GetBoundPath(acc.UserName ?? "");
-            if (string.IsNullOrWhiteSpace(exe)) return;
-            string logFile = BgiLogWatcher.FindTodayLog(exe) ?? "";
-            if (logFile.Length == 0)
-            {
-                // 日志文件不存在（被删/移走）→ 记「缺失」
-                if (acc.UserName != null)
-                    LogBus.Warn("采集·缺失", acc.UserName + " 今日日志文件不存在（未绑定或已被移走）");
-                return;
-            }
             try
             {
-                long len = new FileInfo(logFile).Length;
-                long persisted = IngestCursorStore.LoadCursor(acc.Id, logFile);
-                long pending = persisted < 0 ? len : Math.Max(0, len - persisted);
+                long pending = Math.Max(0, len - e.Cursor);
                 if (pending > 8 * 1024 * 1024)
                 {
                     // 未读区间过大 → 记「补采中」，分多个 tick 消化
-                    LogBus.Info("采集·补采中", acc.UserName + " 未读 " + (pending / 1024 / 1024) + " MB，分批补采（不阻塞启动）");
+                    LogBus.Info("采集·补采中", e.UserName + " 未读 " + (pending / 1024 / 1024) + " MB，分批补采（不阻塞启动）");
                 }
                 else if (pending > 0)
                 {
-                    LogBus.Ok("采集·断点续传", acc.UserName + " 从断点续读，待补 " + pending + " 字节");
+                    LogBus.Ok("采集·断点续传", e.UserName + " 从断点续读，待补 " + pending + " 字节");
                 }
             }
             catch { }
@@ -667,8 +658,7 @@ namespace SoulLink.Services
             public readonly Dictionary<string, long> ResumeFrom = new(StringComparer.OrdinalIgnoreCase);
         }
 
-        private static readonly Dictionary<string, BackfillState> Backfills =
-            new(StringComparer.OrdinalIgnoreCase);
+
 
 
         /// <summary>
@@ -687,7 +677,7 @@ namespace SoulLink.Services
                 foreach (string f in files)
                 {
                     if (string.IsNullOrWhiteSpace(f)) continue;
-                    if (bs.Pending.Contains(f)) continue;        // 已在待办里
+                    // files contains only verified nonempty, fully-read historical files.
                     if (!RunRecordCollector.TryFileDay(f, out long fileDayMs)) continue;
 
                     string day = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -699,15 +689,16 @@ namespace SoulLink.Services
 
                     if (cnt <= 0)
                     {
-                        lock (Sync)
+                        lock (e.StepGate)
                         {
+                            if (e.Backfill != bs) return;
                             if (!bs.Pending.Contains(f))
                             {
                                 bs.Pending.Add(f);
                                 // ★ B1：库里零记录 → 从头重读（0）；幂等去重兜底不产生重复。
                                 bs.ResumeFrom[f] = 0;
                             }
-                            bs.Pending.Sort(StringComparer.Ordinal);   // 保持按文件名（=日期）升序
+                            // Append only: FileIndex and Offset must continue to identify the active file.
                         }
                         LogBus.Info("采集·历史回填补充", e.UserName + " " + Path.GetFileName(f)
                             + " 库中无 " + day + " 的记录，安排回填");
@@ -725,16 +716,7 @@ namespace SoulLink.Services
         {
             if (string.IsNullOrWhiteSpace(exe)) return false;
 
-            BackfillState bs;
-            lock (Sync)
-            {
-                if (!Backfills.TryGetValue(e.AccountId, out var found))
-                {
-                    found = new BackfillState();
-                    Backfills[e.AccountId] = found;
-                }
-                bs = found;
-            }
+            var bs = e.Backfill;
 
             // ① 首次：扫描待回填文件列表（只扫一次，很轻）
             if (!bs.Initialized)
@@ -746,11 +728,11 @@ namespace SoulLink.Services
                 //   原来复用 RunDbRetentionDays（留存天数），两者语义不同：
                 //   想多采历史但不留那么久，就会被绑死。
                 int days = Math.Clamp(App.Config?.Settings?.BgiBackfillDays ?? 7, 1, 60);
-                    var files = BgiLogWatcher.ListRecentLogs(exe, days);
-                    string todayName = "better-genshin-impact" + DateTime.Now.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".log";
-                    foreach (string f in files)
+                    var files = BgiLogWatcher.RecentHistory(exe, days);
+                    var verifyInDb = new List<string>();
+                    foreach (var file in files)
                     {
-                        if (string.Equals(Path.GetFileName(f), todayName, StringComparison.OrdinalIgnoreCase)) continue;
+                        string f = file.FullName;
 
                         // ★★ t66 修复（11-25 卡在 9/36.9 MB 的根因）：
                         //
@@ -773,11 +755,9 @@ namespace SoulLink.Services
                         //   现在三重依据：
                         //     ① 日志文件存在且非空；
                         //     ② 游标 < 文件长度（没读完）；**或** 该日期在库里零记录（库缺失）；
-                        //     ③ 文件名日期在回填窗口内（ListRecentLogs 已保证）。
+                        //     ③ 文件名日期在回填窗口内（RecentHistory 已保证）。
                         long cur = IngestCursorStore.LoadCursor(e.AccountId, f);
-                        long lenNow = 0;
-                        try { lenNow = new FileInfo(f).Length; } catch { }
-                        if (lenNow <= 0) continue;                       // ① 空文件跳过
+                        long lenNow = file.Length;
 
                         bool notFullyRead = cur < 0 || cur < lenNow;     // ② 没读完
 
@@ -791,6 +771,7 @@ namespace SoulLink.Services
                             // ★ B1：游标续读 —— 从持久化游标处继续，绝不从头重读。
                             bs.ResumeFrom[f] = cur < 0 ? 0 : cur;
                         }
+                        else verifyInDb.Add(f);
                     }
                     if (bs.Pending.Count > 0)
                         LogBus.Ok("采集·历史回填", e.UserName + " 待回填 " + bs.Pending.Count
@@ -806,7 +787,7 @@ namespace SoulLink.Services
                     //
                     //   为什么要查：游标只说明「日志被读过」，不说明「数据在库里」。
                     //   清库/换库后游标仍在，那天的数据就永远补不回来（实测过）。
-                    _ = CheckMissingDaysAsync(e, files, bs);
+                    if (verifyInDb.Count > 0) _ = CheckMissingDaysAsync(e, verifyInDb, bs);
                 }
                 catch { }
                 return false;   // 本 tick 只做初始化，不干活
@@ -834,11 +815,17 @@ namespace SoulLink.Services
             var sliceSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var fi = new FileInfo(current);
-                if (!fi.Exists || fi.Length <= 0)
+                var fi = BgiLogWatcher.ProbeDailyPath(current, out bool missing);
+                if (fi == null && !missing)
+                {
+                    // Unavailable, not confirmed absent: keep its persisted progress for re-entry.
+                    bs.FileIndex++; bs.Offset = 0; bs.FailStreak = 0;
+                    return false;
+                }
+                if (fi == null || fi.Length <= 0)
                 {
                     bs.FileIndex++; bs.Offset = 0;
-                    IngestCursorStore.Advance(e.AccountId, current, 0, 0, 0);
+                    bs.FailStreak = 0;
                     return false;
                 }
                 long len = fi.Length;
@@ -1002,6 +989,11 @@ namespace SoulLink.Services
                 e = found;
             }
 
+            lock (e.StepGate) return StepBound(e, user, bound);
+        }
+
+        private static bool StepBound(Entry e, string user, bool bound)
+        {
             bool wasUnbound = false;
             lock (Sync)
             {
@@ -1009,8 +1001,10 @@ namespace SoulLink.Services
                 if (!bound)
                 {
                     // ★ 未绑定：清空并**不做任何 IO**。
-                    bool had = e.Primed || e.BgiExe.Length > 0 || e.LogFile.Length > 0;
+                    bool had = e.Primed || e.BgiExe.Length > 0 || e.LogFile.Length > 0 || e.Error.Length > 0;
                     if (had) e.Version++;
+                    e.MissingPath = "";
+                    e.BgiPid = 0;
                     e.BgiExe = "";
                     e.LogFile = "";
                     e.Cursor = 0;
@@ -1031,55 +1025,63 @@ namespace SoulLink.Services
 
             // 绑定了：解析路径（不写回配置），再找该会话里正在跑的 BGI 日志。
             string exe = BgiPathResolver.GetBoundPath(user);
-            string logFile = "";
-            int sessionId = 0;
-
-            if (!string.IsNullOrWhiteSpace(exe))
+            string expected = BgiDailyLogProbe.ExpectedPath(exe, DateTime.Today);
+            var file = BgiLogWatcher.ProbeDailyPath(expected, out bool confirmedMissing);
+            bool rebound = !string.Equals(e.BgiExe, exe, StringComparison.OrdinalIgnoreCase);
+            if (rebound)
             {
-                // ★ 优先从**配置的 exe 路径**推导今天的日志（同目录 log\ 下按日期命名）。
-                //   这一步只要 0.017ms（一次 FileInfo）。
-                //
-                //   原来是反过来的：先枚举全部进程（23.7ms）拿 inst.LogFile，
-                //   拿不到才退回推导。而用户既然已经填了 BGI 路径，
-                //   推导几乎总能成功 —— 等于每次都白花 23.7ms。
-                //   watcher 事件里也调这个，日志每秒写 1KB 就烧掉 25% CPU，
-                //   根源就在这里。
-                logFile = BgiLogWatcher.FindTodayLog(exe) ?? "";
-
-                // 记录 BGI 的 PID，供之后低成本判活（GetProcessById 0.012ms）。
-                // ★ 只有这里需要一次进程枚举；而且缓存进 Entry 后不用重复。
-                var state = AccountStateCenter.Get(acc.Id);
-                sessionId = state?.SessionId ?? 0;
-                if (sessionId > 0 && e.BgiPid <= 0)
-                {
-                    try
-                    {
-                        var inst = BgiLogWatcher.DiscoverForSession(sessionId, exe);
-                        if (inst != null)
-                        {
-                            if (inst.Pid > 0) e.BgiPid = inst.Pid;
-                            // 推导失败时才用进程给的文件（极少数目录结构特殊的情况）
-                            if (logFile.Length == 0 && !string.IsNullOrWhiteSpace(inst.LogFile))
-                                logFile = inst.LogFile;
-                        }
-                    }
-                    catch { }
-                }
+                e.BgiPid = 0;
+                e.Backfill = new BackfillState();
             }
+            if (file == null)
+            {
+                bool changed;
+                lock (Sync)
+                {
+                    string error = expected.Length == 0 ? "绑定的 BGI 路径为空" :
+                        confirmedMissing ? "等待今日日志" : "今日日志路径暂不可用";
+                    changed = rebound || e.Error != error || !string.Equals(e.MissingPath, expected, StringComparison.OrdinalIgnoreCase);
+                    e.BgiExe = exe;
+                    e.MissingPath = expected;
+                    if (e.LogFile.Length > 0)
+                    {
+                        // A recreated file can be larger than its predecessor. Never skip
+                        // its prefix using the cursor of the file we observed disappear.
+                        if (confirmedMissing && string.Equals(expected, e.LogFile, StringComparison.OrdinalIgnoreCase))
+                            IngestCursorStore.Reset(e.AccountId, e.LogFile);
+                        else
+                            IngestCursorStore.Flush(e.AccountId, e.LogFile, Math.Max(0, e.Cursor - e.PendingLen), e.FileLength, e.LastWrite.Ticks);
+                    }
+                    e.LogFile = "";
+                    e.Cursor = e.FileLength = 0;
+                    e.PendingLen = 0;
+                    e.Primed = false;
+                    e.LastWrite = DateTime.MinValue;
+                    e.Error = error;
+                    if (changed) e.Version++;
+                }
+                StopWatcher(e);
+                if (changed && expected.Length > 0)
+                    LogBus.Warn("采集·日志", user + " " + e.Error + " " + expected);
+                // 今天还没启动也可补历史；目录离线则等当天发现入口恢复。
+                if (confirmedMissing) PumpBackfill(e, exe);
+                return changed;
+            }
+
+            string logFile = file.FullName;
+            int sid = AccountStateCenter.Get(e.AccountId)?.SessionId ?? 0;
+            if (e.BgiPid <= 0 && sid > 0)
+                e.BgiPid = BgiLogWatcher.DiscoverForSession(sid, exe)?.Pid ?? 0;
 
             lock (Sync)
             {
-                e.BgiExe = exe ?? "";
-                if (logFile.Length == 0)
-                {
-                    // 绑定了但今天还没有日志：保留上次的粘性配置组与统计，只是不前进。
-                    e.Error = exe.Length == 0 ? "BGI 路径为空" : "";
-                    return false;
-                }
+                e.BgiExe = exe;
+                e.MissingPath = "";
+                e.Error = "";
                 if (!string.Equals(e.LogFile, logFile, StringComparison.OrdinalIgnoreCase))
                 {
                     e.ResetForNewFile(logFile);
-                    e.Version++;
+                    ReportBacklog(e, file.Length);
 
                     // ★ 3.3.41 跨天补全入口（契约 §4.4）：文件滚动 / 新一天日志开始文件时，
                     //   让运行记录采集器判断「内存里的 open 窗口还算不算同一次运行」——
@@ -1099,20 +1101,18 @@ namespace SoulLink.Services
             //   与「留存 7 天」需求冲突。每份日志的日期由文件名唯一确定（用户原则：
             //   同一份日志就是同一天），所以按文件回填是安全且确定的。
             //   只在「该文件的持久化 cursor 不存在（-1）」时补，采过的不重复。
+            bool updated = Pump(e, file);
             PumpBackfill(e, exe);
-
-            return Pump(e);
+            return updated;
         }
 
         /// <summary>把文件从 cursor 读到 EOF。返回是否有可见变化。</summary>
-        private static bool Pump(Entry e)
+        private static bool Pump(Entry e, FileInfo fi)
         {
             long len;
             DateTime write;
             try
             {
-                var fi = new FileInfo(e.LogFile);
-                if (!fi.Exists) return false;
                 len = fi.Length;
                 write = fi.LastWriteTime;
             }

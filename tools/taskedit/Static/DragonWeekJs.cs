@@ -24,7 +24,7 @@ namespace SoulLink.TaskEdit
       var CN = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
       var SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   
-      var html = '<details class="card" open><summary>逐日配置 ' +
+      var html = '<details class="card"><summary>逐日配置 ' +
         '<span class="badge tag">一周表格</span></summary><div class="body">';
   
       /* ── 表 1：秘境/队伍/选择值 ── */
@@ -51,7 +51,7 @@ namespace SoulLink.TaskEdit
       }
   
       /* ── 表 2：地脉花每天类型/国家 + 是否跑 ── */
-      html += '<tr><td class="rowhead" colspan="8" style="padding-top:12px;color:#93c5fd">' +
+      html += '<tr><td class="rowhead" colspan="8" style="padding-top:12px;color:var(--acc)">' +
         '地脉花（每周）</td></tr>';
       html += '<tr><td class="rowhead">是否跑</td>';
       for (var k = 0; k < 7; k++) {

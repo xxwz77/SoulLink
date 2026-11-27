@@ -866,32 +866,7 @@ namespace SoulLink.Views
                             changed = true;
                         _sqliteTodayRuns[st.UserName] = todayRuns;
 
-                        // ★ 2026-11-26 用户要求「主界面汇总显示总数」：
-                        //   把 run.db 里各组解析到的狗粮收益汇总到 st.Today。
-                        //
-                        //   ★★ 必须排除「records 那一组」：records/*.txt 已单独给出
-                        //      DogfoodExp/Mora（界面那行大数字），若这里再把同组累加一次，
-                        //      主界面汇总就变成双倍（用户实测看到「经验 +61,740 · 其他组 +148,680」
-                        //      自相矛盾，因为 148,680 里已经含了那个 61,740）。
-                        //
-                        //   排除判据不写死组名：取「records 记录里那条的数值」与 run 对比，
-                        //   数值完全相同的那一组就是 records 来源组 → 跳过它。
-                        try
-                        {
-                            long otherExp = 0, otherMora = 0;
-                            foreach (var r in todayRuns)
-                            {
-                                if (r.DogfoodExp <= 0 && r.DogfoodMora <= 0) continue;
-                                // records 来源组 → 已在 DogfoodExp 里单独显示，这里跳过（否则双倍）
-                                if (string.Equals(r.GroupName, SoulLink.Services.DogfoodRecordReader.RecordsSourceGroup,
-                                        StringComparison.OrdinalIgnoreCase)) continue;
-                                otherExp += r.DogfoodExp;
-                                otherMora += r.DogfoodMora;
-                            }
-                            st.Today.DogfoodOtherExp = otherExp;
-                            st.Today.DogfoodOtherMora = otherMora;
-                        }
-                        catch { }
+
                     }
                     catch { _sqliteTodayRuns[st.UserName] = Array.Empty<SoulLink.Services.RunRecord>(); }
                 }

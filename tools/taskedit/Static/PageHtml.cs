@@ -3,7 +3,7 @@ using System.Text;
 
 namespace SoulLink.TaskEdit
 {
-    // 任务编辑页 HTML 外壳（按 §3.1 左树 + 右画布布局）。
+    // 任务编辑页 HTML 外壳（按 §3.1 账号 + 分页编辑布局）。
     internal static partial class TaskEditStatic
     {
         internal static string Page()
@@ -19,23 +19,20 @@ namespace SoulLink.TaskEdit
             sb.Append("<div class=\"top\">");
             sb.Append("<span class=\"brand\">SoulLink</span>");
             sb.Append("<span class=\"pill\">任务编辑</span>");
+            sb.Append("<span class=\"pill\" id=\"accountLabel\"></span><select id=\"accountSelect\" aria-label=\"选择账号\" hidden></select>");
             sb.Append("<div class=\"tabs\">");
-            sb.Append("<button class=\"tab on\" data-tab=\"edit\">配置组 / 一条龙</button>");
-            sb.Append("<button class=\"tab\" data-tab=\"pick\">拾取名单</button>");
+            sb.Append("<button class=\"tab on\" data-tab=\"dragon\" disabled>一条龙</button><button class=\"tab\" data-tab=\"group\" disabled>配置组</button>");
+            sb.Append("<button class=\"tab\" data-tab=\"pick\" disabled>拾取名单</button>");
             sb.Append("</div>");
             sb.Append("<span class=\"spacer\"></span>");
             sb.Append("<span class=\"ver\" id=\"verBar\">…</span>");
-            sb.Append("<button class=\"btn\" id=\"reloadBtn\">重新加载</button>");
+            sb.Append("<button class=\"btn\" id=\"themeBtn\" aria-label=\"切换亮暗主题\">主题</button><button class=\"btn\" id=\"reloadBtn\">重新加载</button>");
             sb.Append("<button class=\"btn\" id=\"saveBtn\" disabled>保存</button>");
             sb.Append("</div>");
 
             /* ── 主体 ── */
             sb.Append("<div class=\"main\">");
-            sb.Append("<div class=\"side\" id=\"side\">");
-            sb.Append("<div class=\"side-head\">对象<span class=\"spacer\" style=\"flex:1\"></span>");
-            sb.Append("<button class=\"btn sm\" id=\"sideRefresh\" title=\"刷新列表\">⟳</button></div>");
-            sb.Append("<div class=\"tree\" id=\"tree\"><div class=\"hint\">加载中…</div></div>");
-            sb.Append("</div>");
+            sb.Append("<details id=\"objectPicker\" hidden><summary></summary><div class=\"object-grid\"></div></details>");
             sb.Append("<div class=\"canvas\" id=\"canvas\">");
             sb.Append("<div class=\"canvas-empty\">加载中…</div>");
             sb.Append("</div>");
@@ -58,11 +55,6 @@ namespace SoulLink.TaskEdit
             /* ── 脚本（顺序敏感：core 最先，app 最后）── */
             foreach (string js in Scripts)
                 sb.Append("<script src=\"/taskedit/static/").Append(js).Append("\"></script>");
-
-            /* 侧栏刷新按钮（内联，避免为一行代码再开一个文件） */
-            sb.Append("<script>document.addEventListener('DOMContentLoaded',function(){");
-            sb.Append("var b=document.getElementById('sideRefresh');");
-            sb.Append("if(b)b.onclick=function(){TE.tree.load(true);};});</script>");
 
             sb.Append("</body></html>");
             return sb.ToString();

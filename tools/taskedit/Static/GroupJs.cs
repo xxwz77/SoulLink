@@ -21,14 +21,14 @@ namespace SoulLink.TaskEdit
       TE.group.name = name;
       TE.group.selIdx = -1;
       TE.busy(true, '加载配置组「' + name + '」…');
-      TE.api.get('/groups/' + encodeURIComponent(name)).then(function (d) {
+      return TE.tree.readDetail('/groups/' + encodeURIComponent(name), function (d) {
         if (!d || d._status >= 400 || d.ok === false) {
-          TE.el('canvas').innerHTML = '<div class="banner err">读取失败：' + TE.esc(d.error || '未知错误') + '</div>';
+          TE.el('canvas').innerHTML = '<div class="banner err">读取失败：' + TE.esc((d && d.error) || '未知错误') + '</div>';
           return;
         }
         TE.group.data = d;
         TE.group.render();
-      }).catch(function (e) {
+      }, function (e) {
         TE.el('canvas').innerHTML = '<div class="banner err">读取失败：' + TE.esc(e.message) + '</div>';
       });
     },
@@ -40,12 +40,12 @@ namespace SoulLink.TaskEdit
       var html = '';
 
       html += '<div class="head"><h2>' + TE.esc(TE.group.name) + '</h2>' +
-        '<span class="meta">' + projects.length + ' 个项目</span>' +
-        '<span class="grow"></span>' +
-        '<button class="btn" id="gRun">运行</button>' +
-        '<button class="btn" id="gAdd">添加</button>' +
-        '<button class="btn" id="gSet">设置</button>' +
-        '<button class="btn" id="gDir">本地目录</button></div>';
+        '<span class="meta">' + projects.length + ' 个项目</span></div>' +
+        '<div class="native-tools" aria-label="配置组工具">' +
+        '<button class="btn" disabled title="请在 BGI 客户端运行">运行</button>' +
+        '<button class="btn" id="gAdd" aria-haspopup="true">添加 ▾</button>' +
+        '<button class="btn" id="gMore" aria-haspopup="true">更多功能 ▾</button>' +
+        '<button class="btn" id="gSet">设置</button></div>';
 
       /* 项目表格（13 个字段全覆盖）在 GroupTableJs.cs 的 TE.group.tableHtml */
       html += TE.group.tableHtml(projects);
@@ -95,19 +95,25 @@ namespace SoulLink.TaskEdit
     bind: function (cfg) {
       var c = TE.el('canvas');
 
-      TE.el('gRun').onclick = function () {
-        /* ★ 只发通知给主程序（控制面），绝不在这里启停 BGI */
-        TE.confirm('运行配置组', '将请求主程序启动配置组「' + TE.group.name + '」。' +
-          '（本页不直接启停 BGI）', function () {
-            TE.toast('已通知主程序（控制面通道在 P2 接入）', 'warn', 3200);
-          });
+      TE.el('gMore').onclick = function () {
+        var rect = this.getBoundingClientRect();
+        TE.menu(rect.left, rect.bottom, [
+          { label: TE.group.details ? '收起详细列' : '展开详细列', action: function () {
+            TE.group.details = !TE.group.details;
+            TE.el('gTable').classList.toggle('expanded', TE.group.details);
+          } },
+          { label: '本地目录', action: function () { TE.group.showDir(); } }
+        ]);
       };
-      TE.el('gAdd').onclick = function (e) { TE.group.showAddMenu(e.clientX, e.clientY); };
+      TE.el('gAdd').onclick = function () {
+        var rect = this.getBoundingClientRect();
+        TE.group.showAddMenu(rect.left, rect.bottom);
+      };
       TE.el('gSet').onclick = function () {
         var el = TE.el('sec-config');
         if (el) { el.open = true; el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
       };
-      TE.el('gDir').onclick = function () { TE.group.showDir(); };
+
 
       /* ── 行内控件绑定（★ 覆盖全部 13 个 project 字段里的 9 个可编辑项）── */
       var rows = function () { return TE.group.data.projects || TE.group.data.Projects || []; };
@@ -116,7 +122,8 @@ namespace SoulLink.TaskEdit
         cb.onchange = function () {
           var p = rows()[+cb.getAttribute('data-en')];
           if (!p) return;
-          TE.group.fvSet(p, 'enabled', cb.checked);
+          TE.group.fvSet(p, 'status', cb.checked ? 'Enabled' : 'Disabled');
+          if (TE.group.fv(p, 'enabled') !== undefined) TE.group.fvSet(p, 'enabled', cb.checked);
           TE.dirty.mark('group:' + TE.group.name);
         };
       });
@@ -166,17 +173,15 @@ namespace SoulLink.TaskEdit
         };
       });
 
-      TE.$$('[data-ajh]', c).forEach(function (cb) {
-        cb.onchange = function () {
-          var p = rows()[+cb.getAttribute('data-ajh')];
-          if (!p) return;
-          TE.group.fvSet(p, 'allowJsHTTPHash', cb.checked);
-          TE.dirty.mark('group:' + TE.group.name);
-        };
-      });
 
       /* 行右键：按类型给菜单 */
       var tbody = TE.el('gTable').querySelector('tbody');
+      tbody.onclick = function (e) {
+        var btn = e.target.closest('[data-menu]');
+        if (!btn) return;
+        var rect = btn.getBoundingClientRect();
+        TE.group.showRowMenu(+btn.dataset.menu, rect.left, rect.bottom);
+      };
       tbody.oncontextmenu = function (e) {
         var tr = e.target.closest('tr[data-i]');
         e.preventDefault();

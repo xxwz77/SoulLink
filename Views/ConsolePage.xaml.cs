@@ -2782,12 +2782,30 @@ namespace SoulLink.Views
 
         // ── 画面工具栏 ───────────────────────────────────────────────────────
 
-        // ★ 自由视角不再是按钮，只做状态指示（原来误触会让视角乱掉）。
-        //   切换到自由视角仍然通过热键完成，这里只负责把当前状态显示出来。
+        // Explicit RDP game-mode control; the per-console hotkey remains an independent escape hatch.
+        private void BtnGameMode_Click(object sender, RoutedEventArgs e)
+        {
+            var console = _viewing?.Console;
+            if (console == null) { LogBus.Warn("自由视角", "先打开一个用户画面"); return; }
+            console.SetInputMode(console.InputMode == ConsoleInputMode.FreeLook
+                ? ConsoleInputMode.Pointer : ConsoleInputMode.FreeLook);
+        }
 
         private void ApplyModeUi(ConsoleInputMode mode)
         {
             string hk = _viewing?.Console?.ToggleHotkey ?? "Ctrl+Alt+Q";
+            string modeText = mode == ConsoleInputMode.FreeLook ? "退出游戏模式" : "游戏模式";
+            if (BtnGameModeLabel != null) BtnGameModeLabel.Text = modeText;
+            if (BtnFullScreenGameMode != null) BtnFullScreenGameMode.Content = modeText;
+            bool relativeReady = _viewing?.Console?.IsConnected == true && _viewing?.Console?.Input?.Relay.IsConnected == true;
+            bool modeEnabled = mode == ConsoleInputMode.FreeLook || relativeReady;
+            if (BtnGameMode != null) BtnGameMode.IsEnabled = modeEnabled;
+            if (BtnFullScreenGameMode != null) BtnFullScreenGameMode.IsEnabled = modeEnabled;
+            string modeTip = mode == ConsoleInputMode.FreeLook
+                ? "退出自由视角（也可按 " + hk + "）"
+                : relativeReady ? "进入自由视角（" + hk + " 也可切换）" : "相对输入未就绪；等待注入就绪后可进入";
+            if (BtnGameMode != null) BtnGameMode.ToolTip = modeTip;
+            if (BtnFullScreenGameMode != null) BtnFullScreenGameMode.ToolTip = modeTip;
             if (mode == ConsoleInputMode.FreeLook)
             {
                 if (ModeLabel != null) ModeLabel.Text = "自由视角中";

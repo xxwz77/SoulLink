@@ -60,12 +60,18 @@ namespace SoulLink.TaskEdit
         /// 备份一个文件到 &lt;DataDir&gt;\backup\&lt;kind&gt;\&lt;原名&gt;.yyyyMMdd-HHmmss.bak，
         /// 然后裁剪到 <see cref="KeepPerKind"/> 份。返回备份文件全路径（失败返回空串）。
         /// </summary>
-        internal static string Save(string kind, string sourcePath)
+        internal static string Save(string kind, string sourcePath, string account = null)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath)) return "";
                 string dir = DirFor(kind);
+                if (account != null)
+                {
+                    // 账号名单来自配置；仍限制为单个安全目录名。
+                    DragonFiles.FilePath(dir, account);
+                    dir = DragonFiles.CheckPath(Path.Combine(dir, account));
+                }
                 Directory.CreateDirectory(dir);
 
                 string stem = Path.GetFileNameWithoutExtension(sourcePath);
@@ -78,24 +84,26 @@ namespace SoulLink.TaskEdit
                 while (File.Exists(dest))
                     dest = Path.Combine(dir, stem + "." + stamp + "_" + (n++) + ".bak");
 
-                File.Copy(sourcePath, dest, true);
-                Prune(kind, stem);
+                File.Copy(sourcePath, dest, false);
+                PruneDirectory(dir, stem);
                 return dest;
             }
             catch (Exception) { return ""; }
         }
 
         /// <summary>裁剪：同一原名只保留最近 KeepPerKind 份。</summary>
-        internal static int Prune(string kind, string stem)
+        internal static int Prune(string kind, string stem) => PruneDirectory(DirFor(kind), stem);
+
+        private static int PruneDirectory(string dir, string stem)
         {
             int removed = 0;
             try
             {
-                string dir = DirFor(kind);
                 if (!Directory.Exists(dir)) return 0;
                 // 精确匹配 <stem>.*.bak，避免误删别的对象
                 var files = Directory.GetFiles(dir, stem + ".*.bak")
-                    .OrderByDescending(f => f, StringComparer.OrdinalIgnoreCase)   // 时间戳在名字里，字典序=时间序
+                    .Where(f => System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f).Substring(stem.Length), @"^[.]\d{8}-\d{6}-\d{3}(_\d+)?[.]bak$"))
+                    .OrderByDescending(f => f, StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 for (int i = KeepPerKind; i < files.Count; i++)
                 {

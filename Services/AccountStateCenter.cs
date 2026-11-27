@@ -17,6 +17,8 @@ namespace SoulLink.Services
     {
         /// <summary>账号 Id（Account.Id）。</summary>
         public string AccountId = "";
+        internal sealed record DogfoodTotal(DateTime Day, long Exp, long Mora);
+        internal volatile DogfoodTotal? CollectedDogfood;
         /// <summary>Windows 用户名。</summary>
         public string UserName = "";
         /// <summary>显示名（昵称）。</summary>
@@ -600,6 +602,31 @@ namespace SoulLink.Services
         }
 
         /// <summary>刷新一轮。单轮不重入，避免卡住时堆叠。</summary>
+        private static long _nextDogfoodQuery;
+        private static int _dogfoodQueryBusy;
+        private static async Task RefreshDogfoodTotalsAsync(List<AccountState> accounts)
+        {
+            if (Environment.TickCount64 < Interlocked.Read(ref _nextDogfoodQuery) ||
+                Interlocked.CompareExchange(ref _dogfoodQueryBusy, 1, 0) != 0) return;
+            try
+            {
+                var day = DateTime.Today;
+                var totals = await RunRecordStore.QueryDogfoodTotalsAsync(day).ConfigureAwait(false);
+                if (totals == null || DateTime.Today != day) return;
+                foreach (var st in accounts)
+                {
+                    totals.TryGetValue(st.UserName, out var sum);
+                    st.CollectedDogfood = new AccountState.DogfoodTotal(day, sum.Exp, sum.Mora);
+                }
+            }
+            catch (Exception ex) { App.AppendErrorLog("DogfoodTotals", ex); }
+            finally
+            {
+                Interlocked.Exchange(ref _nextDogfoodQuery, Environment.TickCount64 + 30_000);
+                Interlocked.Exchange(ref _dogfoodQueryBusy, 0);
+            }
+        }
+
         private static void RefreshOnce(AppConfig cfg)
         {
             if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0)
@@ -670,6 +697,7 @@ namespace SoulLink.Services
                     catch { }
                 }
 
+                _ = RefreshDogfoodTotalsAsync(snapshot);
                 lock (_sync) _lastRefresh = DateTime.Now;
 
                 // ★ 没有可见窗口时不要通知 UI。

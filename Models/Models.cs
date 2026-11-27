@@ -441,7 +441,8 @@ namespace SoulLink.Models
         /// <summary>摩拉拉取间隔分钟数；默认 60（米游社数据约 1 小时延迟，再频繁无意义）。</summary>
         public int MiyousheLedgerIntervalMinutes { get; set; } = 60;
         /// <summary>国服 x4 DS salt（t20 解包双源确认，公开社区值）。若服务端改协议/作废，可在设置中覆盖。</summary>
-        public string MiyousheDsSalt { get; set; } = "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs";
+        public string MiyousheDsSalt { get; set; } = DefaultMiyousheDsSalt;
+        internal const string DefaultMiyousheDsSalt = "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs";
         /// <summary>每账号自动签到独立开关；缺省跟随全局开关。</summary>
         public Dictionary<string, bool> MiyousheSignAccounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>米游社拉取状态配置（鉴权失败/风控退避分钟数，默认 60）。</summary>

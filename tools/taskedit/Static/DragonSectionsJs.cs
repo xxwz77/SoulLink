@@ -19,26 +19,11 @@ namespace SoulLink.TaskEdit
   sectionsHtml: function (d) {
     var html = '';
 
-    /* ── 账户 ── */
-    html += TE.dragon.card(d, '账户', 'acct', [
-      { k: 'GenshinUid', l: '游戏 UID', t: 'text' },
-      { k: 'AccountBinding', l: '绑定账号', t: 'bool' },
-      { k: 'AccountBindingCode', l: '绑定验证码', t: 'text' }
-    ]);
 
-    /* ── 周期 / 计划表 ── */
-    html += TE.dragon.card(d, '周期与计划表', 'period', [
-      { k: 'Period', l: '周期', t: 'enum', opts: ['每日', '每周', '每月'] },
-      { k: 'ScheduleName', l: '计划表名', t: 'text' },
-      { k: 'NextConfiguration', l: '使用下一配置', t: 'bool' }
-    ]);
-    html += TE.dragon.periodListCard(d);
-    html += TE.dragon.card(d, '完成条件', 'name', [
-      { k: 'Name', l: '配置名称', t: 'text' }
-    ]);
 
     /* ── 合成树脂 ── */
     html += TE.dragon.card(d, '合成树脂', 'resin', [
+      { k: 'CraftingBenchCountry', l: '合成台国家', t: 'text' },
       { k: 'SpecifyResinUse', l: '指定树脂用途', t: 'bool' },
       { k: 'MinResinToKeep', l: '最少保留树脂', t: 'num', min: 0 }
     ]);
@@ -49,7 +34,6 @@ namespace SoulLink.TaskEdit
       { k: 'PartyName', l: '队伍名', t: 'text' },
       { k: 'DomainName', l: '秘境名', t: 'text' },
       { k: 'WeeklyDomainEnabled', l: '启用周本', t: 'bool' },
-      { k: 'CraftingBenchCountry', l: '合成台国家', t: 'text' },
       { k: 'AdventurersGuildCountry', l: '冒险家协会国家', t: 'text' },
       { k: 'SundayDaySelectedValue', l: '周日（按日）', t: 'text' }
     ]);
@@ -91,6 +75,24 @@ namespace SoulLink.TaskEdit
     /* ── ★ 一周表格（21 个 form 字段 + LeyLineRunXxx 7 个开关）── */
     html += TE.dragon.weekCard(d);
 
+    /* ── 账户 ── */
+    html += TE.dragon.card(d, '账户', 'acct', [
+      { k: 'GenshinUid', l: '游戏 UID', t: 'text' },
+      { k: 'AccountBinding', l: '绑定账号', t: 'bool' },
+      { k: 'AccountBindingCode', l: '绑定验证码', t: 'text' }
+    ]);
+
+    /* ── 周期 / 计划表 ── */
+    html += TE.dragon.card(d, '周期与计划表', 'period', [
+      { k: 'Period', l: '周期', t: 'enum', opts: ['每日', '每周', '每月'] },
+      { k: 'ScheduleName', l: '计划表名', t: 'text' },
+      { k: 'NextConfiguration', l: '使用下一配置', t: 'bool' }
+    ]);
+    html += TE.dragon.periodListCard(d);
+    html += TE.dragon.card(d, '完成条件', 'name', [
+      { k: 'Name', l: '配置名称', t: 'text' }
+    ]);
+
     /* ── 只读（不编辑但显示；写回保留）── */
     html += TE.dragon.readonlyCard(d);
 
@@ -108,7 +110,7 @@ namespace SoulLink.TaskEdit
     for (var i = 0; i < DAYS.length; i++) {
       var key = DAYS[i][0];
       var has = Object.prototype.hasOwnProperty.call(pl, key);
-      html += '<label style="display:flex;align-items:center;gap:6px;color:#a8b0c0">' +
+      html += '<label style="display:flex;align-items:center;gap:6px;color:var(--fg2)">' +
         '<input type="checkbox" data-plist="' + TE.attr(key) + '"' +
         (pl[key] === true ? ' checked' : '') + (has ? '' : ' disabled') + '>' +
         TE.esc(key) + '</label>';
@@ -121,7 +123,7 @@ namespace SoulLink.TaskEdit
   resinCountCard: function (d) {
     var rc = TE.dragon.read(d, 'ResinCount');
     if (!rc || typeof rc !== 'object') return '';
-    var html = '<details class="card" open><summary>树脂数量（ResinCount） ' +
+    var html = '<details class="card"><summary>树脂数量（ResinCount） ' +
       '<span class="badge tag">' + Object.keys(rc).length + '</span></summary><div class="body">';
     for (var k in rc) {
       if (!Object.prototype.hasOwnProperty.call(rc, k)) continue;
@@ -157,7 +159,7 @@ namespace SoulLink.TaskEdit
       '<div class="desc" style="margin-bottom:8px">勾选要兑换的商品：</div>' +
       '<div class="row" style="flex-wrap:wrap;gap:14px">';
     for (var i = 0; i < OPTS.length; i++) {
-      html += '<label style="display:flex;align-items:center;gap:6px;color:#a8b0c0">' +
+      html += '<label style="display:flex;align-items:center;gap:6px;color:var(--fg2)">' +
         '<input type="checkbox" data-sto="' + TE.attr(OPTS[i]) + '"' +
         (cur.indexOf(OPTS[i]) >= 0 ? ' checked' : '') + '>' + TE.esc(OPTS[i]) + '</label>';
     }
@@ -249,7 +251,7 @@ namespace SoulLink.TaskEdit
     return '<div class="field"><label>原始 JSON</label><div class="ctl">' +
       '<textarea id="' + id + '" data-raw="' + TE.attr(fieldName) + '" ' +
       'style="min-height:120px;font-family:monospace">' + TE.esc(txt) + '</textarea>' +
-      '<div class="desc" style="color:#ffb454">⚠ 该项使用<b>原始 JSON 编辑</b>：' +
+      '<div class="desc" style="color:var(--warn)">⚠ 该项使用<b>原始 JSON 编辑</b>：' +
       '结构随 BGI 版本变化，没有稳定表单。语法错误会标红且不会保存。</div></div></div>';
   },
 
@@ -267,7 +269,7 @@ namespace SoulLink.TaskEdit
       'IsSereniteaPotExpanded'];
     var html = '<details class="card"><summary>只读 / 系统字段 ' +
       '<span class="badge tag">' + (RO.length + IGN.length) + ' 项（不编辑，写回原样保留）</span>' +
-      '</summary><div class="body" style="font-size:13px;color:#a8b0c0">';
+      '</summary><div class="body" style="font-size:13px;color:var(--fg2)">';
     for (var i = 0; i < RO.length; i++) {
       var v = TE.dragon.read(d, RO[i][0]);
       html += '<div class="field"><label>' + TE.esc(RO[i][0]) + '</label><div class="ctl">' +
@@ -282,7 +284,7 @@ namespace SoulLink.TaskEdit
 
   /* 通用卡片 */
   card: function (d, title, key, fields) {
-    var html = '<details class="card" open><summary>' + TE.esc(title) + '</summary><div class="body">';
+    var html = '<details class="card"' + (key === 'resin' ? ' open' : '') + '><summary>' + TE.esc(title) + '</summary><div class="body">';
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i];
       var raw = TE.dragon.read(d, f.k);

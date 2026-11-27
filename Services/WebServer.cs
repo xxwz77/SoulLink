@@ -490,6 +490,12 @@ public static partial class WebServer
 		{
 			string text = (ctx.Request.Url?.AbsolutePath ?? "/").Trim();
 			string text2 = ctx.Request.HttpMethod ?? "GET";
+			if (text is "/api/bgi/editor/status" or "/api/bgi/editor/start" or "/api/bgi/editor/stop")
+			{
+				if (IsAuthorized(ctx)) await HandleBgiEditor(ctx, text);
+				else await WriteJson(ctx, new { ok = false, state = "unknown", error = "未登录" }, 401);
+				return;
+			}
 			if (text2.Equals("POST", StringComparison.OrdinalIgnoreCase))
 			{
 				if (text == "/api/input")
@@ -607,6 +613,9 @@ public static partial class WebServer
 				await WriteJson(ctx2, await ApiBgiRunsAsync(ctx));
 				return;
 			}
+			case "/api/bgi/runs/log":
+				await WriteJson(ctx, await ApiBgiRunLogAsync(ctx));
+				return;
 			case "/api/bgi/runs/detail":
 			{
 				HttpListenerContext ctx2 = ctx;
@@ -729,10 +738,10 @@ public static partial class WebServer
 		ctx.Response.Close();
 	}
 
-	private static async Task WriteJson(HttpListenerContext ctx, object data)
+	private static async Task WriteJson(HttpListenerContext ctx, object data, int status = 200)
 	{
 		byte[] bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(data));
-		ctx.Response.StatusCode = 200;
+		ctx.Response.StatusCode = status;
 		ctx.Response.ContentType = "application/json; charset=utf-8";
 		ctx.Response.ContentLength64 = bytes.Length;
 		await ctx.Response.OutputStream.WriteAsync(bytes).ConfigureAwait(continueOnCapturedContext: false);
@@ -959,6 +968,17 @@ public static partial class WebServer
 		};
 	}
 
+	private static bool TryLedgerDate(HttpListenerContext ctx, out DateTime? day)
+	{
+		day = null;
+		string? value = ctx.Request.QueryString["date"];
+		if (value == null) return true;
+		if (!DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+			|| parsed.Date == DateTime.MaxValue.Date) return false;
+		day = parsed;
+		return true;
+	}
+
 	private static async Task<object> ApiBgiRunsAsync(HttpListenerContext ctx)
 	{
 		string user = (ctx.Request.QueryString["user"] ?? "").Trim();
@@ -971,10 +991,12 @@ public static partial class WebServer
 			};
 		}
 		int days = (int.TryParse(ctx.Request.QueryString["days"], out var result) ? Math.Clamp(result, 1, 365) : 7);
+		if (!TryLedgerDate(ctx, out var day)) return new { ok = false, error = "date 须为 yyyy-MM-dd" };
 		IReadOnlyList<RunRecord> readOnlyList;
 		try
 		{
-			readOnlyList = await RunRecordStore.QueryRunsAsync(user, days).ConfigureAwait(continueOnCapturedContext: false);
+			readOnlyList = day.HasValue ? await RunRecordStore.QueryRunDayAsync(user, day.Value).ConfigureAwait(false)
+				: await RunRecordStore.QueryRunsAsync(user, days).ConfigureAwait(false);
 		}
 		catch (Exception ex)
 		{
@@ -1244,12 +1266,13 @@ public static partial class WebServer
 		{
 			kind = "";
 		}
+		if (!TryLedgerDate(ctx, out var day)) return new { ok = false, error = "date 须为 yyyy-MM-dd" };
 		IReadOnlyList<PickEvent> rows;
 		RunRecordStore.PickFactCounts pickFactCounts;
 		try
 		{
-			rows = await RunRecordStore.QueryPickFactsAsync(runId, routeId, (kind.Length > 0) ? kind : null, user, days, offset, limit).ConfigureAwait(continueOnCapturedContext: false);
-			pickFactCounts = await RunRecordStore.QueryPickCountsAsync(runId, routeId, user, days).ConfigureAwait(continueOnCapturedContext: false);
+			rows = await RunRecordStore.QueryPickFactsAsync(runId, routeId, (kind.Length > 0) ? kind : null, user, days, offset, limit, day: day).ConfigureAwait(continueOnCapturedContext: false);
+			pickFactCounts = await RunRecordStore.QueryPickCountsAsync(runId, routeId, user, days, day: day).ConfigureAwait(continueOnCapturedContext: false);
 		}
 		catch (Exception ex)
 		{
@@ -1379,6 +1402,16 @@ public static partial class WebServer
 				}
 				case "/api/miyoushe/mora/summary":
 				{
+					if (!TryLedgerDate(ctx, out var day)) { await WriteJson(ctx, new { ok = false, error = "date 须为 yyyy-MM-dd" }); return; }
+					if (day.HasValue)
+					{
+						if (account.Length == 0) { await WriteJson(ctx, new { ok = false, error = "缺少 user" }); return; }
+						var bins = await DailyMoraLedger.QueryAsync(account, day.Value).ConfigureAwait(false);
+						var items = bins.Where(b => (ctx.Request.QueryString["group"] is not string g || b.GroupName == g)
+							&& (ctx.Request.QueryString["route"] is not string r || b.RouteName == r)).ToList();
+						await WriteJson(ctx, new { ok = true, account, source = "my_ledger_entry", items, count = items.Count });
+						return;
+					}
 					int days = (int.TryParse(ctx.Request.QueryString["days"], out var result2) ? Math.Clamp(result2, 1, 365) : 7);
 					int rv = (int.TryParse(ctx.Request.QueryString["rule"], out var result3) ? result3 : 42);
 					string groupName = ctx.Request.QueryString["group"];
@@ -1536,7 +1569,7 @@ public static partial class WebServer
 						ok = true,
 						enabled = appSettings2.MiyousheSignEnabled,
 						hour = appSettings2.MiyousheSignHour,
-						saltConfigured = (appSettings2.MiyousheDsSalt.Length > 0),
+						saltConfigured = (MiyousheService.EffectiveDsSalt(appSettings2, "cn").Length > 0),
 						osSaltConfigured = (appSettings2.MiyousheOsDsSalt.Length > 0)
 					});
 					return;
@@ -1596,7 +1629,7 @@ public static partial class WebServer
 						return;
 					}
 					HttpListenerContext ctx2 = ctx;
-					await WriteJson(ctx2, await MiyousheService.RunForAccountAsync(account, flag, flag2, default).ConfigureAwait(continueOnCapturedContext: false));
+					await WriteJson(ctx2, await MiyousheService.RunForAccountAsync(account, flag, flag2, default, retryLogin: flag2 && !flag).ConfigureAwait(continueOnCapturedContext: false));
 					return;
 				}
 				case "/api/miyoushe/mora/classify":

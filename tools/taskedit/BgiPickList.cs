@@ -37,6 +37,8 @@ namespace SoulLink.TaskEdit
             internal List<string> FuzzyBlackList = new();
             /// <summary>config.json 里 autoPickConfig 的其它字段原样保留（不丢用户设置）。</summary>
             internal JsonObject OtherConfig = new();
+            /// <summary>完整原生 autoPickConfig 对象；网页查看/编辑均以此为真实配置源。</summary>
+            internal JsonObject NativeConfig = new();
         }
 
         private const string BlackFile = "pick_black_lists.txt";
@@ -62,6 +64,7 @@ namespace SoulLink.TaskEdit
                         model.Mode = ap["mode"]?.GetValue<string>() ?? "Blacklist";
                         model.BlacklistModePickEnabled = ap["blacklistModePickEnabled"]?.GetValue<bool>() ?? false;
                         model.WhitelistModeDoNotPickEnabled = ap["whitelistModeDoNotPickEnabled"]?.GetValue<bool>() ?? false;
+                        model.NativeConfig = (JsonObject)ap.DeepClone();
                         foreach (var kv in ap.ToList()) model.OtherConfig[kv.Key] = kv.Value?.DeepClone();
                     }
                 }
@@ -105,14 +108,20 @@ namespace SoulLink.TaskEdit
             }
             else rootObj = new JsonObject();
 
-            var ap = rootObj["autoPickConfig"] as JsonObject ?? new JsonObject();
-            // 先在已有的 autoPickConfig 上覆盖我们管的 4 个字段，再把 OtherConfig 里缺的补上
+            var current = rootObj["autoPickConfig"] as JsonObject ?? new JsonObject();
+            // NativeConfig is the page snapshot of the real BGI autoPickConfig object.
+            // Overlay it on disk's latest config so runtime-added unknown keys survive unless explicitly edited.
+            var ap = (JsonObject)current.DeepClone();
+            foreach (var kv in model.NativeConfig)
+                if (!string.Equals(kv.Key, "templatePick", StringComparison.OrdinalIgnoreCase)) ap[kv.Key] = kv.Value?.DeepClone();
             foreach (var kv in model.OtherConfig)
-                if (ap[kv.Key] == null) ap[kv.Key] = kv.Value?.DeepClone();
+                if (!string.Equals(kv.Key, "templatePick", StringComparison.OrdinalIgnoreCase) && ap[kv.Key] == null) ap[kv.Key] = kv.Value?.DeepClone();
             ap["enabled"] = model.Enabled;
             ap["mode"] = string.Equals(model.Mode, "Whitelist", StringComparison.OrdinalIgnoreCase) ? "Whitelist" : "Blacklist";
             ap["blacklistModePickEnabled"] = model.BlacklistModePickEnabled;
             ap["whitelistModeDoNotPickEnabled"] = model.WhitelistModeDoNotPickEnabled;
+            // 不把历史 SoulLink 自定义规则写回 BGI；仅操作 BGI 原生配置字段。
+            ap.Remove("templatePick");
             rootObj["autoPickConfig"] = ap;
 
             WriteAtomic(cfgPath, rootObj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
@@ -121,7 +130,7 @@ namespace SoulLink.TaskEdit
 
         // ── 行级读写 ────────────────────────────────────────────────
 
-        internal static List<string> ReadLines(string userDir, string file)
+        internal static List<string> ReadLines(string userDir, string file, bool strict = false)
         {
             var list = new List<string>();
             string path = Path.Combine(userDir, file);
@@ -135,7 +144,7 @@ namespace SoulLink.TaskEdit
                     list.Add(line);
                 }
             }
-            catch (Exception) { }
+            catch (Exception) when (!strict) { }
             return list;
         }
 

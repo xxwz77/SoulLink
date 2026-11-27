@@ -235,6 +235,18 @@ AND sign_date=$d AND state IN('success','already'));";
                 return Convert.ToInt32(cmd.ExecuteScalar(), CultureInfo.InvariantCulture) == 1;
             }, false, ct);
 
+        internal Task<MiyousheCredentialState?> GetCredentialStateAsync(string account, CancellationToken ct)
+            => RunAsync(db => ReadCredentialState(db, account), null, ct);
+
+        private static MiyousheCredentialState? ReadCredentialState(SqliteConnection db, string account)
+        {
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT account,state,detail,updated_at_ms FROM my_cred_state WHERE account=$a;";
+            Add(cmd,"$a",account);
+            using var reader = cmd.ExecuteReader();
+            return reader.Read() ? new(reader.GetString(0),reader.GetString(1),reader.GetString(2),reader.GetInt64(3)) : null;
+        }
+
         internal Task SetCredentialStateAsync(string account, string state, string detail, long now, CancellationToken ct = default)
             => RunAsync(db =>
             {
@@ -364,13 +376,7 @@ FROM my_sign_log WHERE account=$a ORDER BY ts_ms DESC LIMIT 400;";
                     reader.GetInt32(4),reader.GetString(5),reader.GetString(6),reader.GetInt32(7),reader.GetInt64(8)));
                 return list;
             }, Array.Empty<MiyousheSignResult>(), ct).ConfigureAwait(false);
-            var cred = await RunAsync<MiyousheCredentialState?>(db =>
-            {
-                using var cmd = db.CreateCommand();
-                cmd.CommandText = "SELECT account,state,detail,updated_at_ms FROM my_cred_state WHERE account=$a;";
-                Add(cmd,"$a",account); using var reader = cmd.ExecuteReader();
-                return reader.Read() ? new MiyousheCredentialState(reader.GetString(0),reader.GetString(1),reader.GetString(2),reader.GetInt64(3)) : null;
-            }, null, ct).ConfigureAwait(false);
+            var cred = await GetCredentialStateAsync(account,ct).ConfigureAwait(false);
             return new MiyousheArchive(roles,entries,days,months,signs,cred);
         }
 

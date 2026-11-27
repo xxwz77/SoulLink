@@ -64,7 +64,7 @@ namespace SoulLink.TaskEdit
         html += '<div class="banner warn">该区在配置里不存在（可能是老版本或未启用）。' +
           '保存时不会凭空创建。</div>';
       } else {
-        html += TE.group.fieldsHtml(sec, obj);
+        html += '<div class="group-fields">' + TE.group.fieldsHtml(sec, obj) + '</div>';
       }
       html += '</div></details>';
     }

@@ -657,6 +657,28 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
   .ra-f-kw input{min-width:0;width:100%}
   .ra-metrics .metric{min-width:calc(50% - 5px)}
 }
+.home-task-link{display:inline-flex;align-items:center;text-decoration:none}
+/* 账本沿用应用主题：宽屏日志工作区，移动端双列筛选。 */
+main:has(#ledgerPage[style*="block"]){max-width:1160px}
+#ledgerTitle{font-size:clamp(24px,4vw,34px);margin:8px 0 12px;color:var(--txt)}
+#ledgerPage .ra-toolbar{padding:14px;gap:10px;border-radius:12px}
+#ledgerPage .ra-f input,#ledgerPage .ra-f select{padding:7px;min-width:0}
+#ledgerPage .ra-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));margin-bottom:16px}
+#ledgerPage .ra-metrics .metric{min-width:0}
+#ledgerPage .ra-rcard{border-radius:12px;background:linear-gradient(115deg,var(--card),var(--card2))}
+#ledgerPage .ra-rcard-hd,#ledgerPage .ra-card-hd{color:inherit;font:inherit;background:transparent;width:100%;border:0;text-align:left;cursor:pointer}
+#ledgerPage .ra-rcard-tags{align-items:center}
+.ra-action{padding:5px 10px;border:1px solid var(--accent-border);border-radius:7px;color:var(--accent);background:var(--accent-bg);cursor:pointer;font:inherit;font-size:12px}
+.ra-action:first-of-type{margin-left:auto}
+.ra-tag-mora{color:var(--txt);background:color-mix(in srgb,#d2a63f 16%,var(--card));font-weight:650}
+#raLogDialog{width:min(850px,94vw);max-height:85vh;padding:18px;color:var(--txt);background:var(--card);border:1px solid var(--border-hi);border-radius:14px;box-shadow:var(--shadow)}
+#raLogDialog::backdrop{background:#040711a8}
+.ra-log-head{display:flex;align-items:center;gap:12px}.ra-log-head h2{margin:0;font-size:17px}
+#raLogMeta,#raLogState{color:var(--txt3);font-size:12px;margin:10px 0;overflow-wrap:anywhere}
+#raLogLines{max-height:50vh;overflow:auto;border-radius:8px;background:var(--card2)}
+.ra-log-row{display:grid;grid-template-columns:5em minmax(0,1fr);gap:8px;padding:6px;border-bottom:1px solid var(--border);font:12px/1.6 Consolas,monospace}
+.ra-log-row span{color:var(--txt4);text-align:right}.ra-log-row pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;font:inherit}
+@media(max-width:620px){#ledgerPage .ra-toolbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}#ledgerPage .ra-f-kw{grid-column:1/-1}.ra-action:first-of-type{margin-left:0}}
 </style>
 </head>
 <body>
@@ -674,6 +696,7 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
     <span id="fpsinfo" class="hdrinfo"></span>
     <span class="pill" id="liveCount">— 在线</span>
         <div class="hdrctrl" id="viewctrls" style="display:none">
+      <button id="gameModeBtn" class="hbtn" type="button" aria-pressed="false">游戏模式</button>
       <button id="pauseBtn" class="hbtn">暂停</button>
       <button id="closeViewer" class="hbtn">收起</button>
       <div class="settingswrap">
@@ -823,6 +846,11 @@ body.viewonly .right{gap:6px;flex-wrap:nowrap}
     <div class="sect-t" id="ledgerTitle">运行分析</div>
     <div class="userswitch" id="ledgerSwitch" style="display:none"></div>
     <div id="ledgerBody"></div>
+    <dialog id="raLogDialog" aria-labelledby="raLogTitle">
+      <div class="ra-log-head"><h2 id="raLogTitle">日志原文</h2><button id="raLogClose" class="ra-action" type="button">关闭</button></div>
+      <div id="raLogMeta"></div><label class="ra-f">日志日期<input id="raLogDate" type="date"></label><div id="raLogLines"></div>
+      <div id="raLogState" role="status"></div><button id="raLogMore" class="ra-action" type="button" hidden>加载更多</button>
+    </dialog>
   </div>
 
   <!-- ══ 摩拉收益页（#/earnings/:id，2026-11-23 网页改版）══ -->
@@ -1095,6 +1123,7 @@ function renderUsers() {
       + '<div class="ucard-actions">'
       + '<button class="uact-btn" data-act="remote">查看画面</button>'
       + '<button class="uact-btn" data-act="ledger">运行分析</button>'
+      + '<a class="uact-btn home-task-link" href="/taskedit/?account=' + esc(encodeURIComponent(u.user)) + '">BGI 任务编辑器</a>'
       + '<button class="uact-btn" data-act="earnings">摩拉收益</button>'
       + '<button class="uact-btn" data-act="miyoushe">米游社</button>'
       + '</div>'
@@ -1167,7 +1196,7 @@ function renderUsers() {
     }
 
     // 功能按钮：hash 路由同页跳转（不再 window.open 新标签）
-    card.querySelectorAll('.uact-btn').forEach(btn => {
+    card.querySelectorAll('button[data-act]').forEach(btn => {
       btn.onclick = e => {
         e.stopPropagation();
         const act = btn.getAttribute('data-act');
@@ -1246,6 +1275,9 @@ function stopH264() {
 }
 
 function stopLive() {
+  if (gameModeEnabled) setGameMode(false);
+  plLifecycleExit();
+  releaseAllInputs();
   liveRunning = false;
   // ★ T34：停画面就停 fps 轮询（避免后台继续每 2s 请求 /api/info）
   if (typeof stopFpsPolling === 'function') stopFpsPolling();
@@ -1565,6 +1597,8 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
     // 解码帧直接画到 DOM 里的 <canvas id="vframe">，不再经过 <img>。
     // 旧版每帧 canvas.toDataURL('image/jpeg') 等于把省下的带宽又花回去
     //（JPEG 重编码 + base64 膨胀 1.33 倍），已删除。
+    const frameMetrics = { decoded: 0, decodedAt: [], renderMs: [], queueAtOutput: [], presented: 0 };
+    window.__slVideoMetrics = frameMetrics;
     const canvas = $('vframe');
     // 呈现层：优先 WebGL2（零回读），不可用才回退 2D drawImage
     const glR = getGlRenderer(canvas);
@@ -1634,6 +1668,11 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
       decoder = new VideoDecoder({
         output: (frame) => {
           if (myGen !== h264Gen) { frame.close(); return; }
+          const outputAt = performance.now();
+          frameMetrics.decoded++;
+          frameMetrics.decodedAt.push(outputAt);
+          frameMetrics.queueAtOutput.push(decoder.decodeQueueSize);
+          if (frameMetrics.decodedAt.length > 512) { frameMetrics.decodedAt.shift(); frameMetrics.queueAtOutput.shift(); }
           try {
             if (canvas.width !== frame.displayWidth
                 || canvas.height !== frame.displayHeight) {
@@ -1642,6 +1681,11 @@ void main(){ outColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y)); }`;
             }
             if (glR) glR.draw(frame, canvas.width, canvas.height);
             else if (ctx) ctx.drawImage(frame, 0, 0);
+            const renderedAt = performance.now();
+            frameMetrics.renderMs.push(renderedAt - outputAt);
+            if (frameMetrics.renderMs.length > 512) frameMetrics.renderMs.shift();
+            // Approximate when the next animation frame can include this canvas draw; not a GPU present timestamp.
+            requestAnimationFrame(() => { frameMetrics.outputToNextAnimationFrameMs = performance.now() - outputAt; });
             canvas.classList.add('show');
             setPh(null, false);
             lastFrameAt = Date.now();     // 真的画出一帧 → 重置画面看门狗
@@ -2192,6 +2236,10 @@ const INPUT_RETRYABLE = new Set(['up', 'releaseall']);   // 幂等：重发无�
 function sendInputOrdered(action, nx, ny, extra) {
   if (!cur) return Promise.resolve(null);
   const body = Object.assign({ action, x: nx, y: ny }, extra || {});
+  if (action === 'up' || action === 'releaseall') {
+    const samples = window.__slInputSamples || (window.__slInputSamples = []);
+    if (samples.length) samples[samples.length - 1].releaseQueueDepth = inputQueue.length;
+  }
   return new Promise(resolve => {
     inputQueue.push({ body, resolve });
     pumpInput();
@@ -2214,6 +2262,13 @@ function pumpInput() {
       try { resp = await postInputRaw(item.body, item.httpOnly); }
       catch (e) { resp = null; }
     }
+    const samples = window.__slInputSamples;
+    if ((item.body.action === 'up' || item.body.action === 'releaseall') && samples && samples.length) {
+      const sample = samples[samples.length - 1];
+      sample.releaseSettledAt = performance.now();
+      sample.releaseQueueDepth = inputQueue.length;
+      sample.releaseOk = !!resp && resp.ok !== false;
+    }
     if (resp == null || resp.ok === false) {
       // ★ T32：fireAndForget（move）失败不刷屏 —— HTTP 降级下高频 move 失败是常态，
       //   每 8ms 一条 warn 会把 console 冲爆、反而掩盖真问题。
@@ -2230,6 +2285,11 @@ function pumpInput() {
 function sendInputNoWait(action, nx, ny, extra) {
   if (!cur) return;
   const body = Object.assign({ action, x: nx, y: ny }, extra || {});
+  if (action === 'moverel' && typeof body.dx === 'number' && typeof body.dy === 'number') {
+    window.__slInputSamples = window.__slInputSamples || [];
+    window.__slInputSamples.push({ action, dx: body.dx, dy: body.dy, queueDepth: wsQueue.length, sentAt: performance.now() });
+    if (window.__slInputSamples.length > 512) window.__slInputSamples.shift();
+  }
 
   // ★★ 2026-11-24（T32 P0-2）：HTTP 降级下 move **必须保序** ★★
   //
@@ -2425,6 +2485,35 @@ let plLockCooldownUntil = 0;     // Esc 后重锁冷却（规范：立即重锁�
 //   默认 false → 左键是普通点击，光标始终可见（修复"点一下就没光标"）。
 //   只有顶栏锁定按钮把它置 true 后，下一次左键才真正进入锁定态（用于游戏转视角）。
 let plLockWanted = false;
+let gameModeEnabled = false; // Pointer Lock is armed only during an explicit user-selected game mode
+const PL_GAME_MODE_KEY = 'sl_pl_game_mode';
+try { gameModeEnabled = localStorage.getItem(PL_GAME_MODE_KEY) === '1'; } catch (e) {}
+plLockWanted = gameModeEnabled;
+
+function applyGameModeUi() {
+  const button = $('gameModeBtn');
+  if (!button) return;
+  button.classList.toggle('on', gameModeEnabled);
+  button.setAttribute('aria-pressed', gameModeEnabled ? 'true' : 'false');
+  button.textContent = gameModeEnabled ? '退出游戏模式' : '游戏模式';
+  button.title = gameModeEnabled ? '下次点击画面锁定鼠标；按 Esc 退出' : '启用后点击画面锁定鼠标，以相对位移持续转视角';
+}
+
+function setGameMode(enabled) {
+  gameModeEnabled = !!enabled && PL_SUPPORTED && window.isSecureContext;
+  plLockWanted = gameModeEnabled;
+  try { if (gameModeEnabled) localStorage.setItem(PL_GAME_MODE_KEY, '1'); else localStorage.removeItem(PL_GAME_MODE_KEY); } catch (e) {}
+  applyGameModeUi();
+  if (!gameModeEnabled) plLifecycleExit();
+  else if (!PL_SUPPORTED || !window.isSecureContext) { gameModeEnabled = plLockWanted = false; applyGameModeUi(); }
+}
+
+const __gameModeBtn = $('gameModeBtn');
+if (__gameModeBtn) __gameModeBtn.onclick = () => {
+  if (gameModeEnabled) { setGameMode(false); return; }
+  setGameMode(true);
+};
+applyGameModeUi();
 let plSensitivity = 1.0;         // movementX/Y 灵敏度（浏览器单位不统一）
 let plEscape = 'ctrl_alt_shift'; // 逃生门快捷键
 let plAltHoldTimer = null;       // 长按 Alt 计时器
@@ -2509,6 +2598,11 @@ document.addEventListener('pointerlockchange', () => {
     const byLifecycle = plExitByLifecycle;
     plExitByShortcut = false;
     plExitByLifecycle = false;
+    // Any unlock disarms game mode so the next ordinary canvas click is a desktop click.
+    gameModeEnabled = false;
+    plLockWanted = false;
+    try { localStorage.removeItem(PL_GAME_MODE_KEY); } catch (e) {}
+    applyGameModeUi();
     // ★ 方案 C：ESC 一键开菜单。排除法判定触发源：
     //   非快捷键退出、非生命周期退出、且页面仍聚焦 → 只剩浏览器 ESC 强制解锁 → 补发 Esc 开菜单。
     if (!byShortcut && !byLifecycle && document.hasFocus()) {
@@ -3385,6 +3479,14 @@ document.addEventListener('pointerdown', e => {
 //   隐藏 → 断流省资源（挂机监控页常年开着的场景）；
 //   回前台 → 自动重连（画面断开时的提示也会被新一轮连接刷新）。
 //   ★ pause 状态下不自动恢复（用户点了暂停就尊重暂停）。
+window.addEventListener('blur', () => {
+  if (pointerLocked || gameModeEnabled) {
+    plLifecycleExit();
+    setGameMode(false);
+    releaseAllInputs();
+  }
+});
+
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     plLifecycleExit();        // ★ 页面隐藏 → 退出 Pointer Lock（浏览器也会自动解锁，这里主动清状态）
@@ -3565,6 +3667,7 @@ async function showRemote(id) {
 }
 
 function applyRemoteUser(u) {
+  if (pointerLocked || gameModeEnabled) { plLifecycleExit(); setGameMode(false); }
   cur = u;
   curId = u.id;
   document.title = (u.label || u.user) + ' · 实时画面';
@@ -3606,12 +3709,15 @@ function applyRemoteUser(u) {
 
 const RA = {
   user: null,
-  days: 7,
+  days: 1,
+  date: '',
+  generation: 0,
   runs: [],
-  groups: [],
+  moraRows: null,
+  roles: [],
+  roleUids: [],
   picks: [],
   pickCounts: { picked: 0, noTarget: 0, skipped: 0 },
-  ledger: null,
   loading: false,
   err: '',
   // 前端筛选状态
@@ -3674,39 +3780,65 @@ function raNum(n) {
 }
 
 // ── 每秒摩拉（对齐参考实现的排序维度）───────────────────────────────
-function raMoraPerMin(run) {
-  const sec = Number(run.durSec) || 0;
-  const mora = Number(run.mora) || 0;
-  if (sec <= 0) return 0;
-  return (mora / sec) * 60;
+function raMoraRows() {
+  return (RA.moraRows || []).filter(x => x.GameUid === RA.miyousheRole && (!RA.date || x.Day === RA.date));
 }
-
-// ── 拉数据（days 变了才重请；其余筛选不重请）────────────────────────
+function raMoraAmount(rows) {
+  const known = rows.filter(row => row.TotalMorale != null);
+  if (!known.length) return '—';
+  const sum = known.reduce((n,row) => n + Number(row.TotalMorale),0);
+  return raNum(sum) + (rows.some(x => x.MissingAmountCount > 0) ? '（部分）' : '');
+}
+function raExecutionMora(runId, routeId, duration) {
+  const rows = raMoraRows().filter(row => row.RunId === runId && (routeId == null || row.RouteId === routeId));
+  const amount = raMoraAmount(rows);
+  let text = '摩拉 ' + amount;
+  if (duration > 0 && amount !== '—' && !rows.some(x => x.MissingAmountCount > 0)) {
+    const total = rows.reduce((sum,row) => sum + Number(row.TotalMorale),0);
+    text += ' · ' + raNum(Math.round(total * 60 / duration)) + '/分';
+  }
+  return '<span class="ra-tag ra-tag-mora">' + text + '</span>';
+}
+function raToday() {
+  const d = new Date();
+  return [d.getFullYear(), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0')].join('-');
+}
+function raRangeText() { return RA.date || ('近 ' + RA.days + ' 天'); }
+function raPeriodQuery() { return RA.date ? 'date=' + encodeURIComponent(RA.date) : 'days=' + RA.days; }
 async function raLoad(u) {
+  const generation = ++RA.generation;
+  if ($('raLogDialog').open) $('raLogDialog').close();
+  RA.open = {runs:true, groups:true, picks:false, problems:false, miyoushe:false};
   RA.user = u;
   RA.loading = true; RA.err = '';
   RA.details = {}; RA.page = { runs: 1, groups: 1, picks: 1 };
   const body = $('ledgerBody');
   if (body) body.innerHTML = raLoadingHtml();
 
-  const q = 'user=' + encodeURIComponent(u.user) + '&days=' + RA.days;
-  const [runsR, groupsR, picksR, ledgerR] = await Promise.allSettled([
+  const q = 'user=' + encodeURIComponent(u.user) + '&' + raPeriodQuery();
+  const [runsR, picksR, moraR, rolesR] = await Promise.allSettled([
     fetch('/api/bgi/runs?' + q).then(r => r.json()),
-    fetch('/api/bgi/runs/groups?' + q).then(r => r.json()),
     fetch('/api/bgi/picks?' + q + '&limit=500').then(r => r.json()),
-    fetch('/api/bgi/ledger?' + q).then(r => r.json()),
+    fetch('/api/miyoushe/mora/summary?' + q).then(r => r.json()),
+    fetch('/api/miyoushe/roles?user=' + encodeURIComponent(u.user)).then(r => r.json()),
   ]);
 
+  if (generation !== RA.generation) return;
+  RA.moraRows = moraR.value?.ok ? moraR.value.items : null;
+  RA.roles = rolesR.value?.roles || [];
+  const uids = [...new Set([...(RA.moraRows || []).map(x => x.GameUid), ...RA.roles.map(x => x.gameUid)].filter(Boolean))];
+  RA.roleUids = uids;
+  if (!uids.includes(RA.miyousheRole)) RA.miyousheRole = RA.roles.find(x => x.isDefault)?.gameUid || uids[0] || '';
   RA.runs = (runsR.status === 'fulfilled' && runsR.value && runsR.value.ok) ? (runsR.value.items || []) : [];
-  RA.groups = (groupsR.status === 'fulfilled' && groupsR.value && groupsR.value.ok) ? (groupsR.value.items || []) : [];
+  if (RA.date) RA.runs = RA.runs.filter(r => (r.startDay || String(r.startAt).slice(0,10)) === RA.date);
   const pk = (picksR.status === 'fulfilled') ? picksR.value : null;
   RA.picks = (pk && pk.ok) ? (pk.items || []) : [];
   RA.pickCounts = (pk && pk.counts) ? pk.counts : { picked: 0, noTarget: 0, skipped: 0 };
-  RA.ledger = (ledgerR.status === 'fulfilled') ? ledgerR.value : null;
+
 
   // 全部失败才算错；部分失败降级显示（不整页白屏）
-  if (runsR.status === 'rejected' && groupsR.status === 'rejected' && picksR.status === 'rejected')
-    RA.err = (runsR.reason && runsR.reason.message) || '网络错误';
+  if (runsR.status === 'rejected' || !runsR.value?.ok)
+    RA.err = runsR.reason?.message || runsR.value?.error || '运行记录查询失败';
 
   RA.loading = false;
   raRender();
@@ -3725,14 +3857,15 @@ function raRender() {
   if (!body) return;
 
   if (RA.err) {
-    body.innerHTML = '<div class="pageempty">加载失败：' + esc(RA.err) + '</div>'
+    body.innerHTML = raToolbarHtml() + '<div class="pageempty">加载失败：' + esc(RA.err) + '</div>'
       + '<div style="text-align:center;margin-top:10px">'
       + '<button class="uact-btn" onclick="raReload()">重试</button></div>';
+    raWire();
     return;
   }
 
   const all = RA.runs || [];
-  const empty = all.length === 0 && (RA.groups || []).length === 0;
+  const empty = all.length === 0;
 
   let html = raToolbarHtml();
   html += raMetricsHtml();
@@ -3740,20 +3873,22 @@ function raRender() {
   if (empty) {
     // ── 空态 ②：确实没有记录 ──
     html += '<div class="pageempty" style="text-align:center;padding:34px 16px">'
-      + '近 ' + RA.days + ' 天没有配置组运行记录。'
+      + esc(raRangeText()) + ' 没有配置组运行记录。'
       + '<div style="margin-top:8px;font-size:11.5px;color:var(--txt4)">'
       + '运行记录由 BGI 日志采集而来；确认主程序已开启、账号目录下有当天的日志文件。</div></div>';
     // ★ t50：米游社数据与运行记录**无关**（它来自米游社账目侧，不是 BGI 日志），
     //   所以「没有运行记录」时仍然要显示米游社分区（角色列表 / 默认角色照常可用）。
     //   原来这里直接 return，导致无运行记录的账号完全看不到米游社角色。
+    if (raMoraRows().length) html += raGroupsSectionHtml();
+    html += raPicksSectionHtml();
     html += raMiyousheSectionHtml();
     body.innerHTML = html;
     raWire();
     return;
   }
 
-  html += raRunsSectionHtml();
   html += raGroupsSectionHtml();
+  html += raRunsSectionHtml();
   html += raPicksSectionHtml();
   html += raProblemsSectionHtml();
   html += raMiyousheSectionHtml();
@@ -3765,16 +3900,27 @@ function raRender() {
 // ── 顶部工具条：时间范围 + 筛选 + 排序 ───────────────────────────────
 function raToolbarHtml() {
   const f = RA.f;
-  const groups = [...new Set((RA.runs || []).map(r => r.group).filter(Boolean))].sort();
+  const groups = [...new Set([...RA.runs.map(r => r.group), ...raMoraRows().map(row => row.GroupName)].filter(Boolean))].sort();
   const states = [...new Set((RA.runs || []).map(r => r.state).filter(Boolean))];
 
   let h = '<div class="ra-toolbar">';
   // 时间范围（★ 后端参数：改了要重请）
   h += '<label class="ra-f"><span>时间范围</span><select id="raDays">';
-  [['1', '今天'], ['3', '近 3 天'], ['7', '近 7 天'], ['14', '近 14 天'], ['30', '近 30 天']]
+  [['1', '单日'], ['3', '近 3 天'], ['7', '近 7 天'], ['14', '近 14 天'], ['30', '近 30 天']]
     .forEach(([v, t]) => { h += '<option value="' + v + '"' + (String(RA.days) === v ? ' selected' : '') + '>' + t + '</option>'; });
   h += '</select></label>';
 
+  h += '<label class="ra-f"><span>运行日期</span><input id="raDate" type="date" value="' + esc(RA.date) + '"></label>';
+  h += '<button type="button" class="ra-action" id="raToday">今天</button>';
+
+  if (RA.roleUids.length) {
+    h += '<label class="ra-f"><span>账目角色</span><select id="raRole">';
+    for (const uid of RA.roleUids) {
+      const role = RA.roles.find(x => x.gameUid === uid);
+      h += '<option value="' + esc(uid) + '"' + (uid === RA.miyousheRole ? ' selected' : '') + '>' + esc([role?.nickname,uid].filter(Boolean).join(' · ')) + '</option>';
+    }
+    h += '</select></label>';
+  }
   // 配置组（前端）
   h += '<label class="ra-f"><span>配置组</span><select id="raGroup"><option value="">全部</option>';
   groups.forEach(g => { h += '<option value="' + esc(g) + '"' + (f.group === g ? ' selected' : '') + '>' + esc(g) + '</option>'; });
@@ -3798,7 +3944,7 @@ function raToolbarHtml() {
   h += '<label class="ra-f"><span>排序</span><select id="raSort">';
   [['start-asc', '开始时间 ↑ 早→晚'], ['start-desc', '开始时间 ↓ 晚→早'],
    ['dur-desc', '时长 ↓'], ['dur-asc', '时长 ↑'],
-   ['mpm-desc', '每分钟摩拉 ↓'], ['picks-desc', '拾取数 ↓']]
+   ['picks-desc', '拾取数 ↓']]
     .forEach(([v, t]) => { h += '<option value="' + v + '"' + (f.sort === v ? ' selected' : '') + '>' + t + '</option>'; });
   h += '</select></label>';
 
@@ -3828,7 +3974,7 @@ function raMetricsHtml() {
   const failed = runs.filter(r => r.state === 'Failed').length;
   const ok = runs.filter(r => r.state === 'Finished').length;
   const durSum = runs.reduce((a, r) => a + (Number(r.durSec) || 0), 0);
-  const moraSum = runs.reduce((a, r) => a + (Number(r.mora) || 0), 0);
+  const moraSum = raMoraAmount(raMoraRows().filter(x => !RA.f.group || x.GroupName === RA.f.group));
   const picksSum = runs.reduce((a, r) => a + (Number(r.picks) || 0), 0);
   const rate = total > 0 ? Math.round((ok / total) * 100) : 0;
   return '<div class="metrics ra-metrics">'
@@ -3837,7 +3983,7 @@ function raMetricsHtml() {
     + '<div class="metric"><div class="v num ' + (failed > 0 ? 'badge-fail' : '') + '">' + failed + '</div><div class="k">失败次数</div></div>'
     + '<div class="metric"><div class="v">' + raDur(durSum) + '</div><div class="k">总时长</div></div>'
     + '<div class="metric"><div class="v num">' + raNum(picksSum) + '</div><div class="k">总拾取</div></div>'
-    + '<div class="metric"><div class="v num">' + raNum(moraSum) + '</div><div class="k">总摩拉</div></div>'
+    + '<div class="metric"><div class="v num">' + moraSum + '</div><div class="k">米游社账目摩拉</div></div>'
     + '</div>';
 }
 
@@ -3867,9 +4013,8 @@ function raFilteredRuns() {
     if (s === 'start-asc') return (a.startAtMs || 0) - (b.startAtMs || 0);
     if (s === 'dur-desc') return (b.durSec || 0) - (a.durSec || 0);
     if (s === 'dur-asc') return (a.durSec || 0) - (b.durSec || 0);
-    if (s === 'mpm-desc') return raMoraPerMin(b) - raMoraPerMin(a);
     if (s === 'picks-desc') return (b.picks || 0) - (a.picks || 0);
-    return (b.startAtMs || 0) - (a.startAtMs || 0);
+    return s === 'start-desc' ? (b.startAtMs || 0) - (a.startAtMs || 0) : (a.startAtMs || 0) - (b.startAtMs || 0);
   });
   return list;
 }
@@ -3926,26 +4071,23 @@ function raRunsSectionHtml() {
 
   for (const r of page) {
     const open = !!RA.open['run:' + r.runId];
-    RA.detailRunId = open ? r.runId : RA.detailRunId;
     h += '<div class="ra-rcard' + (open ? ' ra-rcard-open' : '') + '" data-run="' + esc(r.runId) + '">';
     // 头部：配置组名 + 状态标签 + 展开箭头
-    h += '<div class="ra-rcard-hd">'
+    h += '<button type="button" class="ra-rcard-hd" aria-expanded="' + open + '">'
       + '<span class="ra-rcard-exp">' + (open ? '▾' : '▸') + '</span>'
       + '<span class="ra-rcard-grp">' + esc(r.group || '(未识别组名)') + '</span>'
       + raState(r.state)
       + (r.crossDay ? '<span class="ra-badge badge-warn" title="跨 0 点，分属两个日志文件">跨天</span>' : '')
       + '<span class="ra-rcard-time ra-mono">' + raTime(r.startAt, true)
       + (r.endAt ? ' → ' + raTime(r.endAt, true) : ' → <span style="opacity:.55">进行中</span>')
-      + '</span></div>';
+      + '</span></button>';
     // 彩色标签行：时长 / 拾取 / 脚本 / 摩拉每分
-    const tags = [];
+    const tags = [raExecutionMora(r.runId, null, r.durSec)];
     tags.push('<span class="ra-tag ra-tag-dur">' + raDur(r.durSec) + '</span>');
     if ((r.picks || 0) > 0) tags.push('<span class="ra-tag ra-tag-pick">拾取 ' + raNum(r.picks) + '</span>');
     if ((r.scriptCount || 0) > 0) tags.push('<span class="ra-tag">' + r.scriptCount + ' 脚本</span>');
-    const mpm = Math.round(raMoraPerMin(r));
-    if (mpm > 0) tags.push('<span class="ra-tag ra-tag-mora">' + raNum(mpm) + ' 摩拉/分</span>');
     if ((r.exp || 0) > 0) tags.push('<span class="ra-tag">' + raNum(r.exp) + ' 经验</span>');
-    h += '<div class="ra-rcard-tags">' + tags.join('') + '</div>';
+    h += '<div class="ra-rcard-tags">' + tags.join('') + '<button type="button" class="ra-action" data-raw>分组日志原文</button></div>';
     // 展开体
     if (open) {
       h += '<div class="ra-rcard-bd">' + raDetailHtml(r) + '</div>';
@@ -3966,7 +4108,7 @@ function raUniqueNames(routes) {
 }
 
 // 把一个 run 里的路线/脚本按名字聚合成卡片；每张卡可展开看每次执行明细
-function raRouteCardsHtml(routes) {
+function raRouteCardsHtml(routes, runId) {
   // 分组：名字 → 该名字的全部执行记录
   const map = new Map();
   for (const rt of routes) {
@@ -3977,9 +4119,8 @@ function raRouteCardsHtml(routes) {
   // 组内按开始时间升序
   for (const arr of map.values()) arr.sort((a, b) => (a.startAtMs || 0) - (b.startAtMs || 0));
 
-  // 卡片顺序：先按「执行次数降序」，次数相同按首次开始时间
+  // 卡片顺序按首次开始时间。
   const groups = [...map.entries()].sort((a, b) => {
-    if (b[1].length !== a[1].length) return b[1].length - a[1].length;
     return (a[1][0].startAtMs || 0) - (b[1][0].startAtMs || 0);
   });
 
@@ -3997,17 +4138,17 @@ function raRouteCardsHtml(routes) {
     const failCount = arr.filter(x => x.state === 'Failed').length;
     const anyFail = failCount > 0;
 
-    const key = 'rt:' + RA.detailRunId + ':' + name;
+    const key = 'rt:' + runId + ':' + name;
     const opened = !!RA.open[key];
 
     h += '<div class="ra-card' + (opened ? ' ra-card-open' : '') + '">';
     // 卡片头：类型标签 + 名字 + 次数
-    h += '<div class="ra-card-hd" data-rt="' + esc(key) + '">'
+    h += '<button type="button" class="ra-card-hd" aria-expanded="' + opened + '" data-rt="' + esc(key) + '">'
       + '<span class="ra-badge ' + kindCls + '">' + kindLabel + '</span>'
       + '<span class="ra-card-name" title="' + esc(name) + '">' + esc(name) + '</span>'
       + (times > 1 ? '<span class="ra-badge badge-run">执行 ' + times + ' 次</span>' : '')
       + (anyFail ? '<span class="ra-badge badge-fail">失败 ' + failCount + '</span>' : '')
-      + '</div>';
+      + '</button>';
     // 卡片体：聚合指标（彩色小标签）
     h += '<div class="ra-card-tags">'
       + '<span class="ra-tag">总耗时 ' + raDur(totalDur) + '</span>'
@@ -4027,6 +4168,8 @@ function raRouteCardsHtml(routes) {
           + '<span class="ra-exec-dur">' + raDur(x.durSec) + '</span>'
           + raState(x.state)
           + '<span class="ra-exec-pick">' + (x.pickCount || 0) + ' 拾取</span>'
+          + (x.routeId ? raExecutionMora(runId,x.routeId,x.durSec) : '')
+          + (x.routeId ? '<button type="button" class="ra-action" data-raw data-route="' + esc(x.routeId) + '">路线日志原文</button>' : '')
           + (x.pickDetail ? '<span class="ra-pickd">' + raPickDetailHtml(x.pickDetail) + '</span>' : '')
           + '</div>';
       }
@@ -4054,8 +4197,7 @@ function raDetailHtml(r) {
 
   // 概要行
   h += '<div class="ra-dsum">'
-    + '<span>收益 <b class="num">' + raNum(d.run && d.run.exp) + '</b> 经验 · '
-    + '<b class="num">' + raNum(d.run && d.run.mora) + '</b> 摩拉</span>'
+    + '<span>经验 <b class="num">' + raNum(d.run && d.run.exp) + '</b></span>'
     + '<span>拾取 <b class="num">' + raNum(d.run && d.run.picks) + '</b></span>'
     + '<span>路线 ' + routes.length + ' 条 · 报错 ' + errors.length + ' 条</span>'
     + (d.run && d.run.srcFileStart ? '<span class="ra-mono" style="color:var(--txt4)">' + esc(d.run.srcFileStart) + '</span>' : '')
@@ -4071,7 +4213,7 @@ function raDetailHtml(r) {
   if (routes.length) {
     h += '<div class="ra-sub">路线 / 脚本明细 <span class="badge tag">' + routes.length
       + ' 次执行 / ' + raUniqueNames(routes) + ' 个不同名字</span></div>';
-    h += raRouteCardsHtml(routes);
+    h += raRouteCardsHtml(routes, r.runId);
   } else {
     h += '<div class="ra-sub">路线 / 脚本明细</div><div class="pageempty">该次运行没有路线记录。</div>';
   }
@@ -4119,7 +4261,22 @@ function raPickDetailHtml(pd) {
 // ── ② 按配置组汇总 ──────────────────────────────────────────────────
 function raGroupsSectionHtml() {
   const f = RA.f;
-  let list = (RA.groups || []).slice();
+  const groups = new Map();
+  for (const r of raFilteredRuns()) {
+    const g = groups.get(r.group) || {group:r.group, runs:0, failures:0, totalDurSec:0, totalExp:0, totalMora:0, totalPicks:0};
+    groups.set(r.group,g); g.runs++;
+    if (r.state === 'Failed') g.failures++;
+    g.totalDurSec += Number(r.durSec) || 0; g.totalExp += Number(r.exp) || 0;
+    g.totalPicks += Number(r.picks) || 0;
+    if (r.endAt && (!g.lastEndAt || r.endAt > g.lastEndAt)) g.lastEndAt = r.endAt;
+  }
+  if (!f.state && !f.minDurMin) {
+    for (const row of raMoraRows()) {
+      const name = row.GroupName || '';
+      if (!groups.has(name)) groups.set(name,{group:name,runs:0});
+    }
+  }
+  let list = [...groups.values()];
   if (f.group) list = list.filter(g => g.group === f.group);
   if (f.kw) {
     const k = f.kw.toLowerCase();
@@ -4130,14 +4287,14 @@ function raGroupsSectionHtml() {
   if (!list.length) {
     return raSection('groups', '按配置组汇总', '0',
       '<div class="pageempty" style="text-align:center;padding:22px 12px">'
-      + (RA.groups.length ? '当前筛选条件没有匹配的配置组。' : '暂无汇总数据。')
+      + (RA.runs.length ? '当前筛选条件没有匹配的配置组。' : '暂无汇总数据。')
       + '</div>', RA.open.groups);
   }
 
   const page = raSlice('groups', list);
   let h = '<div class="ra-scroll"><table class="ldtable ra-table"><thead><tr>'
     + '<th>配置组</th><th class="num">次数</th><th class="num">失败</th>'
-    + '<th class="num">总时长</th><th class="num">均经验</th><th class="num">均摩拉</th>'
+    + '<th class="num">总时长</th><th class="num">总经验</th><th class="num">米游社组摩拉</th>'
     + '<th class="num">总拾取</th><th>最后结束</th>'
     + '</tr></thead><tbody>';
   for (const g of page) {
@@ -4147,8 +4304,8 @@ function raGroupsSectionHtml() {
       + '<td class="num">' + (g.runs || 0) + '</td>'
       + '<td class="num ' + failCls + '">' + (g.failures || 0) + '</td>'
       + '<td class="num">' + raDur(g.totalDurSec) + '</td>'
-      + '<td class="num">' + raNum(g.avgExp) + '</td>'
-      + '<td class="num">' + raNum(g.avgMora) + '</td>'
+      + '<td class="num">' + raNum(g.totalExp) + '</td>'
+      + '<td class="num">' + raMoraAmount(raMoraRows().filter(x => (x.GroupName || '') === g.group)) + '</td>'
       + '<td class="num">' + raNum(g.totalPicks) + '</td>'
       + '<td class="ra-mono">' + raTime(g.lastEndAt, true) + '</td>'
       + '</tr>';
@@ -4166,7 +4323,7 @@ function raPicksSectionHtml() {
   if (!total) {
     return raSection('picks', '拾取明细', '0',
       '<div class="pageempty" style="text-align:center;padding:22px 12px">'
-      + '近 ' + RA.days + ' 天没有拾取事件记录。</div>', RA.open.picks);
+      + esc(raRangeText()) + ' 没有拾取事件记录。</div>', RA.open.picks);
   }
 
   // 三类计数条
@@ -4185,7 +4342,7 @@ function raPicksSectionHtml() {
     + '<option value="skipped"' + (RA.f.kind === 'skipped' ? ' selected' : '') + '>跳过</option>'
     + '</select></label></div>';
 
-  let list = (RA.picks || []).slice();
+  let list = (RA.picks || []).slice().sort((a,b) => (a.tsMs || Date.parse(a.ts)) - (b.tsMs || Date.parse(b.ts)));
   if (RA.f.kind) list = list.filter(p => p.kind === RA.f.kind);
   if (RA.f.kw) {
     const k = RA.f.kw.toLowerCase();
@@ -4223,169 +4380,41 @@ function raPicksSectionHtml() {
 
 // ── ④ 问题组（沿用老台账视图，用户熟悉）─────────────────────────────
 function raProblemsSectionHtml() {
-  const d = RA.ledger || {};
-  const problems = (d.zeroReward || []).concat(d.failed || []);
+  const problems = raFilteredRuns().filter(r => r.state === 'Failed');
   if (!problems.length) return '';
   let h = '';
   for (const rec of problems) {
     h += '<div class="dline"><span class="dk">' + esc(rec.group || '') + '</span>'
-      + '<span class="dv">' + esc(rec.state || '') + ' · ' + esc(rec.day || '') + ' ' + esc(rec.start || '')
+      + '<span class="dv">' + esc(rec.state || '') + ' · ' + esc(rec.startAt || '')
       + (rec.detail ? ' · ' + esc(rec.detail) : '') + '</span></div>';
   }
-  return raSection('problems', '问题组（0 收益 / 失败）', problems.length, h, RA.open.problems);
+  return raSection('problems', '失败运行', problems.length, h, RA.open.problems);
 }
 
 // ── ⑤ 米游社摩拉（分区展示，与 BGI 侧不混算）────────────────────────
 function raMiyousheSectionHtml() {
-  let h = '<div id="raMiyousheBody">'
-    + '<div class="pageempty">展开本区后自动加载米游社账目数据…</div></div>';
-  h += '<div class="ra-source">'
-    + '<b>口径说明</b>：本区为<b>米游社札记账目流水</b>（官方数据，延迟约 1 小时，无路线归属）；'
-    + '上方各区的摩拉来自 <b>BGI 日志侧</b>（该次挂机时段实际收益，含路线上下文）。'
-    + '<b>两者口径不同，分区展示，绝不混算。</b>'
-    + '</div>';
-  return raSection('miyoushe', '米游社摩拉（账目侧）', null, h, RA.open.miyoushe);
-}
-
-// ── 米游社数据加载（分区展开时才拉）─────────────────────────────────
-//
-// ★ t50：先拉**角色列表**，再按选中角色拉数据。
-//   用户原话：「米游社那里显示一个17什么的账号，但是没有名字，分不清啊。
-//             而且如果有绑定多个原神账号，应该要可以切换，设为默认，
-//             不然要取哪个数据呢？」
-//   原则：摩拉数据必须标明是**哪个角色**的，几个角色的数绝不混成一个。
-async function raLoadMiyoushe() {
-  const host = $('raMiyousheBody');
-  if (!host || !RA.user) return;
-  host.innerHTML = '<div class="pageempty">加载中…</div>';
-
-  const u = encodeURIComponent(RA.user.user);
-  let roles = null;
-  try {
-    const rr = await fetch('/api/miyoushe/roles?user=' + u);
-    roles = await rr.json();
-  } catch (e) { roles = null; }
-
-  const list = (roles && roles.ok !== false && Array.isArray(roles.roles)) ? roles.roles : [];
-  if (!RA.miyousheRole) {
-    const d = list.find(x => x.isDefault);
-    RA.miyousheRole = (d || list[0] || {}).gameUid || '';
-  }
-
-  if (!list.length) {
-    // ★ 优雅降级：无凭据/无角色 → 明确提示，不显示一串认不出的数字
-    const why = (roles && roles.reason) || '需要重新登录米游社';
-    host.innerHTML = '<div class="ra-degrade">'
-      + '<div class="ra-deg-t">米游社角色不可用</div>'
-      + '<div class="ra-deg-d">' + esc(why) + '</div>'
-      + '<div class="ra-deg-d" style="opacity:.75">配好凭据后，这里会列出该米游社账号绑定的'
-      + '全部原神角色（昵称 · 等级 · UID）。</div></div>';
-    return;
-  }
-
-  let head = '<div class="ra-roles">';
-  for (const r of list) {
-    const on = r.gameUid === RA.miyousheRole;
-    head += '<div class="ra-role' + (on ? ' on' : '') + '">'
-      + '<div class="ra-role-main">'
-      + '<span class="ra-role-nick">' + esc(r.nickname || '(无昵称)') + '</span>'
-      + '<span class="ra-role-lv">Lv.' + (r.level || 0) + '</span>'
-      + (r.isDefault ? '<span class="ra-role-def">默认</span>' : '')
-      + '</div>'
-      + '<div class="ra-role-sub">' + esc(r.region || '') + ' · UID ' + esc(r.gameUid) + '</div>'
-      + '<div class="ra-role-acts">'
-      + '<button class="ra-mini" data-pick="' + esc(r.gameUid) + '">' + (on ? '当前查看' : '查看') + '</button>'
-      + (r.isDefault ? '' : '<button class="ra-mini" data-def="' + esc(r.gameUid) + '">设为默认</button>')
-      + '</div></div>';
-  }
-  head += '</div>';
-
-  const cur = list.find(x => x.gameUid === RA.miyousheRole) || list[0];
-  head += '<div class="ra-own"><b>下方数据归属</b>：' + esc(cur.nickname || '(无昵称)')
-    + ' · Lv.' + (cur.level || 0) + ' · ' + esc(cur.region || '')
-    + ' · UID ' + esc(cur.gameUid)
-    + (cur.isDefault ? ' <span class="ra-role-def">默认角色</span>' : '')
-    + '</div>';
-
-  host.innerHTML = head + '<div id="raMiyousheData"><div class="pageempty">读取该角色摩拉数据…</div></div>';
-  raWireMiyousheRoles(u);
-  raLoadMiyousheData(u, cur.gameUid);
-}
-
-// 角色点击 / 设默认 的绑定
-function raWireMiyousheRoles(userEnc) {
-  document.querySelectorAll('#raMiyousheBody [data-pick]').forEach(btn => {
-    btn.onclick = (ev) => {
-      ev.stopPropagation();
-      RA.miyousheRole = btn.getAttribute('data-pick');
-      raLoadMiyoushe();
-    };
-  });
-  document.querySelectorAll('#raMiyousheBody [data-def]').forEach(btn => {
-    btn.onclick = async (ev) => {
-      ev.stopPropagation();
-      const uid = btn.getAttribute('data-def');
-      btn.disabled = true; btn.textContent = '保存中…';
-      try {
-        const r = await fetch('/api/miyoushe/roles?user=' + userEnc, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ account: RA.user.user, gameUid: uid }),
-        });
-        const d = await r.json();
-        if (!d || d.ok === false) { btn.textContent = '失败'; btn.title = (d && d.error) || ''; return; }
-        RA.miyousheRole = uid;
-        raLoadMiyoushe();
-      } catch (e) { btn.textContent = '失败'; }
-    };
-  });
-}
-
-// 拉某个角色的摩拉数据（明确带 role，避免多个角色的数混算）
-async function raLoadMiyousheData(userEnc, gameUid) {
-  const box = $('raMiyousheData');
-  if (!box) return;
-  const q = 'user=' + userEnc + '&days=' + RA.days
-    + (gameUid ? '&role=' + encodeURIComponent(gameUid) : '');
-  try {
-    const [sumR, verR] = await Promise.allSettled([
-      fetch('/api/miyoushe/mora/summary?' + q).then(r => r.json()),
-      fetch('/api/miyoushe/mora/versions?user=' + userEnc).then(r => r.json()),
-    ]);
-    const sum = (sumR.status === 'fulfilled') ? sumR.value : null;
-    const ver = (verR.status === 'fulfilled') ? verR.value : null;
-
-    if (!sum || sum.ok === false) {
-      box.innerHTML = '<div class="pageempty">该角色的米游社账目数据不可用：'
-        + esc((sum && sum.error) || '未采集到') + '</div>';
-      return;
-    }
-    const items = sum.items || [];
-    if (!items.length) {
-      box.innerHTML = '<div class="pageempty">近 ' + RA.days + ' 天该角色没有米游社账目记录。</div>';
-      return;
-    }
-    let h = '<div class="ra-scroll"><table class="ldtable ra-table"><thead><tr>'
-      + '<th>日期</th><th>来源</th><th class="num">摩拉</th></tr></thead><tbody>';
-    for (const it of items.slice(0, 50)) {
-      h += '<tr><td class="ra-mono">' + esc(it.day || '') + '</td>'
-        + '<td>' + esc(it.groupName || '-') + '</td>'
-        + '<td class="num">' + raNum(it.totalMorale || it.totalMora || 0) + '</td></tr>';
-    }
+  const rows = raMoraRows().filter(x => !RA.f.group || x.GroupName === RA.f.group);
+  let h = '<div class="ra-source">来源：米游社札记 · ' + esc(raRangeText()) + ' · 按日期、配置组及路线归属。重复执行仅在组汇总中计入一次。</div>';
+  if (!rows.length) h += '<div class="pageempty">' + (RA.moraRows ? '当前角色和日期没有匹配账目。' : '米游社账目暂不可用。') + '</div>';
+  else {
+    h += '<div class="ra-scroll"><table class="ldtable ra-table"><thead><tr><th>日期</th><th>配置组</th><th>路线</th><th class="num">流水笔数</th><th class="num">摩拉</th></tr></thead><tbody>';
+    for (const row of rows) h += '<tr><td>' + esc(row.Day) + '</td><td>' + esc(row.GroupName || '未归属配置组') + '</td><td>' + esc(row.RouteName || '未归属路线') + '</td><td class="num">' + raNum(row.RecordCount) + '</td><td class="num">' + raMoraAmount([row]) + '</td></tr>';
     h += '</tbody></table></div>';
-    const verName = (ver && ver.current) ? String(ver.current) : '';
-    if (verName) h += '<div class="ra-source" style="margin-top:6px">分类规则版本：' + esc(verName) + '</div>';
-    box.innerHTML = h;
-  } catch (e) {
-    box.innerHTML = '<div class="pageempty">加载失败：' + esc(e.message) + '</div>';
   }
+  return raSection('miyoushe','米游社摩拉明细', rows.length + ' 项', h, RA.open.miyoushe);
 }
 
 // ── 事件绑定 ─────────────────────────────────────────────────────────
 function raWire() {
   // 时间范围（后端参数 → 重请）
   const days = $('raDays');
-  if (days) days.onchange = () => { RA.days = Number(days.value) || 7; raSaveFilter(); raLoad(RA.user); };
+  const selectDate = day => { RA.date = day; RA.days = 1; raSaveFilter(); raLoad(RA.user); };
+  if (days) days.onchange = () => {
+    RA.days = Number(days.value); RA.date = RA.days === 1 ? raToday() : '';
+    raSaveFilter(); raLoad(RA.user);
+  };
+  $('raDate').onchange = ev => selectDate(ev.target.value || raToday());
+  $('raToday').onclick = () => selectDate(raToday());
 
   // 以下全部前端过滤（不重请）
   const bind = (id, key, isNum) => {
@@ -4398,6 +4427,7 @@ function raWire() {
       raRender();
     };
   };
+  if ($('raRole')) $('raRole').onchange = ev => { RA.miyousheRole = ev.target.value; raRender(); };
   bind('raGroup', 'group');
   bind('raState', 'state');
   bind('raDur', 'minDurMin');
@@ -4432,9 +4462,8 @@ function raWire() {
       const id = card.getAttribute('data-run');
       if (!id) return;
       const key = 'run:' + id;
-      if (RA.open[key]) { delete RA.open[key]; RA.detailRunId = ''; raRender(); return; }
+      if (RA.open[key]) { delete RA.open[key]; raRender(); return; }
       RA.open[key] = true;
-      RA.detailRunId = id;
       RA.details[id] = 'loading';
       raRender();
       raFetchDetail(id);
@@ -4453,6 +4482,9 @@ function raWire() {
     };
   });
 
+  document.querySelectorAll('[data-raw]').forEach(btn => {
+    btn.onclick = () => raOpenLog(btn.closest('[data-run]').dataset.run, btn.dataset.route);
+  });
   // 分页
   document.querySelectorAll('button.ra-pg').forEach(b => {
     b.onclick = () => {
@@ -4471,17 +4503,65 @@ function raWire() {
     const id = (det.id || '').replace('ra-sec-', '');
     det.ontoggle = () => {
       RA.open[id] = det.open;
-      if (id === 'miyoushe' && det.open) raLoadMiyoushe();
+
     };
   });
 }
 
+function raOpenLog(runId, routeId) {
+  const run = RA.runs.find(r => r.runId === runId);
+  if (!run) return;
+  const dialog = $('raLogDialog'), more = $('raLogMore'), lines = $('raLogLines'), state = $('raLogState');
+  const route = routeId && RA.details[runId]?.routes?.find(r => String(r.routeId) === routeId);
+  const day = (route?.startAt || run.startAt).slice(0,10);
+  const q = new URLSearchParams({user:RA.user.user,runId,day,limit:'100'});
+  if (routeId) q.set('routeId',routeId);
+  let offset = 0;
+  const controller = new AbortController();
+  lines.replaceChildren(); more.hidden = true;
+  $('raLogTitle').textContent = routeId ? '路线日志原文' : '分组日志原文';
+  $('raLogMeta').textContent = [run.group,route?.name,'已收录的日志原文'].filter(Boolean).join(' · ');
+  const date = $('raLogDate');
+  date.value = day; date.min = (route?.startAt || run.startAt).slice(0,10);
+  date.max = (route?.endAt || run.endAt || raToday()).slice(0,10);
+  date.onchange = () => { if (date.value && date.validity.valid) { offset = 0; lines.replaceChildren(); q.set('day',date.value); load(); } };
+  dialog.showModal(); dialog.onclose = () => controller.abort();
+  $('raLogClose').onclick = () => dialog.close();
+  async function load() {
+    more.disabled = true; date.disabled = true; state.textContent = '正在读取原文…';
+    try {
+      q.set('offset',String(offset));
+      const resp = await fetch('/api/bgi/runs/log?' + q,{signal:controller.signal});
+      const d = await resp.json();
+      if (controller.signal.aborted) return;
+      if (!resp.ok || !d.ok) throw new Error(d.error || '日志查询失败');
+      for (const row of d.items) {
+        const el = document.createElement('div'), n = document.createElement('span'), text = document.createElement('pre');
+        el.className = 'ra-log-row'; n.textContent = row.lineNo || '—'; n.title = row.srcFile || '';
+        text.textContent = [row.text,row.status !== 'ok' && (row.detail || '原文不可用')].filter(Boolean).join('\n');
+        el.append(n,text); lines.append(el);
+      }
+      offset += d.items.length;
+      more.textContent = '加载更多'; more.hidden = !d.hasMore || !d.items.length;
+      state.textContent = offset ? '已显示 ' + offset + ' 条' : '未找到可归属的日志原文。';
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      state.textContent = '原文读取失败：' + e.message; more.textContent = '重试'; more.hidden = false;
+    } finally { if (!controller.signal.aborted) { more.disabled = false; date.disabled = false; } }
+  }
+  more.onclick = load; load();
+}
+
 // 拉单次运行明细
 async function raFetchDetail(runId) {
+  const generation = RA.generation;
   try {
     const r = await fetch('/api/bgi/runs/detail?id=' + encodeURIComponent(runId));
-    RA.details[runId] = await r.json();
+    const detail = await r.json();
+    if (generation !== RA.generation) return;
+    RA.details[runId] = detail;
   } catch (e) {
+    if (generation !== RA.generation) return;
     RA.details[runId] = 'error';
   }
   raRender();
@@ -4502,7 +4582,7 @@ function raReload() { if (RA.user) raLoad(RA.user); }
 function raSaveFilter() {
   try {
     const p = new URLSearchParams();
-    p.set('days', String(RA.days));
+    if (RA.date) p.set('date', RA.date); else p.set('days', String(RA.days));
     if (RA.f.group) p.set('group', RA.f.group);
     if (RA.f.state) p.set('state', RA.f.state);
     if (RA.f.sort && RA.f.sort !== 'start-asc') p.set('sort', RA.f.sort);
@@ -4520,7 +4600,10 @@ function raLoadFilterFromHash() {
   try {
     const q = location.hash.split('?')[1] || '';
     const p = new URLSearchParams(q);
-    RA.days = Number(p.get('days')) || 7;
+    RA.days = [3,7,14,30].includes(Number(p.get('days'))) ? Number(p.get('days')) : 1;
+    const date = p.get('date') || '';
+    RA.date = /^\d{4}-\d{2}-\d{2}$/.test(date) && !isNaN(Date.parse(date)) ? date : (RA.days === 1 ? raToday() : '');
+    if (RA.date) RA.days = 1;
     RA.f = {
       group: p.get('group') || '',
       state: p.get('state') || '',
@@ -4543,15 +4626,13 @@ async function showRunAnalysis(id) {
   const ep = $('earningsPage'); if (ep) ep.style.display = 'none';
   const mp = $('miyoushePage'); if (mp) mp.style.display = 'none';
   raLoadFilterFromHash();
+  if (RA.user?.id !== u.id) RA.miyousheRole = '';
   RA.user = u;
   curId = u.id;
   document.title = '运行分析 · ' + (u.label || u.user);
   const t = $('ledgerTitle'); if (t) t.textContent = '运行分析';
   buildUserSwitch('ledgerSwitch', u.id, (nu) => {
-    RA.user = nu; curId = nu.id;
-    document.title = '运行分析 · ' + (nu.label || nu.user);
-    buildUserSwitch('ledgerSwitch', nu.id, arguments.callee);
-    raLoad(nu);
+    location.hash = '#/ledger/' + encodeURIComponent(nu.id) + (location.hash.includes('?') ? '?' + location.hash.split('?')[1] : '');
   });
   raLoad(u);
 }
@@ -4752,7 +4833,7 @@ function route() {
   const page = parts[0] || '';
   const id = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '';
   if (page === 'remote' && id) { showRemote(id); return; }
-  if (page === 'ledger') { showLedger(id); return; }
+  if (page === 'ledger') { showLedger(decodeURIComponent((parts[1] || '').split('?')[0])); return; }
   if (page === 'earnings') { showEarnings(id); return; }
   if (page === 'miyoushe') { showMiyoushe(id); return; }
   showOverview();

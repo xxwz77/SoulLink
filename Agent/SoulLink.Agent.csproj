@@ -27,7 +27,7 @@
          主程序升版不触发 agent 重铺；agent 行为变了才 +1。
          这个版本通过 FileVersion 与同目录 SoulLink.Agent.version 暴露，
          主程序用自己编译进的 <AgentVersion> 与之比对。 -->
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <AssemblyTitle>SoulLink 注入代理</AssemblyTitle>
@@ -46,6 +46,7 @@
     <Compile Include="../Relay/GpuAdapter.cs" Link="Relay/GpuAdapter.cs" />
     <Compile Include="../Relay/WgcCapture.cs" Link="Relay/WgcCapture.cs" />
     <Compile Include="../Relay/SessionRecorder.cs" Link="Relay/SessionRecorder.cs" />
+    <Compile Include="../Relay/ViewerFrameQueue.cs" Link="Relay/ViewerFrameQueue.cs" />
     <Compile Include="../Relay/RelayAgent.cs" Link="Relay/RelayAgent.cs" />
     <Compile Include="../Relay/AgentWebServer.cs" Link="Relay/AgentWebServer.cs" />
     <!-- Services 依赖闭包（REFACTOR-20261124-AGENT-BROKER-SPLIT.md §1.2 + Lead 路线 A 抽取后） -->

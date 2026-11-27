@@ -91,6 +91,28 @@ namespace SoulLink.TaskEdit
             };
         }
 
+        internal string EditorState(string account, string root)
+        {
+            string url = _baseUrl, token = _upstreamToken;
+            if (url.Length == 0 || token.Length == 0) return "unknown";
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url + "/api/bgi/editor/status?account=" + Uri.EscapeDataString(account));
+                req.Headers.Add("Cookie", UpstreamCookieName + "=" + token);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                using var response = Http.Send(req, timeout.Token);
+                if (!response.IsSuccessStatusCode) return "unknown";
+                using var doc = System.Text.Json.JsonDocument.Parse(response.Content.ReadAsStream());
+                var result = doc.RootElement;
+                if (!result.GetProperty("ok").GetBoolean() || !string.Equals(account, result.GetProperty("account").GetString(), StringComparison.OrdinalIgnoreCase)) return "unknown";
+                string exe = Path.GetFullPath(Path.Combine(root, "BetterGI.exe")).ToUpperInvariant();
+                string binding = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(exe)));
+                if (result.GetProperty("binding").GetString() != binding) return "unknown";
+                return result.GetProperty("state").GetString() ?? "unknown";
+            }
+            catch { return "unknown"; }
+        }
+
         /// <summary>转发一个请求。</summary>
         internal async Task ForwardAsync(HttpListenerContext ctx, CancellationToken ct)
         {
@@ -161,6 +183,7 @@ namespace SoulLink.TaskEdit
             {
                 if (string.IsNullOrEmpty(name)) continue;
                 if (IsHopByHop(name)) continue;
+                if (name.StartsWith("X-Forwarded-", StringComparison.OrdinalIgnoreCase)) continue;
                 if (name.Equals("Host", StringComparison.OrdinalIgnoreCase)) continue;
                 if (name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) continue;
                 // ★★ 3.3.46（t36）：**不透传 Cookie**，改为注入主程序自己的凭据（见下方）

@@ -2,260 +2,67 @@ using System;
 
 namespace SoulLink.TaskEdit
 {
-    // JS 脚本动态设置表单（§14：SettingItem 六种类型 + 未知类型降级）。
+    // JS 脚本动态设置表单：按项目实例隔离配置，并区分 schema 状态。
     internal static partial class TaskEditStatic
     {
         private const string JsSettingsJs = """
 'use strict';
 (function (TE) {
-
-  /*
-   * JS 脚本自定义配置（用户硬需求）。
-   * 数据来源：脚本 manifest.json 的 SettingsUi → SettingItem 列表。
-   * 六种类型（§14.2）：
-   *   separator / input-text / select / checkbox / multi-checkbox / cascade-select
-   * ★ 未知类型必须降级显示（不崩、不丢数据），并在界面上说明。
-   */
   TE.js = {
-    projIdx: -1, schema: null, values: {},
-
+    projIdx: -1, schema: null, values: {}, schemaState: 'loading',
     open: function (projIdx) {
       TE.js.projIdx = projIdx;
-      var arr = (TE.group.data.projects || TE.group.data.Projects || []);
-      var p = arr[projIdx] || {};
-      var folder = p.folderName || p.FolderName || p.name || '';
-
-      TE.js.values = p.jsScriptSettingsObject || p.JsScriptSettingsObject || {};
-      TE.busy(true, '读取脚本设置 schema…');
-
-      var q = '/getconfig?name=' + encodeURIComponent(TE.group.name) +
-        '&index=' + projIdx + '&folder=' + encodeURIComponent(folder);
-      TE.api.get(q).then(function (r) {
-        TE.js.schema = (r && (r.settingsUi || r.SettingsUi || r.items)) || null;
+      var arr = (TE.group.data.projects || TE.group.data.Projects || []), p = arr[projIdx] || {};
+      var folder = p.folderName || p.FolderName || p.name || p.Name || '';
+      TE.js.values = JSON.parse(JSON.stringify(p.jsScriptSettingsObject || p.JsScriptSettingsObject || {}));
+      TE.js.schema = null; TE.js.schemaState = 'loading';
+      TE.busy(true, '读取脚本设置…');
+      TE.api.get('/jssettings?folder=' + encodeURIComponent(folder)).then(function (r) {
+        if (r && r._status === 404) TE.js.schemaState = r.state || 'missing';
+        else if (r && r._status === 422 && r.state === 'invalid') TE.js.schemaState = 'invalid';
+        else if (!r || r._status >= 400 || r.ok === false) TE.js.schemaState = 'request-failed';
+        else if (r.declared === false) TE.js.schemaState = 'undeclared';
+        else if (r.settingsUi !== undefined) { TE.js.schema = r.settingsUi; TE.js.schemaState = 'ready'; }
+        else TE.js.schemaState = 'invalid';
         TE.js.render();
-      }).catch(function () {
-        /* ★ 拿不到 schema 不阻断：仍然允许用户看/改已有值（降级） */
-        TE.js.schema = null;
-        TE.js.render();
-      });
+      }).catch(function (e) { TE.js.schemaState = 'request-failed'; TE.js.requestError = e.message; TE.js.render(); });
     },
-
     render: function () {
-      var arr = (TE.group.data.projects || TE.group.data.Projects || []);
-      var p = arr[TE.js.projIdx] || {};
+      var arr = (TE.group.data.projects || TE.group.data.Projects || []), p = arr[TE.js.projIdx] || {};
       var name = p.name || p.Name || '';
-
-      var html = '<div class="head"><h2>' + TE.esc(name) + '</h2>' +
-        '<span class="tag js">JS 脚本</span><span class="grow"></span>' +
-        '<button class="btn" id="jsBack">返回配置组</button></div>';
-
+      var html = '<div class="head"><h2>' + TE.esc(name) + '</h2><span class="tag js">JS 脚本实例</span><span class="grow"></span><button class="btn" id="jsBack">返回配置组</button></div>';
       var items = TE.js.normalize(TE.js.schema);
-      if (!items.length) {
-        html += '<div class="banner warn">该脚本没有声明设置项（manifest.json 里没有 SettingsUi），' +
-          '或读取失败。你仍可查看现有值。</div>';
-        html += TE.js.rawJsonHtml();
-      } else {
-        html += '<div class="banner info" style="font-size:12px">共 ' + items.length +
-          ' 个设置项，来自脚本 manifest.json 的 SettingsUi。</div>';
-        html += '<div class="card"><div class="body">';
-        for (var i = 0; i < items.length; i++) html += TE.js.itemHtml(items[i], i);
-        html += '</div></div>';
-      }
-
-      TE.el('canvas').innerHTML = html;
-      TE.el('jsBack').onclick = function () { TE.group.render(); };
-      TE.js.bind(items);
+      if (TE.js.schemaState !== 'ready') {
+        var msgs = {loading:'正在读取设置定义…', undeclared:'该脚本未声明 SettingsUi。', missing:'设置文件缺失。', 'missing-script':'脚本 manifest.json 文件缺失。', 'missing-settings-file':'manifest.json 声明的 settings_ui 文件缺失。', invalid:'设置定义格式错误，无法生成表单。', 'request-failed':'读取设置定义请求失败：' + (TE.js.requestError || '服务不可用')};
+        html += '<div class="banner warn">' + TE.esc(msgs[TE.js.schemaState] || '设置定义不可用') + ' 可查看并编辑实例现有值。</div>' + TE.js.rawJsonHtml();
+      } else if (!items.length) html += '<div class="banner info">SettingsUi 已读取，但未声明设置项。</div>' + TE.js.rawJsonHtml();
+      else { html += '<div class="banner info">' + items.length + ' 个设置项，来自脚本 SettingsUi。</div><div class="card"><div class="body">';
+        for (var i=0;i<items.length;i++) html += TE.js.itemHtml(items[i],i);
+        html += '</div></div>'; }
+      TE.el('canvas').innerHTML='<section class="js-settings">'+html+'</section>'; TE.el('jsBack').onclick=function(){TE.group.render();}; TE.js.bind();
     },
-
-    /* 规范化：兼容若干种可能的字段命名 */
-    normalize: function (schema) {
-      if (!schema) return [];
-      var arr = Array.isArray(schema) ? schema : (schema.items || schema.Items ||
-        schema.settingItems || schema.SettingItems || []);
-      return Array.isArray(arr) ? arr : [];
+    normalize:function(s){ if(!s)return []; var a=Array.isArray(s)?s:(s.items||s.Items||s.settingItems||s.SettingItems||[]); return Array.isArray(a)?a:[]; },
+    rawJsonHtml:function(){return '<details class="card" open><summary>该实例的配置值（原始 JSON）</summary><div class="body"><textarea id="jsRaw" style="min-height:200px">'+TE.esc(JSON.stringify(TE.js.values||{},null,2))+'</textarea></div></details>';},
+    itemHtml:function(it,i){
+      var type=String(it.type||it.Type||it.itemType||'').toLowerCase(), name=it.name||it.Name||it.key||('item'+i), label=it.label||it.Label||it.title||it.Title||it.description||it.Description||name, optsRaw=it.options||it.Options||it.values||it.Values||it.cascadeOptions||it.CascadeOptions||it.levels||it.Levels;
+      var val=TE.js.values[name]; if(val===undefined) val=it.default!==undefined?it.default:(it.Default!==undefined?it.Default:null); if(optsRaw && !it.options && !it.Options)it.options=optsRaw;
+      var id='js-'+i, html='<div class="field"><label>'+TE.esc(label)+'</label><div class="ctl">';
+      if(type==='separator')return '<hr><b>'+TE.esc(label)+'</b>';
+      if(type==='checkbox') html+='<label class="sw"><input type="checkbox" data-js="'+TE.attr(name)+'" data-jt="bool"'+(val===true?' checked':'')+'><i></i></label>';
+      else if(type==='select') {var opts=TE.js.optionsOf(it);html+='<select data-js="'+TE.attr(name)+'" data-jt="text">'; for(var j=0;j<opts.length;j++)html+='<option value="'+TE.attr(opts[j].value)+'"'+(String(val)===String(opts[j].value)?' selected':'')+'>'+TE.esc(opts[j].label)+'</option>';html+='</select>';}
+      else if(type==='multi-checkbox'){var opts=TE.js.optionsOf(it),cur=Array.isArray(val)?val:[]; for(var j=0;j<opts.length;j++)html+='<label><input type="checkbox" data-jsm="'+TE.attr(name)+'" data-jv="'+TE.attr(opts[j].value)+'"'+(cur.indexOf(opts[j].value)>=0?' checked':'')+'> '+TE.esc(opts[j].label)+'</label> ';}
+      else if(type==='cascade-select'){var levels=it.levels||it.Levels||it.cascadeOptions||it.CascadeOptions||[], cur=Array.isArray(val)?val:[]; if(!Array.isArray(levels))levels=[]; for(var l=0;l<levels.length;l++){var level=levels[l],opts=TE.js.optionsOf(level); html+='<select data-jc="'+TE.attr(name)+'" data-jl="'+l+'">'; for(var j=0;j<opts.length;j++)html+='<option value="'+TE.attr(opts[j].value)+'"'+(String(cur[l]||'')===String(opts[j].value)?' selected':'')+'>'+TE.esc(opts[j].label)+'</option>'; html+='</select> ';}}
+      else html+='<input type="text" data-js="'+TE.attr(name)+'" data-jt="'+(['input-text','text'].indexOf(type)>=0?'text':'json')+'" value="'+TE.attr(TE.str(typeof val==='object'?JSON.stringify(val):val))+'">'+(['input-text','text',''].indexOf(type)<0?'<div class="desc">未知类型「'+TE.esc(type)+'」按 JSON 文本降级，其他值不受影响。</div>':'');
+      return html+(it.description||it.Description?'<div class="desc">'+TE.esc(it.description||it.Description)+'</div>':'')+'</div></div>';
     },
-
-    rawJsonHtml: function () {
-      return '<details class="card"><summary>现有配置值（原始 JSON）</summary><div class="body">' +
-        '<textarea id="jsRaw" style="min-height:200px">' +
-        TE.esc(JSON.stringify(TE.js.values || {}, null, 2)) + '</textarea>' +
-        '<div class="desc">⚠ 直接编辑 JSON 有风险；schema 可用时请用上面的表单。</div>' +
-        '</div></details>';
+    optionsOf:function(o){var a=o.options||o.Options||o.values||[];return Array.isArray(a)?a.map(function(x){return typeof x==='object'?{label:x.label||x.Label||x.value||x.Value,value:x.value||x.Value}:{label:String(x),value:x};}):[];},
+    bind:function(){
+      var c=TE.el('canvas'); TE.$$('[data-js]',c).forEach(function(x){x.addEventListener(x.type==='checkbox'||x.tagName==='SELECT'?'change':'input',function(){var v=x.getAttribute('data-jt')==='bool'?x.checked:x.value;if(x.getAttribute('data-jt')==='json'){try{v=JSON.parse(x.value);}catch(e){x.classList.add('bad');return;}}x.classList.remove('bad');TE.js.values[x.getAttribute('data-js')]=v;TE.js.commit();});});
+      TE.$$('[data-jsm]',c).forEach(function(x){x.onchange=function(){var n=x.getAttribute('data-jsm');TE.js.values[n]=TE.$$('[data-jsm]',c).filter(function(y){return y.getAttribute('data-jsm')===n&&y.checked;}).map(function(y){return y.getAttribute('data-jv');});TE.js.commit();};});
+      TE.$$('[data-jc]',c).forEach(function(x){x.onchange=function(){var n=x.getAttribute('data-jc');TE.js.values[n]=TE.$$('[data-jc]',c).filter(function(y){return y.getAttribute('data-jc')===n;}).sort(function(a,b){return +a.getAttribute('data-jl')- +b.getAttribute('data-jl');}).map(function(y){return y.value;});TE.js.commit();};});
+      var raw=TE.el('jsRaw');if(raw)raw.oninput=function(){try{var v=JSON.parse(raw.value);if(!v||typeof v!=='object'||Array.isArray(v))throw Error();TE.js.values=v;raw.classList.remove('bad');TE.js.commit();}catch(e){raw.classList.add('bad');}};
     },
-
-    itemHtml: function (it, idx) {
-      var type = String(it.type || it.Type || it.itemType || '').toLowerCase();
-      var name = it.name || it.Name || it.key || ('item' + idx);
-      var label = it.title || it.Title || it.label || name;
-      var desc = it.description || it.Description || it.tip || '';
-      var val = TE.js.value(name);
-      var id = 'js-' + idx;
-
-      /* separator：只画一条分隔线 */
-      if (type === 'separator') {
-        return '<div style="margin:14px 0 8px;border-top:1px solid #262b36;padding-top:8px">' +
-          (label ? '<b style="font-size:13px">' + TE.esc(label) + '</b>' : '') + '</div>';
-      }
-
-      var html = '<div class="field"><label for="' + id + '">' + TE.esc(label) + '</label><div class="ctl">';
-
-      switch (type) {
-        case 'input-text':
-          html += '<input type="text" id="' + id + '" data-js="' + TE.attr(name) +
-            '" data-jt="text" value="' + TE.attr(TE.str(val)) + '">';
-          break;
-
-        case 'select':
-          var opts = TE.js.optionsOf(it);
-          html += '<select id="' + id + '" data-js="' + TE.attr(name) + '" data-jt="text">';
-          for (var i = 0; i < opts.length; i++) {
-            html += '<option value="' + TE.attr(opts[i].value) + '"' +
-              (String(val) === String(opts[i].value) ? ' selected' : '') + '>' +
-              TE.esc(opts[i].label) + '</option>';
-          }
-          html += '</select>';
-          break;
-
-        case 'checkbox':
-          html += '<label class="sw"><input type="checkbox" id="' + id + '" data-js="' + TE.attr(name) +
-            '" data-jt="bool"' + (val === true ? ' checked' : '') + '><i></i></label>';
-          break;
-
-        case 'multi-checkbox':
-          var mopts = TE.js.optionsOf(it);
-          var cur = Array.isArray(val) ? val : [];
-          html += '<div style="display:flex;flex-wrap:wrap;gap:10px">';
-          for (var m = 0; m < mopts.length; m++) {
-            var cid = id + '-' + m;
-            html += '<label style="display:flex;align-items:center;gap:5px;color:#a8b0c0;font-size:13px">' +
-              '<input type="checkbox" id="' + cid + '" data-jsm="' + TE.attr(name) + '" data-jv="' +
-              TE.attr(mopts[m].value) + '"' + (cur.indexOf(mopts[m].value) >= 0 ? ' checked' : '') + '>' +
-              TE.esc(mopts[m].label) + '</label>';
-          }
-          html += '</div>';
-          break;
-
-        case 'cascade-select':
-          /* 两级联动：先选父级，再按父级列子级 */
-          var levels = it.levels || it.Levels || it.options || [];
-          html += TE.js.cascadeHtml(id, name, levels, val);
-          break;
-
-        default:
-          /* ★ 未知类型降级：显示原始值 + 一个文本框，不丢数据、不崩 */
-          html += '<input type="text" id="' + id + '" data-js="' + TE.attr(name) +
-            '" data-jt="json" value="' + TE.attr(TE.str(typeof val === 'object' ?
-              JSON.stringify(val) : val)) + '">' +
-            '<div class="desc" style="color:#ffb454">⚠ 该控件类型「' + TE.esc(type || '(空)') +
-            '」暂不支持，已降级为文本框（内容按原样保存）。</div>';
-          break;
-      }
-
-      if (desc && type !== 'separator') html += '<div class="desc">' + TE.esc(desc) + '</div>';
-      html += '</div></div>';
-      return html;
-    },
-
-    cascadeHtml: function (id, name, levels, val) {
-      if (!Array.isArray(levels) || !levels.length) {
-        return '<input type="text" id="' + id + '" data-js="' + TE.attr(name) +
-          '" data-jt="text" value="' + TE.attr(TE.str(val)) + '">';
-      }
-      var html = '';
-      for (var L = 0; L < levels.length; L++) {
-        var lv = levels[L];
-        var opts = TE.js.optionsOf(lv);
-        html += '<select id="' + id + '-L' + L + '" data-jc="' + TE.attr(name) + '" data-jl="' + L +
-          '" style="margin-bottom:5px">';
-        for (var i = 0; i < opts.length; i++) {
-          html += '<option value="' + TE.attr(opts[i].value) + '">' + TE.esc(opts[i].label) + '</option>';
-        }
-        html += '</select>';
-      }
-      return html;
-    },
-
-    /* options 兼容：字符串数组 / {label,value} 数组 */
-    optionsOf: function (obj) {
-      var raw = obj.options || obj.Options || obj.items || obj.values || [];
-      if (!Array.isArray(raw)) return [];
-      var out = [];
-      for (var i = 0; i < raw.length; i++) {
-        var v = raw[i];
-        if (v === null || v === undefined) continue;
-        if (typeof v === 'object') out.push({ label: v.label || v.Label || v.value || v.Value || '', value: v.value || v.Value });
-        else out.push({ label: String(v), value: v });
-      }
-      return out;
-    },
-
-    value: function (name) {
-      var v = TE.js.values || {};
-      if (name in v) return v[name];
-      return null;
-    },
-
-    bind: function (items) {
-      var c = TE.el('canvas');
-
-      TE.$$('[data-js]', c).forEach(function (inp) {
-        var ev = (inp.type === 'checkbox' || inp.tagName === 'SELECT') ? 'change' : 'input';
-        inp.addEventListener(ev, function () {
-          var name = inp.getAttribute('data-js'), t = inp.getAttribute('data-jt');
-          var v;
-          if (t === 'bool') v = inp.checked;
-          else if (t === 'json') { try { v = JSON.parse(inp.value); } catch (e) { v = inp.value; } }
-          else v = inp.value;
-          TE.js.values[name] = v;
-          TE.js.commit();
-        });
-      });
-
-      /* multi-checkbox：每次改动重建该字段的数组 */
-      TE.$$('[data-jsm]', c).forEach(function (cb) {
-        cb.onchange = function () {
-          var name = cb.getAttribute('data-jsm');
-          var vals = TE.$$('[data-jsm="' + name.replace(/"/g, '\\"') + '"]', c)
-            .filter(function (x) { return x.checked; })
-            .map(function (x) { return x.getAttribute('data-jv'); });
-          TE.js.values[name] = vals;
-          TE.js.commit();
-        };
-      });
-
-      /* cascade-select：任意一级变化都把各级当前值拼成数组 */
-      TE.$$('[data-jc]', c).forEach(function (sel) {
-        sel.onchange = function () {
-          var name = sel.getAttribute('data-jc');
-          var arr = TE.$$('[data-jc="' + name.replace(/"/g, '\\"') + '"]', c)
-            .map(function (x) { return x.value; });
-          TE.js.values[name] = arr;
-          TE.js.commit();
-        };
-      });
-
-      /* 原始 JSON 编辑（无 schema 时的兜底） */
-      var raw = TE.el('jsRaw');
-      if (raw) {
-        raw.addEventListener('input', function () {
-          try {
-            TE.js.values = JSON.parse(raw.value);
-            TE.js.commit();
-            raw.classList.remove('bad');
-          } catch (e) { raw.classList.add('bad'); }
-        });
-      }
-    },
-
-    /* 写回配置组内存模型（保存时随配置组一起提交） */
-    commit: function () {
-      var arr = (TE.group.data.projects || TE.group.data.Projects || []);
-      var p = arr[TE.js.projIdx];
-      if (!p) return;
-      if ('jsScriptSettingsObject' in p) p.jsScriptSettingsObject = TE.js.values;
-      else p.JsScriptSettingsObject = TE.js.values;
-      TE.dirty.mark('group:' + TE.group.name);
-    }
+    commit:function(){var arr=(TE.group.data.projects||TE.group.data.Projects||[]),p=arr[TE.js.projIdx];if(!p)return;if('jsScriptSettingsObject'in p)p.jsScriptSettingsObject=TE.js.values;else p.JsScriptSettingsObject=TE.js.values;TE.dirty.mark('group:'+TE.group.name);}
   };
 })(window.TE);
 """;

@@ -55,6 +55,7 @@ namespace SoulLink.Services
             public bool Interactive { get; set; } = true;
             public string ResultPath { get; set; } = "";
             public bool RequireElevated { get; set; } = true;
+            public string ExpectedOwnerSid { get; set; } = "";
             public string Nonce { get; set; } = "";
 
             /// <summary>
@@ -179,11 +180,29 @@ namespace SoulLink.Services
             }
             finally { LaunchGate.Release(); }
         }
+
+        // Editor preflight runs inside LaunchGate. The legacy guard would clear a newly
+        // appeared process without the editor's owner/PID checks, so never use it here.
+        internal static async Task<Result> LaunchEditorDragonAsync(BgiEditorRuntime.Target target, string name)
+        {
+            await LaunchGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                target.RequireUnchanged();
+                using var running = target.Inspect();
+                if (running != null) return Result.Fail("BGI 已运行");
+                using var config = target.OpenDragon(name);
+                using var image = File.OpenRead(target.Exe);
+                return await LaunchCoreAsync(target.SessionId, target.Exe, "--startOneDragon \"" + name + "\"",
+                    "", true, null, default, expectedOwnerSid: target.OwnerSid).ConfigureAwait(false);
+            }
+            finally { LaunchGate.Release(); }
+        }
 #endif
 
         private static async Task<Result> LaunchCoreAsync(int sessionId, string exePath, string arguments,
             string workingDir, bool interactive, string? bootstrapExe, CancellationToken ct,
-            Dictionary<string, string>? env = null)
+            Dictionary<string, string>? env = null, string expectedOwnerSid = "")
         {
             var sw = Stopwatch.StartNew();
 
@@ -215,6 +234,7 @@ namespace SoulLink.Services
                     : workingDir,
                 Interactive = interactive,
                 RequireElevated = true,
+                ExpectedOwnerSid = expectedOwnerSid,
                 ResultPath = resultPath,
                 Env = env ?? new Dictionary<string, string>()
             };
@@ -751,6 +771,8 @@ namespace SoulLink.Services
                 if (job.RequireElevated)
                 {
                     var primaryInfo = BrokerSecurity.InspectToken(primary);
+                    if (job.ExpectedOwnerSid.Length > 0 && primaryInfo.Sid != job.ExpectedOwnerSid)
+                        return (false, 0, "目标会话用户已改变");
                     if (!primaryInfo.Elevated || !primaryInfo.Administrator) return (false, 0, "目标程序令牌未通过管理员校验");
                 }
                 if (job.RequireElevated)
