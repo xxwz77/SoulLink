@@ -183,3 +183,22 @@ _msg.txt
 _m.txt
 _msg2.txt
 _m3.txt
+
+# Local-only workspaces and runbooks
+/Server/
+/.local-server/
+/Android/
+/SoulLink-Android/
+/SoulLink-iOS/
+/docs/HANDOFF-2.17.50-20261121.md
+/docs/HANDOFF-2.18.0-20261121.md
+/docs/HANDOFF-3.0.0-20261121.md
+/docs/RELEASE-3.0.0-20261121.md
+/docs/SERVER-UPDATE-GUIDE.md
+/docs/research/AUDIT-20261124-10-TRANSPORT-LATENCY-BUDGET.md
+/docs/research/HANDOFF-REMOTE-20261122.md
+/docs/research/HANDOFF-VIDEO-20261122.md
+/docs/research/HANDOVER.md
+/docs/research/LOBBY-DEPLOY-2.1.0-20261122.md
+/docs/research/LOBBY-DEPLOY-20261122.md
+/docs/research/REFACTOR-20261124-SERVER-URL-EXTERNALIZED.md
