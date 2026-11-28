@@ -13,7 +13,7 @@ public partial class OverviewPage
 {
     private sealed record MoraTarget(string Id, string Name, string Caption, string Role, string Region);
 
-    private Dictionary<(string Account, string Role), DailyMoraLedger.Total> _moraTotals = new();
+    private Dictionary<(string Account, string Role), DailyMoraLedger.Composition> _moraCompositions = new();
     private (string Account, string Role)[] _moraAccounts = [];
     private DateTime _moraQueryDay;
     private DateTime _moraTotalsDay;
@@ -21,6 +21,9 @@ public partial class OverviewPage
     private bool _moraReadAgain;
     private bool _moraLastReadSucceeded;
     private long _nextMoraRefresh;
+    private Task? _moraDetailsRefresh;
+    private string _moraSummaryStatus = "";
+    private string _moraDetailsStatus = "";
 
     private static (string Account, string Role) MoraAccount(Account account)
         => (account.UserName, MiyousheService.GetDefaultRole(account.UserName));
@@ -71,21 +74,22 @@ public partial class OverviewPage
                 var day = DogfoodRecordReader.CurrentBusinessDay();
                 _moraQueryDay = day;
                 _moraAccounts = keys;
-                var totals = keys.Length == 0 ? new Dictionary<(string, string), DailyMoraLedger.Total>()
-                    : await DailyMoraLedger.QueryTotalsAsync(keys, day, DogfoodRecordReader.DayBoundaryHour);
+                var compositions = keys.Length == 0 ? new Dictionary<(string, string), DailyMoraLedger.Composition>()
+                    : await DailyMoraLedger.QueryDiaryCompositionsAsync(keys, day);
                 var accounts = GetOverviewAccounts(App.Config);
                 var now = DateTime.Now;
                 if (_moraReadAgain || DogfoodRecordReader.CurrentBusinessDay(now) != day ||
                     !keys.SequenceEqual(MoraAccounts(accounts))) continue;
 
                 _nextMoraRefresh = Environment.TickCount64 + 60_000;
-                _moraLastReadSucceeded = totals != null;
-                if (totals != null)
+                _moraLastReadSucceeded = compositions != null;
+                if (compositions != null)
                 {
-                    _moraTotals = totals;
+                    _moraCompositions = compositions;
                     _moraTotalsDay = day;
-                    if (_refresh != null && IsVisible) UpdateAccountRows(accounts, now.Date, day);
+                    if (_refresh != null && IsVisible) UpdateAccountRows(accounts, day);
                 }
+                if (IsMoraCompositionOpen) RenderMoraComposition(readFinished: true);
                 return _moraLastReadSucceeded;
             }
         }
@@ -96,7 +100,8 @@ public partial class OverviewPage
     {
         if (!RefreshButton.IsEnabled) return;
         RefreshButton.IsEnabled = false;
-        ShowMoraRefreshStatus("正在刷新会话状态与今日摩拉…");
+        if (_moraDetailsRefresh is not { IsCompleted: false }) _moraDetailsStatus = "";
+        ShowMoraRefreshStatus("正在刷新会话状态与札记今日获得…");
         var config = App.Config;
         var targets = GetOverviewAccounts(config)
             .Where(account => !string.IsNullOrWhiteSpace(account.UserName))
@@ -106,17 +111,16 @@ public partial class OverviewPage
         try
         {
             bool baselineRead = await RefreshMoraTotalsAsync(force: true);
-            var before = _moraTotals;
+            var before = _moraCompositions;
             var beforeDay = _moraTotalsDay;
             var results = new List<(MoraTarget Target, MiyousheService.WorkResult Result)>(targets.Length);
             for (int index = 0; index < targets.Length; index++)
             {
                 var target = targets[index];
-                ShowMoraRefreshStatus($"正在刷新今日摩拉 · {target.Caption}（{index + 1}/{targets.Length}）");
+                ShowMoraRefreshStatus($"正在读取札记今日获得 · {target.Caption}（{index + 1}/{targets.Length}）");
                 results.Add((target, await PullMoraAsync(config, target)));
             }
             bool read = await RefreshMoraTotalsAsync(force: true);
-            bool sessionOk = await sessionRefresh;
             string status = !ReferenceEquals(App.Config, config) ? "配置已切换"
                 : results.Count == 0 ? "没有可刷新的可见账号"
                 : string.Join(" · ", results.Select(entry =>
@@ -125,10 +129,15 @@ public partial class OverviewPage
                     var key = (target.Name, target.Role);
                     return target.Caption + "：" + MoraReceipt(
                         MoraTargetIsCurrent(config, target) ? entry.Result : new(false, state: "changed"),
-                        read, baselineRead && beforeDay == _moraTotalsDay, before.GetValueOrDefault(key),
-                        _moraTotals.GetValueOrDefault(key));
+                        read, baselineRead && beforeDay == _moraTotalsDay, before.GetValueOrDefault(key)?.Total,
+                        _moraCompositions.GetValueOrDefault(key)?.Total);
                 }));
-            ShowMoraRefreshStatus(sessionOk ? status : status + " · 会话状态刷新失败");
+            ShowMoraRefreshStatus(status);
+            var detailTargets = results.Where(item => item.Result.summaryAt.HasValue)
+                .Select(item => (item.Target, SummaryAt: item.Result.summaryAt!.Value)).ToArray();
+            if (detailTargets.Length > 0 && _moraDetailsRefresh is not { IsCompleted: false })
+                _moraDetailsRefresh = SyncMoraDetailsAsync(config, detailTargets);
+            if (!await sessionRefresh) ShowMoraRefreshStatus(status + " · 会话状态刷新失败");
             if (_refresh != null && IsVisible) RefreshOverview();
         }
         catch (Exception ex)
@@ -161,19 +170,37 @@ public partial class OverviewPage
         if (target.Region != "cn") return new(false, state: "unsupported");
         try
         {
-            if (target.Role.Length == 0)
-            {
-                var login = await MiyousheService.LoginStatusAsync(target.Name, default);
-                return new(false, state: login.State == "stored" ? "default_role" : "needs_login");
-            }
-            return await MiyousheService.RunForAccountAsync(target.Name, sign: false, ledger: true,
-                default, expectedLedgerUid: target.Role);
+            return await MiyousheService.RefreshDailyMoraAsync(target.Name, target.Role, default);
         }
         catch (Exception ex)
         {
             LogBus.Warn("概览摩拉拉取失败", ex.GetType().Name);
             return new(false, state: "failed");
         }
+    }
+
+    private async Task SyncMoraDetailsAsync(AppConfig config, (MoraTarget Target, DateTime SummaryAt)[] targets)
+    {
+        _moraDetailsStatus = "正在同步路线摩拉明细…";
+        UpdateMoraRefreshStatus();
+        var receipts = new List<string>(targets.Length);
+        try
+        {
+            foreach (var (target, summaryAt) in targets)
+            {
+                if (!MoraTargetIsCurrent(config, target)) continue;
+                var result = await MiyousheService.RefreshMoraDetailsAsync(target.Name, target.Role, summaryAt, default);
+                if (!MoraTargetIsCurrent(config, target)) continue;
+                receipts.Add(target.Caption + (result.ok ? "：路线摩拉明细已同步" : "：路线摩拉明细未同步完成"));
+            }
+        }
+        catch (Exception ex)
+        {
+            LogBus.Warn("路线摩拉明细同步失败", ex.GetType().Name);
+            receipts.Add("路线摩拉明细未同步完成");
+        }
+        _moraDetailsStatus = string.Join(" · ", receipts);
+        UpdateMoraRefreshStatus();
     }
 
     internal static string MoraReceipt(MiyousheService.WorkResult result, bool read, bool comparable,
@@ -188,17 +215,28 @@ public partial class OverviewPage
                 "skipped" => "米游社账号未绑定原神角色",
                 "unsupported" => "该地区暂不支持摩拉拉取",
                 "changed" => "账号或默认角色已更改",
+                "summary_unavailable" when after is { IsPartial: true } => "札记暂未返回今日获得，仅显示已采集流水",
+                "summary_unavailable" when after != null => "札记暂未返回今日获得，保留上次统计",
+                "summary_unavailable" => "札记暂未返回今日获得",
                 _ => result.retryAfter.HasValue ? "拉取暂停，保留已有流水" : "拉取失败，保留已有流水"
             };
         if (!read) return "已拉取，本地流水读取失败";
         if (after == null) return "已拉取，今日暂无流水";
+        if (after.IsPartial) return "札记暂未返回今日获得，仅显示已采集流水";
         if (!comparable) return "已拉取并读取今日摩拉";
         return before == after ? "已拉取，今日摩拉未变化" : "今日摩拉已更新";
     }
 
     private void ShowMoraRefreshStatus(string status)
     {
-        MoraRefreshStatus.Text = status;
+        _moraSummaryStatus = status;
+        UpdateMoraRefreshStatus();
+    }
+
+    private void UpdateMoraRefreshStatus()
+    {
+        MoraRefreshStatus.Text = _moraDetailsStatus.Length == 0
+            ? _moraSummaryStatus : _moraSummaryStatus + " · " + _moraDetailsStatus;
         MoraRefreshStatus.Visibility = Visibility.Visible;
     }
 }

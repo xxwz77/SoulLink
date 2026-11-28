@@ -1032,18 +1032,33 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
                 return rows;
             }, null, ct);
 
-        internal static Task<Dictionary<string, (long Exp, long Mora)>?> QueryDogfoodTotalsAsync(DateTime day)
+        internal readonly record struct DogfoodTotals(long CalendarExp, long CalendarMora, long BusinessExp, long BusinessMora);
+
+        internal static Task<Dictionary<string, DogfoodTotals>?> QueryDogfoodTotalsAsync(DateTime calendarDay, DateTime businessStart)
         {
-            return Core.Value.EnqueueQuery<Dictionary<string, (long Exp, long Mora)>?>(db =>
+            long calendarFrom = ToMs(calendarDay.Date);
+            long businessFrom = ToMs(businessStart);
+            long businessUntil = ToMs(businessStart.AddDays(1));
+            return Core.Value.EnqueueQuery<Dictionary<string, DogfoodTotals>?>(db =>
             {
                 using var cmd = db.CreateCommand();
-                cmd.CommandText = @"SELECT account,SUM(dogfood_exp),SUM(dogfood_mora) FROM run
-                    WHERE COALESCE(end_at_ms,start_at_ms) >= $from AND (dogfood_exp>0 OR dogfood_mora>0)
+                cmd.CommandText = @"WITH dogfood AS (
+                        SELECT account,dogfood_exp,dogfood_mora,COALESCE(end_at_ms,start_at_ms) AS at_ms FROM run
+                        WHERE (dogfood_exp>0 OR dogfood_mora>0))
+                    SELECT account,
+                        SUM(CASE WHEN at_ms >= $calendarFrom THEN dogfood_exp ELSE 0 END),
+                        SUM(CASE WHEN at_ms >= $calendarFrom THEN dogfood_mora ELSE 0 END),
+                        SUM(CASE WHEN at_ms >= $businessFrom AND at_ms < $businessUntil THEN dogfood_exp ELSE 0 END),
+                        SUM(CASE WHEN at_ms >= $businessFrom AND at_ms < $businessUntil THEN dogfood_mora ELSE 0 END)
+                    FROM dogfood WHERE at_ms >= $earliest
                     GROUP BY account COLLATE NOCASE";
-                cmd.Parameters.AddWithValue("$from", new DateTimeOffset(day.Date).ToUnixTimeMilliseconds());
-                var totals = new Dictionary<string, (long, long)>(StringComparer.OrdinalIgnoreCase);
+                Add(cmd, "$calendarFrom", calendarFrom);
+                Add(cmd, "$businessFrom", businessFrom);
+                Add(cmd, "$businessUntil", businessUntil);
+                Add(cmd, "$earliest", Math.Min(calendarFrom, businessFrom));
+                var totals = new Dictionary<string, DogfoodTotals>(StringComparer.OrdinalIgnoreCase);
                 using var reader = cmd.ExecuteReader();
-                while (reader.Read()) totals[reader.GetString(0)] = (reader.GetInt64(1), reader.GetInt64(2));
+                while (reader.Read()) totals[reader.GetString(0)] = new(reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4));
                 return totals;
             }, null, default);
         }

@@ -96,6 +96,10 @@ namespace SoulLink.Services
             public int Dirty;
             /// <summary>BGI 进程 PID（用于低成本判活，GetProcessById 仅 0.012ms）。</summary>
             public int BgiPid;
+            public DateTime BgiProcessStart;
+            public bool ProcessObserved;
+            public long GroupRevision;
+            public bool ResumedFile;
             /// <summary>上次判活的时间（避免每秒都查）。</summary>
             public DateTime LastAliveCheck = DateTime.MinValue;
 
@@ -141,6 +145,16 @@ namespace SoulLink.Services
                 Volatile.Write(ref SessionProgress, null);
             }
 
+            public void ClearCurrentGroup()
+            {
+                GroupRevision++;
+                CurrentGroup = "";
+                CurrentGroupAt = DateTime.MinValue;
+                StoppedAt = DateTime.MinValue;
+                OneDragon = "";
+                ClearSessionStatus();
+            }
+
             /// <summary>最近一条带时间戳的日志时刻（无时间戳的续行沿用）。</summary>
             public DateTime LastEventAt = DateTime.MinValue;
 
@@ -178,11 +192,13 @@ namespace SoulLink.Services
                         StringComparison.OrdinalIgnoreCase);
                 var previous = Status;
                 Version++;
+                GroupRevision++;
                 LogFile = file;
                 // ★ t45 断点续传：换文件/新文件时从持久化游标继续，而不是从 0 重扫。
                 //   首次见到该文件（无持久化记录）LoadCursor 返回 -1 → 落回 0。
                 long persisted = IngestCursorStore.LoadCursor(AccountId, file);
                 Cursor = persisted >= 0 ? persisted : 0;
+                ResumedFile = persisted > 0;
                 // ★ t52：持久化游标 > 0 意味着「本次启动不会全量重扫」，标记并计数（可观测）。
                 //   注意：Primed 仍置 false，因为 Tracker 内存状态确需重建，但重建走 SQLite 而非日志扫描。
                 if (persisted > 0 && !SkippedRescan)
@@ -204,8 +220,6 @@ namespace SoulLink.Services
                 //   而历史日志不会再读 → 自动化条件（CondScriptGroupState/TrigScriptGroup）
                 //   读到的永远是 Never。这里从 SQLite run 表（权威）异步把「今天」的
                 //   运行状态灌回 Tracker，与实时增量无缝衔接（尽力而为，不阻塞采集）。
-                if (persisted > 0 && UserName.Length > 0)
-                    _ = SeedGroupsFromDbAsync(this);
                 Today = new DailyStats();
                 PicksByGroup.Clear();
                 ErrorCount = WarnCount = FailCount = 0;
@@ -233,6 +247,8 @@ namespace SoulLink.Services
                 // 行序号**不**归零：跨天滚动后新文件首行接着上一行的序号，
                 // 触点事件游标才不会被「同一天的文件重建」误判成回退。
                 _ = NextSeq;
+                if (ResumedFile && UserName.Length > 0)
+                    _ = SeedGroupsFromDbAsync(this, file, GroupRevision);
             }
         }
 
@@ -274,11 +290,11 @@ namespace SoulLink.Services
         ///   界面还挂着"当前：CD采集-全采集"就是在骗人。
         /// </summary>
         private static readonly Regex RxStopped = new(
-            @"配置组s*""[^""]+""s*(?:执行结束|未成功完成)" +
-            @"|取消执行配置组s*[:：]" +
+            @"配置组\s*""[^""]+""\s*(?:执行结束|未成功完成)" +
+            @"|取消执行配置组\s*[:：]" +
             @"|停止快捷键.*?按下" +
             @"|停止当前执行任务" +
-            @"|任务已停止|任务结束|→s*""任务结束""" +
+            @"|任务已停止|任务结束|→\s*""任务结束""" +
             @"|已停止运行|中断执行",
             RegexOptions.Compiled);
 
@@ -487,22 +503,24 @@ namespace SoulLink.Services
                 {
                     // 取出并清标记：期间新来的事件会重新置位，下一拍处理。
                     int dirty = Interlocked.Exchange(ref e.Dirty, 0);
+                    int pid = e.BgiPid;
 
                     // ★ 日志没动时做「低成本判活」：
                     //   GetProcessById 只要 0.012ms（枚举全部进程要 23.7ms）。
                     //   活着 → 什么都不做；死了 → 标记脏，让 Step 更新状态。
                     if (dirty == 0)
                     {
+                        if (pid <= 0) continue;
+                        bool? alive = ProcessAlive(pid);
                         // ★ t10：判活节流 ≥30s（用既有 LastAliveCheck 字段，避免每秒查）。
                         //   判活结果同时喂给运行记录采集器（BGI 状态时段：idle/not_running），
                         //   只在空闲拍（dirty==0）做，本身已是低频，无新进程枚举。
-                        if (e.BgiPid > 0 && (DateTime.Now - e.LastAliveCheck).TotalSeconds >= 30)
+                        if ((DateTime.Now - e.LastAliveCheck).TotalSeconds >= 30)
                         {
                             e.LastAliveCheck = DateTime.Now;
-                            bool alive = IsAlive(e.BgiPid);
                             try { RunRecordCollector.ObserveBgiState(e.UserName, 0, alive, e.LogFile); } catch { }
                         }
-                        if (e.BgiPid > 0 && IsAlive(e.BgiPid))
+                        if (alive != false)
                         {
                             // ★★ t56 修复（回填不推进的根因）：
                             //   原来这里直接 continue，跳过 Step() —— 但 **Step 里现在挂着历史回填**
@@ -517,20 +535,10 @@ namespace SoulLink.Services
                             }
                             continue;
                         }
-                        if (e.BgiPid > 0)
-                        {
-                            // 进程没了：让下游知道（BgiRunning 由 AccountStateCenter 判断，
-                            // 这里只保证日志侧状态也被刷新一次）
-                            dirty = 1;
-                        }
-                        else
-                        {
-                            continue;
-                        }
                     }
 
                     var acc = new Account { Id = e.AccountId, UserName = e.UserName };
-                    if (Step(acc)) any = true;
+                    if (Step(acc, observeProcess: pid > 0 && ProcessAlive(pid) == false)) any = true;
                 }
                 catch { }
             }
@@ -547,15 +555,45 @@ namespace SoulLink.Services
         /// ★ PID 可能被复用（极端情况），但配合 30 秒一次的
         ///   AccountStateCenter 全量刷新足以兜住。
         /// </summary>
-        private static bool IsAlive(int pid)
+        private static bool? ProcessAlive(int pid, DateTime expectedStart = default)
         {
             if (pid <= 0) return false;
             try
             {
                 using var p = System.Diagnostics.Process.GetProcessById(pid);
-                return !p.HasExited;
+                return !p.HasExited && (expectedStart == DateTime.MinValue || p.StartTime == expectedStart);
             }
-            catch { return false; }
+            catch (ArgumentException) { return false; }
+            catch { return null; }
+        }
+
+        private static bool ObserveProcess(Entry entry, BgiLogWatcher.Instance? process)
+        {
+            entry.ProcessObserved = true;
+            int pid = process?.Pid ?? 0;
+            DateTime start = process?.StartTime ?? DateTime.MinValue;
+            if (start == DateTime.MaxValue) start = DateTime.MinValue;
+            if (pid != entry.BgiPid)
+            {
+                // 枚举偶发缺项，或同一会话暂时选中了另一个实例。只有原进程确实退出才切换。
+                if (entry.BgiPid > 0 && ProcessAlive(entry.BgiPid, entry.BgiProcessStart) != false) return false;
+                entry.ClearCurrentGroup();
+                entry.BgiPid = pid;
+                entry.BgiProcessStart = start;
+            }
+            else
+            {
+                if (start == DateTime.MinValue || entry.BgiProcessStart == start) return false;
+                // 同一 PID 的两个已知启动时间不同，说明 PID 被复用。
+                if (entry.BgiProcessStart != DateTime.MinValue ||
+                    (entry.CurrentGroup.Length > 0 && entry.CurrentGroupAt < GroupLogStart(start)))
+                    entry.ClearCurrentGroup();
+                else
+                    entry.GroupRevision++;
+                entry.BgiProcessStart = start;
+            }
+            entry.Version++;
+            return true;
         }
 
         // ── 1 秒节拍（TickHub）──────────────────────────────────────
@@ -589,6 +627,9 @@ namespace SoulLink.Services
         /// 由 AccountStateCenter 的 1 Hz 循环调用。
         /// </summary>
         public static void Tick(IEnumerable<Account> accounts)
+            => Tick(accounts, null);
+
+        internal static void Tick(IEnumerable<Account> accounts, Func<Account, BgiLogWatcher.Instance?>? processForAccount)
         {
             var list = accounts?.Where(a => a != null).ToList() ?? new List<Account>();
 
@@ -601,7 +642,7 @@ namespace SoulLink.Services
             {
                 try
                 {
-                    if (Step(acc)) any = true;
+                    if (Step(acc, processForAccount?.Invoke(acc), processForAccount != null)) any = true;
                 }
                 catch (Exception ex)
                 {
@@ -1020,7 +1061,7 @@ namespace SoulLink.Services
         }
 
         /// <summary>返回 true 表示该账号的可见数据发生了变化。</summary>
-        private static bool Step(Account acc)
+        private static bool Step(Account acc, BgiLogWatcher.Instance? process = null, bool observeProcess = false)
         {
             string user = acc.UserName ?? "";
             bool bound = BgiPathResolver.IsPinned(user);
@@ -1036,19 +1077,18 @@ namespace SoulLink.Services
                 e = found;
             }
 
-            lock (e.StepGate) return StepBound(e, user, bound);
+            lock (e.StepGate) return StepBound(e, user, bound, process, observeProcess);
         }
 
-        private static bool StepBound(Entry e, string user, bool bound)
+        private static bool StepBound(Entry e, string user, bool bound, BgiLogWatcher.Instance? process, bool observeProcess)
         {
             bool wasUnbound = false;
             lock (Sync)
             {
                 if (!string.Equals(e.UserName, user, StringComparison.OrdinalIgnoreCase))
                 {
-                    e.ClearSessionStatus();
-                    e.CurrentGroup = "";
-                    e.CurrentGroupAt = DateTime.MinValue;
+                    e.ClearCurrentGroup();
+                    e.Version++;
                 }
                 e.UserName = user;
                 if (!bound)
@@ -1058,6 +1098,8 @@ namespace SoulLink.Services
                     if (had) e.Version++;
                     e.MissingPath = "";
                     e.BgiPid = 0;
+                    e.BgiProcessStart = DateTime.MinValue;
+                    e.ProcessObserved = false;
                     e.BgiExe = "";
                     e.LogFile = "";
                     e.Cursor = 0;
@@ -1066,9 +1108,7 @@ namespace SoulLink.Services
                     e.Error = "";
                     if (had)
                     {
-                        e.ClearSessionStatus();
-                        e.CurrentGroup = "";
-                        e.CurrentGroupAt = DateTime.MinValue;
+                        e.ClearCurrentGroup();
                         e.Tail.Clear();
                         e.TailChars = 0;
                     }
@@ -1088,13 +1128,22 @@ namespace SoulLink.Services
             string expected = BgiDailyLogProbe.ExpectedPath(exe, DateTime.Today);
             var file = BgiLogWatcher.ProbeDailyPath(expected, out bool confirmedMissing);
             bool rebound = !string.Equals(e.BgiExe, exe, StringComparison.OrdinalIgnoreCase);
-            if (rebound)
+            bool processChanged = false;
+            lock (Sync)
             {
-                e.BgiPid = 0;
-                e.Backfill = new BackfillState();
-                e.ClearSessionStatus();
-                e.CurrentGroup = "";
-                e.CurrentGroupAt = DateTime.MinValue;
+                if (rebound)
+                {
+                    e.BgiPid = 0;
+                    e.BgiProcessStart = DateTime.MinValue;
+                    e.Backfill = new BackfillState();
+                    e.ClearCurrentGroup();
+                    e.Version++;
+                }
+                if (observeProcess)
+                {
+                    if (!string.Equals(process?.ExePath, exe, StringComparison.OrdinalIgnoreCase)) process = null;
+                    processChanged = ObserveProcess(e, process);
+                }
             }
             if (!rebound && expected.Length > 0 && e.LogFile.Length > 0
                 && !string.Equals(e.LogFile, expected, StringComparison.OrdinalIgnoreCase)
@@ -1120,11 +1169,16 @@ namespace SoulLink.Services
                         // A recreated file can be larger than its predecessor. Never skip
                         // its prefix using the cursor of the file we observed disappear.
                         if (confirmedMissing && string.Equals(expected, e.LogFile, StringComparison.OrdinalIgnoreCase))
+                        {
                             IngestCursorStore.Reset(e.AccountId, e.LogFile);
+                            e.ClearCurrentGroup();
+                        }
                         else
                             IngestCursorStore.Flush(e.AccountId, e.LogFile, Math.Max(0, e.Cursor - e.PendingLen), e.FileLength, e.LastWrite.Ticks);
                     }
                     e.LogFile = "";
+                    if (changed) e.GroupRevision++;
+                    e.ResumedFile = false;
                     e.Cursor = e.FileLength = 0;
                     e.PendingLen = 0;
                     e.Primed = false;
@@ -1137,20 +1191,10 @@ namespace SoulLink.Services
                     LogBus.Warn("采集·日志", user + " " + e.Error + " " + expected);
                 // 今天还没启动也可补历史；目录离线则等当天发现入口恢复。
                 if (confirmedMissing) PumpBackfill(e, exe);
-                return changed;
+                return changed || processChanged;
             }
 
             string logFile = file.FullName;
-            var accountState = AccountStateCenter.Get(e.AccountId);
-            int sid = accountState?.SessionId ?? 0;
-            int pid = accountState?.BgiPid ?? 0;
-            if (pid <= 0 && e.BgiPid <= 0 && sid > 0)
-                pid = BgiLogWatcher.DiscoverForSession(sid, exe)?.Pid ?? 0;
-            if (pid > 0)
-            {
-                if (e.BgiPid > 0 && e.BgiPid != pid) e.ClearSessionStatus();
-                e.BgiPid = pid;
-            }
 
             lock (Sync)
             {
@@ -1167,6 +1211,10 @@ namespace SoulLink.Services
                     // 先收尾上一文件的运行，再等当天日志确认是否要建立续跑段。
                     try { RunRecordCollector.OnFileChanged(e.UserName, logFile); } catch { }
                 }
+                else if (processChanged && e.BgiPid > 0 && e.ResumedFile)
+                {
+                    _ = SeedGroupsFromDbAsync(e, logFile, e.GroupRevision);
+                }
             }
 
             // ★ 日志文件确定后建立 watcher：之后 BGI 一写入就立刻解析，
@@ -1180,7 +1228,7 @@ namespace SoulLink.Services
             //   只在「该文件的持久化 cursor 不存在（-1）」时补，采过的不重复。
             bool updated = Pump(e, file);
             PumpBackfill(e, exe);
-            return updated;
+            return updated || processChanged;
         }
 
         /// <summary>把文件从 cursor 读到 EOF。返回是否有可见变化。</summary>
@@ -1198,7 +1246,7 @@ namespace SoulLink.Services
             // 文件变短 = 被轮转 / 重建 → 从头重扫，但保留粘性配置组。
             if (len < e.Cursor)
             {
-                lock (Sync) { e.Cursor = 0; e.PendingLen = 0; }
+                lock (Sync) { e.Cursor = 0; e.PendingLen = 0; e.ResumedFile = false; e.GroupRevision++; }
                 // ★ t45 轮转处理：重置持久化游标并记录一次轮转事件（可观测）。
                 IngestCursorStore.Reset(e.AccountId, e.LogFile);
                 LogBus.Warn("采集·轮转", e.UserName + " 日志被轮转/变小，游标已重置从头补采");
@@ -1334,6 +1382,7 @@ namespace SoulLink.Services
             try { RunRecordCollector.Feed(e.UserName, batch, e.LogFile, fileLen, writeTicks); } catch { }
 
             var lines = batch.Lines;
+            var processStart = e.BgiProcessStart == DateTime.MaxValue ? DateTime.MinValue : GroupLogStart(e.BgiProcessStart);
             for (int i = 0; i < lines.Length; i++)
             {
                 ref var logLine = ref lines[i];
@@ -1364,9 +1413,11 @@ namespace SoulLink.Services
                 //   出现快捷键停止也是这个逻辑，不再保留运行状态。」
                 //   所以 CurrentGroup 不是"永久粘着"，而是"运行中的那个"：
                 //   出现停止锚点就清空，直到下一条配置组行重新填上。
-                bool stopped = RxStopped.IsMatch(line);
+                bool currentProcess = !e.ProcessObserved || (e.BgiPid > 0 && at >= processStart);
+                bool stopped = currentProcess && RxStopped.IsMatch(line);
                 if (stopped)
                 {
+                    e.GroupRevision++;
                     if (e.CurrentGroup.Length > 0) e.LastGroup = e.CurrentGroup;
                     e.CurrentGroup = "";
                     e.CurrentGroupAt = DateTime.MinValue;
@@ -1401,8 +1452,9 @@ namespace SoulLink.Services
                     if (!bogus)
                     {
                         // 只有当这一行不是"结束/停止"行时，才算"开始运行这个组"。
-                        if (!stopped && !string.Equals(e.CurrentGroup, g, StringComparison.Ordinal))
+                        if (currentProcess && !stopped && !string.Equals(e.CurrentGroup, g, StringComparison.Ordinal))
                         {
+                            e.GroupRevision++;
                             e.CurrentGroup = g;
                             e.CurrentGroupAt = at;
                             e.StoppedAt = DateTime.MinValue;
@@ -1437,6 +1489,11 @@ namespace SoulLink.Services
             }
 
             e.StatusSourceFile = e.LogFile;
+            PublishSessionProgress(e);
+        }
+
+        private static void PublishSessionProgress(Entry e)
+        {
             var status = e.Status;
             Volatile.Write(ref e.SessionProgress, new BgiSessionProgress(e.BgiPid, e.CurrentGroup,
                 status.TaskName, status.RouteFile, status.Round, status.RoleName, status.RouteEta,
@@ -1524,7 +1581,10 @@ namespace SoulLink.Services
         /// ★ 尽力而为：DB 不可用或查询失败时静默返回，不影响日志采集主链路。
         ///   结果按 start 升序喂入，与日志事件先后顺序一致。
         /// </summary>
-        private static async Task SeedGroupsFromDbAsync(Entry e)
+        private static DateTime GroupLogStart(DateTime processStart)
+            => processStart.AddTicks(-(processStart.Ticks % TimeSpan.TicksPerSecond));
+
+        private static async Task SeedGroupsFromDbAsync(Entry e, string logFile, long revision)
         {
             try
             {
@@ -1540,6 +1600,8 @@ namespace SoulLink.Services
                     .OrderBy(r => r.StartAtMs)
                     .ToList();
                 if (today.Count == 0) return;
+                var latest = today.LastOrDefault(r => string.Equals(Path.GetFileName(r.SrcFileStart),
+                    Path.GetFileName(logFile), StringComparison.OrdinalIgnoreCase));
 
                 var runs = today.Select(r => new ScriptGroupRun
                 {
@@ -1553,14 +1615,32 @@ namespace SoulLink.Services
                     TimeIsExact = true,
                 }).Where(r => r.Name.Length > 0).ToList();
 
+                lock (e.StepGate)
                 lock (Sync)
                 {
-                    // 只有该 Entry 仍指向同一账号、且用户确实被跳过重扫时才灌入，
-                    // 避免「异步回来时账号已切文件/换人」把旧数据灌进新状态。
-                    if (Entries.TryGetValue(e.AccountId, out var cur) && ReferenceEquals(cur, e)
-                        && cur.UserName == user)
-                        cur.Groups.Seed(runs);
+                    // 增量日志里的开始/结束、解绑、换文件和换进程都优先于这次异步查询。
+                    if (!Entries.TryGetValue(e.AccountId, out var cur) || !ReferenceEquals(cur, e)
+                        || !cur.ResumedFile || cur.GroupRevision != revision
+                        || !string.Equals(cur.UserName, user, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(cur.LogFile, logFile, StringComparison.OrdinalIgnoreCase)) return;
+                    cur.Groups.Seed(runs);
+                    if (cur.CurrentGroup.Length == 0 && cur.BgiPid > 0 && ProcessAlive(cur.BgiPid) == true
+                        && cur.BgiProcessStart > DateTime.MinValue && cur.BgiProcessStart < DateTime.MaxValue
+                        && latest is { EndAtMs: null, State: "Running", StartAtMs: > 0 }
+                        && !string.IsNullOrWhiteSpace(latest.GroupName))
+                    {
+                        var startedAt = DateTimeOffset.FromUnixTimeMilliseconds(latest.StartAtMs).LocalDateTime;
+                        if (startedAt >= GroupLogStart(cur.BgiProcessStart) && startedAt <= DateTime.Now)
+                        {
+                            cur.CurrentGroup = latest.GroupName;
+                            cur.CurrentGroupAt = startedAt;
+                            cur.StoppedAt = DateTime.MinValue;
+                            PublishSessionProgress(cur);
+                        }
+                    }
+                    cur.Version++;
                 }
+                try { Changed?.Invoke(); } catch { }
             }
             catch { }
         }
@@ -1604,6 +1684,8 @@ namespace SoulLink.Services
                     e.Cursor = 0;
                     e.PendingLen = 0;
                     e.Primed = false;
+                    e.ResumedFile = false;
+                    e.GroupRevision++;
                     e.SkippedRescan = false;
                     e.SkippedRescanBytes = 0;
                 }

@@ -19,6 +19,7 @@ namespace SoulLink.Services
         public string AccountId = "";
         internal sealed record DogfoodTotal(DateTime Day, long Exp, long Mora);
         internal volatile DogfoodTotal? CollectedDogfood;
+        internal volatile DogfoodTotal? CollectedBusinessDogfood;
         /// <summary>Windows 用户名。</summary>
         public string UserName = "";
         /// <summary>显示名（昵称）。</summary>
@@ -610,13 +611,20 @@ namespace SoulLink.Services
                 Interlocked.CompareExchange(ref _dogfoodQueryBusy, 1, 0) != 0) return;
             try
             {
-                var day = DateTime.Today;
-                var totals = await RunRecordStore.QueryDogfoodTotalsAsync(day).ConfigureAwait(false);
-                if (totals == null || DateTime.Today != day) return;
+                var now = DateTime.Now;
+                var calendarDay = now.Date;
+                var businessDay = DogfoodRecordReader.CurrentBusinessDay(now);
+                var totals = await RunRecordStore.QueryDogfoodTotalsAsync(calendarDay,
+                    businessDay.AddHours(DogfoodRecordReader.DayBoundaryHour)).ConfigureAwait(false);
+                if (totals == null) return;
+                var refreshedAt = DateTime.Now;
+                bool calendarCurrent = refreshedAt.Date == calendarDay;
+                bool businessCurrent = DogfoodRecordReader.CurrentBusinessDay(refreshedAt) == businessDay;
                 foreach (var st in accounts)
                 {
                     totals.TryGetValue(st.UserName, out var sum);
-                    st.CollectedDogfood = new AccountState.DogfoodTotal(day, sum.Exp, sum.Mora);
+                    if (calendarCurrent) st.CollectedDogfood = new AccountState.DogfoodTotal(calendarDay, sum.CalendarExp, sum.CalendarMora);
+                    if (businessCurrent) st.CollectedBusinessDogfood = new AccountState.DogfoodTotal(businessDay, sum.BusinessExp, sum.BusinessMora);
                 }
             }
             catch (Exception ex) { App.AppendErrorLog("DogfoodTotals", ex); }
@@ -683,7 +691,14 @@ namespace SoulLink.Services
                 // ★ BGI 日志：唯一读取点。只在**已绑定**的账号上做 IO，
                 //   单遍流式消费到字节游标，不保留原文。
                 var __s4 = __sw.ElapsedMilliseconds;
-                try { BgiLogCenter.Tick(AccountScope.Accounts(cfg)); }
+                try
+                {
+                    BgiLogCenter.Tick(AccountScope.Accounts(cfg), account =>
+                    {
+                        int sessionId = SessionService.Find(sessions, account.UserName)?.Id ?? 0;
+                        return bgi.GetValueOrDefault(sessionId);
+                    });
+                }
                 catch (Exception ex) { App.AppendErrorLog("BgiLogCenter.Tick", ex); }
                 __tBgi = __sw.ElapsedMilliseconds - __s4;
                 bool anyChanged = false;

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
@@ -13,9 +14,23 @@ internal static class MoraRouteIncome
     private const int BatchSize = 128;
     private const int MaxBatchesPerPull = 32;
     private const long MinuteMs = 60_000;
+    private const long JarAmount = 150;
+    private const string JarAction = "其他";
 
-    private sealed record Entry(long RowId, long Time, long Amount);
+    private sealed record Entry(long RowId, long Time, long Amount, bool JarCandidate, bool PreciseTime)
+    {
+        internal long WindowStart => PreciseTime ? Time : Time - Time % MinuteMs;
+        internal long WindowEnd => WindowStart + (PreciseTime ? 1 : MinuteMs);
+    }
     private sealed record Match(Entry Entry, RunRecordStore.LedgerWindow? Route);
+
+    internal static bool IsJarReceipt(string action, long? amount)
+        => action == JarAction && amount == JarAmount;
+
+    internal static bool IsJarRoute(string? name)
+        => name != null && (name.Contains("罐子", StringComparison.Ordinal) || name.Contains("盗罐", StringComparison.Ordinal)
+            || name.Contains("打罐", StringComparison.Ordinal) || name.Contains("砸罐", StringComparison.Ordinal)
+            || name.Contains("陶罐", StringComparison.Ordinal));
 
     internal static async Task UpdateAsync(string account, string uid, CancellationToken ct,
         DateTimeOffset? checkedAt = null)
@@ -50,16 +65,17 @@ internal static class MoraRouteIncome
         }
     }
 
-    // BGI has Windows account information only. Check both known roles and previously imported facts.
+    // A selected default only disambiguates cached bindings. Facts from multiple roles still cannot share Windows route windows.
     private static Task<bool> HasUnambiguousRoleAsync(string account, string uid, CancellationToken ct)
         => MiyousheStore.Shared.RunAsync(db =>
         {
             using var cmd = db.CreateCommand();
             cmd.CommandText = @"
-SELECT NOT EXISTS(SELECT 1 FROM my_role WHERE account=$account COLLATE NOCASE AND game_uid<>$uid)
+SELECT ($selected=1 OR NOT EXISTS(SELECT 1 FROM my_role WHERE account=$account COLLATE NOCASE AND game_uid<>$uid))
    AND NOT EXISTS(SELECT 1 FROM my_ledger_entry WHERE account=$account COLLATE NOCASE AND game_uid<>$uid);";
             cmd.Parameters.AddWithValue("$account", account);
             cmd.Parameters.AddWithValue("$uid", uid);
+            cmd.Parameters.AddWithValue("$selected", MiyousheService.GetDefaultRole(account) == uid);
             return Convert.ToInt64(cmd.ExecuteScalar()) == 1;
         }, false, ct);
 
@@ -70,11 +86,14 @@ SELECT NOT EXISTS(SELECT 1 FROM my_role WHERE account=$account COLLATE NOCASE AN
             using var cmd = db.CreateCommand();
             string[] actionParameters = MoraClassifier.KillActions.Select((_, index) => "$action" + index).ToArray();
             cmd.CommandText = @"
-SELECT e.rowid,e.ts_ms,e.num FROM my_ledger_entry e
+SELECT e.rowid,e.ts_ms,e.num,CASE WHEN TRIM(e.action)=$jarAction THEN e.time_text END FROM my_ledger_entry e
 LEFT JOIN my_mora_route_income m ON m.entry_rowid=e.rowid
 WHERE e.account=$account AND e.game_uid=$uid AND e.kind=2 AND e.num IS NOT NULL AND e.pull_confirmed=1
   AND e.ts_ms >= $cutoff AND e.ts_ms <= $now
-  AND TRIM(e.action) IN (" + string.Join(",", actionParameters) + ") AND " + (retryUnmatched
+  AND (TRIM(e.action) IN (" + string.Join(",", actionParameters) + @")
+      OR (TRIM(e.action)=$jarAction AND e.num=$jarAmount AND COALESCE(e.count,1)=1
+          AND COALESCE(e.single_mora,$jarAmount)=$jarAmount))
+  AND " + (retryUnmatched
                 ? "m.route_id IS NULL AND m.checked_at_ms < $retry"
                 : "m.entry_rowid IS NULL") + @"
 ORDER BY e.ts_ms DESC,e.rowid DESC LIMIT $limit;";
@@ -84,11 +103,19 @@ ORDER BY e.ts_ms DESC,e.rowid DESC LIMIT $limit;";
             cmd.Parameters.AddWithValue("$now", now);
             cmd.Parameters.AddWithValue("$retry", now - 15 * MinuteMs);
             cmd.Parameters.AddWithValue("$limit", BatchSize);
+            cmd.Parameters.AddWithValue("$jarAction", JarAction);
+            cmd.Parameters.AddWithValue("$jarAmount", JarAmount);
             for (int index = 0; index < actionParameters.Length; index++)
                 cmd.Parameters.AddWithValue(actionParameters[index], MoraClassifier.KillActions[index]);
             using var reader = cmd.ExecuteReader();
             var rows = new List<Entry>(BatchSize);
-            while (reader.Read()) rows.Add(new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2)));
+            while (reader.Read())
+            {
+                bool jar = !reader.IsDBNull(3);
+                bool precise = jar && Regex.IsMatch(reader.GetString(3),
+                    @"(?:^|[\sT])\d{1,2}:\d{2}:\d{2}\b", RegexOptions.CultureInvariant);
+                rows.Add(new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), jar, precise));
+            }
             return rows;
         }, null, ct);
 
@@ -97,17 +124,19 @@ ORDER BY e.ts_ms DESC,e.rowid DESC LIMIT $limit;";
         var matches = new List<Match>(entries.Count);
         var active = new List<RunRecordStore.LedgerWindow>();
         int next = 0;
-        foreach (var entry in entries.OrderBy(e => e.Time))
+        foreach (var entry in entries.OrderBy(e => e.WindowStart))
         {
-            // A pull can receive this entry an hour later. The match uses its original event minute.
-            long minute = entry.Time - entry.Time % MinuteMs;
-            long end = minute + MinuteMs;
+            // Kill entries keep minute-level matching. Jar receipts with source seconds can use the exact instant.
+            long start = entry.WindowStart;
+            long end = entry.WindowEnd;
             while (next < windows.Count && windows[next].Start < end) active.Add(windows[next++]);
-            active.RemoveAll(window => window.End <= minute);
-            var (run, route) = DailyMoraLedger.ResolveWindows(active, eligible: true);
-            // A match needs a completed route covering the entire minute.
-            if (run == null || run.Start > minute || run.End < end
-                || route == null || route.IsOpen || route.Start > minute || route.End < end)
+            active.RemoveAll(window => window.End <= start);
+            var overlapping = next > 0 && windows[next - 1].Start >= end
+                ? active.FindAll(window => window.Start < end) : active;
+            var (run, route) = DailyMoraLedger.ResolveWindows(overlapping, eligible: true);
+            if (run == null || run.Start > start || run.End < end
+                || route == null || route.IsOpen || route.Start > start || route.End < end
+                || (entry.JarCandidate && !IsJarRoute(route.RouteName)))
                 route = null;
             matches.Add(new(entry, route));
         }

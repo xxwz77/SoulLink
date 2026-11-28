@@ -21,6 +21,7 @@ public partial class OverviewPage : UserControl
     {
         public string AccessibleName => $"{Caption}，会话{Session}，BetterGI {Bgi}，当前配置组 {Group}，"
             + $"今日 A/B 线 {Ending}，狗粮经验汇总 {DogfoodExp}，狗粮摩拉汇总 {DogfoodMora}，今日摩拉总收益 {MoraIncome}";
+        public string MoraAccessibleName => $"{Caption}，今日摩拉总收益 {MoraIncome}，打开收益构成与明细";
     }
 
     private sealed class AccountRow(string id) : INotifyPropertyChanged
@@ -90,6 +91,7 @@ public partial class OverviewPage : UserControl
         _refresh = null;
         BgiLogCenter.Changed -= OnLogsChanged;
         MiyousheService.LedgerRefreshed -= OnMoraLedgerRefreshed;
+        CloseMoraComposition(restoreFocus: false);
         _logScroll?.Abort();
         _logScroll = null;
     }
@@ -117,7 +119,7 @@ public partial class OverviewPage : UserControl
         var accounts = GetOverviewAccounts(config);
         var now = DateTime.Now;
         var gameDay = DogfoodRecordReader.CurrentBusinessDay(now);
-        UpdateAccountRows(accounts, now.Date, gameDay);
+        UpdateAccountRows(accounts, gameDay);
         _ = RefreshMoraTotalsAsync(forceMora);
         var selected = accounts.FirstOrDefault(account => account.Id == _selectedAccountId);
 
@@ -145,7 +147,7 @@ public partial class OverviewPage : UserControl
         ManageActionsButton.IsEnabled = hasAccount;
     }
 
-    private void UpdateAccountRows(Account[] accounts, DateTime calendarDay, DateTime gameDay)
+    private void UpdateAccountRows(Account[] accounts, DateTime gameDay)
     {
         // Keep containers and keyboard focus when only live status changes.
         var previous = AccountsList.ItemsSource as AccountRow[];
@@ -157,8 +159,8 @@ public partial class OverviewPage : UserControl
             var state = AccountStateCenter.Get(account.Id);
             var log = state?.BgiRunning == true ? BgiLogCenter.Snapshot(account.Id) : null;
             var ending = state?.DogfoodRecords.FirstOrDefault(record => record.BusinessDay == gameDay)?.Route;
-            var dogfood = state?.CollectedDogfood;
-            var mora = _moraTotalsDay == gameDay ? _moraTotals.GetValueOrDefault(MoraAccount(account)) : null;
+            var dogfood = state?.CollectedBusinessDogfood;
+            var mora = _moraTotalsDay == gameDay ? _moraCompositions.GetValueOrDefault(MoraAccount(account))?.Total : null;
             rows[index].Update(SummarizeAccount(account, state, log) with
             {
                 Ending = ending switch
@@ -167,8 +169,8 @@ public partial class OverviewPage : UserControl
                     DogfoodEndingRoute.EndingB => "B · 自跑",
                     _ => "—"
                 },
-                DogfoodExp = dogfood?.Day == calendarDay && dogfood.Exp > 0 ? dogfood.Exp.ToString("N0") : "—",
-                DogfoodMora = dogfood?.Day == calendarDay && dogfood.Mora > 0 ? dogfood.Mora.ToString("N0") : "—",
+                DogfoodExp = dogfood?.Day == gameDay && dogfood.Exp > 0 ? dogfood.Exp.ToString("N0") : "—",
+                DogfoodMora = dogfood?.Day == gameDay && dogfood.Mora > 0 ? dogfood.Mora.ToString("N0") : "—",
                 MoraIncome = mora == null ? "暂无数据" : mora.Amount.ToString("N0") + (mora.IsPartial ? "（部分）" : "")
             });
         }
@@ -196,7 +198,7 @@ public partial class OverviewPage : UserControl
             : !state.HasSession ? "未登录"
             : state.SessionState.Equals("Disc", StringComparison.OrdinalIgnoreCase) ||
                 state.SessionState.Equals("Disconnected", StringComparison.OrdinalIgnoreCase) ? "已断开" : "已登录";
-        string? group = string.IsNullOrWhiteSpace(log?.CurrentGroup) ? state?.CurrentGroup : log.CurrentGroup;
+        string? group = log?.CurrentGroup ?? state?.CurrentGroup;
         return new(account.Caption, session, running ? "运行中" : state?.HasSession == true ? "未运行" : "—",
             running, running && !string.IsNullOrWhiteSpace(group) ? group : "—");
     }
@@ -269,6 +271,7 @@ public partial class OverviewPage : UserControl
 
     private void AccountsList_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        if (Keyboard.FocusedElement is Button) return;
         if (e.Key != Key.Enter || e.OriginalSource is not DependencyObject source) return;
         if (ItemsControl.ContainerFromElement(AccountsList, source) is not ListBoxItem item) return;
         item.IsSelected = true;

@@ -150,16 +150,11 @@ namespace SoulLink.Services
         /// 仍不可得 → unknown。★ count 只用于反推单次值，绝不用于乘算击杀数。
         /// </summary>
         internal static string ClassifyWithFallback(long? singleMora, long? count, long? morale, string? routeName)
-        {
-            if (singleMora.HasValue) return ClassifyValue(singleMora.Value, routeName ?? "");
-            if (morale.HasValue && count.HasValue && count.Value > 0)
-            {
-                long total = morale.Value, c = count.Value;
-                if (total >= 0 && total % c == 0)
-                    return ClassifyValue(total / c, routeName ?? "");
-            }
-            return CatUnknown;
-        }
+            => Classify(ResolveSingleMora(singleMora, count, morale), routeName);
+
+        internal static long? ResolveSingleMora(long? singleMora, long? count, long? morale)
+            => singleMora ?? (morale is long total && total >= 0 && count is long occurrences &&
+                occurrences > 0 && total % occurrences == 0 ? total / occurrences : null);
         // ── 归属窗口（t18 §5 两档）────────────────────────────────────────
 
         /// <summary>BGI ExecutionRecords 的项目窗口（纳秒 ISO 时间已转 ms）。</summary>

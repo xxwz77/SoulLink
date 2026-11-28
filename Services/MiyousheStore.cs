@@ -20,6 +20,9 @@ namespace SoulLink.Services
         long? CurrentPrimogems, long? CurrentMora, long? LastPrimogems, long? LastMora,
         int? PrimogemRate, int? MoraRate, string RawJson, string Source, long FetchedAtMs);
     public sealed record MiyousheCredentialState(string Account, string State, string Detail, long UpdatedAtMs);
+    internal sealed record MiyousheLedgerScope(string Account, string GameUid, string Region, string YearMonth, int Kind,
+        long WindowStartMs, long WindowEndMs);
+    internal sealed record MiyousheLedgerCursor(MiyousheLedgerScope Scope, int Page, string StateJson);
     public sealed record MiyousheArchive(IReadOnlyList<MiyousheRole> Roles,
         IReadOnlyList<MiyousheLedgerEntry> Entries, IReadOnlyList<MiyousheLedgerDay> Days,
         IReadOnlyList<MiyousheLedgerMonth> Months, IReadOnlyList<MiyousheSignResult> Signs,
@@ -119,6 +122,7 @@ CREATE TABLE IF NOT EXISTS my_ledger_month(account TEXT NOT NULL,game_uid TEXT N
 CREATE TABLE IF NOT EXISTS my_cred_state(account TEXT PRIMARY KEY,state TEXT NOT NULL DEFAULT 'ok',
  detail TEXT NOT NULL DEFAULT '',updated_at_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_my_entry_account_time ON my_ledger_entry(account,game_uid,ts_ms);
+CREATE INDEX IF NOT EXISTS ix_my_mora_account_day ON my_ledger_entry(account COLLATE NOCASE,ts_ms) WHERE kind=2;
 CREATE TABLE IF NOT EXISTS my_mora_route_income(
  entry_rowid INTEGER PRIMARY KEY,account TEXT NOT NULL,game_uid TEXT NOT NULL,entry_ts_ms INTEGER NOT NULL,
  amount INTEGER NOT NULL,run_id TEXT,route_id TEXT,route_name TEXT,route_start_ms INTEGER,route_end_ms INTEGER,
@@ -128,6 +132,9 @@ CREATE INDEX IF NOT EXISTS ix_mora_income_route ON my_mora_route_income(account,
 CREATE TABLE IF NOT EXISTS my_pull_log(batch_id TEXT PRIMARY KEY,account TEXT NOT NULL,game_uid TEXT NOT NULL,
 state TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',pages INTEGER NOT NULL DEFAULT 0,inserted INTEGER NOT NULL DEFAULT 0,
 started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS my_ledger_cursor(account TEXT NOT NULL,game_uid TEXT NOT NULL,region TEXT NOT NULL,
+ year_month TEXT NOT NULL,kind INTEGER NOT NULL,window_start_ms INTEGER NOT NULL,window_end_ms INTEGER NOT NULL,
+ page INTEGER NOT NULL,state_json TEXT NOT NULL,PRIMARY KEY(account,game_uid,year_month,kind));
 CREATE INDEX IF NOT EXISTS ix_my_pull_account_role_time ON my_pull_log(account,game_uid,started_at_ms DESC);
 CREATE TABLE IF NOT EXISTS my_sign_batch(batch_id TEXT PRIMARY KEY,account TEXT NOT NULL,state TEXT NOT NULL,
 started_at_ms INTEGER NOT NULL,ended_at_ms INTEGER NOT NULL);
@@ -283,7 +290,8 @@ source=excluded.source,fetched_at_ms=excluded.fetched_at_ms;";
                 return cmd.ExecuteNonQuery();
             }, 0, ct);
         internal Task<int> SaveLedgerFactsAsync(IReadOnlyList<MiyousheLedgerEntry> entries,
-            IReadOnlyList<MiyousheLedgerDay> days, CancellationToken ct = default, bool stableOccurrences = false)
+            IReadOnlyList<MiyousheLedgerDay> days, CancellationToken ct = default, bool stableOccurrences = false,
+            MiyousheLedgerCursor? cursor = null, MiyousheLedgerScope? clearCursor = null)
             => RunAsync(db =>
             {
                 using var tx = db.BeginTransaction();
@@ -341,13 +349,64 @@ VALUES($a,$u,$r,$ym,$k,$ai,$an,$n,$sm,$cnt,$tt,$ts,$raw,$src,$at,$fd,
                     using var cmd = db.CreateCommand(); cmd.Transaction = tx;
                     cmd.CommandText = @"INSERT INTO my_ledger_day(account,game_uid,day,kind,primogems,mora,raw_json,source,fetched_at_ms)
 VALUES($a,$u,$d,$k,$p,$m,$raw,$src,$at) ON CONFLICT(account,game_uid,day) DO UPDATE SET
-primogems=COALESCE(excluded.primogems,my_ledger_day.primogems),mora=COALESCE(excluded.mora,my_ledger_day.mora),raw_json=excluded.raw_json,source=excluded.source,fetched_at_ms=excluded.fetched_at_ms;";
+kind=CASE WHEN excluded.source='ys_ledger/monthInfo' THEN excluded.kind ELSE my_ledger_day.kind END,
+primogems=CASE WHEN excluded.source='ys_ledger/monthInfo' AND my_ledger_day.source<>'ys_ledger/monthInfo' THEN excluded.primogems
+ ELSE COALESCE(excluded.primogems,my_ledger_day.primogems) END,
+mora=CASE WHEN excluded.source='ys_ledger/monthInfo' AND my_ledger_day.source<>'ys_ledger/monthInfo' THEN excluded.mora
+ ELSE COALESCE(excluded.mora,my_ledger_day.mora) END,
+raw_json=excluded.raw_json,source=excluded.source,fetched_at_ms=excluded.fetched_at_ms
+WHERE my_ledger_day.source<>'ys_ledger/monthInfo' OR
+ (excluded.source='ys_ledger/monthInfo' AND excluded.fetched_at_ms>=my_ledger_day.fetched_at_ms);";
                     Add(cmd,"$a",row.Account); Add(cmd,"$u",row.GameUid); Add(cmd,"$d",row.Day); Add(cmd,"$k",row.Kind);
                     Add(cmd,"$p",row.Primogems); Add(cmd,"$m",row.Mora); Add(cmd,"$raw",row.RawJson);
                     Add(cmd,"$src",row.Source); Add(cmd,"$at",row.FetchedAtMs); cmd.ExecuteNonQuery();
                 }
+                if (cursor != null)
+                {
+                    using var cmd = LedgerScopeCommand(db, cursor.Scope);
+                    cmd.Transaction = tx;
+                    cmd.CommandText = @"INSERT INTO my_ledger_cursor(account,game_uid,region,year_month,kind,window_start_ms,
+window_end_ms,page,state_json) VALUES($a,$uid,$r,$month,$kind,$lo,$hi,$page,$state)
+ON CONFLICT(account,game_uid,year_month,kind) DO UPDATE SET region=excluded.region,window_start_ms=excluded.window_start_ms,
+window_end_ms=excluded.window_end_ms,page=excluded.page,state_json=excluded.state_json;";
+                    Add(cmd, "$page", cursor.Page);
+                    Add(cmd, "$state", cursor.StateJson);
+                    cmd.ExecuteNonQuery();
+                }
+                if (clearCursor != null)
+                {
+                    using var cmd = LedgerScopeCommand(db, clearCursor);
+                    cmd.Transaction = tx;
+                    cmd.CommandText = "DELETE FROM my_ledger_cursor WHERE " + LedgerScopeFilter;
+                    cmd.ExecuteNonQuery();
+                }
                 tx.Commit(); return inserted;
-            }, 0, ct);
+            }, cursor != null || clearCursor != null ? -1 : 0, ct);
+
+        private const string LedgerScopeFilter = "account=$a AND game_uid=$uid AND region=$r AND year_month=$month AND kind=$kind "
+            + "AND window_start_ms=$lo AND window_end_ms=$hi";
+
+        private static SqliteCommand LedgerScopeCommand(SqliteConnection db, MiyousheLedgerScope scope)
+        {
+            var cmd = db.CreateCommand();
+            Add(cmd, "$a", scope.Account);
+            Add(cmd, "$uid", scope.GameUid);
+            Add(cmd, "$r", scope.Region);
+            Add(cmd, "$month", scope.YearMonth);
+            Add(cmd, "$kind", scope.Kind);
+            Add(cmd, "$lo", scope.WindowStartMs);
+            Add(cmd, "$hi", scope.WindowEndMs);
+            return cmd;
+        }
+
+        internal Task<MiyousheLedgerCursor?> LoadLedgerCursorAsync(MiyousheLedgerScope scope, CancellationToken ct)
+            => RunAsync<MiyousheLedgerCursor?>(db =>
+            {
+                using var cmd = LedgerScopeCommand(db, scope);
+                cmd.CommandText = "SELECT page,state_json FROM my_ledger_cursor WHERE " + LedgerScopeFilter;
+                using var reader = cmd.ExecuteReader();
+                return reader.Read() ? new(scope, reader.GetInt32(0), reader.GetString(1)) : null;
+            }, null, ct);
 
         internal Task<IReadOnlyList<string>> ListAccountsAsync(CancellationToken ct = default)
             => RunAsync<IReadOnlyList<string>>(db =>

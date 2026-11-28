@@ -137,32 +137,51 @@ namespace SoulLink.Services
             { return new(account,role.GameUid,date,"already",-5003,"今日已签到","",0,NowMs()); }
         }
 
-        internal async Task PullLedgerAsync(string account, MiyousheCredential credential, MiyousheRole role,
-            DateTime requestedMonth, DateTime calendarDay, Func<int,int,CancellationToken,Task> progress, CancellationToken ct)
+        internal async Task<bool> PullLedgerMonthInfoAsync(string account, MiyousheCredential credential,
+            MiyousheRole role, DateTime requestedMonth, DateTime? diaryDay, CancellationToken ct,
+            DateTimeOffset? fetchedAtOverride = null)
         {
             int month = requestedMonth.Month;
             string ym = requestedMonth.ToString("yyyy-MM", CultureInfo.InvariantCulture);
             string infoQuery = Query(new[]{("bind_uid",role.GameUid),("bind_region",role.Region),("month",month.ToString())});
-            using (var request = new HttpRequestMessage(HttpMethod.Get,MonthInfoUrl+"?"+infoQuery))
+            using var request = new HttpRequestMessage(HttpMethod.Get,MonthInfoUrl+"?"+infoQuery);
+            AddAuthorized(request,credential,infoQuery,null);
+            var reply = await SendAsync(request,ct).ConfigureAwait(false);
+            var fetchedAt = fetchedAtOverride ?? DateTimeOffset.Now;
+            var data = Data(reply);
+            if (data.TryGetProperty("month_data",out var m) && m.ValueKind == JsonValueKind.Object)
             {
-                AddAuthorized(request,credential,infoQuery,null);
-                var reply = await SendAsync(request,ct).ConfigureAwait(false);
-                var data = Data(reply); string raw = data.GetRawText();
-                if (data.TryGetProperty("month_data",out var m) && m.ValueKind == JsonValueKind.Object)
-                {
-                    await MiyousheStore.Shared.SaveLedgerMonthAsync(new(account,role.GameUid,ym,
-                        Long(m,"current_primogems"),Long(m,"current_mora"),Long(m,"last_primogems"),Long(m,"last_mora"),
-                        Int(m,"primogem_rate"),Int(m,"mora_rate"),m.GetRawText(),"ys_ledger/monthInfo",NowMs()),ct).ConfigureAwait(false);
-                }
-                if (calendarDay.Year == requestedMonth.Year && calendarDay.Month == month &&
-                    data.TryGetProperty("day_data",out var d) && d.ValueKind == JsonValueKind.Object)
-                {
-                    string day = calendarDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                    await MiyousheStore.Shared.SaveLedgerFactsAsync(Array.Empty<MiyousheLedgerEntry>(),
-                        new[]{new MiyousheLedgerDay(account,role.GameUid,day,0,Long(d,"current_primogems"),
-                            Long(d,"current_mora"),d.GetRawText(),"ys_ledger/monthInfo",NowMs())},ct).ConfigureAwait(false);
-                }
+                await MiyousheStore.Shared.SaveLedgerMonthAsync(new(account,role.GameUid,ym,
+                    Long(m,"current_primogems"),Long(m,"current_mora"),Long(m,"last_primogems"),Long(m,"last_mora"),
+                    Int(m,"primogem_rate"),Int(m,"mora_rate"),m.GetRawText(),"ys_ledger/monthInfo",NowMs()),ct).ConfigureAwait(false);
             }
+            var received = fetchedAt.LocalDateTime;
+            if (diaryDay is not DateTime snapshotDay || received.Year != requestedMonth.Year || received.Month != month ||
+                DogfoodRecordReader.CurrentBusinessDay(received) != snapshotDay ||
+                !data.TryGetProperty("day_data", out var dayData) || dayData.ValueKind != JsonValueKind.Object)
+                return false;
+
+            long? currentMora = Long(dayData, "current_mora");
+            long? currentPrimogems = Long(dayData, "current_primogems");
+            if (!currentMora.HasValue && !currentPrimogems.HasValue) return false;
+            string day = snapshotDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            await MiyousheStore.Shared.SaveLedgerFactsAsync(Array.Empty<MiyousheLedgerEntry>(),
+                new[] { new MiyousheLedgerDay(account, role.GameUid, day, 0, currentPrimogems, currentMora,
+                    dayData.GetRawText(), "ys_ledger/monthInfo", fetchedAt.ToUnixTimeMilliseconds()) }, ct).ConfigureAwait(false);
+            if (!MiyousheStore.Shared.IsHealthy) throw new IOException("米游社札记汇总写入失败");
+            return currentMora.HasValue;
+        }
+
+        internal async Task PullLedgerAsync(string account, MiyousheCredential credential, MiyousheRole role,
+            DateTime requestedMonth, DateTime? diaryDay, Func<int,int,CancellationToken,Task> progress,
+            CancellationToken ct, DateTime? detailsSince = null, Action? onDailySummarySaved = null,
+            bool skipMonthInfo = false, DateTimeOffset? fetchedAtOverride = null)
+        {
+            if (!skipMonthInfo &&
+                await PullLedgerMonthInfoAsync(account, credential, role, requestedMonth, diaryDay, ct, fetchedAtOverride)
+                    .ConfigureAwait(false))
+                onDailySummarySaved?.Invoke();
+            string ym = requestedMonth.ToString("yyyy-MM", CultureInfo.InvariantCulture);
             int allPages=0,allInserted=0;
             for (int kind = 1; kind <= 2; kind++)
             {
@@ -170,40 +189,137 @@ namespace SoulLink.Services
                 {
                     if (kind==1) { allPages=pages; allInserted=inserted; }
                     await progress(allPages+(kind==2?pages:0),allInserted+(kind==2?inserted:0),token).ConfigureAwait(false);
-                },ct).ConfigureAwait(false);
+                },ct, detailsSince).ConfigureAwait(false);
                 if (kind == 1) await DelayBetweenRequestsAsync(ct).ConfigureAwait(false);
             }
         }
 
         internal void ConfigureTestDelay(int milliseconds) { _pageDelayMs=milliseconds; }
-        private async Task PullDetailPagesAsync(string account, MiyousheCredential credential, MiyousheRole role,
-            string ym, DateTime month, int kind, Func<int,int,CancellationToken,Task> progress, CancellationToken ct)
+
+        private sealed record DetailPage(JsonElement Items, int? Number, string Fingerprint)
         {
-            int totalPages = 0, totalInserted = 0;
-            var occurrences = new Dictionary<(int ActionId, string Time, string Raw), int>();
-            var daily = new Dictionary<string, long>();
-            bool complete = false;
-            for (int page = 1; page <= 100; page++)
+            internal bool Matches(int page) => Items.GetArrayLength() > 0 && (!Number.HasValue || Number.Value == page);
+        }
+        private sealed record BoundaryOccurrence(int ActionId, string Time, string Raw, int Count);
+        private sealed record DetailCursorState(string[] Fingerprints, long BoundaryMs,
+            BoundaryOccurrence[] BoundaryOccurrences, Dictionary<string, long> Daily);
+
+        private async Task PullDetailPagesAsync(string account, MiyousheCredential credential, MiyousheRole role,
+            string ym, DateTime month, int kind, Func<int,int,CancellationToken,Task> progress, CancellationToken ct,
+            DateTime? since)
+        {
+            int? replay = await PullDetailPassAsync(account, credential, role, ym, month, kind, progress, ct, since,
+                allowResume: true, totalInserted: 0).ConfigureAwait(false);
+            if (replay.HasValue)
             {
-                string query = Query(new[]{("bind_uid",role.GameUid),("bind_region",role.Region),("month",month.Month.ToString()),
-                    ("type",kind.ToString()),("current_page",page.ToString()),("page_size","100")});
-                using var request = new HttpRequestMessage(HttpMethod.Get,MonthDetailUrl+"?"+query);
-                AddAuthorized(request,credential,query,null);
-                var reply = await SendAsync(request,ct).ConfigureAwait(false);
-                var data = Data(reply);
-                if (!data.TryGetProperty("list", out var list) || list.ValueKind != JsonValueKind.Array)
-                    throw new InvalidDataException("米游社流水分页格式无效");
+                await DelayBetweenRequestsAsync(ct).ConfigureAwait(false);
+                await PullDetailPassAsync(account, credential, role, ym, month, kind, progress, ct, since,
+                    allowResume: false, totalInserted: replay.Value).ConfigureAwait(false);
+            }
+        }
+
+        // Returns inserted count only when a resumed stream has changed and must be replayed once.
+        private async Task<int?> PullDetailPassAsync(string account, MiyousheCredential credential, MiyousheRole role,
+            string ym, DateTime month, int kind, Func<int,int,CancellationToken,Task> progress, CancellationToken ct,
+            DateTime? since, bool allowResume, int totalInserted)
+        {
+            // Dense game days can contain more than 2,000 receipts. The time boundary stops normal pulls.
+            const int maxPagesPerPass = 512;
+            int firstPage = 1;
+            var occurrences = new Dictionary<(int ActionId, string Time, string Raw), int>();
+            var boundaryOccurrences = new Dictionary<(int ActionId, string Time, string Raw), int>();
+            var daily = new Dictionary<string, long>();
+            var fingerprints = new List<string>();
+            var seenPages = new HashSet<string>(StringComparer.Ordinal);
+            DateTimeOffset? cutoff = since.HasValue ? new DateTimeOffset(since.Value) : null;
+            DateTimeOffset? previousTime = null;
+            bool descending = cutoff.HasValue;
+            MiyousheLedgerScope? scope = since is DateTime startDay && cutoff is DateTimeOffset begins
+                ? new(account, role.GameUid, role.Region, ym, kind, begins.ToUnixTimeMilliseconds(),
+                    new DateTimeOffset(startDay.AddDays(1)).ToUnixTimeMilliseconds()) : null;
+            bool resumed = false;
+            bool cursorExists = false;
+            DetailPage? firstResponse = null;
+            if (allowResume && scope != null &&
+                await MiyousheStore.Shared.LoadLedgerCursorAsync(scope, ct).ConfigureAwait(false) is { } saved)
+            {
+                var state = ReadDetailCursor(saved, maxPagesPerPass);
+                if (state != null)
+                {
+                    firstResponse = await ReadDetailPageAsync(credential, role, month, kind, 1, ct).ConfigureAwait(false);
+                    if (firstResponse.Matches(1) && firstResponse.Fingerprint == state.Fingerprints[0])
+                    {
+                        var tail = firstResponse;
+                        if (saved.Page > 1)
+                        {
+                            await DelayBetweenRequestsAsync(ct).ConfigureAwait(false);
+                            tail = await ReadDetailPageAsync(credential, role, month, kind, saved.Page, ct).ConfigureAwait(false);
+                        }
+                        if (tail.Matches(saved.Page) && tail.Fingerprint == state.Fingerprints[^1] &&
+                            ParseMinute(String(tail.Items[tail.Items.GetArrayLength() - 1], "time"), month.Year)
+                                ?.ToUnixTimeMilliseconds() == state.BoundaryMs)
+                        {
+                            resumed = cursorExists = true;
+                            firstPage = saved.Page + 1;
+                            previousTime = DateTimeOffset.FromUnixTimeMilliseconds(state.BoundaryMs);
+                            daily = state.Daily;
+                            fingerprints.AddRange(state.Fingerprints);
+                            seenPages.UnionWith(fingerprints);
+                            foreach (var occurrence in state.BoundaryOccurrences)
+                            {
+                                var key = (occurrence.ActionId, occurrence.Time, occurrence.Raw);
+                                occurrences[key] = boundaryOccurrences[key] = occurrence.Count;
+                            }
+                            await progress(saved.Page, totalInserted, ct).ConfigureAwait(false);
+                        }
+                        if (saved.Page > 1 || resumed) await DelayBetweenRequestsAsync(ct).ConfigureAwait(false);
+                    }
+                }
+                if (!resumed) await ClearDetailCursorAsync(scope, ct).ConfigureAwait(false);
+            }
+
+            for (int page = firstPage; !(descending && previousTime < cutoff); page++)
+            {
+                DetailPage response = page == 1 && firstResponse != null ? firstResponse :
+                    await ReadDetailPageAsync(credential, role, month, kind, page, ct).ConfigureAwait(false);
+                bool empty = response.Items.GetArrayLength() == 0;
+                bool invalidPage = empty ? response.Number is > 0 && response.Number != page
+                    : !response.Matches(page) || !seenPages.Add(response.Fingerprint);
+                if (invalidPage)
+                {
+                    if (resumed)
+                    {
+                        await ClearDetailCursorAsync(scope!, ct).ConfigureAwait(false);
+                        return totalInserted;
+                    }
+                    throw new InvalidDataException("米游社返回了重复或不匹配的流水分页");
+                }
+                // 列表可能少于请求数量，在收到空页前继续拉取。
+                if (empty)
+                {
+                    await progress(page, totalInserted, ct).ConfigureAwait(false);
+                    break;
+                }
+                fingerprints.Add(response.Fingerprint);
+
                 var entries = new List<MiyousheLedgerEntry>();
-                foreach (var item in list.EnumerateArray())
+                foreach (var item in response.Items.EnumerateArray())
                 {
                     string time = String(item,"time");
                     var occurredAt = ParseMinute(time, month.Year);
+                    if (descending)
+                    {
+                        descending = occurredAt.HasValue && (!previousTime.HasValue || occurredAt <= previousTime);
+                        if (occurredAt != previousTime) boundaryOccurrences.Clear();
+                        previousTime = occurredAt;
+                    }
                     long? num = Long(item,"num"); int actionId = Int(item,"action_id") ?? 0;
                     // Count identical facts across the pull. An inserted row on page one must not renumber other facts.
                     string raw = item.GetRawText();
                     var identity = (actionId, time, raw);
                     occurrences.TryGetValue(identity, out int ordinal);
                     occurrences[identity] = ordinal + 1;
+                    if (descending) boundaryOccurrences[identity] = ordinal + 1;
                     entries.Add(new(account,role.GameUid,role.Region,ym,kind,actionId,String(item,"action"),num,
                         Long(item,"single_morale") ?? Long(item,"single_mora"),Int(item,"count"),
                         time,occurredAt?.ToUnixTimeMilliseconds(),raw,"ys_ledger/monthDetail",NowMs(),ordinal));
@@ -211,26 +327,88 @@ namespace SoulLink.Services
                     {
                         string day = at.LocalDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                         daily.TryGetValue(day, out long sum);
-                        daily[day] = sum + num.Value;
+                        daily[day] = checked(sum + num.Value);
                     }
                 }
-                totalInserted += await MiyousheStore.Shared.SaveLedgerFactsAsync(entries,
-                    Array.Empty<MiyousheLedgerDay>(), ct, stableOccurrences: true).ConfigureAwait(false);
-                await progress(++totalPages, totalInserted, ct).ConfigureAwait(false);
-                int pageSize = Math.Max(1, Int(data,"page_size") ?? 100);
-                if (list.GetArrayLength() < pageSize) { complete = true; break; }
-                if (page < 100) await DelayBetweenRequestsAsync(ct).ConfigureAwait(false);
+                if (resumed && !descending)
+                {
+                    await ClearDetailCursorAsync(scope!, ct).ConfigureAwait(false);
+                    return totalInserted;
+                }
+                MiyousheLedgerCursor? nextCursor = null;
+                if (descending && scope != null && previousTime is DateTimeOffset boundary)
+                {
+                    var state = new DetailCursorState(fingerprints.ToArray(), boundary.ToUnixTimeMilliseconds(),
+                        boundaryOccurrences.Select(pair => new BoundaryOccurrence(
+                            pair.Key.ActionId, pair.Key.Time, pair.Key.Raw, pair.Value)).ToArray(), daily);
+                    nextCursor = new(scope, page, JsonSerializer.Serialize(state));
+                }
+                int inserted = await MiyousheStore.Shared.SaveLedgerFactsAsync(entries, Array.Empty<MiyousheLedgerDay>(),
+                    ct, stableOccurrences: true, cursor: nextCursor,
+                    clearCursor: nextCursor == null && cursorExists ? scope : null).ConfigureAwait(false);
+                EnsureDetailCommit(inserted);
+                cursorExists = nextCursor != null;
+                totalInserted += inserted;
+                await progress(page, totalInserted, ct).ConfigureAwait(false);
+                if (descending && previousTime < cutoff) break;
+                if (page - firstPage + 1 == maxPagesPerPass)
+                    throw new InvalidDataException("米游社流水达到分页上限，尚未读完整");
+                await DelayBetweenRequestsAsync(ct).ConfigureAwait(false);
             }
 
-            // Write a day total only after all pages have been observed; a partial pull leaves previous totals intact.
-            if (complete && daily.Count > 0)
+            // A date-window pull can finish partway through an older calendar day.
+            string? firstCompleteDay = null;
+            if (descending && previousTime < cutoff && since is DateTime start)
             {
-                var days = daily.Select(pair => new MiyousheLedgerDay(account, role.GameUid, pair.Key, kind,
+                DateTime firstCompleteDate = start.TimeOfDay == TimeSpan.Zero ? start.Date : start.Date.AddDays(1);
+                firstCompleteDay = firstCompleteDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            }
+            var days = daily.Where(pair => firstCompleteDay == null || string.CompareOrdinal(pair.Key, firstCompleteDay) >= 0)
+                .Select(pair => new MiyousheLedgerDay(account, role.GameUid, pair.Key, kind,
                     kind == 1 ? pair.Value : null, kind == 2 ? pair.Value : null,
                     JsonSerializer.Serialize(new { sum = pair.Value }), "ys_ledger/monthDetail", NowMs())).ToArray();
-                await MiyousheStore.Shared.SaveLedgerFactsAsync(Array.Empty<MiyousheLedgerEntry>(), days, ct)
-                    .ConfigureAwait(false);
+            if (days.Length > 0 || cursorExists)
+                EnsureDetailCommit(await MiyousheStore.Shared.SaveLedgerFactsAsync(Array.Empty<MiyousheLedgerEntry>(),
+                    days, ct, clearCursor: cursorExists ? scope : null).ConfigureAwait(false));
+            return null;
+        }
+
+        private async Task<DetailPage> ReadDetailPageAsync(MiyousheCredential credential, MiyousheRole role,
+            DateTime month, int kind, int page, CancellationToken ct)
+        {
+            // 国服札记用 page/limit。传 current_page/page_size 时接口仍返回第一页。
+            string query = Query(new[] { ("bind_uid", role.GameUid), ("bind_region", role.Region),
+                ("month", month.Month.ToString(CultureInfo.InvariantCulture)), ("type", kind.ToString(CultureInfo.InvariantCulture)),
+                ("page", page.ToString(CultureInfo.InvariantCulture)), ("limit", "20") });
+            using var request = new HttpRequestMessage(HttpMethod.Get, MonthDetailUrl + "?" + query);
+            AddAuthorized(request, credential, query, null);
+            var data = Data(await SendAsync(request, ct).ConfigureAwait(false));
+            if (!data.TryGetProperty("list", out var list) || list.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("米游社流水分页格式无效");
+            string fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(list.GetRawText())));
+            return new(list, Int(data, "page") ?? Int(data, "current_page"), fingerprint);
+        }
+
+        private static DetailCursorState? ReadDetailCursor(MiyousheLedgerCursor saved, int maxPagesPerPass)
+        {
+            if (saved.Page < 1 || saved.Page > int.MaxValue - maxPagesPerPass - 1) return null;
+            try
+            {
+                var state = JsonSerializer.Deserialize<DetailCursorState>(saved.StateJson);
+                return state?.Fingerprints?.Length == saved.Page && state.Daily != null &&
+                    state.BoundaryOccurrences != null && state.BoundaryOccurrences.All(item => item is { Count: > 0 })
+                    ? state : null;
             }
+            catch (JsonException) { return null; }
+        }
+
+        private static async Task ClearDetailCursorAsync(MiyousheLedgerScope scope, CancellationToken ct)
+            => EnsureDetailCommit(await MiyousheStore.Shared.SaveLedgerFactsAsync(Array.Empty<MiyousheLedgerEntry>(),
+                Array.Empty<MiyousheLedgerDay>(), ct, clearCursor: scope).ConfigureAwait(false));
+
+        private static void EnsureDetailCommit(int result)
+        {
+            if (result < 0 || !MiyousheStore.Shared.IsHealthy) throw new IOException("米游社流水写入失败");
         }
         private async Task<MiyousheReply> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -414,7 +592,7 @@ namespace SoulLink.Services
         }
         private static DateTimeOffset? ParseMinute(string value, int year)
         {
-            if (System.Text.RegularExpressions.Regex.IsMatch(value,@"^\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}$"))
+            if (System.Text.RegularExpressions.Regex.IsMatch(value,@"^\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?$"))
                 value=year.ToString("0000", CultureInfo.InvariantCulture)+"-"+value.Replace('/','-');
             return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var at)
                 ? at : null;

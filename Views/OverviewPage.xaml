@@ -83,9 +83,91 @@
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
+        <Style x:Key="MoraCompositionLink" TargetType="Button">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Foreground" Value="{DynamicResource DesktopAccent}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="LinkFocus" BorderThickness="1" BorderBrush="Transparent" CornerRadius="3"
+                                Margin="-1" Background="Transparent">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="LinkFocus" Property="Background" Value="{DynamicResource HoverFill}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="LinkFocus" Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="MoraCompositionBar" TargetType="ProgressBar">
+            <Setter Property="Height" Value="5" />
+            <Setter Property="Maximum" Value="100" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid>
+                            <Border x:Name="PART_Track" CornerRadius="2.5" Background="{DynamicResource HoverFill}" />
+                            <Border x:Name="PART_Indicator" CornerRadius="2.5" HorizontalAlignment="Left"
+                                    Background="{TemplateBinding Foreground}" />
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <DrawingImage x:Key="MoraJarIcon">
+            <DrawingImage.Drawing>
+                <DrawingGroup>
+                    <GeometryDrawing Brush="#380F0806">
+                        <GeometryDrawing.Geometry>
+                            <EllipseGeometry Center="12,21.1" RadiusX="7.6" RadiusY="1.5" />
+                        </GeometryDrawing.Geometry>
+                    </GeometryDrawing>
+                    <GeometryDrawing Geometry="M 8,7 L 16,7 C 16.2,9 19.5,10.4 20,13.5 C 20.7,16.5 19.1,19.3 16.7,20.8 C 14.2,21.7 9.8,21.7 7.3,20.8 C 4.9,19.3 3.3,16.5 4,13.5 C 4.5,10.4 7.8,9 8,7 Z">
+                        <GeometryDrawing.Brush>
+                            <LinearGradientBrush StartPoint="0,0.25" EndPoint="1,0.85">
+                                <GradientStop Color="#E5A071" Offset="0" />
+                                <GradientStop Color="#BC6A46" Offset="0.55" />
+                                <GradientStop Color="#743B31" Offset="1" />
+                            </LinearGradientBrush>
+                        </GeometryDrawing.Brush>
+                        <GeometryDrawing.Pen>
+                            <Pen Brush="#68372C" Thickness="0.8" />
+                        </GeometryDrawing.Pen>
+                    </GeometryDrawing>
+                    <GeometryDrawing Brush="#9D4C35"
+                                     Geometry="M 4.1,13.3 C 8,14.7 16,14.7 19.9,13.3 L 20,15 C 15.2,16.5 8.8,16.5 4,15 Z" />
+                    <GeometryDrawing Brush="#F4C196"
+                                     Geometry="M 6.8,11.1 C 8.2,9.6 9.3,9 9.5,8.1 L 10.7,8.3 C 10.4,9.5 8.5,10.5 7.1,12.4 Z" />
+                    <GeometryDrawing Brush="#C47651"
+                                     Geometry="M 6.9,4.3 C 6.9,3.4 9.1,2.8 12,2.8 C 14.9,2.8 17.1,3.4 17.1,4.3 L 16.5,7 C 15.4,8.3 8.6,8.3 7.5,7 Z">
+                        <GeometryDrawing.Pen>
+                            <Pen Brush="#68372C" Thickness="0.8" />
+                        </GeometryDrawing.Pen>
+                    </GeometryDrawing>
+                    <GeometryDrawing Brush="#64362D">
+                        <GeometryDrawing.Geometry>
+                            <EllipseGeometry Center="12,4.4" RadiusX="4" RadiusY="1" />
+                        </GeometryDrawing.Geometry>
+                        <GeometryDrawing.Pen>
+                            <Pen Brush="#E3AA7F" Thickness="0.85" />
+                        </GeometryDrawing.Pen>
+                    </GeometryDrawing>
+                </DrawingGroup>
+            </DrawingImage.Drawing>
+        </DrawingImage>
     </UserControl.Resources>
 
-    <Grid>
+    <Grid x:Name="OverviewRoot">
         <Grid.RowDefinitions>
             <RowDefinition Height="80" />
             <RowDefinition Height="Auto" />
@@ -152,7 +234,7 @@
                                  Foreground="{DynamicResource TextPrimary}"
                                  ItemContainerStyle="{StaticResource OverviewAccountRow}" SelectionMode="Single"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 KeyboardNavigation.TabNavigation="Once" SelectionChanged="AccountsList_SelectionChanged"
+                                 KeyboardNavigation.TabNavigation="Continue" SelectionChanged="AccountsList_SelectionChanged"
                                  PreviewKeyDown="AccountsList_PreviewKeyDown"
                                  AutomationProperties.Name="账号运行状态"
                                  AutomationProperties.HelpText="使用方向键选择账号，查看所选账号的快捷动作和运行日志。">
@@ -222,18 +304,23 @@
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="1" Margin="0,0,5,0">
                                                         <TextBlock Text="狗粮经验汇总" Style="{StaticResource OverviewMetricLabel}"
-                                                                   ToolTip="按自然日汇总各 BetterGI 配置组的狗粮经验。" />
+                                                                   ToolTip="汇总各 BetterGI 配置组的狗粮经验，业务日从 04:00 开始。" />
                                                         <TextBlock Text="{Binding Summary.DogfoodExp}" Style="{StaticResource OverviewMetricValue}" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="2" Margin="0,0,5,0">
                                                         <TextBlock Text="狗粮摩拉汇总" Style="{StaticResource OverviewMetricLabel}"
-                                                                   ToolTip="按自然日汇总各 BetterGI 配置组的狗粮摩拉。" />
+                                                                   ToolTip="汇总各 BetterGI 配置组的狗粮摩拉，业务日从 04:00 开始。" />
                                                         <TextBlock Text="{Binding Summary.DogfoodMora}" Style="{StaticResource OverviewMetricValue}" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="3">
                                                         <TextBlock Text="今日摩拉总收益" Style="{StaticResource OverviewMetricLabel}"
-                                                                   ToolTip="汇总默认或唯一原神角色已拉取的米游社札记流水。游戏日从 04:00 开始，流水可能延迟。" />
-                                                        <TextBlock Text="{Binding Summary.MoraIncome}" Style="{StaticResource OverviewMetricValue}" />
+                                                                   ToolTip="显示默认或唯一原神角色在米游社旅行者札记中的今日获得，凌晨 04:00 换日。尚未同步到札记总额时，显示该业务日已采集流水并标为部分。" />
+                                                        <Button Style="{StaticResource MoraCompositionLink}" Click="OpenMoraComposition_Click"
+                                                                ToolTip="查看今日收益构成与本地流水明细"
+                                                                AutomationProperties.Name="{Binding Summary.MoraAccessibleName}">
+                                                            <TextBlock Text="{Binding Summary.MoraIncome}" TextDecorations="Underline"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                        </Button>
                                                     </StackPanel>
                                                 </Grid>
                                             </Grid>
@@ -399,6 +486,111 @@
                 </Border>
             </Grid>
         </Border>
+        </Grid>
+        <Grid x:Name="MoraCompositionOverlay" Grid.RowSpan="3" Panel.ZIndex="20"
+              Visibility="Collapsed" ClipToBounds="True" SizeChanged="MoraCompositionLayout_SizeChanged">
+            <Border Background="Transparent" MouseDown="MoraCompositionOutside_MouseDown" />
+            <Canvas>
+                <Border x:Name="MoraCompositionPanel" Padding="13" CornerRadius="9" BorderThickness="1"
+                    Background="{DynamicResource PopupBackground}" BorderBrush="{DynamicResource StrokeMid}"
+                    TextElement.Foreground="{DynamicResource TextPrimary}" TextElement.FontSize="12"
+                    KeyboardNavigation.TabNavigation="Cycle" PreviewKeyDown="MoraComposition_PreviewKeyDown"
+                    SizeChanged="MoraCompositionLayout_SizeChanged" ClipToBounds="True"
+                    AutomationProperties.Name="今日摩拉收益构成与明细">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,3">
+                                <Button x:Name="CloseMoraCompositionButton" DockPanel.Dock="Right" Content="关闭"
+                                        Style="{StaticResource DesktopLink}" Padding="6,2" Click="CloseMoraComposition_Click"/>
+                                <Image Width="24" Height="24" Margin="0,0,6,0" Source="/Assets/Mora/coin.png" />
+                                <TextBlock Text="收益构成" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <TextBlock x:Name="MoraCompositionSubtitle" Foreground="{DynamicResource TextSecondary}"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="MoraCompositionTotal" FontWeight="SemiBold" Margin="0,4,0,7" />
+                        </StackPanel>
+                        <ScrollViewer x:Name="MoraCompositionScroll" Grid.Row="1" Focusable="False"
+                                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
+                                <ItemsControl x:Name="MoraCompositionParts">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" CornerRadius="6"
+                                                    Padding="8,5" Margin="0,0,0,5">
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding Share}" VerticalAlignment="Center" />
+                                                        <Image Width="24" Height="24" Margin="0,0,6,0">
+                                                            <Image.Style>
+                                                                <Style TargetType="Image">
+                                                                    <Setter Property="Source" Value="{Binding Icon}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                                                                            <Setter Property="Source" Value="{StaticResource MoraJarIcon}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Image.Style>
+                                                        </Image>
+                                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                    </DockPanel>
+                                                    <DockPanel Margin="0,1,0,4">
+                                                        <TextBlock DockPanel.Dock="Left" Text="{Binding Summary}" />
+                                                        <TextBlock Text="{Binding EliteTiers}" Margin="8,0,0,0" TextAlignment="Right"
+                                                                   TextWrapping="Wrap" FontSize="11"
+                                                                   Foreground="{DynamicResource TextSecondary}">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding EliteTiers}" Value="">
+                                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </DockPanel>
+                                                    <ProgressBar Style="{StaticResource MoraCompositionBar}" Value="{Binding Progress, Mode=OneWay}"
+                                                                 Foreground="{Binding Tint}" AutomationProperties.Name="{Binding Label}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock x:Name="MoraCompositionNote" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
+                                <Expander x:Name="MoraCompositionDetails" Header="流水明细" Margin="0,6,0,0"
+                                          Expanded="MoraCompositionDetails_Expanded">
+                                    <ListBox x:Name="MoraCompositionEntries" BorderThickness="0" Background="Transparent"
+                                             Foreground="{DynamicResource TextPrimary}" MaxHeight="150"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                             AutomationProperties.Name="今日摩拉流水明细">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel Margin="0,1">
+                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Amount}" Margin="5,0,0,0" />
+                                                    <TextBlock DockPanel.Dock="Left" Text="{Binding Time}" Margin="0,0,6,0"
+                                                               Foreground="{DynamicResource TextSecondary}" />
+                                                    <TextBlock Text="{Binding Source}" ToolTip="{Binding Source}" TextTrimming="CharacterEllipsis" />
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </Expander>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+            </Canvas>
         </Grid>
     </Grid>
 </UserControl>

@@ -97,8 +97,8 @@ namespace SoulLink.Views
             //   避免两个窗口标题完全相同、分不清哪个是哪个。
             try
             {
-                // t56: dev build marker (env SOULLINK_DEV_BUILD=1)
-                bool isDev = Environment.GetEnvironmentVariable("SOULLINK_DEV_BUILD") == "1";
+                bool isDev = Environment.GetEnvironmentVariable("SOULLINK_DEV_BUILD") == "1"
+                    || System.IO.File.Exists(System.IO.Path.Combine(AppContext.BaseDirectory, ".soullink-dev"));
                 if (isDev)
                 {
                     Title = "SoulLink - DEV (do not use)";
