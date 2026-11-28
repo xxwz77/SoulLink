@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 namespace SoulLink.Models
 {
@@ -82,6 +83,7 @@ namespace SoulLink.Models
         {
             Paused = Enabled && !Paused;
             Enabled = true;
+            ResetScheduleScan();
         }
 
         /// <summary>
@@ -163,6 +165,16 @@ namespace SoulLink.Models
         public Dictionary<string, string> ScheduleCycleDay { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>定时触点最后触发的计划基准日。实际时刻可以受递增延时影响。</summary>
         public Dictionary<string, DateTime> ScheduleLastTriggeredDay { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        private long _lastScheduleScanTicks;
+
+        internal DateTime? RecordScheduleScan(DateTime now)
+        {
+            long previous = Interlocked.Exchange(ref _lastScheduleScanTicks, now.Ticks);
+            return previous == 0 ? null : new DateTime(previous, now.Kind);
+        }
+
+        internal void ResetScheduleScan() => Interlocked.Exchange(ref _lastScheduleScanTicks, 0);
+
         /// <summary>TON 等待线圈的截止时刻；输入断开后清除。</summary>
         public Dictionary<string, DateTime> DelayUntil { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>本轮已命中的日志/定时/手动等瞬时信号；等待其它条件时不设超时。</summary>

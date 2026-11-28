@@ -80,8 +80,10 @@ namespace SoulLink.Models
                   "每触发一次，下次时刻往后推这么多秒；0=固定时刻", false),
                 P("resetAfter", "复位周期（次）", "0", FlowParamKind.Number,
                   "递增多少次后回到初始时刻；0=永不复位", false),
-                P("catchUpHours", "当日补跑窗口（小时）", "12", FlowParamKind.Number, "0=当天不限时", false),
-                P("catchUpSeconds", "补跑窗口（秒）", "", FlowParamKind.Number, "精确秒数窗口可跨午夜；0=当天不限时", false));
+                P("catchUpHours", "当日补跑窗口（小时）", "0", FlowParamKind.Number,
+                  "错过预定时间后，可在设定的小时数内补跑，最晚到当天午夜。\n0 小时（默认）：错过即跳过。\n24 小时：当天午夜前均可补跑。", false),
+                P("catchUpSeconds", "补跑窗口（秒）", "", FlowParamKind.Number,
+                  "错过预定时间后，可在设定的秒数内补跑，窗口可以跨午夜。0 秒：错过即跳过。", false));
             D(FlowNodeType.TrigInterval,FlowNodeKind.Condition,"定时·间隔","每到间隔时满足一次，随后恢复不满足","\uE916",P("intervalSeconds","间隔秒","600",FlowParamKind.Number));
             D(FlowNodeType.TrigSessionOnline,FlowNodeKind.Condition,"会话在线","目标账号的会话当前在线","\uE7EE");
             D(FlowNodeType.TrigManual,FlowNodeKind.Condition,"手动","仅点击「立即运行」时满足","\uE768");

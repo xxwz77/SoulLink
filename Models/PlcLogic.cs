@@ -96,9 +96,11 @@ namespace SoulLink.Models
         }
     }
 
-    /// <summary>本地日历定时。每个基准日期只记录一次，补跑限制在实际到期日期内。</summary>
+    /// <summary>本地日历定时。每个基准日期最多触发一次。</summary>
     public static class PlcSchedule
     {
+        private static readonly TimeSpan OnTimeScanGap = TimeSpan.FromSeconds(5);
+
         private readonly record struct Period(string Kind, TimeSpan Clock, int WeekDays, int Month,
             int DayOfMonth, DateTime StartDate, int IntervalDays, int StepSeconds, int ResetAfter,
             long CatchUpSeconds, bool PreciseCatchUp);
@@ -168,9 +170,9 @@ namespace SoulLink.Models
             }
             else
             {
-                if (!IntField(node, "catchUpHours", 12, 0, int.MaxValue, out int catchUp, optional: true))
+                if (!IntField(node, "catchUpHours", 0, 0, int.MaxValue, out int catchUp, optional: true))
                     return ("catchUpHours", "补跑小时数必须是非负整数");
-                catchUpSeconds = (long)catchUp * 3600;
+                catchUpSeconds = Math.Min(catchUp, 24) * 3600;
             }
             period = new(kind, clock, weekDays, month, dayOfMonth, startDate, interval, step, reset, catchUpSeconds, preciseCatchUp);
             return null;
@@ -197,10 +199,10 @@ namespace SoulLink.Models
             return true;
         }
 
-        internal static PlcSignal Sample(AutomationFlow flow, FlowNode node, DateTime now)
+        internal static PlcSignal Sample(AutomationFlow flow, FlowNode node, DateTime now, DateTime? previousScan = null)
         {
             if (Read(node, out var period) != null) return new(false, false);
-            var occurrence = Find(flow, node, period, now, includeFuture: false);
+            var occurrence = Find(flow, node, period, now, includeFuture: false, previousScan);
             return new(occurrence.HasValue) { ScheduleDay = occurrence?.BaseDay };
         }
 
@@ -218,7 +220,8 @@ namespace SoulLink.Models
             if (count < int.MaxValue) flow.ScheduleFireCount[node.Id] = count + 1;
         }
 
-        private static Occurrence? Find(AutomationFlow flow, FlowNode node, Period period, DateTime now, bool includeFuture)
+        private static Occurrence? Find(AutomationFlow flow, FlowNode node, Period period, DateTime now,
+            bool includeFuture, DateTime? previousScan = null)
         {
             int stepIndex = Math.Max(0, flow.ScheduleFireCount.GetValueOrDefault(node.Id));
             if (period.ResetAfter > 0) stepIndex %= period.ResetAfter;
@@ -229,15 +232,19 @@ namespace SoulLink.Models
             var minimum = includeFuture && flow.CreatedAt is { } created && created.Date > now.Date ? created.Date : now.Date;
             var first = new DateTime(Math.Max(0, minimum.Ticks - wholeDays), now.Kind);
             var lastTriggered = LastTriggeredDay(flow, node, period, now);
-            // Migrated plans have a short seconds window. A scan just after midnight can still see a 23:59:59 slot.
-            if (period.PreciseCatchUp && now.TimeOfDay.TotalSeconds < period.CatchUpSeconds && first > DateTime.MinValue)
+            // 连续扫描跨过时刻时仍算准时。首轮扫描或长时间中断后只走已设置的补跑窗口。
+            DateTime? onTimeSince = period.CatchUpSeconds == 0 && previousScan is { } previousTime
+                && previousTime < now && now - previousTime <= OnTimeScanGap ? previousTime : null;
+            bool checkPreviousDay = (period.PreciseCatchUp && now.TimeOfDay.TotalSeconds < period.CatchUpSeconds)
+                || onTimeSince?.Date < now.Date;
+            if (checkPreviousDay && first > DateTime.MinValue)
             {
                 var previous = first.AddDays(-1);
                 if ((lastTriggered == null || previous > lastTriggered.Value) && previous.Ticks <= DateTime.MaxValue.Ticks - offset
                     && Matches(period, previous))
                 {
                     var target = previous.AddTicks(offset);
-                    if (target <= now && (now - target).TotalSeconds <= Math.Min(period.CatchUpSeconds, 86_400)
+                    if (IsDue(target, Math.Min(period.CatchUpSeconds, 86_400))
                         && (flow.CreatedAt is not { } registered || target >= registered)) return new(previous, target, stepIndex);
                 }
             }
@@ -251,12 +258,15 @@ namespace SoulLink.Models
             {
                 var at = day.AddTicks(offset);
                 if ((flow.CreatedAt is not { } registered || at >= registered)
-                    && (at >= now || (at.Date == now.Date && (period.CatchUpSeconds == 0 || (now - at).TotalSeconds <= period.CatchUpSeconds))))
+                    && (at >= now || (at.Date == now.Date && IsDue(at, period.CatchUpSeconds))))
                     return includeFuture || at <= now ? new(day, at, stepIndex) : null;
                 if (!includeFuture || day.Date == DateTime.MaxValue.Date) return null;
                 baseDay = NextBaseDay(period, day.AddDays(1));
             }
             return null;
+
+            bool IsDue(DateTime at, long windowSeconds)
+                => at <= now && (at > onTimeSince || (now - at).TotalSeconds <= windowSeconds);
         }
 
         private static DateTime? LastTriggeredDay(AutomationFlow flow, FlowNode node, Period period, DateTime now)

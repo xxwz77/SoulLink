@@ -98,7 +98,8 @@ public partial class FlowEditorWindow
         if (_flow.SatisfiedContacts.Contains(node.Id)) text.Text = "本次定时信号已触发，等待流程继续";
         else if (next is { } occurrence)
         {
-            text.Text = occurrence.At <= now ? $"本次 {occurrence.At:MM-dd HH:mm:ss} · 补跑窗口内"
+            text.Text = occurrence.At < now ? $"本次 {occurrence.At:MM-dd HH:mm:ss} · 补跑窗口内"
+                : occurrence.At == now ? $"本次 {occurrence.At:MM-dd HH:mm:ss} · 到达计划时刻"
                 : $"下次 {occurrence.At:yyyy-MM-dd HH:mm:ss}";
             if (node.GetInt("stepSeconds", 0) > 0 && PlcSchedule.Recurrence(node) != "once")
                 text.Text += $" · 本轮第 {(long)occurrence.StepIndex + 1} 次";

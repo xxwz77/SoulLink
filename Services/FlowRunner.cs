@@ -122,8 +122,9 @@ namespace SoulLink.Services
                     time = DateTime.Now;
                 }
 
+                var previousScheduleScan = !manual && flow.Enabled && !flow.Paused ? flow.RecordScheduleScan(time) : null;
                 var r = await PlcScanEngine.ScanAsync(flow,
-                    n => ReadContactAsync(n, flow, sessionId, cfg, manual, time, mutable: true),
+                    n => ReadContactAsync(n, flow, sessionId, cfg, manual, time, mutable: true, previousScheduleScan),
                     n => WriteOutputAsync(n, flow, sessionId, cfg), manual,
                     now: time, checkpoint: async _ => { if (cfg.Automations.Contains(flow)) await Task.Run(() => ConfigStore.Save(cfg)).ConfigureAwait(false); }).ConfigureAwait(false);
                 flow.EnsurePlcModel();
@@ -190,6 +191,7 @@ namespace SoulLink.Services
             //   并且给出明确原因（而不是让动作层报一句听不懂的"没有会话"）。
             if (sid <= 0)
             {
+                flow.ResetScheduleScan();
                 string who = cfg.Accounts.FirstOrDefault(a => a.Id == accountId)?.UserName ?? accountId;
                 flow.WaitingChannel = "等待「" + who + "」的会话上线 / 通道建立…";
                 bool hasSession = state != null && state.HasSession;
@@ -205,6 +207,7 @@ namespace SoulLink.Services
                 return (true, "");
             }
 
+            flow.ResetScheduleScan();
             flow.WaitingChannel = "等待注入通道建立（会话 " + sid + "）…";
             FlowRunner.ReportChannelWait?.Invoke(target.Title, "等待注入通道建立…");
             LogBus.Info("等待注入通道（门控）",
@@ -240,7 +243,8 @@ namespace SoulLink.Services
         internal static Task<PlcSignal> ReadPreviewContactAsync(FlowNode n, AutomationFlow flow, int sessionId, AppConfig cfg, DateTime time)
             => ReadContactAsync(n, flow, sessionId, cfg, false, time, mutable: false);
 
-        private static async Task<PlcSignal> ReadContactAsync(FlowNode n, AutomationFlow flow, int flowSessionId, AppConfig cfg, bool manual, DateTime time, bool mutable)
+        private static async Task<PlcSignal> ReadContactAsync(FlowNode n, AutomationFlow flow, int flowSessionId,
+            AppConfig cfg, bool manual, DateTime time, bool mutable, DateTime? previousScheduleScan = null)
         {
             string accountId = TargetAccountId(n, flow.AccountId, cfg);
             int sid = TargetSessionId(n, flow.AccountId, flowSessionId, cfg);
@@ -253,7 +257,7 @@ namespace SoulLink.Services
             switch (n.Type)
             {
                 case FlowNodeType.TrigSchedule:
-                    return PlcSchedule.Sample(flow, n, now);
+                    return PlcSchedule.Sample(flow, n, now, previousScheduleScan);
                 case FlowNodeType.TrigInterval:
                 {
                     int seconds = Math.Max(1, n.GetInt("intervalSeconds", 600));
