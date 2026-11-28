@@ -21,7 +21,11 @@ internal static class BgiTemplatePick
     internal const string BlackFuzzyDefault = "Assets/Config/Pick/default_pick_fuzzy_black_lists.json";
     internal const string DefaultBlack = "Assets/Config/Pick/default_pick_black_lists.json";
     internal const string DefaultFuzzyWhite = "Assets/Config/Pick/default_pick_fuzzy_white_lists.json";
-    internal sealed record TemplateInfo(string Name, string ItemName, string Color, string Category, int Len);
+    internal sealed record TemplateInfo(string Name, string ItemName, string Color, string Category, string Region, int Len)
+    {
+        public string DisplayName => BgiPickTemplateCategories.DisplayName(ItemName);
+        public string? AlternateItemName => BgiPickTemplateCategories.AlternateItemName(ItemName);
+    }
     internal sealed class Model
     {
         public string Root = ""; public string Warning = ""; public string Mode = "Blacklist";
@@ -31,32 +35,6 @@ internal static class BgiTemplatePick
         public List<string> TemplateBlackList;
         public List<TemplateInfo> Templates = new(); public JsonObject AutoPickConfig = new();
     }
-    private static readonly string[] ArtifactTerms = { "战狂", "游医", "幸运儿", "流放者", "冒险家", "教官" };
-    // The bundled flat catalog often has only a color folder. These names
-    // supplement category metadata for existing installations.
-    private static readonly HashSet<string> Specialties = new(StringComparer.Ordinal)
-    {
-        "便携轴承", "冬凌草", "霜盏花", "松珀香", "月落银", "赤念果",
-        "悼灵花", "劫波莲", "帕蒂沙兰", "沙脂蛹", "圣金虫", "树王圣体菇",
-        "万相石", "月莲", "金蕨", "霜仙花", "妖精绿艾", "植绒草",
-        "苍晶螺", "初露之源", "海露花", "虹彩蔷薇", "湖光铃兰", "柔灯铃",
-        "幽光星星", "子探测单元", "绝云椒椒", "琉璃百合", "琉璃袋", "霓裳花",
-        "清水玉", "清心", "石珀", "星螺", "夜泊石", "嘟嘟莲",
-        "风车菊", "钩钩果", "空羽蛾", "落落莓", "慕风蘑菇", "蒲公英籽",
-        "塞西莉亚花", "小灯草", "枯叶紫英", "浪沫羽鳃", "琉鳞石", "青蜜莓",
-        "肉龙掌", "微光角菌", "云岩裂叶", "灼灼彩菊", "血斛", "幽灯蕈",
-        "晶化骨髓", "海灵芝", "鸣草", "珊瑚真珠", "天云草实",
-    };
-    private static readonly HashSet<string> Ores = new(StringComparer.Ordinal)
-    {
-        "铁块", "白铁块", "水晶块", "魔晶块", "星银矿石", "紫晶块", "萃凝晶", "电气水晶",
-    };
-    private static readonly HashSet<string> Foods = new(StringComparer.Ordinal)
-    {
-        "松茸", "松果", "蘑菇", "甜甜花", "薄荷", "金鱼草", "日落果", "树莓", "苹果", "莲蓬", "马尾",
-        "兽肉", "冷鲜肉", "禽肉", "鱼肉", "鸟蛋", "海草", "竹笋", "小麦", "土豆", "卷心菜", "番茄",
-        "白萝卜", "胡萝卜", "火腿", "堇瓜", "泡泡桔", "枣椰", "香辛果", "墩墩桃", "颗粒果",
-    };
     private static string Asset(string root, string relative)
     {
         var p = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
@@ -74,17 +52,16 @@ internal static class BgiTemplatePick
         try { using var doc = JsonDocument.Parse(File.ReadAllText(path, Encoding.UTF8)); if (doc.RootElement.ValueKind == JsonValueKind.Object) return doc.RootElement.EnumerateObject().Where(x => x.Value.ValueKind == JsonValueKind.String).ToDictionary(x => x.Name, x => x.Value.GetString() ?? "", StringComparer.OrdinalIgnoreCase); } catch { }
         return new(StringComparer.OrdinalIgnoreCase);
     }
-    private static string Category(string item, string metadata, string templatePath, string color)
+    private static string LegacyCategory(string item, string metadata, string templatePath, string color)
     {
         if (!string.IsNullOrWhiteSpace(metadata)) return metadata.Trim();
         var folders = templatePath.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (folders.Length > 2 && folders[0] == color) return folders[1];
         if (folders.Length > 1 && folders[0] != color && folders[0] is not ("灰" or "绿" or "蓝" or "紫" or "金" or "白"))
             return folders[0];
-        if (Specialties.Contains(item)) return "地方特产";
-        if (ArtifactTerms.Any(term => item.StartsWith(term, StringComparison.Ordinal)) && item is not "冒险家的经验") return "圣遗物";
-        if (Ores.Contains(item)) return "矿物";
-        if (Foods.Contains(item)) return "食材";
+        if (item == "妖精绿艾") return "地方特产";
+        if (BgiPickTemplateCategories.IsArtifactPiece(item)) return BgiPickTemplateCategories.ArtifactCategory;
+        if (item == "火腿") return "食材";
         if (item.StartsWith("精锻用", StringComparison.Ordinal)) return "武器强化材料";
         if (item.Contains("武器原胚", StringComparison.Ordinal)) return "武器材料";
         if (item is "大英雄的经验" or "冒险家的经验" or "流浪者的经验") return "角色经验材料";
@@ -139,8 +116,10 @@ internal static class BgiTemplatePick
                 var item = Get("itemName"); if (string.IsNullOrWhiteSpace(item)) item = Get("name"); if (string.IsNullOrWhiteSpace(item)) continue;
                 var lenValue = row.EnumerateObject().FirstOrDefault(p => p.Name.Equals("len", StringComparison.OrdinalIgnoreCase)).Value;
                 var color = Get("color");
+                var classification = BgiPickTemplateCategories.Find(item);
                 m.Templates.Add(new TemplateInfo(Get("name"), item, color,
-                    Category(item, Get("category"), Get("file"), color),
+                    classification?.Category ?? LegacyCategory(item, Get("category"), Get("file"), color),
+                    classification?.Region ?? BgiPickTemplateCategories.CommonRegion,
                     lenValue.ValueKind == JsonValueKind.Number && lenValue.TryGetInt32(out var n) ? n : 0));
             }
             m.Templates = m.Templates.GroupBy(x => (x.ItemName, x.Color)).Select(x => x.First())

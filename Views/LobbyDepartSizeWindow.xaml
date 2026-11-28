@@ -7,8 +7,7 @@
         WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource DialogSurface}"
         ShowInTaskbar="False" FontFamily="{StaticResource UiFont}">
 
-    <Border CornerRadius="16" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="10">
-        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+    <Border CornerRadius="16" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="10" Background="{DynamicResource DialogSurface}">
 
         <Grid ClipToBounds="True">
             <ctl:AuroraBackdrop Opacity="0.48" />
@@ -21,7 +20,7 @@
                 <ComboBox x:Name="SizeCombo" Height="40" Margin="0,14,0,0"
                           Padding="11,0,6,0" FontSize="13"
                           Foreground="{DynamicResource TextPrimary}"
-                          Background="#30FFFFFF" BorderBrush="#30FFFFFF" BorderThickness="1"
+                          Background="{DynamicResource SubtleSurface}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1"
                           VerticalContentAlignment="Center">
                     <ComboBoxItem Content="2 人发车" Tag="2" />
                     <ComboBoxItem Content="3 人发车" Tag="3" />

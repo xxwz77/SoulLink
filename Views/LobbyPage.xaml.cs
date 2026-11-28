@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -66,7 +67,7 @@ namespace SoulLink.Views
                 {
                     Text = "还没有房间。点右上角「新建房间」创建你自己的。",
                     FontSize = 11.5, TextWrapping = TextWrapping.Wrap,
-                    Foreground = (Brush)FindResource("TextMuted")
+                    Foreground = UiBrush.Get("TextMuted")
                 });
         }
 
@@ -172,7 +173,7 @@ namespace SoulLink.Views
                             {
                                 Text = "尚未配置服务器。\n\n点顶部「服务器」填写新的服务器地址后即可使用联机。",
                                 FontSize = 12,
-                                Foreground = (Brush)FindResource("TextMuted"),
+                                Foreground = UiBrush.Get("TextMuted"),
                                 HorizontalAlignment = HorizontalAlignment.Center,
                                 TextAlignment = TextAlignment.Center,
                                 TextWrapping = TextWrapping.Wrap,
@@ -196,7 +197,7 @@ namespace SoulLink.Views
                             Text = "连不上服务器。\n\n" + msg
                                  + "\n\n点顶部「服务器」可以修改地址。",
                             FontSize = 12,
-                            Foreground = (Brush)FindResource("TextMuted"),
+                            Foreground = UiBrush.Get("TextMuted"),
                             HorizontalAlignment = HorizontalAlignment.Center,
                             TextAlignment = TextAlignment.Center,
                             TextWrapping = TextWrapping.Wrap,
@@ -276,14 +277,14 @@ namespace SoulLink.Views
             {
                 if (ConnDot == null) return;
 
-                Color c = state switch
+                string resource = state switch
                 {
-                    ConnState.Connected => Color.FromRgb(0x41, 0xF0, 0xC0),   // 绿
-                    ConnState.Connecting => Color.FromRgb(0xF0, 0xC4, 0x6B),  // 黄
-                    _ => Color.FromRgb(0xFF, 0x7B, 0x7B)                       // 红
+                    ConnState.Connected => "MintBrush",   // 绿
+                    ConnState.Connecting => "AmberBrush",  // 黄
+                    _ => "RoseBrush"                       // 红
                 };
 
-                ConnDot.Fill = new SolidColorBrush(c);
+                ConnDot.Fill = UiBrush.Get(resource);
 
                 string text = state switch
                 {
@@ -297,11 +298,11 @@ namespace SoulLink.Views
                     text += "（" + error + "）";
 
                 if (ConnText.Text != text) ConnText.Text = text;
-                ConnText.Foreground = new SolidColorBrush(state == ConnState.Connected
-                    ? Color.FromRgb(0x9F, 0xE8, 0xC8)
+                ConnText.Foreground = state == ConnState.Connected
+                    ? UiBrush.Get("MintBrush")
                     : (state == ConnState.Connecting
-                        ? Color.FromRgb(0xF0, 0xC4, 0x6B)
-                        : Color.FromRgb(0xFF, 0x9B, 0x9B)));
+                        ? UiBrush.Get("AmberBrush")
+                        : UiBrush.Get("RoseBrush"));
 
                 ConnDot.ToolTip = text;
             }
@@ -384,7 +385,7 @@ namespace SoulLink.Views
                              + "点右上角「新建房间」创建你自己的房间。\n"
                              + "或者点「加入房间」，输入别人给你的房间码。",
                         FontSize = 12,
-                        Foreground = (Brush)FindResource("TextMuted"),
+                        Foreground = UiBrush.Get("TextMuted"),
                         HorizontalAlignment = HorizontalAlignment.Center,
                         TextWrapping = TextWrapping.Wrap,
                         TextAlignment = TextAlignment.Center,
@@ -439,7 +440,7 @@ namespace SoulLink.Views
             bool sel = _selected != null &&
                        (_selected.Id == big?.Id || _selected.Id == small?.Id);
 
-            Color accent = Color.FromRgb(0x41, 0xF0, 0xC0);
+            string accent = "MintBrush";
 
             var outer = new StackPanel();
 
@@ -449,17 +450,17 @@ namespace SoulLink.Views
             {
                 Text = any.Title.Replace("（大号）", "").Replace("（小号）", ""),
                 FontSize = 13, FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("TextPrimary")
+                Foreground = UiBrush.Get("TextPrimary")
             });
             head.Children.Add(new Border
             {
                 CornerRadius = new CornerRadius(5), Padding = new Thickness(6, 1, 6, 1),
                 Margin = new Thickness(9, 0, 0, 0),
-                Background = new SolidColorBrush(Color.FromArgb(0x28, accent.R, accent.G, accent.B)),
+                Background = UiBrush.Get(accent, 0x28),
                 Child = new TextBlock
                 {
                     Text = "私人·大小号", FontSize = 9.5,
-                    Foreground = new SolidColorBrush(accent)
+                    Foreground = UiBrush.Get(accent)
                 }
             });
             outer.Children.Add(head);
@@ -468,29 +469,25 @@ namespace SoulLink.Views
             {
                 Text = "房主 " + any.OwnerName + "  ·  两间绑定，满员才发车",
                 FontSize = 10.5,
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 Margin = new Thickness(0, 4, 0, 10)
             });
 
             // 两个子房间
-            outer.Children.Add(PairSubRow(big, "大号房", Color.FromRgb(0xFF, 0xB1, 0x4D)));
-            outer.Children.Add(PairSubRow(small, "小号房", Color.FromRgb(0x4F, 0xE3, 0xFF)));
+            outer.Children.Add(PairSubRow(big, "大号房", "AmberBrush"));
+            outer.Children.Add(PairSubRow(small, "小号房", "DesktopAccent"));
 
             var card = new Border
             {
                 CornerRadius = new CornerRadius(11),
                 Padding = new Thickness(12, 11, 14, 11),
                 Margin = new Thickness(0, 0, 0, 8),
-                Background = new SolidColorBrush(sel
-                    ? Color.FromArgb(0x2A, accent.R, accent.G, accent.B)
-                    : Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(sel
-                    ? Color.FromArgb(0xAA, accent.R, accent.G, accent.B)
-                    : Color.FromArgb(0x1E, 0xFF, 0xFF, 0xFF)),
+                BorderBrush = sel ? UiBrush.Get(accent, 0xAA) : UiBrush.Get("TextPrimary", 0x1E),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand,
                 Child = outer
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
 
             card.MouseLeftButtonUp += async (_, __) =>
             {
@@ -507,7 +504,7 @@ namespace SoulLink.Views
         /// 大小号卡片里的一个子房间（大号房 / 小号房）。
         /// ★ 做成独立可点的小卡片：点哪个就选中哪个，选中的高亮（用户建议）。
         /// </summary>
-        private Border PairSubRow(LobbyRoom? room, string label, Color accent)
+        private Border PairSubRow(LobbyRoom? room, string label, string accent)
         {
             bool selected = room != null && _selected != null && _selected.Id == room.Id;
 
@@ -520,7 +517,7 @@ namespace SoulLink.Views
             grid.Children.Add(new Border
             {
                 Width = 3, CornerRadius = new CornerRadius(2),
-                Background = new SolidColorBrush(accent),
+                Background = UiBrush.Get(accent),
                 Margin = new Thickness(0, 1, 9, 1)
             });
 
@@ -528,7 +525,7 @@ namespace SoulLink.Views
             mid.Children.Add(new TextBlock
             {
                 Text = label, FontSize = 10.5,
-                Foreground = new SolidColorBrush(accent),
+                Foreground = UiBrush.Get(accent),
                 FontWeight = FontWeights.SemiBold
             });
 
@@ -537,7 +534,7 @@ namespace SoulLink.Views
                 mid.Children.Add(new TextBlock
                 {
                     Text = "（未创建）", FontSize = 10,
-                    Foreground = (Brush)FindResource("TextMuted"),
+                    Foreground = UiBrush.Get("TextMuted"),
                     Margin = new Thickness(0, 2, 0, 0)
                 });
             }
@@ -549,8 +546,8 @@ namespace SoulLink.Views
                     Text = codeText, FontSize = 10, Margin = new Thickness(0, 2, 0, 0),
                     FontFamily = new FontFamily("Consolas"),
                     Foreground = room.Code.Length > 0
-                        ? new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8))
-                        : new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x6B))
+                        ? UiBrush.Get("MintBrush")
+                        : UiBrush.Get("AmberBrush")
                 });
             }
             Grid.SetColumn(mid, 1);
@@ -564,15 +561,15 @@ namespace SoulLink.Views
                 {
                     Width = 6, Height = 6, VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(0, 0, 5, 0),
-                    Fill = new SolidColorBrush(online > 0
-                        ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0x3A, 0x46, 0x66))
+                    Fill = online > 0
+                        ? UiBrush.Get("MintBrush") : UiBrush.Get("TextSecondary")
                 });
                 right.Children.Add(new TextBlock
                 {
                     Text = online + " 人", FontSize = 10.5,
                     Foreground = online > 0
-                        ? new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8))
-                        : (Brush)FindResource("TextMuted")
+                        ? UiBrush.Get("MintBrush")
+                        : UiBrush.Get("TextMuted")
                 });
                 Grid.SetColumn(right, 2);
                 grid.Children.Add(right);
@@ -584,17 +581,13 @@ namespace SoulLink.Views
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(10, 8, 10, 8),
                 Margin = new Thickness(0, 0, 0, 6),
-                Background = new SolidColorBrush(selected
-                    ? Color.FromArgb(0x30, accent.R, accent.G, accent.B)
-                    : Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(selected
-                    ? Color.FromArgb(0xAA, accent.R, accent.G, accent.B)
-                    : Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)),
+                BorderBrush = selected ? UiBrush.Get(accent, 0xAA) : UiBrush.Get("TextPrimary", 0x18),
                 BorderThickness = new Thickness(1),
                 Cursor = room != null ? Cursors.Hand : Cursors.Arrow,
                 Child = grid,
                 Tag = room
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
 
             if (room != null)
             {
@@ -612,9 +605,9 @@ namespace SoulLink.Views
         {
             bool sel = _selected?.Id == r.Id;
             bool isPair = r.Kind == RoomKind.PrivatePair;
-            Color accent = isPair
-                ? Color.FromRgb(0x41, 0xF0, 0xC0)
-                : Color.FromRgb(0xFF, 0xB1, 0x4D);
+            string accent = isPair
+                ? "MintBrush"
+                : "AmberBrush";
 
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -624,7 +617,7 @@ namespace SoulLink.Views
             grid.Children.Add(new Border
             {
                 Width = 4, CornerRadius = new CornerRadius(2),
-                Background = new SolidColorBrush(accent),
+                Background = UiBrush.Get(accent),
                 Margin = new Thickness(0, 2, 12, 2)
             });
 
@@ -633,17 +626,17 @@ namespace SoulLink.Views
             head.Children.Add(new TextBlock
             {
                 Text = r.Title, FontSize = 13, FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("TextPrimary")
+                Foreground = UiBrush.Get("TextPrimary")
             });
             head.Children.Add(new Border
             {
                 CornerRadius = new CornerRadius(5), Padding = new Thickness(6, 1, 6, 1),
                 Margin = new Thickness(9, 0, 0, 0),
-                Background = new SolidColorBrush(Color.FromArgb(0x28, accent.R, accent.G, accent.B)),
+                Background = UiBrush.Get(accent, 0x28),
                 Child = new TextBlock
                 {
                     Text = r.KindText, FontSize = 9.5,
-                    Foreground = new SolidColorBrush(accent)
+                    Foreground = UiBrush.Get(accent)
                 }
             });
             mid.Children.Add(head);
@@ -652,7 +645,7 @@ namespace SoulLink.Views
             sub.Children.Add(new TextBlock
             {
                 Text = "房主 " + r.OwnerName, FontSize = 10.5,
-                Foreground = (Brush)FindResource("TextMuted")
+                Foreground = UiBrush.Get("TextMuted")
             });
 
             if (r.Code.Length > 0)
@@ -660,13 +653,13 @@ namespace SoulLink.Views
                 sub.Children.Add(new TextBlock
                 {
                     Text = "  ·  房间码 ", FontSize = 10.5,
-                    Foreground = (Brush)FindResource("TextMuted")
+                    Foreground = UiBrush.Get("TextMuted")
                 });
                 sub.Children.Add(new TextBlock
                 {
                     Text = r.Code, FontSize = 11, FontWeight = FontWeights.SemiBold,
                     FontFamily = new FontFamily("Consolas"),
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8))
+                    Foreground = UiBrush.Get("MintBrush")
                 });
             }
             else
@@ -675,7 +668,7 @@ namespace SoulLink.Views
                 sub.Children.Add(new TextBlock
                 {
                     Text = "  ·  🔒 需要房间码", FontSize = 10.5,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x6B))
+                    Foreground = UiBrush.Get("AmberBrush")
                 });
             }
             mid.Children.Add(sub);
@@ -696,15 +689,15 @@ namespace SoulLink.Views
             {
                 Width = 8, Height = 8, VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 6, 0),
-                Fill = new SolidColorBrush(onlineNum > 0
-                    ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0x3A, 0x46, 0x66))
+                Fill = onlineNum > 0
+                    ? UiBrush.Get("MintBrush") : UiBrush.Get("TextSecondary")
             });
             countRow.Children.Add(new TextBlock
             {
                 Text = onlineNum + " 人在线", FontSize = 11.5,
                 Foreground = onlineNum > 0
-                    ? new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8))
-                    : (Brush)FindResource("TextMuted")
+                    ? UiBrush.Get("MintBrush")
+                    : UiBrush.Get("TextMuted")
             });
             right.Children.Add(countRow);
 
@@ -713,7 +706,7 @@ namespace SoulLink.Views
                 {
                     Text = "可发车", FontSize = 10, Margin = new Thickness(0, 4, 0, 0),
                     HorizontalAlignment = HorizontalAlignment.Right,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0))
+                    Foreground = UiBrush.Get("MintBrush")
                 });
 
             Grid.SetColumn(right, 2);
@@ -724,16 +717,12 @@ namespace SoulLink.Views
                 CornerRadius = new CornerRadius(11),
                 Padding = new Thickness(12, 11, 14, 11),
                 Margin = new Thickness(0, 0, 0, 8),
-                Background = new SolidColorBrush(sel
-                    ? Color.FromArgb(0x2A, accent.R, accent.G, accent.B)
-                    : Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(sel
-                    ? Color.FromArgb(0xAA, accent.R, accent.G, accent.B)
-                    : Color.FromArgb(0x1E, 0xFF, 0xFF, 0xFF)),
+                BorderBrush = sel ? UiBrush.Get(accent, 0xAA) : UiBrush.Get("TextPrimary", 0x1E),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand,
                 Child = grid
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
 
             card.MouseLeftButtonUp += async (_, __) => await SelectRoomAsync(r);
             return card;
@@ -779,10 +768,10 @@ namespace SoulLink.Views
 
                 // ── 两个子区块 ──
                 DetailPanel.Children.Add(PairDetailBlock(big, "大号房", "这里是大号（真人）",
-                    Color.FromRgb(0xFF, 0xB1, 0x4D)));
+                    "AmberBrush"));
 
                 DetailPanel.Children.Add(PairDetailBlock(small, "小号房", "这里是小号（补位）",
-                    Color.FromRgb(0x4F, 0xE3, 0xFF)));
+                    "DesktopAccent"));
 
                 // 按钮
                 // ★ 同上：用设备码比对
@@ -819,7 +808,7 @@ namespace SoulLink.Views
             {
                 Text = "在线成员（" + online.Count + "）",
                 FontSize = 11, FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 Margin = new Thickness(0, 16, 0, 8)
             });
 
@@ -828,7 +817,7 @@ namespace SoulLink.Views
                 DetailPanel.Children.Add(new TextBlock
                 {
                     Text = "还没有人在线", FontSize = 11,
-                    Foreground = (Brush)FindResource("TextMuted")
+                    Foreground = UiBrush.Get("TextMuted")
                 });
             }
 
@@ -841,13 +830,13 @@ namespace SoulLink.Views
                 row.Children.Add(new System.Windows.Shapes.Ellipse
                 {
                     Width = 7, Height = 7, VerticalAlignment = VerticalAlignment.Center,
-                    Fill = new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0))
+                    Fill = UiBrush.Get("MintBrush")
                 });
 
                 var name = new TextBlock
                 {
                     Text = s.DisplayName, FontSize = 11.5,
-                    Foreground = (Brush)FindResource("TextPrimary"),
+                    Foreground = UiBrush.Get("TextPrimary"),
                     VerticalAlignment = VerticalAlignment.Center,
                     TextTrimming = TextTrimming.CharacterEllipsis
                 };
@@ -872,7 +861,7 @@ namespace SoulLink.Views
         }
 
         /// <summary>详情里的一个子区块（大号房 / 小号房）。</summary>
-        private Border PairDetailBlock(LobbyRoom? room, string label, string hint, Color accent)
+        private Border PairDetailBlock(LobbyRoom? room, string label, string hint, string accent)
         {
             var sp = new StackPanel();
 
@@ -881,20 +870,20 @@ namespace SoulLink.Views
             head.Children.Add(new Border
             {
                 Width = 3, Height = 14, CornerRadius = new CornerRadius(2),
-                Background = new SolidColorBrush(accent),
+                Background = UiBrush.Get(accent),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0)
             });
             head.Children.Add(new TextBlock
             {
                 Text = label, FontSize = 12, FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(accent),
+                Foreground = UiBrush.Get(accent),
                 VerticalAlignment = VerticalAlignment.Center
             });
             head.Children.Add(new TextBlock
             {
                 Text = "  " + hint, FontSize = 9.5,
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 VerticalAlignment = VerticalAlignment.Center
             });
             sp.Children.Add(head);
@@ -904,7 +893,7 @@ namespace SoulLink.Views
                 sp.Children.Add(new TextBlock
                 {
                     Text = "（未创建）", FontSize = 11,
-                    Foreground = (Brush)FindResource("TextMuted"),
+                    Foreground = UiBrush.Get("TextMuted"),
                     Margin = new Thickness(0, 6, 0, 0)
                 });
             }
@@ -915,7 +904,7 @@ namespace SoulLink.Views
                 codeRow.Children.Add(new TextBlock
                 {
                     Text = "房间码 ", FontSize = 10,
-                    Foreground = (Brush)FindResource("TextMuted")
+                    Foreground = UiBrush.Get("TextMuted")
                 });
                 codeRow.Children.Add(new TextBlock
                 {
@@ -923,8 +912,8 @@ namespace SoulLink.Views
                     FontSize = room.Code.Length > 0 ? 12 : 10,
                     FontFamily = new FontFamily("Consolas"),
                     Foreground = room.Code.Length > 0
-                        ? new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8))
-                        : new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x6B))
+                        ? UiBrush.Get("MintBrush")
+                        : UiBrush.Get("AmberBrush")
                 });
                 sp.Children.Add(codeRow);
 
@@ -934,7 +923,7 @@ namespace SoulLink.Views
                 {
                     Text = online.Count + " 人在线" + (online.Count == 0 ? "" : "："),
                     FontSize = 10,
-                    Foreground = (Brush)FindResource("TextMuted"),
+                    Foreground = UiBrush.Get("TextMuted"),
                     Margin = new Thickness(0, 6, 0, 0)
                 });
 
@@ -949,27 +938,28 @@ namespace SoulLink.Views
                     {
                         Width = 6, Height = 6, VerticalAlignment = VerticalAlignment.Center,
                         Margin = new Thickness(0, 0, 7, 0),
-                        Fill = new SolidColorBrush(accent)
+                        Fill = UiBrush.Get(accent)
                     });
                     row.Children.Add(new TextBlock
                     {
                         Text = s.DisplayName, FontSize = 11,
-                        Foreground = (Brush)FindResource("TextPrimary")
+                        Foreground = UiBrush.Get("TextPrimary")
                     });
                     sp.Children.Add(row);
                 }
             }
 
-            return new Border
+            var card = new Border
             {
                 CornerRadius = new CornerRadius(9),
                 Padding = new Thickness(11, 10, 11, 10),
                 Margin = new Thickness(0, 12, 0, 0),
-                Background = new SolidColorBrush(Color.FromArgb(0x16, accent.R, accent.G, accent.B)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x44, accent.R, accent.G, accent.B)),
+                BorderBrush = UiBrush.Get(accent, 0x44),
                 BorderThickness = new Thickness(1),
                 Child = sp
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
+            return card;
         }
 
 
@@ -982,14 +972,14 @@ namespace SoulLink.Views
             row.Children.Add(new TextBlock
             {
                 Text = label, FontSize = 11,
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 VerticalAlignment = VerticalAlignment.Center
             });
 
             var v = new TextBlock
             {
                 Text = value, FontSize = 11.5,
-                Foreground = (Brush)FindResource("TextPrimary"),
+                Foreground = UiBrush.Get("TextPrimary"),
                 VerticalAlignment = VerticalAlignment.Center,
                 TextWrapping = TextWrapping.Wrap
             };

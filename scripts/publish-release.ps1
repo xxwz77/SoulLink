@@ -2,12 +2,13 @@
 [CmdletBinding()]
 param(
     [string]$OutputDirectory = (Join-Path $PWD 'artifacts/github-release'),
-    [string]$Tag
+    [string]$Tag,
+    [switch]$ValidateNotesOnly
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $output = [IO.Path]::GetFullPath($OutputDirectory)
-$work = [IO.Directory]::CreateTempSubdirectory('SoulLink-Release-')
+$work = $null
 
 function Build-Package([string]$Project, [string]$Destination, [string[]]$Additional = @()) {
     dotnet publish $Project -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o $Destination --nologo @Additional
@@ -18,6 +19,26 @@ function Get-Version([string]$Project, [string]$Property = 'Version') {
     $value = (& dotnet msbuild $Project "-getProperty:$Property" -nologo | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $value -cnotmatch '^\d+\.\d+\.\d+$') { throw "版本无效 $Project $Property" }
     return $value
+}
+
+function Assert-ReleaseNotes([string]$Path, [string]$Version) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "缺少更新说明 $Path" }
+    $markdown = (Get-Content -LiteralPath $Path -Raw -Encoding utf8) -replace '(?s)<!--.*?-->', ''
+    $sections = [regex]::Matches($markdown, '(?m)^##[ \t]+(.+?)[ \t]*\r?$')
+    $expected = "v$Version"
+    $matching = @($sections | Where-Object { $_.Groups[1].Value -ceq $expected })
+    if ($matching.Count -ne 1 -or $sections[0].Groups[1].Value -cne $expected) {
+        throw "请在 $Path 顶部添加唯一的「## $expected」版本章节，保留已有历史。"
+    }
+
+    $start = $sections[0].Index + $sections[0].Length
+    $end = if ($sections.Count -gt 1) { $sections[1].Index } else { $markdown.Length }
+    $content = $markdown.Substring($start, $end - $start) -split '\r?\n' | Where-Object {
+        $line = $_.Trim() -replace '^(?:[-*+]|\d+\.)[ \t]+', ''
+        $line = $line -replace '[*_`~]', ''
+        $line -match '[\p{L}\p{N}]' -and $line -notmatch '^(?:#|>).*|^(?:TODO|TBD|待补充|待填写)[\p{P}\s]*$'
+    }
+    if (-not $content) { throw "$Path 的 $expected 章节需要填写本版实际更新内容。" }
 }
 
 function Copy-Required([string]$Source, [string]$Target) {
@@ -38,9 +59,16 @@ Push-Location $root
 try {
     $version = Get-Version SoulLink.csproj
     if ($Tag -and $Tag -cne "v$version") { throw "标签应为 v$version" }
+    $notes = 'docs/RELEASE-NOTES.md'
+    Assert-ReleaseNotes $notes $version
+    if ($ValidateNotesOnly) {
+        Write-Host "已核对 v$version 更新说明及历史文件。"
+        return
+    }
     $agentVersion = Get-Version Agent/SoulLink.Agent.csproj
     $brokerVersion = Get-Version Agent/SoulLink.Broker.csproj
     if ((Get-Version SoulLink.csproj AgentVersion) -ne $agentVersion) { throw '主程序和代理的版本要求不一致' }
+    $work = [IO.Directory]::CreateTempSubdirectory('SoulLink-Release-')
     $core = Join-Path $work.FullName 'core'
     $client = Join-Path $work.FullName 'client'
     $agent = Join-Path $work.FullName 'agent'
@@ -98,9 +126,10 @@ try {
         $file = Get-Item -LiteralPath (Join-Path $output $name)
         Write-Host "$($file.Name)  $($file.Length) bytes"
     }
+    Copy-Required $notes $output
 }
 finally {
     Pop-Location
-    if ($work.Parent.FullName -eq [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) -and
+    if ($null -ne $work -and $work.Parent.FullName -eq [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) -and
         $work.Name.StartsWith('SoulLink-Release-', [StringComparison]::Ordinal)) { $work.Delete($true) }
 }

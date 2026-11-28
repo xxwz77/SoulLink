@@ -27,7 +27,9 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: soullink-win-x64
-          path: ${{ runner.temp }}/release/*.zip
+          path: |
+            ${{ runner.temp }}/release/*.zip
+            ${{ runner.temp }}/release/RELEASE-NOTES.md
           if-no-files-found: error
           compression-level: 0
 
@@ -50,14 +52,21 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF_NAME
           $repo = $env:GITHUB_REPOSITORY
-          $assets = @(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'release') -Filter *.zip)
+          $releaseDirectory = Join-Path $env:RUNNER_TEMP 'release'
+          $notes = Join-Path $releaseDirectory 'RELEASE-NOTES.md'
+          $notesText = Get-Content -LiteralPath $notes -Raw -Encoding utf8
+          if ([string]::IsNullOrWhiteSpace($notesText)) { throw 'Expected validated release notes' }
+          $assets = @(Get-ChildItem -LiteralPath $releaseDirectory -Filter *.zip)
           if ($assets.Count -ne 4) { throw 'Expected four release ZIPs' }
           $paths = $assets.FullName
-          gh release create $tag --repo $repo --verify-tag --draft --generate-notes --title "SoulLink $tag" @paths
+          gh release create $tag --repo $repo --verify-tag --draft --notes-file $notes --title "SoulLink $tag" @paths
           if ($LASTEXITCODE -ne 0) { throw 'Draft release failed' }
-          $id = gh release view $tag --repo $repo --json databaseId --jq '.databaseId'
+          $draft = gh release view $tag --repo $repo --json databaseId,body | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Draft release lookup failed' }
-          $uploaded = gh api "repos/$repo/releases/$id/assets" | ConvertFrom-Json
+          if (($draft.body -replace "`r`n", "`n").TrimEnd() -cne ($notesText -replace "`r`n", "`n").TrimEnd()) {
+            throw 'Draft release notes did not match the validated file'
+          }
+          $uploaded = gh api "repos/$repo/releases/$($draft.databaseId)/assets" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Release asset lookup failed' }
           foreach ($file in $assets) {
             $remote = $uploaded | Where-Object { $_.name -ceq $file.Name }

@@ -27,7 +27,7 @@
                                        VerticalAlignment="Center" />
                             <Ellipse x:Name="ConnDot" Width="7" Height="7"
                                      VerticalAlignment="Center" Margin="14,3,5,0"
-                                     Fill="#8B9CC8" />
+                                     Fill="{DynamicResource TextSecondary}" />
                             <TextBlock x:Name="ConnText" Text="连接中…" FontSize="10.5"
                                        Foreground="{DynamicResource TextMuted}"
                                        VerticalAlignment="Center" Margin="0,3,0,0" />

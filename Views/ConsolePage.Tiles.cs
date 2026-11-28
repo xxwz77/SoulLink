@@ -81,8 +81,8 @@ namespace SoulLink.Views
             {
                 CornerRadius = new CornerRadius(10),
                 BorderThickness = new Thickness(1),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF)),
-                Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x04, 0x06, 0x0D)),
+                BorderBrush = UiBrush.Get("StrokeSoft"),
+                Background = UiBrush.Get("WindowBackground"),
                 ClipToBounds = true
             };
 
@@ -95,14 +95,14 @@ namespace SoulLink.Views
                 Text = row.Account.Caption,
                 FontSize = 10.5,
                 Margin = new Thickness(10, 5, 10, 5),
-                Foreground = new SolidColorBrush(Color.FromArgb(0xBB, 0xFF, 0xFF, 0xFF)),
+                Foreground = UiBrush.Get("TextSecondary"),
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Left
             };
 
             var header = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
+                Background = UiBrush.Get("SubtleSurface"),
                 Cursor = Cursors.Hand,
                 Child = title,
                 Visibility = Visibility.Collapsed,
@@ -587,9 +587,7 @@ namespace SoulLink.Views
                 }
                 else
                 {
-                    t.Chrome.BorderBrush = new SolidColorBrush(focus
-                        ? Color.FromArgb(0xAA, 0x7C, 0x5C, 0xFF)
-                        : Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF));
+                    t.Chrome.BorderBrush = focus ? UiBrush.Get("DesktopAccent", 0xAA) : UiBrush.Get("StrokeSoft");
                     t.Chrome.BorderThickness = new Thickness(focus && multi ? 2 : 1);
                 }
                 t.Header.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;

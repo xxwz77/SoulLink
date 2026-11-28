@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -43,7 +44,7 @@ namespace SoulLink.Views
         private void Show(string title, string detail, string diagnostics, bool ok)
         {
             StatusTitle.Text = title; StatusText.Text = detail; Diagnostics.Text = diagnostics;
-            StatusDot.Fill = new SolidColorBrush(ok ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0xFF, 0xB1, 0x4D));
+            StatusDot.Fill = ok ? UiBrush.Get("MintBrush") : UiBrush.Get("AmberBrush");
         }
         private async Task DetectAsync()
         {

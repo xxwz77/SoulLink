@@ -280,6 +280,7 @@ namespace SoulLink.Services
                         }
                     }
                 }
+                migrated |= LegacyActionScheduleMigration.Apply(cfg, DateTime.Now);
                 bool remoteControlMigrated = MigrateRemoteControl(cfg);
                 if (migrated)
                 {
@@ -415,6 +416,8 @@ namespace SoulLink.Services
             public bool NavCollapsed { get; set; }
             /// <summary>左侧导航是否启用「自动收起」（鼠标悬停展开）</summary>
             public bool NavAutoHide { get; set; }
+            public double? OverviewLogHeightFraction { get; set; }
+            public double? OverviewActionsHeightFraction { get; set; }
         }
 
         public static UiState LoadState()

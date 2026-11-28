@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -137,9 +138,10 @@ namespace SoulLink.Services
         }
 
         internal async Task PullLedgerAsync(string account, MiyousheCredential credential, MiyousheRole role,
-            int month, Func<int,int,CancellationToken,Task> progress, CancellationToken ct)
+            DateTime requestedMonth, DateTime calendarDay, Func<int,int,CancellationToken,Task> progress, CancellationToken ct)
         {
-            string ym = DateTime.Now.Year.ToString("0000")+"-"+month.ToString("00");
+            int month = requestedMonth.Month;
+            string ym = requestedMonth.ToString("yyyy-MM", CultureInfo.InvariantCulture);
             string infoQuery = Query(new[]{("bind_uid",role.GameUid),("bind_region",role.Region),("month",month.ToString())});
             using (var request = new HttpRequestMessage(HttpMethod.Get,MonthInfoUrl+"?"+infoQuery))
             {
@@ -152,9 +154,10 @@ namespace SoulLink.Services
                         Long(m,"current_primogems"),Long(m,"current_mora"),Long(m,"last_primogems"),Long(m,"last_mora"),
                         Int(m,"primogem_rate"),Int(m,"mora_rate"),m.GetRawText(),"ys_ledger/monthInfo",NowMs()),ct).ConfigureAwait(false);
                 }
-                if (data.TryGetProperty("day_data",out var d) && d.ValueKind == JsonValueKind.Object)
+                if (calendarDay.Year == requestedMonth.Year && calendarDay.Month == month &&
+                    data.TryGetProperty("day_data",out var d) && d.ValueKind == JsonValueKind.Object)
                 {
-                    string day = DateTime.Now.ToString("yyyy-MM-dd");
+                    string day = calendarDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                     await MiyousheStore.Shared.SaveLedgerFactsAsync(Array.Empty<MiyousheLedgerEntry>(),
                         new[]{new MiyousheLedgerDay(account,role.GameUid,day,0,Long(d,"current_primogems"),
                             Long(d,"current_mora"),d.GetRawText(),"ys_ledger/monthInfo",NowMs())},ct).ConfigureAwait(false);
@@ -163,7 +166,7 @@ namespace SoulLink.Services
             int allPages=0,allInserted=0;
             for (int kind = 1; kind <= 2; kind++)
             {
-                await PullDetailPagesAsync(account,credential,role,ym,month,kind,async (pages,inserted,token) =>
+                await PullDetailPagesAsync(account,credential,role,ym,requestedMonth,kind,async (pages,inserted,token) =>
                 {
                     if (kind==1) { allPages=pages; allInserted=inserted; }
                     await progress(allPages+(kind==2?pages:0),allInserted+(kind==2?inserted:0),token).ConfigureAwait(false);
@@ -174,7 +177,7 @@ namespace SoulLink.Services
 
         internal void ConfigureTestDelay(int milliseconds) { _pageDelayMs=milliseconds; }
         private async Task PullDetailPagesAsync(string account, MiyousheCredential credential, MiyousheRole role,
-            string ym, int month, int kind, Func<int,int,CancellationToken,Task> progress, CancellationToken ct)
+            string ym, DateTime month, int kind, Func<int,int,CancellationToken,Task> progress, CancellationToken ct)
         {
             int totalPages = 0, totalInserted = 0;
             var occurrences = new Dictionary<(int ActionId, string Time, string Raw), int>();
@@ -182,7 +185,7 @@ namespace SoulLink.Services
             bool complete = false;
             for (int page = 1; page <= 100; page++)
             {
-                string query = Query(new[]{("bind_uid",role.GameUid),("bind_region",role.Region),("month",month.ToString()),
+                string query = Query(new[]{("bind_uid",role.GameUid),("bind_region",role.Region),("month",month.Month.ToString()),
                     ("type",kind.ToString()),("current_page",page.ToString()),("page_size","100")});
                 using var request = new HttpRequestMessage(HttpMethod.Get,MonthDetailUrl+"?"+query);
                 AddAuthorized(request,credential,query,null);
@@ -194,6 +197,7 @@ namespace SoulLink.Services
                 foreach (var item in list.EnumerateArray())
                 {
                     string time = String(item,"time");
+                    var occurredAt = ParseMinute(time, month.Year);
                     long? num = Long(item,"num"); int actionId = Int(item,"action_id") ?? 0;
                     // Count identical facts across the pull. An inserted row on page one must not renumber other facts.
                     string raw = item.GetRawText();
@@ -202,9 +206,10 @@ namespace SoulLink.Services
                     occurrences[identity] = ordinal + 1;
                     entries.Add(new(account,role.GameUid,role.Region,ym,kind,actionId,String(item,"action"),num,
                         Long(item,"single_morale") ?? Long(item,"single_mora"),Int(item,"count"),
-                        time,ParseMinute(time),raw,"ys_ledger/monthDetail",NowMs(),ordinal));
-                    if (num.HasValue && TryDay(time,out string day))
+                        time,occurredAt?.ToUnixTimeMilliseconds(),raw,"ys_ledger/monthDetail",NowMs(),ordinal));
+                    if (num.HasValue && occurredAt is DateTimeOffset at)
                     {
+                        string day = at.LocalDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                         daily.TryGetValue(day, out long sum);
                         daily[day] = sum + num.Value;
                     }
@@ -407,22 +412,12 @@ namespace SoulLink.Services
             if (value.ValueKind == JsonValueKind.False) return false;
             return String(element,name) == "1";
         }
-        private static long? ParseMinute(string value)
+        private static DateTimeOffset? ParseMinute(string value, int year)
         {
             if (System.Text.RegularExpressions.Regex.IsMatch(value,@"^\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}$"))
-                value=DateTime.Now.Year.ToString("0000")+"-"+value.Replace('/','-');
-            if (!DateTimeOffset.TryParse(value,System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.AssumeLocal,out var at)) return null;
-            return at.ToUnixTimeMilliseconds();
-        }
-        private static bool TryDay(string value,out string day)
-        {
-            if (System.Text.RegularExpressions.Regex.IsMatch(value,@"^\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}$"))
-                value=DateTime.Now.Year.ToString("0000")+"-"+value.Replace('/','-');
-            if (DateTimeOffset.TryParse(value,System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.AssumeLocal,out var at))
-            { day = at.LocalDateTime.ToString("yyyy-MM-dd"); return true; }
-            day = ""; return false;
+                value=year.ToString("0000", CultureInfo.InvariantCulture)+"-"+value.Replace('/','-');
+            return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var at)
+                ? at : null;
         }
         private static string SafeServerMessage(string message,int code)
         {

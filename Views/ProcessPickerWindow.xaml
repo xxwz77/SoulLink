@@ -8,8 +8,7 @@
 
     <Grid Margin="0">
 
-        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
-                        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True" Background="{DynamicResource DialogSurface}">
 
             <Grid Margin="22,18,22,18">
                 <Grid.RowDefinitions>
@@ -31,7 +30,7 @@
                     </Button>
                 </Grid>
 
-                <Border Grid.Row="1" CornerRadius="11" Background="{DynamicResource FieldBackground}" BorderBrush="#28FFFFFF" BorderThickness="1" Margin="0,14,0,10">
+                <Border Grid.Row="1" CornerRadius="11" Background="{DynamicResource FieldBackground}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" Margin="0,14,0,10">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -44,7 +43,7 @@
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="2" CornerRadius="14" Background="#0CFFFFFF" BorderBrush="#1EFFFFFF" BorderThickness="1" Padding="2">
+                <Border Grid.Row="2" CornerRadius="14" Background="{DynamicResource SubtleSurface}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" Padding="2">
                     <ListBox x:Name="List" Background="Transparent" BorderThickness="0"
                              ItemContainerStyle="{StaticResource SessionItem}"
                              MouseDoubleClick="List_MouseDoubleClick">

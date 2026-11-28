@@ -43,7 +43,7 @@ namespace SoulLink.Views
         {
             ValidBox.Visibility = Visibility.Visible;
             ValidText.Text = text;
-            if (!flash) return;
+            if (!flash || ThemeManager.AnimationsDisabled) return;
             var fade = new System.Windows.Media.Animation.DoubleAnimation(1.0, 0.35, TimeSpan.FromMilliseconds(650))
             {
                 AutoReverse = true,

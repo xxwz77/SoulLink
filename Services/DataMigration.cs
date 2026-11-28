@@ -195,7 +195,8 @@ namespace SoulLink.Services
                         .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                     string rel = full.Substring(baseFull.Length)
                         .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                    string dst = Path.Combine(dstRoot, rel);
+                    // The destination already follows srcRoot during recursion. Keep rel for labels and config rules.
+                    string dst = Path.Combine(dstRoot, Path.GetFileName(file));
 
                     // ══════════════════════════════════════════════════════
                     //  ★★ 3.1.1 修复：配置类文件必须覆盖，否则迁移等于没做 ★★

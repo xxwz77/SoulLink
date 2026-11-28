@@ -16,32 +16,37 @@ namespace SoulLink.Views
     public partial class FlowEditorWindow : Window
     {
         private readonly AutomationFlow _flow;
-        private readonly Account _account;
+        private Account _account;
         private readonly AppConfig _cfg;
-        private readonly bool _isNew;
         private bool _ready;
-        private bool _dirty;
+        private bool _updatingSuggestedName;
         private readonly System.Windows.Threading.DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromSeconds(1) };
         private bool _previewBusy;
         private bool _suppressTodayToggle;
+        private (CheckBox Toggle, TextBlock Status)? _endTodayControls;
         private int _previewVersion;
 
         public FlowEditorWindow(AutomationFlow flow, Account account, AppConfig cfg,
                                 bool isNew = false)
         {
             InitializeComponent();
-            _isNew = isNew;
-            _flow = flow;
+            _flow = FlowEdits.DraftOf(flow);
             _account = account;
             _cfg = cfg;
+            _flow.AutoName = FlowName.UsesSuggestion(_flow, account);
+            if (_flow.AutoName == true) _flow.Name = FlowName.Suggest(_flow, cfg);
+            BeginFlowDraft(flow, isNew);
 
-            HeaderText.Text = account.Caption + " 的自动化";
-            SubHeader.Text = "条件满足时执行动作；连接方式决定多个条件如何组合";
+            HeaderText.Text = "自动化流程";
+            foreach (var owner in cfg.Accounts.Where(a => a != null && !string.IsNullOrWhiteSpace(a.Id)).DistinctBy(a => a.Id))
+            {
+                var label = owner.Caption == owner.UserName ? owner.UserName : $"{owner.Caption} · {owner.UserName}";
+                OwnerPicker.Items.Add(new ComboBoxItem { Content = label, Tag = owner, IsSelected = owner.Id == account.Id });
+            }
             RefreshDailyState();
-            NameBox.Text = flow.Name;
-            EnabledCheck.IsChecked = flow.Enabled;
-            _flow.EnsurePlcModel();
-            if (_flow.MigrationNotes.Count > 0) { OnCanvasNotice(string.Join("；", _flow.MigrationNotes)); _dirty = true; }
+            NameBox.Text = _flow.Name;
+            EnabledCheck.IsChecked = _flow.Enabled;
+            if (_flow.MigrationNotes.Count > 0) OnCanvasNotice(string.Join("；", _flow.MigrationNotes));
 
             BuildLibrary();
             BuildHelp();
@@ -49,7 +54,6 @@ namespace SoulLink.Views
             Canvas.NodeSelected += OnNodeSelected;
             Canvas.Changed += () =>
             {
-                _dirty = true;
                 _previewVersion++;
                 RefreshCondModeRow();
                 RefreshValidateHint();
@@ -75,7 +79,7 @@ namespace SoulLink.Views
             // ★ 2026-11-26 用户要求：新建自动化**不再默认塞入「定时·间隔」触点**。
             //   由用户在画布上自行添加需要的条件 / 触发器，空画布保持空白。
 
-            Canvas.Load(flow);
+            Canvas.Load(_flow);
             UpdateEmptyHint();
 
             // 首次打开时播放引导；用户可勾选“不再弹出”，之后仍可从使用说明重播。
@@ -119,7 +123,7 @@ namespace SoulLink.Views
             if (_operationNotice.Length == 0) return;
             ValidateHint.Visibility = Visibility.Visible;
             view.Text = _operationNotice;
-            ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0x4F,0xE3,0xFF));
+            ValidateHint.Foreground = UiBrush.Get("DesktopAccent");
             ValidateHint.ToolTip = _operationNotice;
         }
 
@@ -136,15 +140,25 @@ namespace SoulLink.Views
         private Button? _bgiPickerButton;
         private readonly Dictionary<string, FrameworkElement> _fieldTargets = new(StringComparer.OrdinalIgnoreCase);
         private FrameworkElement? _highlightedField;
-        private readonly Brush _normalFieldBorder = new SolidColorBrush(Color.FromArgb(0x30,0xFF,0xFF,0xFF));
-        private static readonly Brush ErrorFieldBorder = new SolidColorBrush(Color.FromRgb(0xFF,0x9B,0x9B));
+        private readonly Brush _normalFieldBorder = UiBrush.Get("TextPrimary", 0x30);
+        private static readonly Brush ErrorFieldBorder = UiBrush.Get("RoseBrush");
 
         private void RefreshValidateHint()
         {
             if (ValidateHint == null) return;
+            if (_ready && _flow.AutoName == true)
+            {
+                string suggestion = FlowName.Suggest(_flow, _cfg);
+                if (NameBox.Text != suggestion)
+                {
+                    _updatingSuggestedName = true;
+                    try { _flow.Name = suggestion; NameBox.Text = suggestion; }
+                    finally { _updatingSuggestedName = false; }
+                }
+            }
             try
             {
-                var report = FlowValidator.Validate(_flow, _cfg);
+                var report = ValidateDraft();
                 var text = ValidateHint.Content as TextBlock ?? new TextBlock();
                 ValidateHint.Content = text;
                 text.TextWrapping = TextWrapping.Wrap;
@@ -159,22 +173,22 @@ namespace SoulLink.Views
                 if (report.HasError)
                 {
                     text.Text = "✕ " + (issue?.Message ?? "流程不能运行") + "（点击前往）" + todayTip;
-                    ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0xFF,0x9B,0x9B));
+                    ValidateHint.Foreground = UiBrush.Get("RoseBrush");
                     ValidateHint.Cursor = issue?.Node != null ? Cursors.Hand : Cursors.Arrow;
                     ValidateHint.ToolTip = report.ToText() + "\n\n点击定位到相关模块" + todayTip;
                 }
                 else if (issue != null)
                 {
                     text.Text = "提醒：" + issue.Message + "（点击前往）" + todayTip;
-                    ValidateHint.Foreground = new SolidColorBrush(Color.FromRgb(0xFF,0xD9,0x8A));
+                    ValidateHint.Foreground = UiBrush.Get("AmberBrush");
                     ValidateHint.Cursor = issue.Node != null ? Cursors.Hand : Cursors.Arrow;
                     ValidateHint.ToolTip = report.ToText() + todayTip;
                 }
                 else
                 {
                     text.Text = "✔ 可以运行" + todayTip;
-                    ValidateHint.Foreground = new SolidColorBrush(today.WillRun
-                        ? Color.FromRgb(0x6E,0xF0,0xC8) : Color.FromRgb(0xFF,0xB1,0x4D));
+                    ValidateHint.Foreground = today.WillRun
+                        ? UiBrush.Get("MintBrush") : UiBrush.Get("AmberBrush");
                     ValidateHint.Cursor = Cursors.Arrow; ValidateHint.ToolTip = today.Text;
                 }
             }
@@ -215,409 +229,6 @@ namespace SoulLink.Views
             ClearFieldHighlights();
             if (_hintIssue != null && Canvas.SelectedNode == _hintIssue.Node) HighlightIssue(_hintIssue);
         }
-        // ══════════ 左侧模块库 ══════════
-
-        /// <summary>
-        /// 模块库：只列"类别"，点一下在**右侧展开菜单**选具体类型。
-        /// ★ 用户要求：模块只需要类型，点击后在右侧菜单中选择。
-        ///   这样左栏只占 3 行，不会铺满整个侧边。
-        /// </summary>
-
-
-        /// <summary>在点击的类别卡片右侧弹出具体类型菜单。</summary>
-
-
-        /// <summary>
-        /// 模块库：显示 4 个**类别卡片**（触发器/条件/执行器/结束）。
-        /// ★ 用户要求：恢复成类别卡片，结束独立成一类（琥珀色）。
-        ///   点卡片后在右侧弹出该类别的具体节点。
-        /// </summary>
-        private void BuildLibrary()
-        {
-            LibPanel.Children.Clear();
-            _allCards.Clear();   // 防止重复累积
-
-            // ★ 触发器与条件已合并为一个「判定」块：
-            //   两者本质是同一套判定逻辑，只是位置不同 ——
-            //   放第一个（无上游连线）就是触发器，放后面就是条件。
-            //   这样模块库不再有"触发器/条件"之分，用户不必先想清楚"这算哪个"。
-            var judgeCount = FlowNodeCatalog.ByKind(FlowNodeKind.Condition).Count;
-            if (judgeCount > 0) LibPanel.Children.Add(BuildJudgeCard(judgeCount));
-
-            foreach (var kind in new[] { FlowNodeKind.Action, FlowNodeKind.Terminate })
-            {
-                var defs = FlowNodeCatalog.ByKind(kind);
-                if (defs.Count == 0) continue;
-                LibPanel.Children.Add(BuildKindCard(kind, defs.Count));
-            }
-
-        }
-
-        private static string KindName(FlowNodeKind kind) => kind switch
-        {
-            FlowNodeKind.Trigger => "条件",
-            FlowNodeKind.Condition => "条件",
-            FlowNodeKind.Terminate => "当天完成",
-            _ => "动作"
-        };
-
-        private static string KindDesc(FlowNodeKind kind) => kind switch
-        {
-            FlowNodeKind.Trigger => "判断当前状态，满足就继续",
-            FlowNodeKind.Condition => "判断当前状态，满足就继续",
-            FlowNodeKind.Terminate => "到达后今天不再重复执行",
-            _ => "条件满足后执行实际操作"
-        };
-
-        private static Color AccentOf(FlowNodeKind kind) => kind switch
-        {
-            FlowNodeKind.Trigger => Color.FromRgb(0xA9, 0x7B, 0xFF),
-            FlowNodeKind.Condition => Color.FromRgb(0x4F, 0xE3, 0xFF),
-            FlowNodeKind.Terminate => Color.FromRgb(0xFF, 0xB1, 0x4D),
-            _ => Color.FromRgb(0x41, 0xF0, 0xC0)
-        };
-
-        /// <summary>一个类别卡片：标题 + 数量 + 说明，点一下弹出该类节点清单。</summary>
-        /// <summary>
-        /// 「判定」卡片：包含原来的触发器 + 条件（合并显示）。
-        /// ★ 去重原则：同一件事不再同时出现"触发器版"和"条件版"，
-        ///   只保留一个模块，由它在图中的位置决定语义。
-        /// </summary>
-        private Border BuildJudgeCard(int count)
-        {
-            var accent = Color.FromRgb(0xA9, 0x7B, 0xFF);
-
-            var sp = new StackPanel();
-            sp.Children.Add(new TextBlock
-            {
-                Text = "条件",
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(accent)
-            });
-            sp.Children.Add(new TextBlock
-            {
-                Text = count + " 个模块",
-                FontSize = 10,
-                Foreground = (Brush)FindResource("TextMuted"),
-                Margin = new Thickness(0, 3, 0, 0)
-            });
-            sp.Children.Add(new TextBlock
-            {
-                Text = "满足条件后，继续下一步",
-                FontSize = 10,
-                Foreground = (Brush)FindResource("TextMuted"),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 5, 0, 0),
-                LineHeight = 15
-            });
-
-            var card = new Border
-            {
-                CornerRadius = new CornerRadius(11),
-                Padding = new Thickness(12, 11, 12, 11),
-                Margin = new Thickness(0, 0, 0, 9),
-                Background = new SolidColorBrush(Color.FromArgb(0x1A, accent.R, accent.G, accent.B)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, accent.R, accent.G, accent.B)),
-                BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand,
-                Child = sp
-            };
-
-            _allCards.Add((FlowNodeKind.Trigger, card));
-
-            card.MouseEnter += (_, __) =>
-            {
-                card.Background = new SolidColorBrush(Color.FromArgb(0x30, accent.R, accent.G, accent.B));
-                CancelCloseMenu();
-                ShowJudgeMenu(card);
-            };
-            card.MouseLeave += (_, __) =>
-            {
-                card.Background = new SolidColorBrush(Color.FromArgb(0x1A, accent.R, accent.G, accent.B));
-                ScheduleCloseMenu();
-            };
-
-            return card;
-        }
-
-        /// <summary>判定卡片弹出的清单：触发器 + 条件合并，同一模块只出现一次。</summary>
-        private void ShowJudgeMenu(FrameworkElement anchor)
-        {
-            var seen = new HashSet<FlowNodeType>();
-            var merged = new List<FlowNodeDef>();
-            foreach (var d in FlowNodeCatalog.ByKind(FlowNodeKind.Trigger))
-                if (seen.Add(d.Type)) merged.Add(d);
-            foreach (var d in FlowNodeCatalog.ByKind(FlowNodeKind.Condition))
-                if (seen.Add(d.Type)) merged.Add(d);
-
-            ShowMergedMenu(merged, Color.FromRgb(0xA9, 0x7B, 0xFF), anchor);
-        }
-
-        private Border BuildKindCard(FlowNodeKind kind, int count)
-        {
-            Color accent = AccentOf(kind);
-
-            var sp = new StackPanel();
-
-            var head = new StackPanel { Orientation = Orientation.Horizontal };
-            head.Children.Add(new TextBlock
-            {
-                Text = KindName(kind),
-                FontSize = 14,
-                FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(accent)
-            });
-            head.Children.Add(new TextBlock
-            {
-                Text = "  " + count,
-                FontSize = 10.5,
-                Foreground = new SolidColorBrush(Color.FromArgb(0x99, accent.R, accent.G, accent.B)),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            sp.Children.Add(head);
-
-            sp.Children.Add(new TextBlock
-            {
-                Text = KindDesc(kind),
-                FontSize = 10.5,
-                Foreground = (Brush)FindResource("TextMuted"),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 5, 0, 0),
-                LineHeight = 15
-            });
-
-            var card = new Border
-            {
-                CornerRadius = new CornerRadius(11),
-                Padding = new Thickness(12, 11, 12, 11),
-                Margin = new Thickness(0, 0, 0, 9),
-                Background = new SolidColorBrush(Color.FromArgb(0x1A, accent.R, accent.G, accent.B)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, accent.R, accent.G, accent.B)),
-                BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand,
-                Child = sp
-            };
-
-            // ══════════ 悬停展开（纯事件驱动，不用坐标）══════════
-            //
-            //   ★ 用户指出：既然 MouseEnter 能把卡片点亮，
-            //     说明事件本身是可靠的，直接用它开菜单就行，
-            //     没必要去算鼠标坐标（那套东西被 DPI 缩放坑了两次）。
-            //
-            //   逻辑：
-            //     MouseEnter 卡片  → 立刻开菜单（对应类别）
-            //     MouseLeave 卡片  → 0.3 秒后关，但如果鼠标进了菜单就不关
-            //     MouseEnter 菜单  → 取消关闭
-            //     MouseLeave 菜单  → 0.3 秒后关
-            _allCards.Add((kind, card));
-
-            card.MouseEnter += (_, __) =>
-            {
-                card.Background = new SolidColorBrush(Color.FromArgb(0x30, accent.R, accent.G, accent.B));
-
-                // 单节点类别（如"结束"）不弹菜单
-                if (FlowNodeCatalog.ByKind(kind).Count <= 1) return;
-
-                CancelCloseMenu();
-                ShowKindMenu(kind, card);
-            };
-
-            card.MouseLeave += (_, __) =>
-            {
-                card.Background = new SolidColorBrush(Color.FromArgb(0x1A, accent.R, accent.G, accent.B));
-                ScheduleCloseMenu();
-            };
-
-            // ★ 该类只有一个节点（如"结束"）→ 不需要菜单，直接拖出来用
-            if (count == 1)
-            {
-                var only = FlowNodeCatalog.ByKind(kind)[0];
-
-                Point pressPos = default;
-                bool dragging = false;
-
-                card.MouseLeftButtonDown += (_, ev) =>
-                {
-                    pressPos = ev.GetPosition(card);
-                    dragging = false;
-                    card.CaptureMouse();
-                    ev.Handled = true;
-                };
-
-                card.MouseMove += (_, ev) =>
-                {
-                    if (!card.IsMouseCaptured) return;
-                    var cur = ev.GetPosition(card);
-                    if (!dragging &&
-                        (Math.Abs(cur.X - pressPos.X) > 6 || Math.Abs(cur.Y - pressPos.Y) > 6))
-                    {
-                        dragging = true;
-                        BeginDragFromLibrary(only);
-                    }
-                };
-
-                card.MouseLeftButtonUp += (_, ev) =>
-                {
-                    card.ReleaseMouseCapture();
-                    if (!dragging)
-                    {
-                        // 单击也直接加
-                        var center = new Point(
-                            Math.Max(20, CanvasScroll.ActualWidth / 2 - 89 + CanvasScroll.HorizontalOffset),
-                            Math.Max(20, CanvasScroll.ActualHeight / 2 - 31 + CanvasScroll.VerticalOffset));
-                        AddNode(only, center);
-                    }
-                    ev.Handled = true;
-                };
-
-                card.ToolTip = "按住拖到画布即可添加「" + only.Title + "」";
-                return card;
-            }
-
-            // 点击卡片也打开（有些用户习惯点）
-            card.MouseLeftButtonUp += (_, __) =>
-            {
-                _activeCard = card;
-                _activeKind = kind;
-                _menuLeftAt = null;
-                ShowKindMenu(kind, card);
-            };
-
-            return card;
-        }
-
-        /// <summary>在点击的类别卡片右侧弹出该类别的具体节点清单。</summary>
-        private void ShowKindMenu(FlowNodeKind kind, FrameworkElement anchor)
-            => ShowMergedMenu(FlowNodeCatalog.ByKind(kind), AccentOf(kind), anchor);
-
-        /// <summary>
-        /// 构建并显示节点清单（供各类别与"判定"合并卡片共用）。
-        /// ★ 同一个 def 只会渲染一次，因此调用方无需自己去重。
-        /// </summary>
-        private void ShowMergedMenu(List<FlowNodeDef> defs, Color accent, FrameworkElement anchor)
-        {
-            KindMenu.Children.Clear();
-
-            foreach (var d in defs)
-            {
-                var def = d;
-
-                var row = new StackPanel { Orientation = Orientation.Horizontal };
-                row.Children.Add(new TextBlock
-                {
-                    Text = def.Glyph,
-                    FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                    FontSize = 12,
-                    Width = 20,
-                    Foreground = new SolidColorBrush(accent),
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-
-                var col = new StackPanel { Margin = new Thickness(6, 0, 0, 0) };
-                col.Children.Add(new TextBlock
-                {
-                    Text = def.Title,
-                    FontSize = 12,
-                    Foreground = (Brush)FindResource("TextPrimary")
-                });
-                col.Children.Add(new TextBlock
-                {
-                    Text = def.Desc,
-                    FontSize = 9.5,
-                    Foreground = (Brush)FindResource("TextMuted"),
-                    TextWrapping = TextWrapping.Wrap,
-                    MaxWidth = 220
-                });
-                row.Children.Add(col);
-
-                var btn = new Border
-                {
-                    CornerRadius = new CornerRadius(7),
-                    Padding = new Thickness(8, 7, 8, 7),
-                    Margin = new Thickness(0, 0, 0, 2),
-                    Background = Brushes.Transparent,
-                    Cursor = Cursors.Hand,
-                    Child = row
-                };
-                btn.MouseEnter += (_, __) =>
-                    btn.Background = new SolidColorBrush(Color.FromArgb(0x20, accent.R, accent.G, accent.B));
-                btn.MouseLeave += (_, __) => btn.Background = Brushes.Transparent;
-
-                // ★ 用户要求：**长按拖出**模块，不要点击就自动放一个位置。
-                //   做法：按下时记录起点，移动超过阈值就开始拖拽预览，
-                //   松手时落到鼠标所在位置（画布坐标）。
-                Point pressPos = default;
-                bool dragging = false;
-
-                btn.MouseLeftButtonDown += (_, ev) =>
-                {
-                    pressPos = ev.GetPosition(btn);
-                    dragging = false;
-                    btn.CaptureMouse();
-                    ev.Handled = true;
-                };
-
-                btn.MouseMove += (_, ev) =>
-                {
-                    if (!btn.IsMouseCaptured) return;
-                    var cur = ev.GetPosition(btn);
-                    if (!dragging &&
-                        (Math.Abs(cur.X - pressPos.X) > 6 || Math.Abs(cur.Y - pressPos.Y) > 6))
-                    {
-                        dragging = true;
-                        BeginDragFromLibrary(def);
-                    }
-                };
-
-                btn.MouseLeftButtonUp += (_, ev) =>
-                {
-                    btn.ReleaseMouseCapture();
-
-                    // 拖动中：松手由画布事件处理（Canvas_DragUp）
-                    // 未拖动（单击）：放到画布可见区域中央附近
-                    if (!dragging)
-                    {
-                        MenuLayer.Visibility = Visibility.Collapsed;
-                        var center = new Point(
-                            Math.Max(20, CanvasScroll.ActualWidth / 2 - 89 + CanvasScroll.HorizontalOffset),
-                            Math.Max(20, CanvasScroll.ActualHeight / 2 - 31 + CanvasScroll.VerticalOffset));
-                        AddNode(def, center);
-                    }
-                    ev.Handled = true;
-                };
-
-                KindMenu.Children.Add(btn);
-            }
-
-            // ★ 定位：在窗口内的覆盖层上绝对定位（不用 Popup）。
-            //   位置 = 卡片右侧，纵向与画布顶部对齐，高度与画布等高。
-            try
-            {
-                // 卡片在 MenuLayer 坐标系里的位置
-                var p = anchor.TranslatePoint(new Point(anchor.ActualWidth + 6, 0), MenuLayer);
-
-                double canvasH = CanvasScroll != null ? CanvasScroll.ActualHeight : 0;
-                if (canvasH < 200) canvasH = Math.Max(200, ActualHeight - 220);
-
-                // 让菜单顶部与画布顶部对齐
-                double top = p.Y;
-                if (CanvasScroll != null)
-                {
-                    var canvasTopInLayer = CanvasScroll.TranslatePoint(new Point(0, 0), MenuLayer).Y;
-                    top = canvasTopInLayer;
-                }
-
-                KindMenuScroll.MaxHeight = canvasH;
-
-                System.Windows.Controls.Canvas.SetLeft(KindMenuCard, p.X);
-                System.Windows.Controls.Canvas.SetTop(KindMenuCard, top);
-            }
-            catch { }
-
-            MenuLayer.Visibility = Visibility.Visible;
-        }
-
         // ── 首次使用引导：半透明遮罩 + 分步高亮 + 自绘示例（不依赖真实状态） ──
         //
         //   ★ 设计要点（按反馈修正）：
@@ -635,16 +246,16 @@ namespace SoulLink.Views
             try
             {
                 if (_guide != null) return;
-                if (!force && (_guideShown || !_cfg.Settings.ShowFlowGuide)) return;
+                if (!force && (_guideShown || !_showFlowGuide)) return;
                 _guideShown = true;
-                MenuLayer.Visibility = Visibility.Collapsed;
+                CloseLibraryMenu();
                 GuideLayer.Children.Clear();
                 GuideLayer.Visibility = Visibility.Visible;
                 _guide = new FlowGuideOverlay(
                     FlowGuideOverlay.BuildSteps(LibPanel, CanvasScroll, PropPanel, ValidateHint),
                     EndGuide,
-                    () => !_cfg.Settings.ShowFlowGuide,
-                    checkedValue => { _cfg.Settings.ShowFlowGuide = !checkedValue; _dirty = true; });
+                    () => !_showFlowGuide,
+                    checkedValue => _showFlowGuide = !checkedValue);
                 _guide.SetSceneReferences(CanvasScroll, PropPanel);
                 GuideLayer.Children.Add(_guide);
                 GuideLayer.SizeChanged += (_, _) => _guide?.SyncHostSize();
@@ -687,7 +298,7 @@ namespace SoulLink.Views
                     Text = title,
                     FontSize = 11,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = (Brush)FindResource("TextPrimary"),
+                    Foreground = UiBrush.Get("TextPrimary"),
                     Margin = new Thickness(0, 10, 0, 3),
                     TextWrapping = TextWrapping.Wrap
                 });
@@ -695,7 +306,7 @@ namespace SoulLink.Views
                 {
                     Text = desc,
                     FontSize = 10,
-                    Foreground = (Brush)FindResource("TextMuted"),
+                    Foreground = UiBrush.Get("TextMuted"),
                     TextWrapping = TextWrapping.Wrap,
                     LineHeight = 16
                 });
@@ -749,7 +360,7 @@ namespace SoulLink.Views
             try
             {
                 _draggingDef = def;
-                MenuLayer.Visibility = Visibility.Collapsed;
+                CloseLibraryMenu();
 
                 if (_dragGhost == null)
                 {
@@ -759,14 +370,14 @@ namespace SoulLink.Views
                         Height = 62,
                         CornerRadius = new CornerRadius(12),
                         BorderThickness = new Thickness(2),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0xCC, 0x4F, 0xE3, 0xFF)),
-                        Background = new SolidColorBrush(Color.FromArgb(0xCC, 0x10, 0x18, 0x2E)),
+                        BorderBrush = UiBrush.Get("DesktopAccent", 0xCC),
+                        Background = UiBrush.Get("DialogSurface", 0xCC),
                         IsHitTestVisible = false,
                         Child = new TextBlock
                         {
                             Text = def.Title,
                             FontSize = 12.5,
-                            Foreground = (Brush)FindResource("TextPrimary"),
+                            Foreground = UiBrush.Get("TextPrimary"),
                             HorizontalAlignment = HorizontalAlignment.Center,
                             VerticalAlignment = VerticalAlignment.Center
                         }
@@ -838,24 +449,6 @@ namespace SoulLink.Views
                 foreach (var p in def.Params)
                     node.Set(p.Key, p.Default);
 
-                // 新建模块默认当前流程账号；已有节点保持自己保存的目标用户。
-                if (node.Params.TryGetValue("user", out var defaultUser) && defaultUser.Length == 0)
-                    node.Set("user", _account.UserName);
-
-                // ★ 不要自动把"目标用户"填成别的账号。
-                //
-                //   原来这里为了让下拉有内容，会把目标用户设成"第一个有 BGI 路径的账号"，
-                //   结果本账号 A2 的流程会指向 A1 的 BGI —— 切换账号后路径完全不同步，
-                //   而且执行时会在错误的会话里跑（用户实测反馈"更改账号没用同步更改 bgi 位置"）。
-                //
-                //   正确做法：目标用户留空 = 本流程绑定的账号。
-                //   列表为空就让它空着，由用户自己在该账号下配 BGI 路径。
-                if (UsesBgi(def.Type) && node.Get("user").Length == 0)
-                {
-                    // 明确写空，避免沿用旧默认值
-                    node.Set("user", "");
-                }
-
                 // 位置：拖动落点优先；没有落点（单击）时错开摆放
                 if (at.HasValue)
                 {
@@ -880,7 +473,6 @@ namespace SoulLink.Views
                 }
 
                 _flow.Nodes.Add(node);
-                _dirty = true;
                 Canvas.Load(_flow);
                 // 新节点放到视口中间附近，避免落在滚动区外面看不见。
                 Canvas.UpdateLayout();
@@ -906,7 +498,6 @@ namespace SoulLink.Views
 
                 _flow.Nodes.RemoveAll(n => n.Id == node.Id);
                 _flow.Edges.RemoveAll(e => e.From == node.Id || e.To == node.Id);
-                _dirty = true;
                 Canvas.Load(_flow);
                 ShowPropPanel(null);
                 UpdateEmptyHint();
@@ -925,10 +516,20 @@ namespace SoulLink.Views
 
         // ══════════ 右侧属性面板 ══════════
 
+        private FlowNode? _propertyNode;
+
         private void OnNodeSelected(FlowNode? node) => ShowPropPanel(node);
 
         private void ShowPropPanel(FlowNode? node)
         {
+            if (_propertyNode != node)
+            {
+                _propertyNode = node;
+                PropScroll.ScrollToTop();
+            }
+            _scheduleProgress = null;
+            _endTodayControls = null;
+            _bgiPickerButton = null;
             PropPanel.Children.Clear();
             ClearPropPanel();
             _fieldTargets.Clear(); ClearFieldHighlights();
@@ -937,37 +538,24 @@ namespace SoulLink.Views
             {
                 PropPanel.Children.Add(new TextBlock
                 {
-                    Text = "点击画布上的节点来编辑它的参数",
-                    FontSize = 11.5,
+                    Text = "选中画布中的节点以编辑属性。",
+                    FontSize = 12,
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground = (Brush)FindResource("TextMuted")
+                    Foreground = UiBrush.Get("TextSecondary")
                 });
                 return;
             }
 
             var def = FlowNodeCatalog.Get(node.Type);
 
-            // ★ 节点类型：可直接切换，不用删了重建
-            //   （用户要求：红框处无法修改类型，后期修改很麻烦）
-            PropPanel.Children.Add(new TextBlock
-            {
-                Text = "节点类型",
-                FontSize = 10.5,
-                Foreground = (Brush)FindResource("TextMuted"),
-                Margin = new Thickness(0, 0, 0, 0)
-            });
-
             var typeCombo = new ComboBox
             {
-                Height = 36,
-                Margin = new Thickness(0, 5, 0, 0),
-                Padding = new Thickness(10, 0, 6, 0),
-                FontSize = 12.5,
-                Foreground = (Brush)FindResource("TextPrimary"),
-                Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                BorderThickness = new Thickness(1)
+                MinHeight = 34,
+                Padding = new Thickness(10, 0, 9, 0),
+                FontWeight = FontWeights.SemiBold,
+                ToolTip = def?.Desc
             };
+            System.Windows.Automation.AutomationProperties.SetName(typeCombo, "节点类型");
 
             // 原触发器和条件已统一成触点，可在同一池里切换数据源。
             foreach (var cand in FlowNodeCatalog.ByKind(node.IsContact ? FlowNodeKind.Condition : node.Kind))
@@ -975,6 +563,12 @@ namespace SoulLink.Views
 
             foreach (ComboBoxItem it in typeCombo.Items)
                 if (it.Tag is FlowNodeType t && t == node.Type) { it.IsSelected = true; break; }
+            if (typeCombo.SelectedItem == null)
+            {
+                var current = new ComboBoxItem { Content = node.Title, Tag = node.Type };
+                typeCombo.Items.Insert(0, current);
+                typeCombo.SelectedItem = current;
+            }
 
             typeCombo.SelectionChanged += (_, __) =>
             {
@@ -1010,47 +604,10 @@ namespace SoulLink.Views
             PropPanel.Children.Add(typeCombo);
             _propUi.Add(typeCombo);
 
-            if (node.IsContact)
-            {
-                var op = new ComboBox { Margin = new Thickness(0,12,0,0), Height = 32 };
-                op.Items.Add(new ComboBoxItem { Content = "全部满足才继续", Tag = "AND" });
-                op.Items.Add(new ComboBoxItem { Content = "任一满足就继续", Tag = "OR" });
-                foreach (ComboBoxItem item in op.Items) if ((string)item.Tag == (node.Logic == FlowLogicOp.OR ? "OR" : "AND")) item.IsSelected = true;
-                op.SelectionChanged += (_,__) => { node.Logic = op.SelectedIndex == 1 ? FlowLogicOp.OR : FlowLogicOp.AND; MarkDirty(); Canvas.Redraw(); };
-                PropPanel.Children.Add(op);
-                var neg = new CheckBox { Content = "条件不满足时继续", IsChecked = node.Negated, Style = (Style)FindResource("GlassCheckBox"), Margin = new Thickness(0,8,0,0) };
-                neg.Checked += (_,__) => { node.Negated = true; MarkDirty(); Canvas.Redraw(); };
-                neg.Unchecked += (_,__) => { node.Negated = false; MarkDirty(); Canvas.Redraw(); };
-                PropPanel.Children.Add(neg);
-            }
-
-            // 标题 + 说明
-            PropPanel.Children.Add(new TextBlock
-            {
-                Text = node.Title,
-                FontSize = 13.5,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("TextPrimary"),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 12, 0, 0)
-            });
-
-            if (def != null && def.Desc.Length > 0)
-            {
-                PropPanel.Children.Add(new TextBlock
-                {
-                    Text = def.Desc,
-                    FontSize = 10.5,
-                    Foreground = (Brush)FindResource("TextMuted"),
-                    TextWrapping = TextWrapping.Wrap,
-                    Margin = new Thickness(0, 4, 0, 0)
-                });
-            }
-
             // 参数
             if (def != null)
             {
-                foreach (var p in def.Params)
+                foreach (var p in def.Params.Where(p => ShouldShowScheduleParameter(node, p.Key)))
                     AddParamEditor(node, p);
             }
 
@@ -1062,15 +619,39 @@ namespace SoulLink.Views
             if (node.Kind == FlowNodeKind.Terminate)
                 AddEndEditors(node);
 
-                // ★ 2.17.41：定时·时刻显示"当前第几次 / 下次什么时候"，
-                //   否则用户设了延时和复位周期却看不到运行中的效果。
-                if (node.Type == FlowNodeType.TrigSchedule)
-                    AddScheduleProgressHint(node);
+            if (node.Type == FlowNodeType.TrigSchedule)
+                AddScheduleProgressHint(node);
+
+            if (node.IsContact)
+            {
+                var combination = new StackPanel();
+                combination.Children.Add(new TextBlock
+                {
+                    Text = "条件组合", FontSize = 12, FontWeight = FontWeights.SemiBold,
+                    Foreground = UiBrush.Get("TextPrimary")
+                });
+                var op = new ComboBox { Margin = new Thickness(0, 5, 0, 0), MinHeight = 32 };
+                System.Windows.Automation.AutomationProperties.SetName(op, "条件组合方式");
+                op.Items.Add(new ComboBoxItem { Content = "全部满足才继续", Tag = "AND" });
+                op.Items.Add(new ComboBoxItem { Content = "任一满足就继续", Tag = "OR" });
+                foreach (ComboBoxItem item in op.Items) if ((string)item.Tag == (node.Logic == FlowLogicOp.OR ? "OR" : "AND")) item.IsSelected = true;
+                op.SelectionChanged += (_,__) => { node.Logic = op.SelectedIndex == 1 ? FlowLogicOp.OR : FlowLogicOp.AND; MarkDirty(); Canvas.Redraw(); };
+                combination.Children.Add(op);
+                var neg = new CheckBox { Content = "条件不满足时继续", IsChecked = node.Negated, Style = (Style)FindResource("GlassCheckBox"), Margin = new Thickness(0,8,0,0) };
+                neg.Checked += (_,__) => { node.Negated = true; MarkDirty(); Canvas.Redraw(); };
+                neg.Unchecked += (_,__) => { node.Negated = false; MarkDirty(); Canvas.Redraw(); };
+                combination.Children.Add(neg);
+                PropPanel.Children.Add(new Border
+                {
+                    BorderBrush = UiBrush.Get("StrokeSoft"), BorderThickness = new Thickness(0, 1, 0, 0),
+                    Margin = new Thickness(0, 14, 0, 0), Padding = new Thickness(0, 10, 0, 0), Child = combination
+                });
+            }
 
             // 删除按钮
             var del = new Button
             {
-                Content = "删除这个节点",
+                Content = "删除节点",
                 Style = (Style)FindResource("GhostButton"),
                 Padding = new Thickness(12, 7, 12, 7),
                 Margin = new Thickness(0, 16, 0, 0),
@@ -1081,88 +662,33 @@ namespace SoulLink.Views
             PropPanel.Children.Add(del);
         }
 
-        /// <summary>
-        /// 定时·时刻的运行进度提示：当前轮次 + 下次触发时刻 + 复位状态。
-        ///
-        /// ★ 用户设了"每次延时 60 秒、3 次复位"之后，最想知道的是
-        ///   "现在排到第几次了、下次几点"，所以直接算给他看。
-        /// </summary>
-        private void AddScheduleProgressHint(FlowNode node)
-        {
-            try
-            {
-                string tv = node.Get("time", "04:00:00");
-                var parts = tv.Trim().Split(':');
-                int hh = 4, mi = 0, ss = 0;
-                if (parts.Length >= 2)
-                {
-                    int.TryParse(parts[0], out hh);
-                    int.TryParse(parts[1], out mi);
-                    if (parts.Length >= 3) int.TryParse(parts[2], out ss);
-                }
-                int step = node.GetInt("stepSeconds", 0);
-                int reset = node.GetInt("resetAfter", 0);
-
-                int fireCount = 0;
-                string dayKey = PlcLogic.DayKey(DateTime.Now, _flow.DayBoundaryHour);
-                if (_flow.ScheduleCycleDay.TryGetValue(node.Id, out var cyc)
-                    && string.Equals(cyc, dayKey, StringComparison.Ordinal))
-                    fireCount = _flow.ScheduleFireCount.TryGetValue(node.Id, out var fc) ? fc : 0;
-
-                int used = (reset > 0 && fireCount >= reset) ? 0 : fireCount;
-                var baseAt = new TimeSpan(hh, mi, ss);
-                var next = DateTime.Now.Date.Add(baseAt).AddSeconds((double)used * step);
-                if (next < DateTime.Now && step == 0) next = next.AddDays(1);
-
-                string text;
-                if (step > 0)
-                {
-                    text = "本轮第 " + (used + 1) + " 次 · 本次时刻 " + next.ToString("HH:mm:ss");
-                    if (reset > 0)
-                        text += " · 递增 " + used + "/" + reset + " 次"
-                              + (used >= reset - 1 ? "，下次回到 " + baseAt.ToString(@"hh\:mm\:ss") : "");
-                    else
-                        text += " · 永不复位（会一直往后推）";
-                }
-                else
-                {
-                    text = "固定时刻 " + baseAt.ToString(@"hh\:mm\:ss") + "（未设延时）";
-                }
-
-                PropPanel.Children.Add(new TextBlock
-                {
-                    Text = text,
-                    FontSize = 10.5,
-                    Margin = new Thickness(0, 10, 0, 0),
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x9D, 0xFF, 0xE0))
-                });
-            }
-            catch { }
-        }
-
         private void AddParamEditor(FlowNode node, FlowParamDef p)
         {
-            var block = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+            var block = new StackPanel { Margin = new Thickness(0, 9, 0, 0) };
 
-            block.Children.Add(new TextBlock
+            var label = new TextBlock
             {
                 Text = p.Label,
-                FontSize = 10.5,
-                Foreground = (Brush)FindResource("TextMuted"),
+                FontSize = 11.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = UiBrush.Get("TextPrimary"),
                 TextWrapping = TextWrapping.Wrap
-            });
+            };
+            if (p.Kind != FlowParamKind.Bool) block.Children.Add(label);
 
             switch (p.Kind)
             {
+                case FlowParamKind.WeekDays:
+                    block.Children.Add(BuildWeekDaysEditor(node, p.Key));
+                    break;
                 case FlowParamKind.Bool:
                 {
                     var cb = new CheckBox
                     {
-                        Content = "是",
+                        Content = label,
                         IsChecked = node.GetBool(p.Key, p.Default == "true"),
                         Style = (Style)FindResource("GlassCheckBox"),
-                        Margin = new Thickness(0, 6, 0, 0),
+                        Margin = new Thickness(0, 3, 0, 0),
                         FontSize = 11.5
                     };
                     cb.Checked += (_, __) => { node.Set(p.Key, "true"); MarkDirty(); };
@@ -1222,20 +748,20 @@ namespace SoulLink.Views
                         if (listening)
                         {
                             keyBox.Text = "请按下要发送的按键…（可单按 CTRL/SHIFT/ALT，或按「取消」退出）";
-                            keyBox.Foreground = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
-                            keyBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF));
+                            keyBox.Foreground = UiBrush.Get("DesktopAccent");
+                            keyBox.BorderBrush = UiBrush.Get("DesktopAccent");
                         }
                         else if (string.IsNullOrEmpty(cur))
                         {
                             keyBox.Text = "点击这里，然后按下按键（可组合键）";
-                            keyBox.Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x9C, 0xC8));
-                            keyBox.BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
+                            keyBox.Foreground = UiBrush.Get("TextSecondary");
+                            keyBox.BorderBrush = UiBrush.Get("TextPrimary", 0x40);
                         }
                         else
                         {
                             keyBox.Text = cur;
-                            keyBox.Foreground = (Brush)FindResource("TextPrimary");
-                            keyBox.BorderBrush = new SolidColorBrush(Color.FromArgb(0x50, 0x41, 0xF0, 0xC0));
+                            keyBox.Foreground = UiBrush.Get("TextPrimary");
+                            keyBox.BorderBrush = UiBrush.Get("MintBrush", 0x50);
                         }
                         // 只读框不能被编辑；把插入符藏到末尾也不显示
                         keyBox.CaretIndex = keyBox.Text?.Length ?? 0;
@@ -1363,8 +889,8 @@ namespace SoulLink.Views
                         Style = (Style)FindResource("PillButton"),
                         Height = 24, MinWidth = 60, Padding = new Thickness(9, 0, 9, 0),
                         Content = "取消录入",
-                        Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+                        Background = UiBrush.Get("TextPrimary", 0x22),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x40),
                         ToolTip = "退出按键监听（不改变已录内容）"
                     };
                     btnCancel.Click += (_, __) => StopListen();
@@ -1376,8 +902,8 @@ namespace SoulLink.Views
                         Height = 24, MinWidth = 60, Padding = new Thickness(9, 0, 9, 0),
                         Margin = new Thickness(6, 0, 0, 0),
                         Content = "清空",
-                        Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+                        Background = UiBrush.Get("TextPrimary", 0x22),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x40),
                         ToolTip = "清掉已录的按键"
                     };
                     btnClear.Click += (_, __) =>
@@ -1415,9 +941,9 @@ namespace SoulLink.Views
                         MinHeight = 64,
                         Margin = new Thickness(0, 6, 0, 0),
                         CornerRadius = new CornerRadius(8),
-                        Background = new SolidColorBrush(Color.FromArgb(0x22, 0x00, 0x00, 0x00)),
+                        Background = UiBrush.Get("TextPrimary", 0x22),
                         BorderThickness = new Thickness(1),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x40),
                         Padding = new Thickness(4),
                         Cursor = Cursors.Hand
                     };
@@ -1426,9 +952,9 @@ namespace SoulLink.Views
                     var thumbMark = new System.Windows.Shapes.Ellipse
                     {
                         Width = 12, Height = 12,
-                        Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
+                        Stroke = UiBrush.Get("DesktopAccent"),
                         StrokeThickness = 2,
-                        Fill = new SolidColorBrush(Color.FromArgb(0x66, 0x4F, 0xE3, 0xFF)),
+                        Fill = UiBrush.Get("DesktopAccent", 0x66),
                         Visibility = Visibility.Collapsed,
                         IsHitTestVisible = false,
                         HorizontalAlignment = HorizontalAlignment.Left,
@@ -1439,7 +965,7 @@ namespace SoulLink.Views
                         Text = "还没有选图。点「选择截图…」，再点这张缩略图放大后选点。",
                         FontSize = 10.5, TextWrapping = TextWrapping.Wrap,
                         VerticalAlignment = VerticalAlignment.Center,
-                        Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x9C, 0xC8))
+                        Foreground = UiBrush.Get("TextSecondary")
                     };
                     var thumbTip = new TextBlock
                     {
@@ -1448,7 +974,7 @@ namespace SoulLink.Views
                         HorizontalAlignment = HorizontalAlignment.Right,
                         VerticalAlignment = VerticalAlignment.Bottom,
                         Margin = new Thickness(0, 0, 4, 2),
-                        Foreground = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
+                        Foreground = UiBrush.Get("DesktopAccent"),
                         IsHitTestVisible = false,
                         Visibility = Visibility.Collapsed
                     };
@@ -1462,7 +988,7 @@ namespace SoulLink.Views
                     {
                         FontSize = 10.5, Margin = new Thickness(0, 6, 0, 0),
                         TextWrapping = TextWrapping.Wrap,
-                        Foreground = new SolidColorBrush(Color.FromRgb(0x9D, 0xFF, 0xE0))
+                        Foreground = UiBrush.Get("MintBrush")
                     };
 
                     // 目标分辨率：从当前账号的注入通道拿实际值
@@ -1572,8 +1098,8 @@ namespace SoulLink.Views
                         Style = (Style)FindResource("PillButton"),
                         Height = 26, MinWidth = 92, Padding = new Thickness(10, 0, 10, 0),
                         Content = "选择截图…",
-                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0x4F, 0xE3, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x90, 0x4F, 0xE3, 0xFF))
+                        Background = UiBrush.Get("DesktopAccent", 0x30),
+                        BorderBrush = UiBrush.Get("DesktopAccent", 0x90)
                     };
                     btnPick.Click += (_, __) =>
                     {
@@ -1597,8 +1123,8 @@ namespace SoulLink.Views
                         Height = 26, MinWidth = 72, Padding = new Thickness(10, 0, 10, 0),
                         Margin = new Thickness(6, 0, 0, 0),
                         Content = "清除选点",
-                        Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF))
+                        Background = UiBrush.Get("TextPrimary", 0x22),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x40)
                     };
                     btnClearPick.Click += (_, __) =>
                     {
@@ -1716,9 +1242,9 @@ namespace SoulLink.Views
                         Margin = new Thickness(0, 6, 0, 0),
                         Padding = new Thickness(10, 0, 6, 0),
                         FontSize = 12.5,
-                        Foreground = (Brush)FindResource("TextPrimary"),
-                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                        Foreground = UiBrush.Get("TextPrimary"),
+                        Background = UiBrush.Get("TextPrimary", 0x30),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x30),
                         BorderThickness = new Thickness(1)
                     };
 
@@ -1756,10 +1282,13 @@ namespace SoulLink.Views
                         if (combo.SelectedItem is ComboBoxItem it)
                         {
                             node.Set(p.Key, it.Tag as string ?? "");
+                            if (node.Type == FlowNodeType.TrigSchedule && p.Key == "recurrence")
+                                OnScheduleRecurrenceChanged(node, combo);
                             MarkDirty();
                             Canvas.Redraw();
                         }
                     };
+                    if (node.Type == FlowNodeType.TrigSchedule) RegisterField(p.Key, combo);
                     block.Children.Add(combo);
                     _propUi.Add(combo);
                     break;
@@ -1773,21 +1302,19 @@ namespace SoulLink.Views
                         Margin = new Thickness(0, 6, 0, 0),
                         Padding = new Thickness(10, 0, 6, 0),
                         FontSize = 12.5,
-                        Foreground = (Brush)FindResource("TextPrimary"),
-                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                        Foreground = UiBrush.Get("TextPrimary"),
+                        Background = UiBrush.Get("TextPrimary", 0x30),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x30),
                         BorderThickness = new Thickness(1)
                     };
                     // ★ 用户要求：依赖日志数据的节点，**不列出未绑定 BGI 路径的账号**。
                     //   否则会出现"能选中、但运行时永远拿不到数据"的静默失配。
                     bool needsBound = BgiDataDependency.NeedsBoundBgi(node.Type);
 
-                    // 「本账号」= 流程自己绑定的账号；它未绑定时同样不能列。
-                    string selfUser = _account?.UserName ?? "";
-                    bool selfOk = !needsBound || (selfUser.Length > 0 && BgiPathResolver.IsPinned(selfUser));
-                    if (selfOk) combo.Items.Add(new ComboBoxItem { Content = "（本账号）", Tag = "" });
-
-                    var candidates = needsBound ? BgiDataDependency.BoundAccounts(_cfg) : AccountScope.Accounts(_cfg);
+                    string selfUser = _account.UserName;
+                    bool unbound = needsBound && !IsDraftBgiBound(selfUser);
+                    combo.Items.Add(new ComboBoxItem { Content = $"所属会话 · {selfUser}", Tag = "" });
+                    var candidates = AccountScope.Accounts(_cfg).Where(a => !needsBound || IsDraftBgiBound(a.UserName));
                     foreach (var a in candidates)
                         combo.Items.Add(new ComboBoxItem
                         {
@@ -1795,49 +1322,22 @@ namespace SoulLink.Views
                             Tag = a.UserName
                         });
 
-                    if (needsBound && combo.Items.Count == 0)
+                    string cur = node.Get(p.Key);
+                    var saved = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(item =>
+                        string.Equals(item.Tag as string, cur, StringComparison.OrdinalIgnoreCase));
+                    if (saved == null)
                     {
+                        saved = new ComboBoxItem { Content = cur + "（当前不可选）", Tag = cur };
+                        combo.Items.Add(saved);
+                    }
+                    combo.SelectedItem = saved;
+                    RegisterField(p.Key, combo);
+                    if (unbound && cur.Length == 0)
                         block.Children.Add(new TextBlock
                         {
-                            Text = BgiDataDependency.UnboundHint,
-                            FontSize = 10, TextWrapping = TextWrapping.Wrap,
-                            Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xB4, 0x7A)),
-                            Margin = new Thickness(0, 6, 0, 0)
+                            Text = "所属会话尚未绑定 BGI 路径。", TextWrapping = TextWrapping.Wrap,
+                            Foreground = UiBrush.Get("AmberBrush"), Margin = new Thickness(0, 4, 0, 0)
                         });
-                        break;   // 没有可选账号就不给下拉，避免误操作
-                    }
-
-                    string cur = node.Get(p.Key);
-                    foreach (ComboBoxItem it in combo.Items)
-                        if ((it.Tag as string) == cur) { it.IsSelected = true; break; }
-                    // ★★ 2.17.48：默认选中「本账号」后必须把值写回节点参数。★★
-                    //   原来只 combo.SelectedIndex = 0，而 SelectionChanged 是**之后**才挂上的，
-                    //   于是界面显示「A2 山客」，节点里 user 仍是空串。
-                    //   紧随其后的「配置组名 / 一条龙」拿着空 user 去读 BGI 目录，
-                    //   永远读不到东西 —— 用户看到的就是「配置组下拉只有一个（未选择）」，
-                    //   而且手动改目标用户也没反应（图3 的根因）。
-                    bool matchedSaved = combo.SelectedIndex >= 0;
-                    if (!matchedSaved && cur.Length > 0)
-                    {
-                        // ★ 已保存的账号不在候选里（未绑定 / 已从配置删除）：
-                        //   必须原样保留并选中，**不能**悄悄改成列表里的第一个账号 ——
-                        //   那等于把用户的流程静默改到别人的会话上去执行。
-                        var keep = new ComboBoxItem { Content = cur, Tag = cur };
-                        combo.Items.Add(keep);
-                        keep.IsSelected = true;
-                    }
-                    else if (!matchedSaved && combo.Items.Count > 0)
-                    {
-                        // 全新节点：默认选中第一个候选，并写回参数，
-                        // 让紧随其后的「配置组名 / 一条龙」能按这个账号读目录。
-                        combo.SelectedIndex = 0;
-                        if (combo.SelectedItem is ComboBoxItem auto && (auto.Tag as string ?? "") != cur)
-                        {
-                            node.Set(p.Key, auto.Tag as string ?? "");
-                            var captured = node;
-                            Dispatcher.InvokeAsync(() => { if (Canvas.SelectedNode == captured) ShowPropPanel(captured); });
-                        }
-                    }
 
                     combo.SelectionChanged += (_, __) =>
                     {
@@ -1862,9 +1362,9 @@ namespace SoulLink.Views
                         Margin = new Thickness(0, 6, 0, 0),
                         Padding = new Thickness(10, 0, 6, 0),
                         FontSize = 12.5,
-                        Foreground = (Brush)FindResource("TextPrimary"),
-                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                        Foreground = UiBrush.Get("TextPrimary"),
+                        Background = UiBrush.Get("TextPrimary", 0x30),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x30),
                         BorderThickness = new Thickness(1)
                     };
                     combo.Items.Add(new ComboBoxItem { Content = "（页面选定的那条）", Tag = "" });
@@ -1898,9 +1398,9 @@ namespace SoulLink.Views
                         Margin = new Thickness(0, 6, 0, 0),
                         Padding = new Thickness(10, 0, 6, 0),
                         FontSize = 12.5,
-                        Foreground = (Brush)FindResource("TextPrimary"),
-                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                        Foreground = UiBrush.Get("TextPrimary"),
+                        Background = UiBrush.Get("TextPrimary", 0x30),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x30),
                         BorderThickness = new Thickness(1)
                     };
                     combo.Items.Add(new ComboBoxItem { Content = "（未选择）", Tag = "" });
@@ -1917,7 +1417,7 @@ namespace SoulLink.Views
                     //   还是 BGI 目录下真的没有 ScriptGroup。三种情况分开提示。
                     if (groupNames.Count == 0)
                     {
-                        var data = BgiDataCenter.Get(string.IsNullOrWhiteSpace(groupUser) ? _account.UserName : groupUser);
+                        var data = DraftBgiData(string.IsNullOrWhiteSpace(groupUser) ? _account.UserName : groupUser);
                         string why;
                         if (string.IsNullOrWhiteSpace(groupUser) && string.IsNullOrWhiteSpace(_account.UserName))
                             why = "先在上面选择「目标用户」。";
@@ -1934,7 +1434,7 @@ namespace SoulLink.Views
                             Text = "未能从数据中心获取配置组名称：" + why,
                             FontSize = 10,
                             TextWrapping = TextWrapping.Wrap,
-                            Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xB4, 0x7A)),
+                            Foreground = UiBrush.Get("AmberBrush"),
                             Margin = new Thickness(0, 6, 0, 0)
                         });
                     }
@@ -1967,30 +1467,59 @@ namespace SoulLink.Views
                         Margin = new Thickness(0, 6, 0, 0),
                         Padding = new Thickness(10, 0, 6, 0),
                         FontSize = 12.5,
-                        Foreground = (Brush)FindResource("TextPrimary"),
-                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                        Foreground = UiBrush.Get("TextPrimary"),
+                        Background = UiBrush.Get("TextPrimary", 0x30),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x30),
                         BorderThickness = new Thickness(1)
                     };
-                    var none = new ComboBoxItem { Content = "（未选择）", Tag = "" };
-                    combo.Items.Add(none);
-                    foreach (var a in _cfg.Actions)
-                        combo.Items.Add(new ComboBoxItem { Content = a.Name, Tag = a.Id });
+                    var target = FlowActionBinding.ResolveTarget(node, _flow.AccountId, _cfg, out string targetError);
+                    var actions = target == null ? Array.Empty<ActionItem>() : FlowActionBinding.Choices(_cfg, target).ToArray();
+                    string emptyHint = target == null ? targetError : actions.Length == 0 ? "该目标账号暂无可选的快捷动作。" : "";
+                    var warning = new TextBlock
+                    {
+                        Text = emptyHint,
+                        Foreground = UiBrush.Get("AmberBrush"),
+                        FontSize = 10,
+                        Margin = new Thickness(0, 6, 0, 0),
+                        TextWrapping = TextWrapping.Wrap
+                    };
+
+                    combo.Items.Add(new ComboBoxItem { Content = "（未选择）", Tag = "" });
+                    foreach (var action in actions)
+                        combo.Items.Add(new ComboBoxItem { Content = action.Name, Tag = action.Id });
 
                     string cur = node.Get(p.Key);
-                    foreach (ComboBoxItem it in combo.Items)
-                        if ((it.Tag as string) == cur) { it.IsSelected = true; break; }
+                    var selected = combo.Items.Cast<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == cur);
+                    ComboBoxItem? savedReference = null;
+                    if (selected == null)
+                    {
+                        savedReference = new ComboBoxItem { Content = "（原引用待修正）", Tag = cur, IsEnabled = false };
+                        combo.Items.Add(savedReference);
+                        selected = savedReference;
+                        if (target != null)
+                        {
+                            FlowActionBinding.ResolveAction(cur, target, _cfg, out string actionError);
+                            warning.Text = actionError;
+                        }
+                    }
+                    combo.SelectedItem = selected;
+                    warning.Visibility = warning.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
                     combo.SelectionChanged += (_, __) =>
                     {
-                        if (combo.SelectedItem is ComboBoxItem it)
+                        if (combo.SelectedItem is ComboBoxItem it && it != savedReference)
                         {
                             node.Set(p.Key, it.Tag as string ?? "");
+                            if (savedReference != null) savedReference.Visibility = Visibility.Collapsed;
+                            warning.Text = emptyHint;
+                            warning.Visibility = emptyHint.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
                             MarkDirty();
                             Canvas.Redraw();
                         }
                     };
+                    RegisterField(p.Key, combo);
                     block.Children.Add(combo);
+                    block.Children.Add(warning);
                     _propUi.Add(combo);
                     break;
                 }
@@ -2002,17 +1531,18 @@ namespace SoulLink.Views
                     //   这里减小内边距并显式设前景色，保证清晰可读。
                     var tb = new TextBox
                     {
-                        Text = node.Get(p.Key, p.Default),
+                        Text = node.Type == FlowNodeType.TrigSchedule && p.Key == "time"
+                            ? PlcSchedule.ClockText(node) : node.Get(p.Key, p.Default),
                         Height = 36,
                         Margin = new Thickness(0, 6, 0, 0),
                         Style = (Style)FindResource("GlassTextBox"),
                         Padding = new Thickness(10, 0, 10, 0),
                         VerticalContentAlignment = VerticalAlignment.Center,
                         FontSize = 12.5,
-                        Foreground = (Brush)FindResource("TextPrimary"),
-                        CaretBrush = (Brush)FindResource("CyanBrush"),
-                        Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                        Foreground = UiBrush.Get("TextPrimary"),
+                        CaretBrush = UiBrush.Get("CyanBrush"),
+                        Background = UiBrush.Get("TextPrimary", 0x30),
+                        BorderBrush = UiBrush.Get("TextPrimary", 0x30),
                         BorderThickness = new Thickness(1),
                         // ★ 2.17.38：把参数名挂在 Tag 上，图片点选后要回来刷新 X/Y 显示
                         Tag = p.Key
@@ -2023,6 +1553,7 @@ namespace SoulLink.Views
                         MarkDirty();
                         Canvas.Redraw();
                     };
+                    if (node.Type == FlowNodeType.TrigSchedule) RegisterField(p.Key, tb);
                     block.Children.Add(tb);
                     _propUi.Add(tb);
                     break;
@@ -2034,101 +1565,26 @@ namespace SoulLink.Views
                 block.Children.Add(new TextBlock
                 {
                     Text = p.Hint,
-                    FontSize = 10,
-                    Foreground = (Brush)FindResource("TextMuted"),
+                    FontSize = 10.5,
+                    Foreground = UiBrush.Get("TextSecondary"),
                     TextWrapping = TextWrapping.Wrap,
                     Margin = new Thickness(0, 4, 0, 0)
                 });
             }
 
+            if (!_fieldTargets.ContainsKey(p.Key) && FirstEditor(block) is { } editor)
+                _fieldTargets.Add(p.Key, editor);
             PropPanel.Children.Add(block);
-        }
 
-        // ── hover 菜单的单例定时器（避免多定时器叠加导致闪烁）──
-        // ── 悬停菜单：单一心跳定时器轮询鼠标位置 ──
-        private FrameworkElement? _activeCard;
-        private FlowNodeKind _activeKind;
-
-        /// <summary>所有类别卡片（kind + 元素），用于按鼠标位置反查。</summary>
-        private readonly List<(FlowNodeKind kind, FrameworkElement card)> _allCards
-            = new List<(FlowNodeKind, FrameworkElement)>();
-        private DateTime? _menuLeftAt;          // 鼠标离开"卡片∪菜单"的时刻
-        private DateTime _lastActivate = DateTime.MinValue;
-        private int _dbgTick;
-
-        /// <summary>调试：记录菜单开关，用于判断是否反复抖动。</summary>
-        private void LogMenu(string action)
-        {
-            try
+            static Control? FirstEditor(Panel container)
             {
-                string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  [菜单] " + action + Environment.NewLine;
-                // ★ 2.21.1：跟随数据目录
-                string dir = SoulLink.Services.AppIdentity.DataDir;
-                System.IO.Directory.CreateDirectory(dir);
-                System.IO.File.AppendAllText(System.IO.Path.Combine(dir, "flow-menu.log"), line);
+                foreach (UIElement child in container.Children)
+                {
+                    if (child is Control { Focusable: true } control) return control;
+                    if (child is Panel group && FirstEditor(group) is { } nested) return nested;
+                }
+                return null;
             }
-            catch { }
-        }
-
-
-
-        // ══════════ 菜单开关（纯事件驱动，不用坐标）══════════
-
-        private System.Windows.Threading.DispatcherTimer? _closeMenuTimer;
-
-        /// <summary>取消待关闭（鼠标进入菜单或另一张卡片时调用）。</summary>
-        private void CancelCloseMenu() => _closeMenuTimer?.Stop();
-
-        /// <summary>安排 0.3 秒后关闭；期间鼠标回到菜单/卡片则取消。</summary>
-        private void ScheduleCloseMenu()
-        {
-            if (MenuLayer.Visibility != Visibility.Visible) return;
-
-            _closeMenuTimer ??= new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(300)
-            };
-
-            _closeMenuTimer.Stop();
-            _closeMenuTimer.Tick -= CloseMenuTick;
-            _closeMenuTimer.Tick += CloseMenuTick;
-            _closeMenuTimer.Start();
-        }
-
-        /// <summary>鼠标进入菜单 → 保持打开。</summary>
-        private void KindMenuCard_MouseEnter(object sender, MouseEventArgs e)
-        {
-            CancelCloseMenu();
-        }
-
-        /// <summary>鼠标离开菜单 → 0.3 秒后关闭。</summary>
-        private void KindMenuCard_MouseLeave(object sender, MouseEventArgs e)
-        {
-            ScheduleCloseMenu();
-        }
-
-        private void CloseMenuTick(object? sender, EventArgs e)
-        {
-            try
-            {
-                _closeMenuTimer?.Stop();
-                if (KindMenuCard.IsMouseOver) return;   // 鼠标已移到菜单上
-                MenuLayer.Visibility = Visibility.Collapsed;
-            }
-            catch { }
-        }
-
-        /// <summary>点击菜单外的空白区域 → 收起菜单。</summary>
-        private void MenuLayer_MouseDown(object sender, MouseButtonEventArgs e)
-        {
-            try
-            {
-                // 点在卡片内部就不关
-                if (e.OriginalSource is DependencyObject d && FindAncestor<Border>(d) == KindMenuCard)
-                    return;
-                MenuLayer.Visibility = Visibility.Collapsed;
-            }
-            catch { }
         }
 
         private static T? FindAncestor<T>(DependencyObject? d) where T : DependencyObject
@@ -2139,7 +1595,7 @@ namespace SoulLink.Views
 
         private void TitleRow_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            try { if (e.OriginalSource is DependencyObject d && FindAncestor<TextBox>(d) != null) return; DragMove(); } catch { }
+            try { if (e.OriginalSource is DependencyObject d && (FindAncestor<TextBox>(d) != null || FindAncestor<ComboBox>(d) != null || FindAncestor<System.Windows.Controls.Primitives.ButtonBase>(d) != null)) return; DragMove(); } catch { }
         }
 
         /// <summary>这些执行器要启动 BGI，需要知道 BGI 在哪。</summary>
@@ -2165,7 +1621,7 @@ namespace SoulLink.Views
             {
                 Text = "BGI 程序路径",
                 FontSize = 10.5,
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 TextWrapping = TextWrapping.Wrap
             });
 
@@ -2174,7 +1630,7 @@ namespace SoulLink.Views
             if (user.Length == 0) user = _account.UserName;
 
             // ★ 统一走解析器
-            string path = BgiPathResolver.GetPath(user);
+            string path = DraftBgiPath(user);
             // 只读当前目标账号的路径，不使用其它账号兜底。
             if (!string.IsNullOrEmpty(path) && !File.Exists(path)) path = "";
 
@@ -2188,11 +1644,11 @@ namespace SoulLink.Views
                 Padding = new Thickness(10, 3, 10, 3),
                 FontSize = 10.5,
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = new SolidColorBrush(string.IsNullOrEmpty(path)
-                    ? Color.FromRgb(0xFF, 0x9B, 0x9B)
-                    : Color.FromRgb(0x9F, 0xE8, 0xC8)),
-                Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+                Foreground = string.IsNullOrEmpty(path)
+                    ? UiBrush.Get("RoseBrush")
+                    : UiBrush.Get("MintBrush"),
+                Background = UiBrush.Get("TextPrimary", 0x30),
+                BorderBrush = UiBrush.Get("TextPrimary", 0x30),
                 BorderThickness = new Thickness(1)
             };
 
@@ -2221,11 +1677,10 @@ namespace SoulLink.Views
                 };
                 if (dlg.ShowDialog() != true) return;
 
-                // ★ 用户明确选择 = 手动指定，走 Pin（自动探测之后不再覆盖）
-                BgiDataCenter.SetPath(user, dlg.FileName);
+                StageBgiPath(user, dlg.FileName);
 
                 box.Text = dlg.FileName;
-                box.Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8));
+                box.Foreground = UiBrush.Get("MintBrush");
                 MarkDirty();
 
                 // 路径变了，一条龙/配置组列表要重新读
@@ -2237,9 +1692,9 @@ namespace SoulLink.Views
             // 提示
             block.Children.Add(new TextBlock
             {
-                Text = "这个路径按「目标用户」保存，不同账号可以用不同的 BGI。",
+                Text = "保存流程时同时更新所选目标用户的路径。",
                 FontSize = 9.5,
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 5, 0, 0)
             });
@@ -2249,9 +1704,9 @@ namespace SoulLink.Views
 
         private void MarkDirty()
         {
-            _dirty = true;
             ClearFieldHighlights();
             RefreshValidateHint();
+            RefreshScheduleProgress();
         }
 
         private void OnSharedBgiDataChanged(string userName)
@@ -2270,14 +1725,29 @@ namespace SoulLink.Views
         private List<string> ListBgiConfigs(string sub, string? userName = null)
         {
             string user = string.IsNullOrWhiteSpace(userName) ? _account.UserName : userName;
-            return BgiDataCenter.ListConfigs(user, sub).ToList();
+            var data = DraftBgiData(user);
+            return sub.Equals("OneDragon", StringComparison.OrdinalIgnoreCase) ? data.OneDragonConfigs : data.ScriptGroups;
+        }
+
+        private void OwnerPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!_ready || OwnerPicker.SelectedItem is not ComboBoxItem { Tag: Account owner } ||
+                owner.Id == _account.Id) return;
+            _account = owner;
+            _flow.AccountId = owner.Id;
+            SyncDraftRuntime();
+            RefreshDailyState();
+            MarkDirty();
+            ShowPropPanel(Canvas.SelectedNode);
+            Canvas.Redraw();
+            _ = RefreshConditionPreview();
         }
 
         private void NameBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (!_ready) return;
+            if (!_ready || _updatingSuggestedName) return;
+            _flow.AutoName = false;
             _flow.Name = NameBox.Text ?? "";
-            _dirty = true;
         }
 
         private void RefreshDailyState()
@@ -2288,20 +1758,41 @@ namespace SoulLink.Views
             DailyStateText.ToolTip = _flow.HasEnd
                 ? "日界在「当天完成」节点上设置；到达日界自动清除标记并开始新一轮。"
                 : "没有「当天完成」节点：每轮结束会重新获取条件，可再次执行。";
-            DailyStateText.Foreground = new SolidColorBrush(today.WillRun
-                ? Color.FromRgb(0x6E, 0xF0, 0xC8)
-                : Color.FromRgb(0xFF, 0xB1, 0x4D));
+            DailyStateText.Foreground = today.WillRun
+                ? UiBrush.Get("MintBrush")
+                : UiBrush.Get("AmberBrush");
+            if (_endTodayControls is { } end)
+            {
+                _suppressTodayToggle = true;
+                try
+                {
+                    end.Toggle.IsChecked = today.WillRun;
+                    end.Toggle.IsEnabled = _flow.Enabled && !_flow.Paused;
+                    end.Status.Text = today.Text;
+                    end.Status.Foreground = DailyStateText.Foreground;
+                }
+                finally { _suppressTodayToggle = false; }
+            }
         }
         private void OnFlowScanned(AutomationFlow flow)
         {
             if (flow.Id != _flow.Id) return;
-            Dispatcher.InvokeAsync(() => { RefreshDailyState(); Canvas.SetLiveStates(flow.RuntimeStates); });
+            Dispatcher.InvokeAsync(() =>
+            {
+                SyncDraftRuntime();
+                RefreshDailyState();
+                if (!HasFlowEdits && FlowEdits.SameOwner(_flow, flow) && ReferenceEquals(flow, CurrentSavedFlow()))
+                    Canvas.SetLiveStates(flow.RuntimeStates);
+            });
         }
         private async Task RefreshConditionPreview()
         {
             if (_previewBusy || !IsLoaded || !IsVisible) return;
             // 引导演示期间不要用真实求值覆盖演示中的状态灯。
             if (_guide != null) return;
+            SyncDraftRuntime();
+            RefreshDailyState();
+            RefreshScheduleProgress();
             _previewBusy = true;
             int version = ++_previewVersion;
             try
@@ -2323,7 +1814,7 @@ namespace SoulLink.Views
         {
             PropPanel.Children.Add(new TextBlock
             {
-                Text = "日界", FontSize = 10.5, Foreground = (Brush)FindResource("TextMuted"),
+                Text = "日界", FontSize = 10.5, Foreground = UiBrush.Get("TextMuted"),
                 Margin = new Thickness(0, 12, 0, 0)
             });
             var combo = new ComboBox { Height = 32, Margin = new Thickness(0, 6, 0, 0) };
@@ -2335,10 +1826,9 @@ namespace SoulLink.Views
                 if (combo.SelectedItem is not ComboBoxItem item || !int.TryParse(item.Tag as string, out int hour)) return;
                 if (node.DayBoundaryHour == hour) return;
                 node.DayBoundaryHour = hour;
-                PlcLogic.ClearDailyLatch(_flow);
-                _flow.RunComplete = false;
-                _dirty = true;
+                SyncDraftRuntime();
                 RefreshDailyState();
+                MarkDirty();
                 Canvas.Redraw();
             };
             PropPanel.Children.Add(combo);
@@ -2346,7 +1836,7 @@ namespace SoulLink.Views
 
             PropPanel.Children.Add(new TextBlock
             {
-                Text = "今日状态", FontSize = 10.5, Foreground = (Brush)FindResource("TextMuted"),
+                Text = "今日状态", FontSize = 10.5, Foreground = UiBrush.Get("TextMuted"),
                 Margin = new Thickness(0, 12, 0, 0)
             });
             var todayState = _flow.TodayRunState();
@@ -2354,11 +1844,11 @@ namespace SoulLink.Views
             {
                 Text = todayState.Text,
                 FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0),
-                Foreground = new SolidColorBrush(todayState.WillRun
-                    ? Color.FromRgb(0x6E, 0xF0, 0xC8) : Color.FromRgb(0xFF, 0xB1, 0x4D))
+                Foreground = todayState.WillRun
+                    ? UiBrush.Get("MintBrush") : UiBrush.Get("AmberBrush")
             };
             PropPanel.Children.Add(stateText);
-            // 双向开关：勾选=今日运行，取消=今日不运行。任何时刻都能改，两个方向都立即生效。
+            // 双向开关：先预览今日状态，保存时交给扫描器应用。
             _suppressTodayToggle = true;
             var todayToggle = new CheckBox
             {
@@ -2369,21 +1859,14 @@ namespace SoulLink.Views
                 IsEnabled = _flow.Enabled && !_flow.Paused
             };
             todayToggle.ToolTip = _flow.Enabled && !_flow.Paused
-                ? "取消勾选＝今天不再运行；重新勾选＝恢复今天运行。"
+                ? "取消勾选＝今天不再运行；重新勾选＝恢复今天运行。保存后生效。"
                 : "流程未启用或已暂停，今日不会运行；请先启用流程。";
             void ApplyTodayWanted(bool want)
             {
                 var at = DateTime.Now;
-                _flow.ToggleTodayRequested = want;
-                _flow.RunResetRequested = false;
-                PlcLogic.SetTodayRun(_flow, at, want);   // 立即反映到界面与保存内容
-                _dirty = true;
+                StageToday(node, want, at);
                 RefreshDailyState();
                 RefreshValidateHint();
-                var now = _flow.TodayRunState(at);
-                stateText.Text = now.Text;
-                stateText.Foreground = new SolidColorBrush(now.WillRun
-                    ? Color.FromRgb(0x6E, 0xF0, 0xC8) : Color.FromRgb(0xFF, 0xB1, 0x4D));
             }
             todayToggle.Checked += (_, __) =>
             {
@@ -2396,6 +1879,7 @@ namespace SoulLink.Views
                 ApplyTodayWanted(false);
             };
             _suppressTodayToggle = false;
+            _endTodayControls = (todayToggle, stateText);
             PropPanel.Children.Add(todayToggle);
         }
 
@@ -2403,7 +1887,6 @@ namespace SoulLink.Views
         {
             if (!_ready) return;
             _flow.Enabled = EnabledCheck.IsChecked == true;
-            _dirty = true;
             RefreshDailyState();
             RefreshValidateHint();
         }
@@ -2456,7 +1939,7 @@ namespace SoulLink.Views
                     WindowStartupLocation = WindowStartupLocation.CenterOwner,
                     Width = winW + 24,
                     Height = winH + 90,
-                    Background = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x24)),
+                    Background = UiBrush.Get("DialogSurface"),
                     ResizeMode = ResizeMode.CanResize,
                     ShowInTaskbar = false
                 };
@@ -2468,14 +1951,14 @@ namespace SoulLink.Views
                     FontSize = 12,
                     Margin = new Thickness(12, 10, 12, 8),
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD6, 0xF0))
+                    Foreground = UiBrush.Get("TextSecondary")
                 };
                 DockPanel.SetDock(tip, Dock.Top);
                 root.Children.Add(tip);
 
                 var pickCanvas = new Canvas
                 {
-                    Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0B, 0x14)),
+                    Background = UiBrush.Get("DialogSurface"),
                     ClipToBounds = true
                 };
                 var img = new Image { Source = bmp, Stretch = Stretch.Uniform };
@@ -2487,9 +1970,9 @@ namespace SoulLink.Views
                 var cross = new System.Windows.Shapes.Ellipse
                 {
                     Width = 18, Height = 18,
-                    Stroke = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)),
+                    Stroke = UiBrush.Get("DesktopAccent"),
                     StrokeThickness = 2,
-                    Fill = new SolidColorBrush(Color.FromArgb(0x50, 0x4F, 0xE3, 0xFF)),
+                    Fill = UiBrush.Get("DesktopAccent", 0x50),
                     IsHitTestVisible = false,
                     Visibility = Visibility.Collapsed
                 };
@@ -2498,7 +1981,7 @@ namespace SoulLink.Views
                 var liveText = new TextBlock
                 {
                     FontSize = 12,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x9D, 0xFF, 0xE0)),
+                    Foreground = UiBrush.Get("MintBrush"),
                     IsHitTestVisible = false
                 };
                 pickCanvas.Children.Add(liveText);
@@ -2567,8 +2050,8 @@ namespace SoulLink.Views
                     Style = (Style)FindResource("PillButton"),
                     Height = 28, MinWidth = 72, Padding = new Thickness(12, 0, 12, 0),
                     Content = "取消",
-                    Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF))
+                    Background = UiBrush.Get("TextPrimary", 0x22),
+                    BorderBrush = UiBrush.Get("TextPrimary", 0x40)
                 };
                 btnCancel2.Click += (_, __) => win.Close();
                 btnBar.Children.Add(btnCancel2);
@@ -2643,33 +2126,7 @@ namespace SoulLink.Views
             if (box.Items.Count > 0) box.SelectedIndex = 0;
         }
 
-        private void Close_Click(object sender, RoutedEventArgs e)
-        {
-            if (_dirty)
-            {
-                var r = ThemedMessage.YesNoCancel(this, "保存", "有未保存的修改，要保存吗？");
-                if (r == MessageBoxResult.Cancel) return;
-                if (r == MessageBoxResult.Yes && !SaveFlow()) return;
-            }
-            Close();
-        }
-
-        private bool SaveFlow(bool showMessage = true)
-        {
-            try
-            {
-                _flow.Name = string.IsNullOrWhiteSpace(NameBox.Text) ? "未命名流程" : NameBox.Text.Trim();
-                _flow.Enabled = EnabledCheck.IsChecked == true;
-                _flow.EnsurePlcModel();
-                var report = FlowValidator.Validate(_flow, _cfg);
-                if (report.HasError) { if (showMessage) ThemedMessage.Info(this, "流程不完整", report.ToText()); return false; }
-                if (_isNew && !_cfg.Automations.Exists(f => f.Id == _flow.Id)) _cfg.Automations.Add(_flow);
-                ConfigStore.Save(_cfg); _dirty = false;
-                if (showMessage) ThemedMessage.Info(this, "提示", "流程已保存。\n" + (report.Issues.Count > 0 ? report.ToText() : "条件每轮重新判断；从不满足变为满足时执行动作。"));
-                return true;
-            }
-            catch (Exception ex) { if (showMessage) ThemedMessage.Info(this, "保存失败", ex.Message); return false; }
-        }
+        private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
         private void Save_Click(object? sender, RoutedEventArgs e) => SaveFlow();
 
@@ -2679,9 +2136,13 @@ namespace SoulLink.Views
         {
             if (!ThemedMessage.Confirm(this, "确认", "确定删除整个流程「" + _flow.DisplayName + "」？")) return;
 
-            _cfg.Automations.RemoveAll(f => f.Id == _flow.Id);
-            ConfigStore.Save(_cfg);
-            DialogResult = true;
+            if (!FlowRunner.TryEditIdleFlow(_flow.Id, () => _cfg.Automations.RemoveAll(f => f.Id == _flow.Id)))
+            {
+                ThemedMessage.Info(this, "无法删除", "流程正在执行，完成后可以删除。");
+                return;
+            }
+            if (_hasSavedFlow) ConfigStore.Save(_cfg);
+            _closeWithoutPrompt = true;
             Close();
         }
 
@@ -2692,22 +2153,16 @@ namespace SoulLink.Views
                 // 立即运行与关闭共用同一个保存事务，避免新流程未入库。
                 if (!SaveFlow(showMessage: false)) return;
 
-                // 运行前同样校验
-                var vr = FlowValidator.Validate(_flow, _cfg);
-                if (vr.HasError)
-                {
-                    var errs = new List<string>();
-                    foreach (var i in vr.Issues) if (i.IsError) errs.Add("• " + i.Message);
-                    ThemedMessage.Info(this, "流程不完整", "这个流程还不能运行，请先修正：\n\n" + string.Join("\n", errs));
-                    return;
-                }
-
+                var live = CurrentSavedFlow();
+                if (live == null) return;
                 var sessions = await SessionService.QueryAsync();
-                var s = SessionService.Find(sessions, _account.UserName);
+                var user = _cfg.Accounts.FirstOrDefault(account => account.Id == live.AccountId)?.UserName ?? "";
+                var s = SessionService.Find(sessions, user);
                 int sid = s?.Id ?? 0; // 无会话的触点也能判断；真正需要会话的 OUT 会报告明确错误。
 
-                LogBus.Info("手动运行流程：" + _flow.DisplayName);
-                var result = await FlowRunner.RunAsync(_flow, sid, _cfg, manual: true);
+                LogBus.Info("手动运行流程：" + live.DisplayName);
+                var result = await FlowRunner.RunAsync(live, sid, _cfg, manual: true);
+                SyncDraftRuntime();
                 Canvas.Redraw();
                 RefreshDailyState();
 

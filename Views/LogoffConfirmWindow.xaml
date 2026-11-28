@@ -6,12 +6,8 @@
         WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource DialogSurface}"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         ShowInTaskbar="False" FontFamily="{StaticResource UiFont}">
-    <Grid Margin="18">
-        <Grid.Effect>
-            <DropShadowEffect BlurRadius="38" ShadowDepth="0" Opacity="0.85" Color="#FF02040A" />
-        </Grid.Effect>
-        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
-                        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+    <Grid Margin="18" Effect="{DynamicResource CardShadow}">
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True" Background="{DynamicResource DialogSurface}">
             <Grid>
                 <ctl:AuroraBackdrop Opacity="0.5" IsHitTestVisible="False" />
                 <StackPanel Margin="26,24,26,22">
@@ -20,10 +16,10 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Border Width="42" Height="42" CornerRadius="13" Background="#18FF6B8B"
-                                BorderBrush="#44FF6B8B" BorderThickness="1" VerticalAlignment="Top">
+                        <Border Width="42" Height="42" CornerRadius="13" Background="{DynamicResource SubtleSurface}"
+                                BorderBrush="{DynamicResource RoseBrush}" BorderThickness="1" VerticalAlignment="Top">
                             <TextBlock Text="&#xE7E8;" FontFamily="Segoe MDL2 Assets" FontSize="19"
-                                       Foreground="{StaticResource RoseBrush}" HorizontalAlignment="Center"
+                                       Foreground="{DynamicResource RoseBrush}" HorizontalAlignment="Center"
                                        VerticalAlignment="Center" />
                         </Border>
                         <StackPanel Grid.Column="1" Margin="14,0,0,0">
@@ -36,7 +32,7 @@
                     <Border Style="{StaticResource GlassPanel}" Margin="0,22,0,0" Padding="15,13">
                         <StackPanel>
                             <TextBlock Text="所有正在运行的程序都会被关闭" FontSize="13" FontWeight="SemiBold"
-                                       Foreground="{StaticResource RoseBrush}" />
+                                       Foreground="{DynamicResource RoseBrush}" />
                             <TextBlock x:Name="SessionText" TextWrapping="Wrap" LineHeight="20" FontSize="11.5"
                                        Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
                             <TextBlock Text="未保存的内容将丢失，此操作不可恢复。" TextWrapping="Wrap"

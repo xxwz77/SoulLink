@@ -8,8 +8,7 @@
 
     <Grid Margin="0">
 
-        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
-                        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True" Background="{DynamicResource DialogSurface}">
 
             <Grid Margin="24,18,24,20">
                 <Grid.RowDefinitions>
@@ -34,7 +33,7 @@
                     <StackPanel>
                         <Border Style="{StaticResource GlassPanel}" Padding="16,14">
                             <StackPanel>
-                                <TextBlock Text="它做了什么" FontSize="13.5" FontWeight="SemiBold" Foreground="{StaticResource CyanBrush}" />
+                                <TextBlock Text="它做了什么" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource CyanBrush}" />
                                 <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0" LineHeight="20"
                                            Text="你把原来的 bat 换成界面后，程序会自动完成这些事：① 用 query user 找出目标账号当前的会话 ID（不需要手填）；② 通过 Windows 计划任务的 SYSTEM 身份把指定程序投放到那个用户的桌面上运行；③ 关闭时不弹任何窗，直接结束目标会话里的进程。"/>
                             </StackPanel>

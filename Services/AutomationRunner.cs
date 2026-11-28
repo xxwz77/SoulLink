@@ -24,6 +24,7 @@ namespace SoulLink.Services
      if (status != null) status.Text = action.Name + "：" + (result.Ok ? "成功" : "失败") + " · " + result.Message;
     }
    }
+   profile.RunCount = profile.RecordedRunCount + 1;
    profile.LastRun = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"); ConfigStore.Save(config);
    if (status != null) status.Text = "流程完成：" + success + "/" + total + " 成功；失败已记录日志，后续步骤继续执行。";
   }

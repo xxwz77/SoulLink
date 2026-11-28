@@ -17,21 +17,9 @@
              若这里透明，会看到下层窗口（含 RDP 原生控件），
              看起来像"边框没做好"。 -->
         <Border CornerRadius="18" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
-                ClipToBounds="True">
-                        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+                ClipToBounds="True" Background="{DynamicResource DialogSurface}">
 
-            <Grid>
-                <!-- ★ 不用 AuroraBackdrop：它是每帧重绘的粒子动画，
-                     在独立窗口里会持续抢占 UI 线程 + 抓鼠标事件，
-                     导致编辑器的输入框点不进、打字无反应（用户实测）。
-                     这里改成静态渐变，视觉一致且零开销。 -->
-                <Grid.Background>
-                    <RadialGradientBrush Center="0.25,0.1" GradientOrigin="0.25,0.1"
-                                         RadiusX="0.9" RadiusY="1.1">
-                        <GradientStop Color="#332F5CFF" Offset="0" />
-                        <GradientStop Color="#00000000" Offset="1" />
-                    </RadialGradientBrush>
-                </Grid.Background>
+            <Grid Background="{DynamicResource DialogUnderlay}">
 
                 <Grid>
                     <Grid.RowDefinitions>
@@ -52,28 +40,23 @@
                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
                             <TextBlock x:Name="HeaderText" Text="自动化流程" FontSize="18" FontWeight="Bold"
                                        Foreground="{DynamicResource TextPrimary}" />
-                            <TextBlock x:Name="SubHeader" Text="" FontSize="11.5"
+                            <TextBlock x:Name="DailyStateText" FontSize="11" MaxWidth="258" TextTrimming="CharacterEllipsis"
                                        Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0" />
                         </StackPanel>
 
-                        <!-- 流程名 + 启用/暂停 -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
-                                    VerticalAlignment="Center" Margin="16,0,12,0">
-                            <TextBlock Text="流程名" FontSize="11" Foreground="{DynamicResource TextMuted}"
-                                       VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <!-- ★ 用 InlineTextBox + MinHeight 而不是 GlassTextBox + 固定 Height：
-                                 GlassTextBox 的 Padding=12,9 在 36px 高的框里会把文字上下裁掉。 -->
-                            <TextBox x:Name="NameBox" Width="170" MinHeight="30"
-                                     Style="{StaticResource InlineTextBox}"
-                                     VerticalContentAlignment="Center"
+                                    VerticalAlignment="Center" Margin="14,0,12,0">
+                            <TextBlock Text="所属会话" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <ComboBox x:Name="OwnerPicker" Width="158" Height="34" AutomationProperties.Name="所属会话"
+                                      SelectionChanged="OwnerPicker_SelectionChanged" ToolTip="模块默认使用此会话，可以在模块属性中单独指定。" />
+                            <TextBlock Text="流程名" Foreground="{DynamicResource TextSecondary}"
+                                       VerticalAlignment="Center" Margin="16,0,8,0" />
+                            <TextBox x:Name="NameBox" Width="170" MinHeight="32"
+                                     Style="{StaticResource InlineTextBox}" VerticalContentAlignment="Center"
                                      TextChanged="NameBox_TextChanged" />
                             <CheckBox x:Name="EnabledCheck" Content="启用" IsChecked="True"
-                                      Style="{StaticResource GlassCheckBox}"
-                                      VerticalAlignment="Center" Margin="14,0,0,0"
+                                      Style="{StaticResource GlassCheckBox}" VerticalAlignment="Center" Margin="14,0,0,0"
                                       Checked="EnabledCheck_Changed" Unchecked="EnabledCheck_Changed" />
-                            <TextBlock x:Name="DailyStateText" Text="无 END：循环执行" FontSize="10.5"
-                                       Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="12,0,0,0"
-                                       ToolTip="日界属于「当天完成」节点；没有 END 的流程循环执行。" />
                         </StackPanel>
 
                         <Button Grid.Column="2" Style="{StaticResource WindowButton}" Height="30"
@@ -106,7 +89,7 @@
                                 <!-- 模块库 -->
                                 <Grid Grid.Row="0" Margin="2,0,0,8">
                                     <TextBlock Text="模块库" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource CyanBrush}" VerticalAlignment="Center" />
+                                               Foreground="{DynamicResource CyanBrush}" VerticalAlignment="Center" />
                                     <TextBlock Text="悬停展开 · 拖到画布" FontSize="9"
                                                Foreground="{DynamicResource TextMuted}"
                                                HorizontalAlignment="Right" VerticalAlignment="Center" />
@@ -114,11 +97,11 @@
 
                                 <StackPanel Grid.Row="1" x:Name="LibPanel" />
 
-                                <Border Grid.Row="2" Height="1" Background="#22FFFFFF" Margin="0,10,0,8" />
+                                <Border Grid.Row="2" Height="1" Background="{DynamicResource SubtleSurface}" Margin="0,10,0,8" />
 
                                 <!-- 使用说明 -->
                                 <TextBlock Grid.Row="3" Text="使用说明" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource CyanBrush}" Margin="2,0,0,6" />
+                                           Foreground="{DynamicResource CyanBrush}" Margin="2,0,0,6" />
 
                                 <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto"
                                               HorizontalScrollBarVisibility="Disabled">
@@ -218,27 +201,25 @@
                             </Grid>
                         </Border>
 
-                        <!-- 右：顶部=节点属性（主区域），底部=操作提示 -->
+                        <!-- 右：节点属性 -->
                         <Border Grid.Column="4" Style="{StaticResource GlassPanel}" Padding="14,10">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" MinHeight="180" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
 
                                 <!-- 节点属性标题 -->
-                                <TextBlock Grid.Row="0" Text="节点属性" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource CyanBrush}" Margin="2,0,0,8" />
+                                <TextBlock Grid.Row="0" Text="节点属性" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,9" />
 
                                 <!-- 属性内容：占满剩余高度，可滚动 -->
-                                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                <ScrollViewer x:Name="PropScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
                                               HorizontalScrollBarVisibility="Disabled">
-                                    <StackPanel x:Name="PropPanel">
-                                        <TextBlock Text="点击画布上的节点来编辑它的参数"
-                                                   FontSize="11" TextWrapping="Wrap"
-                                                   Foreground="{DynamicResource TextMuted}" />
+                                    <StackPanel x:Name="PropPanel" Margin="0,0,4,4">
+                                        <TextBlock Text="选中画布中的节点以编辑属性。"
+                                                   FontSize="12" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextSecondary}" />
                                     </StackPanel>
                                 </ScrollViewer>
 
@@ -251,26 +232,26 @@
                             Background="Transparent" Visibility="Collapsed"
                             Panel.ZIndex="200" />
 
-                    <!-- ★ 模块菜单覆盖层：不用 Popup（会跑到其他应用上面），
-                         放在窗口内部用 Canvas 绝对定位，只在本窗口内显示 -->
+                    <!-- 窗内菜单。画布空白保留底下控件的鼠标命中。 -->
                     <Canvas x:Name="MenuLayer" Grid.Row="0" Grid.RowSpan="3"
-                            Background="Transparent" Visibility="Collapsed"
-                            Panel.ZIndex="100"
-                            MouseDown="MenuLayer_MouseDown">
+                            Visibility="Collapsed" Panel.ZIndex="100">
                         <Border x:Name="KindMenuCard" Canvas.Left="0" Canvas.Top="0"
                                 CornerRadius="12" Padding="6"
                                 Background="{DynamicResource PopupBackground}" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
-                                MinWidth="264" MaxWidth="540"
                                 MouseEnter="KindMenuCard_MouseEnter"
                                 MouseLeave="KindMenuCard_MouseLeave">
-                            <ScrollViewer x:Name="KindMenuScroll" MaxHeight="560"
+                            <ScrollViewer x:Name="KindMenuScroll" Focusable="False"
                                           VerticalScrollBarVisibility="Auto"
-                                          HorizontalScrollBarVisibility="Auto">
-                                <!-- ★ 用 StackPanel 而不是 WrapPanel：
-                             WrapPanel + ItemWidth 在项数多时会**换到第二列**，
-                             而第二列被可视区域裁掉，表现为"模块变少了"（用户实测）。
-                             StackPanel 只竖向排列，超出的由外层 ScrollViewer 滚动。 -->
-                        <StackPanel x:Name="KindMenu" />
+                                          HorizontalScrollBarVisibility="Disabled">
+                                <Grid x:Name="KindMenu" HorizontalAlignment="Left" KeyboardNavigation.TabNavigation="Cycle">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="0" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel x:Name="KindMenuLeft" />
+                                    <StackPanel x:Name="KindMenuRight" Grid.Column="2" Visibility="Collapsed" />
+                                </Grid>
                             </ScrollViewer>
                         </Border>
                     </Canvas>

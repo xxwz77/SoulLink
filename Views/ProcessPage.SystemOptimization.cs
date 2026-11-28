@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
@@ -83,7 +84,7 @@ namespace SoulLink.Views
             {
                 Text = s.DisplayName,
                 FontSize = 11.5,
-                Foreground = (Brush)FindResource("TextPrimary"),
+                Foreground = UiBrush.Get("TextPrimary"),
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
             var state = new TextBlock
@@ -93,8 +94,8 @@ namespace SoulLink.Views
                 FontSize = 10,
                 Margin = new Thickness(0, 2, 0, 0),
                 Foreground = s.Running
-                    ? new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0))
-                    : (Brush)FindResource("TextMuted"),
+                    ? UiBrush.Get("MintBrush")
+                    : UiBrush.Get("TextMuted"),
                 ToolTip = s.Reason
             };
             text.Children.Add(title);
@@ -125,7 +126,7 @@ namespace SoulLink.Views
                 FontSize = 9.5,
                 Margin = new Thickness(8, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xC4, 0x6B))
+                Foreground = UiBrush.Get("AmberBrush")
             };
             System.Windows.Controls.Grid.SetColumn(adminNote, 2);
             grid.Children.Add(adminNote);
@@ -146,7 +147,7 @@ namespace SoulLink.Views
                 FontSize = 11,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = (Brush)FindResource("TextSecondary"),
+                Foreground = UiBrush.Get("TextSecondary"),
                 ToolTip = path
             };
             System.Windows.Controls.Grid.SetColumn(text, 0);

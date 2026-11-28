@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using SoulLink.Models;
 using SoulLink.Services;
+using SoulLink.Views;
 
 namespace SoulLink.MoraVerify;
 
@@ -32,10 +36,11 @@ public static class MoraVerify
         // ★ 指向隔离 DB：MiyousheStore.Shared 可 set
         MiyousheStore.Shared = new MiyousheStore(() => System.IO.Path.Combine(dbDir, "miyoushe", "miyoushe.db"));
 
-        if (args.Contains("--daily") || args.Contains("--route-income"))
+        if (args.Contains("--daily") || args.Contains("--route-income") || args.Contains("--overview"))
         {
             if (!string.Equals(AppIdentity.DataDir, dbDir, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("测试库未隔离");
             if (args.Contains("--daily")) return ScenarioDaily().GetAwaiter().GetResult();
+            if (args.Contains("--overview")) return ScenarioOverview().GetAwaiter().GetResult();
             return ScenarioDelayedRouteIncome(dbDir).GetAwaiter().GetResult();
         }
         int failures = 0;
@@ -47,6 +52,138 @@ public static class MoraVerify
         Console.WriteLine(failures == 0 ? "ALL-PASS" : "FAILURES=" + failures);
         try { System.IO.Directory.Delete(dbDir, true); } catch { }
         return failures == 0 ? 0 : 1;
+    }
+
+    private static async Task<int> ScenarioOverview()
+    {
+        const string account = "mora-overview-fixture", second = "mora-other-fixture", role = "900000001";
+        var config = new AppConfig();
+        config.Settings.MiyousheDefaultRole[account] = role;
+        config.Settings.MiyousheDefaultRole[second] = role;
+        typeof(App).GetProperty("Config", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, config);
+        foreach (string name in new[] { account, second })
+            await MiyousheCredentialStore.SaveAsync(name, new MiyousheCredential
+            {
+                AccountId = "offline-fixture", CookieToken = "offline-fixture", DeviceId = Guid.NewGuid().ToString("D")
+            });
+        var now = new DateTime(2027, 1, 1, 3, 30, 0, DateTimeKind.Local);
+        var day = DogfoodRecordReader.CurrentBusinessDay(now);
+        var fixture = new OverviewLedgerHttp();
+        using var http = new HttpClient(fixture);
+        var client = new MiyousheClient("offline-fixture", http);
+        client.ConfigureTestDelay(0);
+        int events = 0;
+        bool committedAtNotification = false;
+        void OnLedger(string who, string uid)
+        {
+            if (who != account || uid != role) return;
+            events++;
+            committedAtNotification = ReadTotal().GetAwaiter().GetResult()?.Amount == 200;
+        }
+        async Task<DailyMoraLedger.Total> ReadTotal()
+            => (await DailyMoraLedger.QueryTotalsAsync(new[] { (account, role) }, day, DogfoodRecordReader.DayBoundaryHour))
+                ?.GetValueOrDefault((account, role));
+        Task<MiyousheService.WorkResult> Pull(string name = account)
+            => MiyousheService.RunForAccountAsync(name, false, true, default, expectedLedgerUid: role);
+
+        MiyousheService.ClientFactoryForTest = _ => client;
+        MiyousheService.LedgerNowForTest = () => now;
+        MiyousheService.DelayForTest = _ => Task.CompletedTask;
+        MiyousheService.LedgerRefreshed += OnLedger;
+        try
+        {
+            long old = new DateTimeOffset(day.AddHours(8)).ToUnixTimeMilliseconds();
+            await MiyousheStore.Shared.SaveLedgerFactsAsync(new[] {
+                new MiyousheLedgerEntry(account, role, "cn_fixture", "2026-12", 2, 5, "任务", 20,
+                    null, null, "2026-12-31 08:00", old, "{}", "fixture", old)
+            }, Array.Empty<MiyousheLedgerDay>());
+            var before = await ReadTotal();
+            var updated = await Pull();
+            var fetched = await ReadTotal();
+            Check(before?.Amount == 20 && updated.ok && fetched?.Amount == 200, "真实拉取逻辑从隔离 HTTP 替身入库，04 点游戏日从 20 更新到 200");
+            Check(fixture.Months.SequenceEqual(new[] { 1, 12 }), "元旦 04 点前拉取当前月和上年 12 月");
+            Check(events == 1 && committedAtNotification, "自动/手动共用通知发出时流水已能读回");
+            Check(OverviewPage.MoraReceipt(updated, true, true, before, fetched) == "今日摩拉已更新", "概览显示今日金额已更新");
+
+            var unchanged = await Pull();
+            Check(unchanged.ok && unchanged.entries == 0 && await ReadTotal() == fetched && events == 1 &&
+                OverviewPage.MoraReceipt(unchanged, true, true, fetched, fetched).Contains("未变化"),
+                "重复分页不翻倍，回执明确已拉取但今日金额未变化");
+
+            fixture.BlockRoles = true;
+            var running = Pull();
+            await fixture.RoleRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var busy = await Pull(second);
+            Check(busy.state == "queued" && OverviewPage.MoraReceipt(busy, true, true, null, null).Contains("其他任务"),
+                "占用网络闸时回报忙碌且不发送第二个请求");
+            config.Settings.MiyousheDefaultRole[account] = "900000002";
+            int priorRequests = fixture.Months.Count;
+            fixture.ReleaseRoles.TrySetResult(true);
+            var changed = await running;
+            Check(changed.state == "changed" && fixture.Months.Count == priorRequests, "角色在拉取途中更改，一律停止该旧任务的流水请求");
+            config.Settings.MiyousheDefaultRole[account] = role;
+
+            fixture.BlockRoles = false;
+            fixture.RejectLogin = true;
+            var unauthorized = await Pull();
+            Check(unauthorized.state == "needs_login" && await ReadTotal() == fetched &&
+                OverviewPage.MoraReceipt(unauthorized, true, true, fetched, fetched).Contains("重新登录"),
+                "授权失效会提示重新登录并保留已入库金额");
+            Check(OverviewPage.MoraReceipt(new(false, state: "default_role"), true, false, null, null).Contains("默认原神角色") &&
+                OverviewPage.MoraReceipt(new(false, state: "failed"), true, false, fetched, fetched).Contains("保留"),
+                "无默认角色及普通失败各有回执");
+            Check(MiyousheService.LedgerMonthsForBusinessDay(now.Date.AddHours(4)).Single().Month == 1 &&
+                MiyousheService.LedgerMonthsForBusinessDay(now.AddDays(1)).Single().Month == 1,
+                "过月初 04 点或普通日期不会额外拉历史月");
+        }
+        finally
+        {
+            MiyousheService.LedgerRefreshed -= OnLedger;
+            MiyousheService.ResetTest();
+        }
+        return _fail;
+    }
+
+    private sealed class OverviewLedgerHttp : HttpMessageHandler
+    {
+        internal bool BlockRoles { get; set; }
+        internal bool RejectLogin { get; set; }
+        internal List<int> Months { get; } = new();
+        internal TaskCompletionSource<bool> RoleRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<bool> ReleaseRoles { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method != HttpMethod.Get) throw new InvalidOperationException("概览刷新不得执行签到");
+            if (path.EndsWith("/getUserGameRolesByCookie", StringComparison.Ordinal))
+            {
+                if (RejectLogin) return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+                if (BlockRoles)
+                {
+                    RoleRequested.TrySetResult(true);
+                    await ReleaseRoles.Task.WaitAsync(cancellationToken);
+                }
+                return Reply("""{"list":[{"game_uid":"900000001","region":"cn_fixture"}]}""");
+            }
+            var query = request.RequestUri.Query.TrimStart('?').Split('&')
+                .Select(part => part.Split('=', 2)).ToDictionary(part => part[0], part => part[1]);
+            int month = int.Parse(query["month"]);
+            if (path.EndsWith("/monthInfo", StringComparison.Ordinal))
+            {
+                Months.Add(month);
+                return Reply("""{"day_data":{"current_mora":0}}""");
+            }
+            if (!path.EndsWith("/monthDetail", StringComparison.Ordinal))
+                throw new InvalidOperationException("未知的模拟请求");
+            if (query["type"] == "1") return Reply("""{"list":[]}""");
+            return month == 1
+                ? Reply("""{"list":[{"time":"1/01 00:30","num":150},{"time":"1/01 04:00","num":900}]}""")
+                : Reply("""{"list":[{"time":"12/31 03:59","num":800},{"time":"12/31 23:55","num":30}]}""");
+        }
+
+        private static HttpResponseMessage Reply(string data)
+            => new(HttpStatusCode.OK) { Content = new StringContent("{\"retcode\":0,\"data\":" + data + "}") };
     }
 
 

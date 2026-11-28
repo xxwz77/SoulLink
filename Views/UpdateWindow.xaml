@@ -9,8 +9,7 @@
         ShowInTaskbar="False" FontFamily="{StaticResource UiFont}"
         ResizeMode="NoResize">
 
-    <Border CornerRadius="14" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="0">
-        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+    <Border CornerRadius="14" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="0" Background="{DynamicResource DialogSurface}">
 
         <Grid ClipToBounds="True">
             <ctl:AuroraBackdrop Opacity="0.48" />
@@ -20,7 +19,7 @@
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets"
                                FontSize="16" VerticalAlignment="Center"
-                               Foreground="{StaticResource CyanBrush}" />
+                               Foreground="{DynamicResource CyanBrush}" />
                     <TextBlock Text="发现新版本" FontSize="15" FontWeight="SemiBold"
                                Foreground="{DynamicResource TextPrimary}"
                                Margin="10,0,0,0" VerticalAlignment="Center" />
@@ -43,7 +42,7 @@
                                    Foreground="{DynamicResource TextMuted}" />
                         <TextBlock x:Name="RemoteVersionText" Text="v—" FontSize="12.5" FontWeight="SemiBold"
                                    Margin="8,0,0,0" VerticalAlignment="Center"
-                                   Foreground="{StaticResource CyanBrush}" />
+                                   Foreground="{DynamicResource CyanBrush}" />
                     </StackPanel>
                 </Border>
 
@@ -53,19 +52,16 @@
                 <Border Background="{DynamicResource FieldBackground}" CornerRadius="10"
                         BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1"
                         Padding="14,12" Margin="0,7,0,0">
-                    <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled">
-                        <TextBlock x:Name="NotesText" Text="" FontSize="12"
-                                   Foreground="{DynamicResource TextSecondary}"
-                                   TextWrapping="Wrap" LineHeight="20" />
-                    </ScrollViewer>
+                    <FlowDocumentScrollViewer x:Name="NotesViewer" MaxHeight="220" IsToolBarVisible="False"
+                                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                              Background="Transparent" />
                 </Border>
 
                 <!-- 进度条 -->
                 <StackPanel x:Name="ProgressPanel" Visibility="Collapsed" Margin="0,14,0,0">
                     <ProgressBar x:Name="ProgressBar" Height="4" Minimum="0" Maximum="100"
                                  Background="{DynamicResource FieldBackground}"
-                                 Foreground="{StaticResource CyanBrush}"
+                                 Foreground="{DynamicResource CyanBrush}"
                                  BorderThickness="0" />
                     <TextBlock x:Name="ProgressText" Text="准备下载…" FontSize="11"
                                Margin="0,7,0,0"
@@ -75,7 +71,7 @@
                 <!-- 错误提示 -->
                 <TextBlock x:Name="ErrorText" Text="" FontSize="11.5" Margin="0,12,0,0"
                            TextWrapping="Wrap" Visibility="Collapsed"
-                           Foreground="{StaticResource AmberBrush}" />
+                           Foreground="{DynamicResource AmberBrush}" />
 
                 <!-- 按钮 -->
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">

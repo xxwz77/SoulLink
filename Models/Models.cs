@@ -45,17 +45,14 @@ namespace SoulLink.Models
         /// </summary>
         public int StopWaitSeconds { get; set; } = 2;
 
-        /// <summary>
-        /// 定时执行计划。为空表示不启用（手动执行）。
-        /// 启用后会写入 Windows 计划任务，即使 SoulLink 没开也会按时执行。
-        /// </summary>
-        public ScheduleSpec? Schedule { get; set; }
+        /// <summary>用于读取旧配置，已启用的计划迁移后清空。</summary>
+        [JsonPropertyName("Schedule")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public ScheduleSpec? LegacySchedule { get; set; }
 
         [JsonIgnore]
         public bool IsClose => Kind == ActionKind.Close;
 
-        [JsonIgnore]
-        public bool HasSchedule => Schedule != null && Schedule.Enabled;
     }
 
     /// <summary>定时类型。</summary>
@@ -379,7 +376,7 @@ namespace SoulLink.Models
 
         /// <summary>允许在找不到会话时回退到当前用户会话</summary>
         public bool AllowCurrentSessionFallback { get; set; } = true;
-        /// <summary>仅管理挂机账号：全局隐藏并禁止主用户作为自动化/更新/投送目标。</summary>
+        /// <summary>仅管理挂机账号：隐藏主账号的远程连接、投送和更新入口，保留主账号流程管理。</summary>
         public bool OnlyAutomationAccounts { get; set; }
         /// <summary>服务端发起的动作也执行（CLI / IPC 调用）</summary>
         public bool AllowRemoteInvoke { get; set; } = true;
@@ -765,6 +762,21 @@ namespace SoulLink.Models
 
         /// <summary>0=跟随系统 1=浅色 2=深色</summary>
         public int ThemeMode { get; set; } = 0;
+
+        public string LightThemeId { get; set; } = "L7";
+        public string DarkThemeId { get; set; } = "D3";
+        public CustomDesktopArtwork? LightCustomArtwork { get; set; }
+        public CustomDesktopArtwork? DarkCustomArtwork { get; set; }
+
+        private int _cardTransparency = 40;
+
+        /// <summary>主窗口内容卡片背景的透明百分比。</summary>
+        public int CardTransparency
+        {
+            get => _cardTransparency;
+            set => _cardTransparency = Math.Clamp(value, 0, 100);
+        }
+
         /// <summary>true=点击 RDP 画面才接收键鼠，移出画面立即释放</summary>
         public bool RdpCaptureOnClick { get; set; } = false;
 
@@ -1022,6 +1034,10 @@ namespace SoulLink.Models
         public bool Enabled { get; set; }
         public string DailyTime { get; set; } = "08:00";
         public string LastRun { get; set; } = "";
+        public int RunCount { get; set; }
+
+        // 旧配置有最后一次运行时间，但没有此前累计次数。
+        [JsonIgnore] public int RecordedRunCount => Math.Max(RunCount, string.IsNullOrWhiteSpace(LastRun) ? 0 : 1);
     }
 
     public class AppConfig
@@ -1046,12 +1062,12 @@ namespace SoulLink.Models
         public string ExePath { get; set; } = "";
         public string Title { get; set; } = "";
         public string StartTime { get; set; } = "";
-
-        public string Display => string.IsNullOrEmpty(Title) ? Name + "  (" + Pid + ")" : Title + "  (" + Pid + ")";
-
         public long StartFileTime { get; set; }
         public long PrivateBytes { get; set; }
         public string PrivateMemoryText => (PrivateBytes / 1048576.0).ToString("0.0") + " MiB";
+
+        public string Display => string.IsNullOrEmpty(Title) ? Name + "  (" + Pid + ")" : Title + "  (" + Pid + ")";
+
         /// <summary>
         /// 中文友好名。进程名（CrossDeviceService.exe 之类）普通用户看不懂，
         /// 会话瘦身页要让人一眼知道"这是什么东西、能不能关"。

@@ -4,7 +4,121 @@
              xmlns:ctl="clr-namespace:SoulLink.Controls"
              FontFamily="{StaticResource UiFont}">
 
+    <UserControl.Resources>
+        <Style x:Key="ThemePreviewChoice" TargetType="RadioButton" BasedOn="{StaticResource DesktopChoice}">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style x:Key="ThemePreviewCheck" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource DesktopAccent}" />
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource AncestorType=RadioButton}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="104" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid>
+            <ctl:DesktopArtwork Region="Header" />
+            <StackPanel VerticalAlignment="Center" Margin="2,0,0,0">
+                <TextBlock Text="设置" FontSize="14" Foreground="{DynamicResource TextSecondary}" />
+                <TextBlock x:Name="SettingsHeading" Text="常规" FontSize="31" FontWeight="Bold"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,2,0,0" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <RadioButton x:Name="GeneralTab" Content="常规" GroupName="SettingsSection" IsChecked="True"
+                             Style="{StaticResource DesktopChoice}" Click="SettingsSection_Click" />
+                <RadioButton x:Name="AppearanceTab" Content="外观" GroupName="SettingsSection"
+                             Style="{StaticResource DesktopChoice}" Margin="6,0,0,0" Click="SettingsSection_Click" />
+            </StackPanel>
+        </Grid>
+        <Grid Grid.Row="1" x:Name="AppearancePanel" Visibility="Collapsed" TextElement.Foreground="{DynamicResource TextPrimary}">
+            <ctl:DesktopArtwork Region="Log" Height="90" VerticalAlignment="Bottom" Opacity=".64" />
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Border Style="{StaticResource DesktopCard}" Padding="15">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,22,0">
+                                <TextBlock Text="卡片透明度" FontSize="21" FontWeight="SemiBold" />
+                                <TextBlock Text="0% 不透明 · 100% 透明" FontSize="13"
+                                           Foreground="{DynamicResource TextSecondary}" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <Slider x:Name="CardTransparencySlider" Grid.Column="1" VerticalAlignment="Center"
+                                    Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" TickFrequency="1"
+                                    IsSnapToTickEnabled="True" IsMoveToPointEnabled="True" ValueChanged="CardTransparency_Changed"
+                                    AutomationProperties.Name="卡片透明度" AutomationProperties.HelpText="0% 不透明，100% 透明" />
+                            <TextBlock Grid.Column="2" MinWidth="43" TextAlignment="Right" VerticalAlignment="Center"
+                                       Text="{Binding Value, ElementName=CardTransparencySlider, StringFormat={}{0:0}%}"
+                                       Margin="14,0,0,0" />
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource DesktopCard}" Padding="15" Margin="0,15,0,0">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,13">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <RadioButton x:Name="ThemeFollowSystem" Tag="0" Content="跟随系统" GroupName="DesktopMode"
+                                                 Style="{StaticResource DesktopChoice}" Click="DesktopMode_Click" />
+                                    <RadioButton x:Name="ThemeLightMode" Tag="1" Content="浅色" GroupName="DesktopMode"
+                                                 Style="{StaticResource DesktopChoice}" Click="DesktopMode_Click" Margin="5,0" />
+                                    <RadioButton x:Name="ThemeDarkMode" Tag="2" Content="深色" GroupName="DesktopMode"
+                                                 Style="{StaticResource DesktopChoice}" Click="DesktopMode_Click" />
+                                </StackPanel>
+                                <TextBlock Text="主题" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <Border Background="{DynamicResource StrokeSoft}" Height="1" />
+                            <TextBlock Text="浅色主题" FontSize="15" FontWeight="SemiBold" Margin="0,13,0,7" />
+                            <WrapPanel x:Name="ThemeLightChoices" />
+                            <Border Background="{DynamicResource StrokeSoft}" Height="1" Margin="0,8,0,0" />
+                            <TextBlock Text="深色主题" FontSize="15" FontWeight="SemiBold" Margin="0,13,0,7" />
+                            <WrapPanel x:Name="ThemeDarkChoices" />
+                            <Border Background="{DynamicResource StrokeSoft}" Height="1" Margin="0,8,0,0" />
+                            <TextBlock Text="原图主题" FontSize="15" FontWeight="SemiBold" Margin="0,13,0,7" />
+                            <WrapPanel x:Name="ThemePortraitChoices" />
+                            <WrapPanel Margin="0,8,0,1">
+                                <Button x:Name="CustomArtworkButton" Content="自定义原图…" Click="CustomArtwork_Click"
+                                        Style="{StaticResource DesktopButton}" Padding="12,6" Margin="0,0,10,4" />
+                                <TextBlock x:Name="CustomArtworkHint" VerticalAlignment="Center" Margin="0,0,0,4"
+                                           Foreground="{DynamicResource TextSecondary}" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource DesktopCard}" Padding="15" Margin="0,15,0,0">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <RadioButton x:Name="EffectHigh" Tag="0" Content="高" GroupName="DesktopEffects" MinWidth="60"
+                                             Style="{StaticResource DesktopChoice}" Click="EffectTier_Click" />
+                                <RadioButton x:Name="EffectMedium" Tag="1" Content="中" GroupName="DesktopEffects" MinWidth="60"
+                                             Style="{StaticResource DesktopChoice}" Click="EffectTier_Click" Margin="5,0" />
+                                <RadioButton x:Name="EffectLow" Tag="2" Content="低" GroupName="DesktopEffects" MinWidth="60"
+                                             Style="{StaticResource DesktopChoice}" Click="EffectTier_Click" />
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="性能档位" FontSize="21" FontWeight="SemiBold" />
+                                <TextBlock x:Name="EffectTierHint" FontSize="13" Foreground="{DynamicResource TextSecondary}" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <Grid Grid.Row="1" x:Name="GeneralPanel" TextElement.Foreground="{DynamicResource TextPrimary}">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="18" />
@@ -87,7 +201,7 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Text="RDP 账号请在「中控台 → 用户配置」中维护。"
+                    <TextBlock Text="RDP 账号请在「账号与会话 → 用户配置」中维护。"
                                Style="{StaticResource Caption}" Margin="0,18,0,8" />
 
                     <!-- 行为 -->
@@ -99,23 +213,13 @@
                             <CheckBox x:Name="RemoteCheck" Content="允许命令行 / 其它程序调用执行动作"
                                       Style="{StaticResource GlassCheckBox}" Margin="0,10,0,0"
                                       Checked="Option_Changed" Unchecked="Option_Changed" />
-                            <CheckBox x:Name="OnlyAutomationCheck" Content="仅管理挂机账号（全局隐藏主用户及其地址、更新、自动化选项）"
+                            <CheckBox x:Name="OnlyAutomationCheck" Content="仅管理挂机账号（可在概览中管理主账号流程）"
                                       Style="{StaticResource GlassCheckBox}" Margin="0,10,0,0"
                                       Checked="Option_Changed" Unchecked="Option_Changed"
-                                      ToolTip="只隐藏，不删除已保存数据；开启后主用户不会被后台作为执行目标。" />
+                                      ToolTip="主账号的远程连接、投送和更新受限。主账号自己的自动化流程可在概览中管理。" />
                             <CheckBox x:Name="FallbackCheck" Content="找不到会话时，允许回退到当前用户会话"
                                       Style="{StaticResource GlassCheckBox}" Margin="0,10,0,0"
                                       Checked="Option_Changed" Unchecked="Option_Changed" />
-                            <TextBlock Text="界面动效（性能档位）" FontSize="10.5"
-                                       Foreground="{DynamicResource TextMuted}" Margin="0,12,0,4" />
-                            <ComboBox x:Name="EffectTierCombo" SelectionChanged="EffectTier_Changed">
-                                <ComboBoxItem Content="高（完整动效）· 前台约 1 核" />
-                                <ComboBoxItem Content="中（关闭动态背景，保留呼吸灯）· 推荐" />
-                                <ComboBoxItem Content="低（全部静止）· 挂机最省电" />
-                            </ComboBox>
-                            <TextBlock x:Name="EffectTierHint" Style="{StaticResource Caption}"
-                                       TextWrapping="Wrap" Margin="0,6,0,0"
-                                       Text="实测：动态背景约占 61 个单核百分点，呼吸灯约占 27 个。窗口失去焦点时动画会自动暂停，所以挂机时即使选「高」也会自动降下来。" />
                         </StackPanel>
                     </Border>
 
@@ -288,7 +392,7 @@
                                    在亮色主题下几乎看不见，且与玻璃卡片风格不搭）。 -->
                             <Border x:Name="LegacyDataPanel" Visibility="Collapsed" Margin="0,10,0,0"
                                     CornerRadius="12" Padding="14,12"
-                                    Background="{DynamicResource FieldBackground}"
+                                    Background="{DynamicResource PanelBackground}"
                                     BorderBrush="{DynamicResource AmberBrush}" BorderThickness="1">
                                 <StackPanel>
                                     <StackPanel Orientation="Horizontal">
@@ -386,7 +490,7 @@
                     </Button>
                 </Grid>
 
-                <Border Grid.Row="1" CornerRadius="13" Background="{DynamicResource FieldBackground}" BorderBrush="#22FFFFFF" BorderThickness="1" Padding="10,8">
+                <Border Grid.Row="1" CornerRadius="13" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" Padding="10,8">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <ItemsControl x:Name="LogList">
                             <ItemsControl.ItemTemplate>
@@ -398,14 +502,25 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{Binding TimeText}" Style="{StaticResource Mono}"
-                                                   Foreground="#66C8E0FF" FontSize="10.5" VerticalAlignment="Top" />
+                                                   Foreground="{DynamicResource TextSecondary}" FontSize="10.5" VerticalAlignment="Top" />
                                         <ctl:GlowDot Grid.Column="1" Width="9" Height="9" Margin="7,4,7,0" VerticalAlignment="Top"
-                                                     Color="{Binding DotColor}" Pulse="False" />
+                                                     Color="{Binding Foreground.Color, ElementName=LogMessage}" Pulse="False" />
                                         <StackPanel Grid.Column="2">
-                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="11.5"
-                                                       Foreground="{Binding TextColor}" />
+                                            <TextBlock x:Name="LogMessage" Text="{Binding Text}" TextWrapping="Wrap" FontSize="11.5">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Level}" Value="Ok"><Setter Property="Foreground" Value="{DynamicResource MintBrush}" /></DataTrigger>
+                                                            <DataTrigger Binding="{Binding Level}" Value="Warn"><Setter Property="Foreground" Value="{DynamicResource AmberBrush}" /></DataTrigger>
+                                                            <DataTrigger Binding="{Binding Level}" Value="Error"><Setter Property="Foreground" Value="{DynamicResource RoseBrush}" /></DataTrigger>
+                                                            <DataTrigger Binding="{Binding Level}" Value="Run"><Setter Property="Foreground" Value="{DynamicResource CyanBrush}" /></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
                                             <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" FontSize="10.5"
-                                                       Foreground="#6688A8D0" Margin="0,2,0,0"
+                                                       Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0"
                                                        Visibility="{Binding DetailVisibility}" />
                                         </StackPanel>
                                     </Grid>
@@ -424,5 +539,6 @@
                 </StackPanel>
             </Grid>
         </Border>
+        </Grid>
     </Grid>
 </UserControl>

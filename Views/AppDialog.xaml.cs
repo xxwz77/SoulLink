@@ -18,7 +18,7 @@ namespace SoulLink.Views
                 OkButton.Style = (Style)FindResource("DangerButton");
                 OkButton.Content = "移除";
                 IconText.Text = "\uE74D";
-                IconText.Foreground = (System.Windows.Media.Brush)FindResource("RoseBrush");
+                IconText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "RoseBrush");
             }
             Loaded += (_, __) => (confirmation ? CancelButton : OkButton).Focus();
         }

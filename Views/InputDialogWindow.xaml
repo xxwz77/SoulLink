@@ -7,8 +7,7 @@
         WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource DialogSurface}"
         ShowInTaskbar="False" FontFamily="{StaticResource UiFont}">
 
-    <Border CornerRadius="16" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="10">
-                <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+    <Border CornerRadius="16" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="10" Background="{DynamicResource DialogSurface}">
 
         <Grid ClipToBounds="True">
             <ctl:AuroraBackdrop Opacity="0.48" />

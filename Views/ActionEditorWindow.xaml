@@ -6,13 +6,9 @@
         WindowStyle="None" AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
         FontFamily="{StaticResource UiFont}">
 
-    <Grid Margin="16">
-        <Grid.Effect>
-            <DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.8" Color="#FF04060E" />
-        </Grid.Effect>
+    <Grid Margin="16" Effect="{DynamicResource CardShadow}">
 
-        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
-                        <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True" Background="{DynamicResource DialogSurface}">
 
             <Grid>
                 <ctl:AuroraBackdrop Opacity="0.75" />
@@ -60,7 +56,7 @@
                                 <TextBox x:Name="UserBox" Grid.Column="0"
                                          Background="Transparent" BorderThickness="0"
                                          Foreground="{DynamicResource TextPrimary}"
-                                         CaretBrush="{StaticResource CyanBrush}"
+                                         CaretBrush="{DynamicResource CyanBrush}"
                                          SelectionBrush="#804FE3FF"
                                          FontFamily="{StaticResource UiFont}" FontSize="13"
                                          Padding="12,0" VerticalContentAlignment="Center"
@@ -82,14 +78,11 @@
                                但也不该做成全不透明，否则破坏整体的玻璃拟态风格。 -->
                         <Popup x:Name="UserPopup" PlacementTarget="{Binding ElementName=UserFieldShell}"
                                Placement="Bottom" StaysOpen="False" AllowsTransparency="True"
-                               PopupAnimation="Fade" VerticalOffset="4">
+                               PopupAnimation="{DynamicResource DesktopPopupAnimation}" VerticalOffset="4">
                             <Border CornerRadius="12" Padding="4"
                                     Background="{DynamicResource PopupBackground}"
                                     BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
-                                    MinWidth="{Binding ActualWidth, ElementName=UserFieldShell}">
-                                <Border.Effect>
-                                    <DropShadowEffect Color="#000000" BlurRadius="16" ShadowDepth="3" Opacity="0.55" />
-                                </Border.Effect>
+                                    MinWidth="{Binding ActualWidth, ElementName=UserFieldShell}" Effect="{DynamicResource CardShadow}">
                                 <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
                                     <StackPanel x:Name="UserPopupList" />
                                 </ScrollViewer>
@@ -216,14 +209,11 @@
                                 <!-- 多选列表：贴在该框正下方 -->
                                 <Popup x:Name="GroupPopup" PlacementTarget="{Binding ElementName=GroupFieldShell}"
                                        Placement="Bottom" StaysOpen="False" AllowsTransparency="True"
-                                       PopupAnimation="Fade" VerticalOffset="4">
+                                       PopupAnimation="{DynamicResource DesktopPopupAnimation}" VerticalOffset="4">
                                     <Border CornerRadius="12" Padding="4"
                                             Background="{DynamicResource PopupBackground}"
                                             BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
-                                            MinWidth="{Binding ActualWidth, ElementName=GroupFieldShell}">
-                                        <Border.Effect>
-                                            <DropShadowEffect Color="#000000" BlurRadius="18" ShadowDepth="3" Opacity="0.6" />
-                                        </Border.Effect>
+                                            MinWidth="{Binding ActualWidth, ElementName=GroupFieldShell}" Effect="{DynamicResource CardShadow}">
                                         <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
                                             <StackPanel x:Name="GroupPopupList" />
                                         </ScrollViewer>
@@ -239,7 +229,7 @@
 
                         <!-- 右：动作分段（打开 / 关闭 / 重启）。选了一条龙/配置组时隐藏 -->
                         <Border Grid.Column="2" x:Name="KindShell"
-                                CornerRadius="12" Background="#14FFFFFF" BorderBrush="#28FFFFFF"
+                                CornerRadius="12" Background="{DynamicResource HoverFill}" BorderBrush="{DynamicResource StrokeSoft}"
                                 BorderThickness="1" Padding="4" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal">
                                 <ToggleButton x:Name="KindOpen" Style="{StaticResource SegmentToggle}" Content="打开" IsChecked="True"
@@ -308,182 +298,18 @@
                         </StackPanel>
                     </Expander>
 
-                    <!-- ══════════ 定时执行 ══════════ -->
-                    <Expander x:Name="ScheduleExpander" Margin="0,14,0,0" Foreground="{DynamicResource TextMuted}"
-                              HorizontalContentAlignment="Stretch" IsExpanded="False">
-                        <Expander.Header>
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="定时执行" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" />
-                                <TextBlock x:Name="ScheduleSummary" Text="（未启用）" FontSize="11"
-                                           Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0" />
-                            </StackPanel>
-                        </Expander.Header>
-
-                        <StackPanel Margin="0,10,0,0">
-                            <!-- ① 是否启用 + 用哪种方式运行 -->
-                            <CheckBox x:Name="ScheduleEnabledCheck" Style="{StaticResource GlassCheckBox}"
-                                      Content="启用定时执行" Checked="ScheduleEnabled_Changed"
-                                      Unchecked="ScheduleEnabled_Changed" />
-
-                            <StackPanel x:Name="ScheduleBody" Margin="24,10,0,0" IsEnabled="False" Opacity="0.45">
-                                <!-- 定时类型 -->
-                                <TextBlock Text="执行周期" Style="{StaticResource Label}" Margin="0,12,0,6" />
-                                <WrapPanel x:Name="ScheduleKindPanel">
-                                    <ToggleButton x:Name="KindDaily" Style="{StaticResource SegmentToggle}"
-                                                  Content="每天" IsChecked="True" Checked="ScheduleKind_Checked" Margin="0,0,6,6" />
-                                    <ToggleButton x:Name="KindWeekly" Style="{StaticResource SegmentToggle}"
-                                                  Content="每周" Checked="ScheduleKind_Checked" Margin="0,0,6,6" />
-                                    <ToggleButton x:Name="KindMonthly" Style="{StaticResource SegmentToggle}"
-                                                  Content="每月" Checked="ScheduleKind_Checked" Margin="0,0,6,6" />
-                                    <ToggleButton x:Name="KindYearly" Style="{StaticResource SegmentToggle}"
-                                                  Content="每年" Checked="ScheduleKind_Checked" Margin="0,0,6,6" />
-                                    <ToggleButton x:Name="KindInterval" Style="{StaticResource SegmentToggle}"
-                                                  Content="固定间隔" Checked="ScheduleKind_Checked" Margin="0,0,6,6" />
-                                    <ToggleButton x:Name="KindOnce" Style="{StaticResource SegmentToggle}"
-                                                  Content="只一次" Checked="ScheduleKind_Checked" Margin="0,0,6,6" />
-                                </WrapPanel>
-
-                                <!-- 时间：时 分 秒 -->
-                                <StackPanel x:Name="TimeRow">
-                                    <TextBlock Text="执行时刻（精确到秒）" Style="{StaticResource Label}" Margin="0,10,0,6" />
-                                    <!-- ★ 不用 GlassTextBox：它固定 Padding=12,9，
-                                         在 64px 宽的窄框里会把数字挤出去（用户实测"挡住文字"）。
-                                         这里用裸 TextBox + 外层 Border 自绘，Padding 为 0。 -->
-                                    <StackPanel Orientation="Horizontal">
-                                        <Border Width="62" Height="40" CornerRadius="10"
-                                                Background="{DynamicResource FieldBackground}"
-                                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
-                                            <TextBox x:Name="HourBox" Text="4" Background="Transparent"
-                                                     BorderThickness="0" Padding="0" TextAlignment="Center"
-                                                     VerticalContentAlignment="Center"
-                                                     Foreground="{DynamicResource TextPrimary}"
-                                                     CaretBrush="{StaticResource CyanBrush}"
-                                                     FontSize="15" TextChanged="ScheduleInput_Changed" />
-                                        </Border>
-                                        <TextBlock Text="时" VerticalAlignment="Center" Margin="6,0,10,0"
-                                                   Foreground="{DynamicResource TextMuted}" />
-                                        <Border Width="62" Height="40" CornerRadius="10"
-                                                Background="{DynamicResource FieldBackground}"
-                                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
-                                            <TextBox x:Name="MinuteBox" Text="0" Background="Transparent"
-                                                     BorderThickness="0" Padding="0" TextAlignment="Center"
-                                                     VerticalContentAlignment="Center"
-                                                     Foreground="{DynamicResource TextPrimary}"
-                                                     CaretBrush="{StaticResource CyanBrush}"
-                                                     FontSize="15" TextChanged="ScheduleInput_Changed" />
-                                        </Border>
-                                        <TextBlock Text="分" VerticalAlignment="Center" Margin="6,0,10,0"
-                                                   Foreground="{DynamicResource TextMuted}" />
-                                        <Border Width="62" Height="40" CornerRadius="10"
-                                                Background="{DynamicResource FieldBackground}"
-                                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
-                                            <TextBox x:Name="SecondBox" Text="0" Background="Transparent"
-                                                     BorderThickness="0" Padding="0" TextAlignment="Center"
-                                                     VerticalContentAlignment="Center"
-                                                     Foreground="{DynamicResource TextPrimary}"
-                                                     CaretBrush="{StaticResource CyanBrush}"
-                                                     FontSize="15" TextChanged="ScheduleInput_Changed" />
-                                        </Border>
-                                        <TextBlock Text="秒" VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextMuted}" />
-                                    </StackPanel>
-                                </StackPanel>
-
-                                <!-- 星期（Weekly） -->
-                                <StackPanel x:Name="WeekRow" Visibility="Collapsed">
-                                    <TextBlock Text="星期几（可多选）" Style="{StaticResource Label}" Margin="0,10,0,6" />
-                                    <WrapPanel x:Name="WeekDayPanel">
-                                        <CheckBox Content="周日" Tag="0" Style="{StaticResource GlassCheckBox}" Margin="0,0,10,6" />
-                                        <CheckBox Content="周一" Tag="1" Style="{StaticResource GlassCheckBox}" Margin="0,0,10,6" />
-                                        <CheckBox Content="周二" Tag="2" Style="{StaticResource GlassCheckBox}" Margin="0,0,10,6" />
-                                        <CheckBox Content="周三" Tag="3" Style="{StaticResource GlassCheckBox}" Margin="0,0,10,6" />
-                                        <CheckBox Content="周四" Tag="4" Style="{StaticResource GlassCheckBox}" Margin="0,0,10,6" />
-                                        <CheckBox Content="周五" Tag="5" Style="{StaticResource GlassCheckBox}" Margin="0,0,10,6" />
-                                        <CheckBox Content="周六" Tag="6" Style="{StaticResource GlassCheckBox}" Margin="0,0,10,6" />
-                                    </WrapPanel>
-                                </StackPanel>
-
-                                <!-- 几号 / 几月（Monthly / Yearly） -->
-                                <StackPanel x:Name="DayOfMonthRow" Orientation="Horizontal" Visibility="Collapsed" Margin="0,10,0,0">
-                                    <TextBlock x:Name="MonthLabel" Text="日期" Style="{StaticResource Label}"
-                                               VerticalAlignment="Center" Visibility="Collapsed" />
-                                    <TextBox x:Name="MonthBox" Width="64" Height="40" Text="1"
-                                             Style="{StaticResource CompactTextBox}"
-                                             Margin="6,0,0,0" Visibility="Collapsed" TextChanged="ScheduleInput_Changed" />
-                                    <TextBlock x:Name="MonthUnit" Text="月" VerticalAlignment="Center" Margin="6,0,10,0"
-                                               Foreground="{DynamicResource TextMuted}" Visibility="Collapsed" />
-                                    <TextBox x:Name="DayBox" Width="64" Height="40" Text="1"
-                                             Style="{StaticResource CompactTextBox}" TextChanged="ScheduleInput_Changed" />
-                                    <TextBlock Text="号" VerticalAlignment="Center" Margin="6,0,0,0"
-                                               Foreground="{DynamicResource TextMuted}" />
-                                </StackPanel>
-
-                                <!-- 固定间隔 -->
-                                <StackPanel x:Name="IntervalRow" Orientation="Horizontal" Visibility="Collapsed" Margin="0,10,0,0">
-                                    <TextBlock Text="每" Style="{StaticResource Label}" VerticalAlignment="Center" />
-                                    <TextBox x:Name="IntervalBox" Width="80" Height="40" Text="60"
-                                             Style="{StaticResource CompactTextBox}" Margin="8,0,0,0" TextChanged="ScheduleInput_Changed" />
-                                    <ComboBox x:Name="IntervalUnitCombo" Width="90" Height="40" Margin="8,0,0,0" SelectionChanged="ScheduleUnit_Changed"
-                                              SelectedIndex="1">
-                                        <ComboBoxItem Content="秒" Tag="1" />
-                                        <ComboBoxItem Content="分钟" Tag="60" />
-                                        <ComboBoxItem Content="小时" Tag="3600" />
-                                    </ComboBox>
-                                    <TextBlock Text="执行一次" Style="{StaticResource Label}"
-                                               VerticalAlignment="Center" Margin="8,0,0,0" />
-                                </StackPanel>
-
-                                <!-- 只一次 -->
-                                <StackPanel x:Name="OnceRow" Visibility="Collapsed" Margin="0,10,0,0">
-                                    <TextBlock Text="执行时间" Style="{StaticResource Label}" Margin="0,0,0,6" />
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBox x:Name="OnceDateBox" Width="150" Height="40" Text="2026-01-01"
-                                                 Style="{StaticResource CompactTextBox}" TextChanged="ScheduleInput_Changed" />
-                                        <TextBox x:Name="OnceTimeBox" Width="110" Height="40" Text="04:00:00"
-                                                 Style="{StaticResource CompactTextBox}" Margin="8,0,0,0" TextChanged="ScheduleInput_Changed" />
-                                        <TextBlock Text="（日期  时:分:秒）" Style="{StaticResource Caption}"
-                                                   VerticalAlignment="Center" Margin="8,0,0,0" />
-                                    </StackPanel>
-                                </StackPanel>
-
-                                <!-- ★ 每次执行后延后 -->
-                                <TextBlock Text="每次执行后延后" Style="{StaticResource Label}" Margin="0,14,0,6" />
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBox x:Name="PostDelayBox" Width="80" Height="40" Text="0"
-                                             Style="{StaticResource CompactTextBox}" TextChanged="ScheduleInput_Changed" />
-                                    <ComboBox x:Name="PostDelayUnitCombo" Width="90" Height="40" Margin="8,0,0,0" SelectionChanged="ScheduleUnit_Changed"
-                                              SelectedIndex="1">
-                                        <ComboBoxItem Content="秒" Tag="1" />
-                                        <ComboBoxItem Content="分钟" Tag="60" />
-                                        <ComboBoxItem Content="小时" Tag="3600" />
-                                        <ComboBoxItem Content="天" Tag="86400" />
-                                    </ComboBox>
-                                </StackPanel>
-                                <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
-                                           Text="例：基准 4:00 延后 1 分钟 → 第2 次 4:01、第3 次 4:02。延后 1 天则是隔一天后的 4:00。" />
-
-                                <!-- 下次执行预览 -->
-                                <Border CornerRadius="8" Background="{DynamicResource FieldBackground}" Padding="10,7" Margin="0,12,0,0">
-                                    <TextBlock x:Name="NextRunHint" Text="下次执行：—"
-                                               FontSize="11" Foreground="{DynamicResource TextSecondary}"
-                                               TextWrapping="Wrap" />
-                                </Border>
-                            </StackPanel>
-                        </StackPanel>
-                    </Expander>
-
                 </StackPanel>
                 </ScrollViewer>
 
                 <!-- 底部固定区：错误提示 + 生成命令 + 按钮，永远可见 -->
                 <StackPanel Grid.Row="1" Margin="26,0,26,20">
-                    <TextBlock x:Name="ErrorText" Foreground="{StaticResource RoseBrush}" FontSize="11.5"
+                    <TextBlock x:Name="ErrorText" Foreground="{DynamicResource RoseBrush}" FontSize="11.5"
                                Margin="2,6,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
 
                     <Border Style="{StaticResource Divider}" Margin="0,10,0,12" />
 
                     <!-- 生成命令（独占一行，不压住按钮） -->
-                    <Border CornerRadius="10" Background="#14000000" BorderBrush="#22FFFFFF" BorderThickness="1"
+                    <Border CornerRadius="10" Background="{DynamicResource FieldBackground}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1"
                             Padding="10,7" Margin="0,0,0,14">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -491,7 +317,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" x:Name="CmdHint" Style="{StaticResource Mono}"
-                                       TextTrimming="CharacterEllipsis" Foreground="#FF9FC6E8"
+                                       TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextSecondary}"
                                        VerticalAlignment="Center" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                             <Button Grid.Column="1" Style="{StaticResource IconButton}" Width="26" Height="26"
                                     Click="CopyCmd_Click" ToolTip="复制这条命令">

@@ -33,6 +33,97 @@
     <SolidColorBrush x:Key="AmberBrush" Color="#FFFFC46B" />
     <SolidColorBrush x:Key="RoseBrush" Color="#FFFF6B8B" />
     <SolidColorBrush x:Key="MagentaBrush" Color="#FFFF5FD2" />
+    <SolidColorBrush x:Key="DesktopAccent" Color="#FF72E9CB" />
+    <SolidColorBrush x:Key="DesktopChrome" Color="#FF0C1B20" />
+    <SolidColorBrush x:Key="DesktopPanel" Color="#D615292E" />
+    <SolidColorBrush x:Key="OverviewAccountsCard" Color="#D615292E" />
+    <SolidColorBrush x:Key="OverviewActionsCard" Color="#D615292E" />
+    <SolidColorBrush x:Key="OverviewAutomationCard" Color="#D615292E" />
+    <SolidColorBrush x:Key="OverviewLogCard" Color="#D615292E" />
+    <CornerRadius x:Key="DesktopCardRadius">8</CornerRadius>
+    <SolidColorBrush x:Key="DesktopRow" Color="#1D72E9CB" />
+    <SolidColorBrush x:Key="DesktopSelection" Color="#3072E9CB" />
+    <PopupAnimation x:Key="DesktopPopupAnimation">Fade</PopupAnimation>
+
+    <Style x:Key="DesktopCard" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource DesktopPanel}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource DesktopCardRadius}" />
+        <Setter Property="Padding" Value="14" />
+    </Style>
+
+    <Style x:Key="DesktopButton" TargetType="Button">
+        <Setter Property="Foreground" Value="{DynamicResource DesktopAccent}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="14,6" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Plate" CornerRadius="5" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Plate" Property="Background" Value="{DynamicResource HoverFill}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Plate" Property="Background" Value="{DynamicResource PressedFill}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Plate" Property="Opacity" Value="0.48" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="DesktopLink" TargetType="Button" BasedOn="{StaticResource DesktopButton}">
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="7,5" />
+    </Style>
+
+    <Style x:Key="DesktopChoice" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Padding" Value="13,7" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="Plate" CornerRadius="5" Background="{TemplateBinding Background}"
+                            BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Plate" Property="Background" Value="{DynamicResource HoverFill}" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Plate" Property="Background" Value="{DynamicResource DesktopSelection}" />
+                            <Setter TargetName="Plate" Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
+                            <Setter Property="Foreground" Value="{DynamicResource DesktopAccent}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 
     <LinearGradientBrush x:Key="AccentGradient" StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#FF6C5CE7" Offset="0" />
@@ -92,6 +183,7 @@
     <SolidColorBrush x:Key="PanelBackground" Color="#18FFFFFF" />
     <SolidColorBrush x:Key="FieldBackground" Color="#260A1226" />
     <SolidColorBrush x:Key="WindowBackground" Color="#FF090919" />
+    <SolidColorBrush x:Key="DialogUnderlay" Color="#FF090919" />
     <!-- 菜单、弹窗、输入区与交互状态都由 ThemeManager 同时切换，避免亮色模式露出深色硬编码。 -->
     <SolidColorBrush x:Key="DialogSurface" Color="#FF11132B" />
     <SolidColorBrush x:Key="PopupBackground" Color="#F51B1935" />
@@ -167,7 +259,7 @@
 
     <!-- 侧栏 / 浮层专用：比 GlassCardStrong 更实，避免透出底下画面干扰阅读 -->
     <Style x:Key="NavSurface" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource NavBackground}" />
+        <Setter Property="Background" Value="{DynamicResource NavBackground}" />
         <Setter Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="14" />
@@ -175,7 +267,7 @@
     </Style>
 
     <Style x:Key="GlassPanel" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource PanelBackground}" />
+        <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
         <Setter Property="BorderBrush" Value="{DynamicResource StrokeSoft}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="14" />
@@ -217,8 +309,8 @@
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
-        <Setter Property="CaretBrush" Value="{StaticResource CyanBrush}" />
-        <Setter Property="SelectionBrush" Value="#804FE3FF" />
+        <Setter Property="CaretBrush" Value="{DynamicResource CyanBrush}" />
+        <Setter Property="SelectionBrush" Value="{DynamicResource DesktopAccent}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="12,9" />
@@ -230,7 +322,7 @@
                         <Border x:Name="Shell" CornerRadius="11" Background="{DynamicResource FieldBackground}"
                                 BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" />
                         <Border x:Name="FocusRing" CornerRadius="11" BorderThickness="1"
-                                BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
+                                BorderBrush="{DynamicResource CyanBrush}" Opacity="0" />
                         <!-- ★★ 2.17.48：GlassTextBox 与 PasswordBox 同款的双层内边距坑。★★
                              原来这里写 Margin="{TemplateBinding Padding}"，而样式本身已有
                              Padding="12,9"，TextBox 内部又把 Padding 应用一次 ——
@@ -250,7 +342,7 @@
                             <Setter TargetName="Shell" Property="Background" Value="{DynamicResource FieldBackground}" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Shell" Property="BorderBrush" Value="#44FFFFFF" />
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.45" />
@@ -271,8 +363,8 @@
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
         <Setter Property="FontSize" Value="12.5" />
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
-        <Setter Property="CaretBrush" Value="{StaticResource CyanBrush}" />
-        <Setter Property="SelectionBrush" Value="#804FE3FF" />
+        <Setter Property="CaretBrush" Value="{DynamicResource CyanBrush}" />
+        <Setter Property="SelectionBrush" Value="{DynamicResource DesktopAccent}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="10,5" />
@@ -284,7 +376,7 @@
                         <Border x:Name="Shell" CornerRadius="9" Background="{DynamicResource FieldBackground}"
                                 BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" />
                         <Border x:Name="FocusRing" CornerRadius="9" BorderThickness="1"
-                                BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
+                                BorderBrush="{DynamicResource CyanBrush}" Opacity="0" />
                         <ScrollViewer x:Name="PART_ContentHost"
                                       Margin="{TemplateBinding Padding}"
                                       VerticalAlignment="Center"
@@ -295,7 +387,7 @@
                             <Setter TargetName="FocusRing" Property="Opacity" Value="1" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Shell" Property="BorderBrush" Value="#44FFFFFF" />
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.45" />
@@ -313,8 +405,8 @@
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
         <Setter Property="FontSize" Value="14" />
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
-        <Setter Property="CaretBrush" Value="{StaticResource CyanBrush}" />
-        <Setter Property="SelectionBrush" Value="#804FE3FF" />
+        <Setter Property="CaretBrush" Value="{DynamicResource CyanBrush}" />
+        <Setter Property="SelectionBrush" Value="{DynamicResource DesktopAccent}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="0" />
@@ -328,7 +420,7 @@
                                 Background="{DynamicResource FieldBackground}"
                                 BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" />
                         <Border x:Name="FocusRing" CornerRadius="10" BorderThickness="1"
-                                BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
+                                BorderBrush="{DynamicResource CyanBrush}" Opacity="0" />
                         <!-- ★ 关键1：Margin 为 0，文字不会被内边距挤出去。
                              ★ 关键2：ScrollViewer 必须**撑满整个框**（Stretch），
                                否则它的可点击区域只有文字那么宽，
@@ -343,7 +435,7 @@
                             <Setter TargetName="FocusRing" Property="Opacity" Value="1" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Shell" Property="BorderBrush" Value="#44FFFFFF" />
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.45" />
@@ -358,7 +450,7 @@
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
-        <Setter Property="CaretBrush" Value="{StaticResource CyanBrush}" />
+        <Setter Property="CaretBrush" Value="{DynamicResource CyanBrush}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="12,9" />
@@ -370,7 +462,7 @@
                         <Border x:Name="Shell" CornerRadius="11" Background="{DynamicResource FieldBackground}"
                                 BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" />
                         <Border x:Name="FocusRing" CornerRadius="11" BorderThickness="1"
-                                BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
+                                BorderBrush="{DynamicResource CyanBrush}" Opacity="0" />
                         <!-- ★★ 2.17.47 修复：密码框内容不可见 / 无光标。★★
                              这里原来写 Margin="{TemplateBinding Padding}" —— 而 PasswordBox 会把
                              Padding 再应用一次到内部内容宿主，等于上下各叠 18px。
@@ -385,7 +477,7 @@
                             <Setter TargetName="Shell" Property="Background" Value="{DynamicResource FieldBackground}" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Shell" Property="BorderBrush" Value="#44FFFFFF" />
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -440,7 +532,7 @@
                     <Grid>
                         <Border x:Name="Bg" CornerRadius="10" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" />
-                        <Border x:Name="Glow" CornerRadius="10" BorderThickness="1" BorderBrush="{StaticResource CyanBrush}"
+                        <Border x:Name="Glow" CornerRadius="10" BorderThickness="1" BorderBrush="{DynamicResource CyanBrush}"
                                 Opacity="0" />
                         <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center"
                                           VerticalAlignment="Center" RecognizesAccessKey="True" />
@@ -537,20 +629,9 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
                     <Grid>
-                        <Border x:Name="Outer" CornerRadius="12">
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="24" ShadowDepth="0" Opacity="0.75" Color="#FF8B6BFF" />
-                            </Border.Effect>
-                            <Border.Background>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#FF6C5CE7" Offset="0" />
-                                    <GradientStop Color="#FF4FE3FF" Offset="0.6" />
-                                    <GradientStop Color="#FFFF5FD2" Offset="1" />
-                                </LinearGradientBrush>
-                            </Border.Background>
-                        </Border>
-                        <Border x:Name="Overlay" CornerRadius="12" Background="#33FFFFFF" Opacity="0" />
-                        <Border x:Name="Inner" CornerRadius="12" BorderThickness="1" BorderBrush="#55FFFFFF" />
+                        <Border x:Name="Outer" CornerRadius="12" Background="{DynamicResource DesktopAccent}" />
+                        <Border x:Name="Overlay" CornerRadius="12" Background="{DynamicResource HoverFill}" Opacity="0" />
+                        <Border x:Name="Inner" CornerRadius="12" BorderThickness="1" BorderBrush="{DynamicResource StrokeMid}" />
                         <!-- ★★ 3.1.11：禁用态专用底板。★★
                              原来只有一句 Outer.Opacity=0.35 —— 渐变只是变淡，在浅色卡片上
                              依旧是「一枚淡紫淡蓝的彩色按钮」。用户实测原话：
@@ -599,20 +680,9 @@
             <Setter.Value>
                 <ControlTemplate TargetType="ctl:HintButton">
                     <Grid>
-                        <Border x:Name="Outer" CornerRadius="12">
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="24" ShadowDepth="0" Opacity="0.75" Color="#FF8B6BFF" />
-                            </Border.Effect>
-                            <Border.Background>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#FF6C5CE7" Offset="0" />
-                                    <GradientStop Color="#FF4FE3FF" Offset="0.6" />
-                                    <GradientStop Color="#FFFF5FD2" Offset="1" />
-                                </LinearGradientBrush>
-                            </Border.Background>
-                        </Border>
-                        <Border x:Name="Overlay" CornerRadius="12" Background="#33FFFFFF" Opacity="0" />
-                        <Border x:Name="Inner" CornerRadius="12" BorderThickness="1" BorderBrush="#55FFFFFF" />
+                        <Border x:Name="Outer" CornerRadius="12" Background="{DynamicResource DesktopAccent}" />
+                        <Border x:Name="Overlay" CornerRadius="12" Background="{DynamicResource HoverFill}" Opacity="0" />
+                        <Border x:Name="Inner" CornerRadius="12" BorderThickness="1" BorderBrush="{DynamicResource StrokeMid}" />
                         <!-- 不可用时的中性灰底板：对比度单独调过，深浅两套主题都看得见 -->
                         <Border x:Name="Muted" CornerRadius="12" Visibility="Collapsed"
                                 Background="{DynamicResource DisabledFill}"
@@ -655,18 +725,8 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
                     <Grid>
-                        <Border x:Name="Outer" CornerRadius="12">
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="22" ShadowDepth="0" Opacity="0.6" Color="#FFFF4D6D" />
-                            </Border.Effect>
-                            <Border.Background>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#FFFF3D68" Offset="0" />
-                                    <GradientStop Color="#FFFF9A6B" Offset="1" />
-                                </LinearGradientBrush>
-                            </Border.Background>
-                        </Border>
-                        <Border x:Name="Overlay" CornerRadius="12" Background="#33FFFFFF" Opacity="0" />
+                        <Border x:Name="Outer" CornerRadius="12" Background="{DynamicResource RoseBrush}" />
+                        <Border x:Name="Overlay" CornerRadius="12" Background="{DynamicResource HoverFill}" Opacity="0" />
                         <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center"
                                           VerticalAlignment="Center" />
                     </Grid>
@@ -703,7 +763,7 @@
                         </Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="Bg" Property="Background" Value="{DynamicResource SelectedFill}" />
-                            <Setter TargetName="Bg" Property="BorderBrush" Value="#55FFFFFF" />
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
                             <Setter Property="Foreground" Value="{DynamicResource ControlAccentText}" />
                             <Setter Property="FontWeight" Value="SemiBold" />
                         </Trigger>
@@ -725,16 +785,16 @@
             <Setter.Value>
                 <ControlTemplate TargetType="ToggleButton">
                     <Border x:Name="Shell" CornerRadius="9" Padding="{TemplateBinding Padding}"
-                            Background="#12FFFFFF" BorderBrush="#22FFFFFF" BorderThickness="1">
+                            Background="{DynamicResource ButtonBackground}" BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Shell" Property="BorderBrush" Value="#44FFFFFF" />
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
                         </Trigger>
                         <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Shell" Property="Background" Value="#2E4FE3FF" />
-                            <Setter TargetName="Shell" Property="BorderBrush" Value="#AA4FE3FF" />
+                            <Setter TargetName="Shell" Property="Background" Value="{DynamicResource DesktopAccent}" />
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
                             <Setter Property="Foreground" Value="{DynamicResource ControlAccentText}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
@@ -755,7 +815,7 @@
                         <Border x:Name="Box" Width="18" Height="18" CornerRadius="5"
                                 Background="{DynamicResource FieldBackground}" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
                                 VerticalAlignment="Center">
-                            <Path x:Name="Tick" Data="M 2.5,7 L 6,11 L 13,3.5" Stroke="#FFFFFFFF" StrokeThickness="2"
+                            <Path x:Name="Tick" Data="M 2.5,7 L 6,11 L 13,3.5" Stroke="{DynamicResource ControlAccentText}" StrokeThickness="2"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                   Opacity="0" />
                         </Border>
@@ -770,20 +830,13 @@
                     </StackPanel>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Box" Property="Background">
-                                <Setter.Value>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                        <GradientStop Color="#FF6C5CE7" Offset="0" />
-                                        <GradientStop Color="#FF4FE3FF" Offset="1" />
-                                    </LinearGradientBrush>
-                                </Setter.Value>
-                            </Setter>
-                            <Setter TargetName="Box" Property="BorderBrush" Value="#88FFFFFF" />
+                            <Setter TargetName="Box" Property="Background" Value="{DynamicResource DesktopAccent}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
                             <Setter TargetName="Tick" Property="Opacity" Value="1" />
                             <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Box" Property="BorderBrush" Value="#77FFFFFF" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.45" />
@@ -808,7 +861,7 @@
                     <Grid>
                         <Border x:Name="Bg" CornerRadius="11" Background="Transparent" />
                         <Border x:Name="Bar" Width="3" Height="18" CornerRadius="2" HorizontalAlignment="Left"
-                                Margin="4,0,0,0" Background="{StaticResource AccentGradient}" Opacity="0" />
+                                Margin="4,0,0,0" Background="{DynamicResource AccentGradient}" Opacity="0" />
                         <ContentPresenter Margin="16,9" VerticalAlignment="Center" />
                     </Grid>
                     <ControlTemplate.Triggers>
@@ -852,9 +905,9 @@
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
                     <Grid>
-                        <Border x:Name="Bg" CornerRadius="13" Background="#10FFFFFF" BorderBrush="#1EFFFFFF" BorderThickness="1" />
+                        <Border x:Name="Bg" CornerRadius="13" Background="{DynamicResource SubtleSurface}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" />
                         <Border x:Name="Ring" CornerRadius="13" BorderThickness="1" Opacity="0"
-                                BorderBrush="{StaticResource CyanBrush}" />
+                                BorderBrush="{DynamicResource CyanBrush}" />
                         <ContentPresenter Margin="14,11" />
                     </Grid>
                     <ControlTemplate.Triggers>
@@ -917,15 +970,7 @@
     <Style x:Key="Divider" TargetType="Border">
         <Setter Property="Height" Value="1" />
         <Setter Property="Margin" Value="0,12" />
-        <Setter Property="Background">
-            <Setter.Value>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#00FFFFFF" Offset="0" />
-                    <GradientStop Color="#2AFFFFFF" Offset="0.5" />
-                    <GradientStop Color="#00FFFFFF" Offset="1" />
-                </LinearGradientBrush>
-            </Setter.Value>
-        </Setter>
+        <Setter Property="Background" Value="{DynamicResource StrokeSoft}" />
     </Style>
 
     <!-- ════════════ ToolTip ════════════ -->
@@ -954,16 +999,9 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Thumb">
                     <Grid Width="18" Height="18" Background="Transparent">
-                        <Ellipse x:Name="Halo" Width="18" Height="18" Opacity="0">
-                            <Ellipse.Fill>
-                                <RadialGradientBrush>
-                                    <GradientStop Color="#884FE3FF" Offset="0.0" />
-                                    <GradientStop Color="#004FE3FF" Offset="1.0" />
-                                </RadialGradientBrush>
-                            </Ellipse.Fill>
-                        </Ellipse>
-                        <Ellipse x:Name="Core" Width="12" Height="12" Fill="#FFFFFFFF"
-                                 Stroke="{StaticResource CyanBrush}" StrokeThickness="2" />
+                        <Ellipse x:Name="Halo" Width="18" Height="18" Opacity="0" Fill="{DynamicResource HoverFill}" />
+                        <Ellipse x:Name="Core" Width="12" Height="12" Fill="{DynamicResource DialogSurface}"
+                                 Stroke="{DynamicResource CyanBrush}" StrokeThickness="2" />
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
@@ -991,21 +1029,14 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Slider">
                     <Grid VerticalAlignment="Center">
-                        <Border Height="4" CornerRadius="2" Background="#26FFFFFF" />
+                        <Border Height="4" CornerRadius="2" Background="{DynamicResource StrokeSoft}" />
                         <!-- 已填充段：用青色→紫罗兰渐变，和标题栏光晕呼应 -->
                         <Track x:Name="PART_Track">
                             <Track.DecreaseRepeatButton>
                                 <RepeatButton Command="{x:Static Slider.DecreaseLarge}" Focusable="False">
                                     <RepeatButton.Template>
                                         <ControlTemplate TargetType="RepeatButton">
-                                            <Border Height="4" CornerRadius="2">
-                                                <Border.Background>
-                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                                        <GradientStop Color="{StaticResource Cyan}" Offset="0" />
-                                                        <GradientStop Color="{StaticResource Violet}" Offset="1" />
-                                                    </LinearGradientBrush>
-                                                </Border.Background>
-                                            </Border>
+                                            <Border Height="4" CornerRadius="2" Background="{DynamicResource AccentGradient}" />
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
@@ -1084,7 +1115,7 @@
                     <Grid>
                         <ToggleButton x:Name="Toggle" Style="{StaticResource ComboToggle}"
                                       IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" />
-                        <Border x:Name="FocusRing" CornerRadius="10" BorderThickness="1" BorderBrush="{StaticResource CyanBrush}" Opacity="0" />
+                        <Border x:Name="FocusRing" CornerRadius="10" BorderThickness="1" BorderBrush="{DynamicResource CyanBrush}" Opacity="0" />
                         <Grid Margin="{TemplateBinding Padding}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -1098,7 +1129,7 @@
                                   Margin="10,2,0,0" />
                         </Grid>
                         <Popup x:Name="PART_Popup" AllowsTransparency="True" Placement="Bottom"
-                               IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade" StaysOpen="False">
+                               IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="{DynamicResource DesktopPopupAnimation}" StaysOpen="False">
                             <Border Background="{DynamicResource WindowBackground}" CornerRadius="13" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1"
                                     Margin="0,6,0,0" Padding="4,6" MinWidth="{TemplateBinding ActualWidth}">
                                 <Border.Effect>
@@ -1168,7 +1199,7 @@
                             <TextBlock x:Name="Check" Grid.Column="0" Text="&#xE73E;"
                                        FontFamily="Segoe MDL2 Assets" FontSize="10"
                                        VerticalAlignment="Center" Visibility="Collapsed"
-                                       Foreground="{StaticResource CyanBrush}" />
+                                       Foreground="{DynamicResource CyanBrush}" />
                             <!-- 图标（可选） -->
                             <ContentPresenter x:Name="Icon" Grid.Column="0"
                                               ContentSource="Icon" VerticalAlignment="Center" />
@@ -1208,4 +1239,18 @@
         <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
     </Style>
 
+    <Style TargetType="Window">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+    </Style>
+    <Style TargetType="Button" BasedOn="{StaticResource DesktopButton}" />
+    <Style TargetType="TextBox" BasedOn="{StaticResource GlassTextBox}" />
+    <Style TargetType="PasswordBox" BasedOn="{StaticResource GlassPasswordBox}" />
+    <Style TargetType="CheckBox" BasedOn="{StaticResource GlassCheckBox}" />
+    <Style TargetType="RadioButton" BasedOn="{StaticResource DesktopChoice}" />
+    <Style TargetType="Slider" BasedOn="{StaticResource GlassSlider}" />
+    <Style TargetType="ProgressBar">
+        <Setter Property="Background" Value="{DynamicResource FieldBackground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
+        <Setter Property="Foreground" Value="{DynamicResource DesktopAccent}" />
+    </Style>
 </ResourceDictionary>

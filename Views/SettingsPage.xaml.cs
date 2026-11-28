@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -8,10 +9,12 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using SoulLink.Models;
 using SoulLink.Services;
+using SoulLink.Theme;
 // ★ P0-2：XAML 字段 EngineState（TextBlock）会遮蔽同名枚举 EngineState，
 //   本文件里所有 5 态判断统一用别名 EngState 引用枚举，避免二义性编译错误。
 using EngState = SoulLink.Services.EngineState;
@@ -23,16 +26,41 @@ namespace SoulLink.Views
         public event Action<bool, string>? StatusChanged;
 
         private readonly ObservableCollection<AccountVm> _accounts = new ObservableCollection<AccountVm>();
+        private readonly List<RadioButton> _desktopThemeChoices = new();
         private bool _loading;
+        private bool _draggingCardTransparency;
+        private bool _cardTransparencyChanged;
 
         public SettingsPage()
         {
             InitializeComponent();
+            CardTransparencySlider.AddHandler(Thumb.DragStartedEvent,
+                new DragStartedEventHandler((_, _) => _draggingCardTransparency = true));
+            CardTransparencySlider.AddHandler(Thumb.DragCompletedEvent,
+                new DragCompletedEventHandler((_, _) =>
+                {
+                    _draggingCardTransparency = false;
+                    SaveCardTransparency();
+                }));
+            AddThemeChoices(ThemeLightChoices, DesktopPalette.Light);
+            AddThemeChoices(ThemeDarkChoices, DesktopPalette.DarkThemes);
+            AddThemeChoices(ThemePortraitChoices, DesktopPalette.Portraits);
             LogList.ItemsSource = LogBus.Entries;
             VersionText.Text = "SoulLink v1.0 · " + (Environment.IsPrivilegedProcess ? "管理员权限" : "普通权限");
 
             // ★ 网页访问是**全局**功能（不只录像），所以放应用设置
-            Loaded += (_, __) => LoadWebSettings();
+            Loaded += (_, __) =>
+            {
+                LoadWebSettings();
+                ThemeManager.AppearanceChanged += RefreshAppearance;
+                RefreshAppearance();
+            };
+            Unloaded += (_, __) =>
+            {
+                ThemeManager.AppearanceChanged -= RefreshAppearance;
+                _draggingCardTransparency = false;
+                SaveCardTransparency();
+            };
         }
 
         // ══════════ 网页访问 ══════════
@@ -187,9 +215,8 @@ namespace SoulLink.Views
                 if (!ok) Services.LobbyApi.BaseUrl = old;
 
                 LobbyServerStatus.Text = ok ? ("✓ " + msg) : ("✕ " + msg);
-                LobbyServerStatus.Foreground = new System.Windows.Media.SolidColorBrush(
-                    ok ? System.Windows.Media.Color.FromRgb(0x6E, 0xF0, 0xC8)
-                       : System.Windows.Media.Color.FromRgb(0xFF, 0x9B, 0x9B));
+                LobbyServerStatus.Foreground = ok ? UiBrush.Get("MintBrush")
+                       : UiBrush.Get("RoseBrush");
             }
             catch (Exception ex)
             {
@@ -213,8 +240,7 @@ namespace SoulLink.Views
                 UpdateLobbyPlaceholder();
 
                 LobbyServerStatus.Text = "✓ 已保存";
-                LobbyServerStatus.Foreground = new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(0x6E, 0xF0, 0xC8));
+                LobbyServerStatus.Foreground = UiBrush.Get("MintBrush");
 
                 LogBus.Ok("服务器地址已更新");
             }
@@ -226,15 +252,10 @@ namespace SoulLink.Views
 
         public void Activate()
         {
+            ShowGeneralSettings();
             _loading = true;
             TrayCheck.IsChecked = App.Config.Settings.MinimizeToTray;
-            try
-            {
-                int tier = Math.Clamp(App.Config.Settings.EffectTier, 0, 2);
-                EffectTierCombo.SelectedIndex = tier;
-                EffectTierHint.Text = DescribeTier(tier);
-            }
-            catch { }
+            RefreshAppearance();
             RemoteCheck.IsChecked = App.Config.Settings.AllowRemoteInvoke;
             FallbackCheck.IsChecked = App.Config.Settings.AllowCurrentSessionFallback;
             OnlyAutomationCheck.IsChecked = App.Config.Settings.OnlyAutomationAccounts;
@@ -316,7 +337,7 @@ namespace SoulLink.Views
                 FontSize = 11.5,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = (Brush)FindResource("TextPrimary")
+                Foreground = UiBrush.Get("TextPrimary")
             };
             Grid.SetColumn(name, 0);
             grid.Children.Add(name);
@@ -329,8 +350,8 @@ namespace SoulLink.Views
             var box = new TextBox
             {
                 Text = saved ?? "",
-                Foreground = pinned ? (Brush)FindResource("TextPrimary")
-                                    : (Brush)FindResource("TextMuted"),
+                Foreground = pinned ? UiBrush.Get("TextPrimary")
+                                    : UiBrush.Get("TextMuted"),
                 Height = 30,
                 Style = (Style)FindResource("InlineTextBox"),
                 VerticalContentAlignment = VerticalAlignment.Center,
@@ -367,8 +388,8 @@ namespace SoulLink.Views
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(8, 0, 0, 0),
                 Foreground = pinned
-                    ? new SolidColorBrush(Color.FromRgb(0x7C, 0x5C, 0xFF))
-                    : new SolidColorBrush(Color.FromRgb(0xFF, 0xB4, 0x7A))
+                    ? UiBrush.Get("DesktopAccent")
+                    : UiBrush.Get("AmberBrush")
             };
             Grid.SetColumn(state, 2);
             grid.Children.Add(state);
@@ -521,7 +542,7 @@ namespace SoulLink.Views
             {
                 EngineState.Text = "引擎组件更新失败";
                 EnginePath.Text = ex.Message;
-                EngineDot.Color = Color.FromRgb(0xFF, 0x6B, 0x6B);
+                UiBrush.BindColor(EngineDot, GlowDot.ColorProperty, "RoseBrush");
             }
             finally { if (BtnRepairAgent != null) BtnRepairAgent.IsEnabled = true; }
         }
@@ -578,15 +599,17 @@ namespace SoulLink.Views
                 if (health?.Ok == false && state == EngState.Ready)
                     finalState = EngState.Error;
 
-                EngineDot.Color = finalState switch
+                string engineResource = finalState switch
                 {
-                    EngState.Ready => Color.FromRgb(0x41, 0xF0, 0xC0),
-                    EngState.NotInstalled => Color.FromRgb(0xFF, 0xC4, 0x6B),
-                    EngState.NotRunning => Color.FromRgb(0xFF, 0xC4, 0x6B),
-                    EngState.AgentNeedsUpdate or EngState.ServiceNeedsUpdate or EngState.ComponentsNeedUpdate => Color.FromRgb(0xFF, 0x9B, 0x4D),
-                    EngState.ChannelDown => Color.FromRgb(0xFF, 0xC4, 0x6B),   // ★ P0-A：通道断非绿
-                    _ => Color.FromRgb(0xFF, 0x6B, 0x6B),
+                    EngState.Ready => "MintBrush",
+                    EngState.NotInstalled => "AmberBrush",
+                    EngState.NotRunning => "AmberBrush",
+                    EngState.AgentNeedsUpdate or EngState.ServiceNeedsUpdate or EngState.ComponentsNeedUpdate => "AmberBrush",
+                    EngState.ChannelDown => "AmberBrush",   // ★ P0-A：通道断非绿
+                    _ => "RoseBrush",
                 };
+
+                UiBrush.BindColor(EngineDot, GlowDot.ColorProperty, engineResource);
 
                 EngineState.Text = finalState switch
                 {
@@ -622,7 +645,7 @@ namespace SoulLink.Views
             });
 
             BtnRepairAgent.Visibility = Visibility.Collapsed;
-            EngineDot.Color = ok ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0xFF, 0xC4, 0x6B);
+            UiBrush.BindColor(EngineDot, GlowDot.ColorProperty, ok ? "MintBrush" : "AmberBrush");
             EngineState.Text = ok ? "可用" : "需要管理员权限";
             EnginePath.Text = detail;
             StatusChanged?.Invoke(ok, detail);
@@ -756,34 +779,116 @@ namespace SoulLink.Views
 
         private void BrokerManage_Click(object sender, RoutedEventArgs e) => new BrokerWindow { Owner = Window.GetWindow(this) }.Show();
 
-        /// <summary>界面动效档位变更：立即保存并重启动画（无需重启程序）。</summary>
-        private void EffectTier_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
-            try
-            {
-                // ★ 初始化时不要写盘：RefreshAll 里设 SelectedIndex 会触发本方法，
-                //   而下拉框默认索引是 0（高），会把用户原本的低档设置覆盖成高档
-                //   （实测踩过：配置从 2 变成 0，用户没动过设置）。
-                if (_loading) return;
+        internal void ShowGeneralSettings() => ShowSettingsSection(general: true);
 
-                int tier = Math.Clamp(EffectTierCombo.SelectedIndex, 0, 2);
-                App.Config.Settings.EffectTier = tier;
-                EffectTierHint.Text = DescribeTier(tier);
-                ConfigStore.Save(App.Config);
-                // ★ 2.17.47：CardShadow 现在跟随档位（低档关闭），
-                //   必须重新 Apply 一次主题才能让资源生效。
-                ThemeManager.Apply();
-                ThemeManager.RefreshEffects();
-            }
-            catch (Exception ex) { LogBus.Warn("切换界面动效档位失败", ex.Message); }
+        private void SettingsSection_Click(object sender, RoutedEventArgs e) =>
+            ShowSettingsSection(general: ReferenceEquals(sender, GeneralTab));
+
+        private void ShowSettingsSection(bool general)
+        {
+            GeneralTab.IsChecked = general;
+            AppearanceTab.IsChecked = !general;
+            GeneralPanel.Visibility = general ? Visibility.Visible : Visibility.Collapsed;
+            AppearancePanel.Visibility = general ? Visibility.Collapsed : Visibility.Visible;
+            SettingsHeading.Text = general ? "常规" : "外观";
         }
 
-        private static string DescribeTier(int tier) => tier switch
+        private void RefreshAppearance()
         {
-            0 => "完整动效：动态背景 + 呼吸灯。实测窗口在前台时约占 1 个核心；失去焦点后自动暂停。",
-            2 => "全部静止：无动态背景、呼吸灯常亮、卡片阴影关闭。挂机最省电。",
-            _ => "推荐档位：关闭动态背景，保留呼吸灯。外观接近原版，开销明显低于「高」。"
-        };
+            var settings = App.Config?.Settings;
+            if (settings == null) return;
+            CardTransparencySlider.Value = settings.CardTransparency;
+            ThemeFollowSystem.IsChecked = settings.ThemeMode == 0;
+            ThemeLightMode.IsChecked = settings.ThemeMode == 1;
+            ThemeDarkMode.IsChecked = settings.ThemeMode == 2;
+            foreach (var theme in _desktopThemeChoices)
+                theme.IsChecked = (string)theme.Tag == ThemeManager.Palette.Id;
+            RefreshCustomArtwork(settings);
+
+            int tier = Math.Clamp(settings.EffectTier, 0, 2);
+            EffectHigh.IsChecked = tier == 0;
+            EffectMedium.IsChecked = tier == 1;
+            EffectLow.IsChecked = tier == 2;
+            EffectTierHint.Text = tier switch
+            {
+                0 => "播放背景和状态指示动画",
+                2 => "关闭界面动画，保留静态主题背景",
+                _ => "低帧率播放主题动效，保留状态指示动画"
+            };
+        }
+
+        private void AddThemeChoices(Panel host, IEnumerable<DesktopPalette> palettes)
+        {
+            foreach (DesktopPalette palette in palettes)
+            {
+                var artwork = new Controls.DesktopArtwork { ThemeId = palette.Id, Region = "Preview" };
+                var preview = new Border { Height = 55, CornerRadius = new CornerRadius(4), ClipToBounds = true, Child = artwork };
+                preview.SetResourceReference(Border.BorderBrushProperty, "StrokeSoft");
+                preview.BorderThickness = new Thickness(1);
+                var name = new TextBlock { Text = palette.Label, TextAlignment = TextAlignment.Center,
+                    FontSize = 12, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(1, 5, 1, 2) };
+                var tile = new StackPanel();
+                tile.Children.Add(preview);
+                tile.Children.Add(name);
+                var choice = new RadioButton { Content = tile, Width = 112, Tag = palette.Id,
+                    GroupName = "DesktopPalette", Style = (Style)FindResource("ThemePreviewChoice") };
+                System.Windows.Automation.AutomationProperties.SetName(choice, palette.Label);
+                choice.Click += DesktopTheme_Click;
+                host.Children.Add(choice);
+                _desktopThemeChoices.Add(choice);
+            }
+        }
+
+        private void DesktopMode_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not RadioButton { Tag: string tag } || !int.TryParse(tag, out int mode)) return;
+            App.Config.Settings.ThemeMode = mode;
+            SaveAppearance();
+        }
+
+        private void DesktopTheme_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not RadioButton { Tag: string id }) return;
+            var palette = DesktopPalette.Find(id);
+            if (palette == null) return;
+            var settings = App.Config.Settings;
+            if (palette.Dark) settings.DarkThemeId = palette.Id;
+            else settings.LightThemeId = palette.Id;
+            if (palette.Dark != ThemeManager.IsDark) settings.ThemeMode = palette.Dark ? 2 : 1;
+            SaveAppearance();
+        }
+
+        private void EffectTier_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not RadioButton { Tag: string tag } || !int.TryParse(tag, out int tier)) return;
+            App.Config.Settings.EffectTier = tier;
+            SaveAppearance();
+            ThemeManager.RefreshEffects();
+        }
+
+        private void CardTransparency_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            int transparency = (int)Math.Round(e.NewValue);
+            if (!IsLoaded || App.Config.Settings.CardTransparency == transparency) return;
+            App.Config.Settings.CardTransparency = transparency;
+            if (Window.GetWindow(this) is MainWindow mainWindow) mainWindow.PreviewCardTransparency();
+            _cardTransparencyChanged = true;
+            if (!_draggingCardTransparency) SaveCardTransparency();
+        }
+
+        private void SaveCardTransparency()
+        {
+            if (!_cardTransparencyChanged) return;
+            _cardTransparencyChanged = false;
+            ConfigStore.Save(App.Config);
+        }
+
+        private static void SaveAppearance()
+        {
+            ConfigStore.Save(App.Config);
+            ThemeManager.Apply();
+        }
 
         /// <summary>
         /// Broker 服务被安装 / 更新后，重新检测并刷新状态栏。

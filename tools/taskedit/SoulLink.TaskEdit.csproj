@@ -46,6 +46,8 @@
     <Compile Include="TaskEditProbe.cs" />
     <Compile Include="BgiPickList.cs" />
     <Compile Include="BgiTemplatePick.cs" />
+    <Compile Include="BgiPickTemplateCategories.cs" />
+    <EmbeddedResource Include="PickTemplateCategories.json" LogicalName="SoulLink.TaskEdit.PickTemplateCategories.json" />
     <Compile Include="BgiBackup.cs" />
     <!-- 任务编辑页前端（CSS/JS 以 C# 原始字符串编译进程序集，单文件发布下最稳） -->
     <Compile Include="TaskEditStatic.cs" />

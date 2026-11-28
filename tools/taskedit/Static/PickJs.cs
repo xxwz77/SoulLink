@@ -7,8 +7,17 @@ namespace SoulLink.TaskEdit
         private const string PickJs = """
 'use strict';
 (function (TE) {
+  var regions=['蒙德','璃月','稻妻','须弥','枫丹','纳塔','挪德卡莱','至冬','通属地区'];
+
+  function filterSelect(id, label, allLabel, values, selected) {
+    var options=values.map(function(value){
+      return '<option value="'+TE.attr(value)+'"'+(selected===value?' selected':'')+'>'+TE.esc(value)+'</option>';
+    }).join('');
+    return '<select id="'+id+'" aria-label="'+label+'"><option value="all">'+allLabel+'</option>'+options+'</select>';
+  }
+
   TE.pick = {
-    data: null, model: null, filter: { q: '', category: 'all', color: 'all' },
+    data: null, model: null, filter: { q: '', category: 'all', region: 'all', color: 'all' },
     open: function () {
       TE.busy(true, '读取 BGI 自动拾取设置…');
       var request=TE.api.get('/picklists');
@@ -19,7 +28,7 @@ namespace SoulLink.TaskEdit
         TE.pick.model=m; TE.pick.data=m.autoPickConfig||{};
         TE.pick.scope=""; TE.pick.templateMode="blackList"; TE.pick.groupLists=null;
         TE.pick.acceptSaved();
-        TE.pick.filter={q:'',category:'all',color:'all'};
+        TE.pick.filter={q:'',category:'all',region:'all',color:'all'};
         TE.pick.render();
       }).catch(function(e){if(TE.tabs.cur!=='pick'||TE.pick.request!==request)return;TE.el('canvas').innerHTML='<div class="banner err">读取失败：'+TE.esc(e.message)+'</div>';});
     },
@@ -51,7 +60,16 @@ namespace SoulLink.TaskEdit
         TE.el('pTemplates').textContent=e.message;
       });
     },
-    filteredTemplates:function(){var m=TE.pick.model,f=TE.pick.filter;return (m.templates||[]).filter(function(x){var n=String(x.itemName||x.name||'');return(!f.q||n.toLowerCase().includes(f.q.toLowerCase()))&&(f.category==='all'||(x.category||'未知')===f.category)&&(f.color==='all'||x.color===f.color);});},
+    filteredTemplates:function(){
+      var m=TE.pick.model,f=TE.pick.filter,query=f.q.toLowerCase();
+      return (m.templates||[]).filter(function(x){
+        var name=String(x.displayName||x.itemName||x.name||'').toLowerCase();
+        return (!query||name.includes(query))
+          && (f.category==='all'||(x.category||'未知')===f.category)
+          && (f.region==='all'||x.region===f.region)
+          && (f.color==='all'||x.color===f.color);
+      });
+    },
     render: function(){
       var m=TE.pick.model||{}, d=TE.pick.data||{}, white=String(m.mode||d.mode||'Blacklist').toLowerCase()==='whitelist';
       var colors=Array.from(new Set((m.templates||[]).map(function(x){return x.color;}).filter(Boolean))).sort();
@@ -83,7 +101,13 @@ namespace SoulLink.TaskEdit
           return '<button type="button" class="btn sm" data-template-mode="'+pair[0]+'" aria-pressed="'+(TE.pick.templateMode===pair[0])+'">'+pair[1]+'</button>';
         }).join('')+'</div>';
       }
-      html+='<details class="card" open><summary>模板拾取</summary><div class="body">'+scopeControls+'<div class="row"><input id="pSearch" aria-label="搜索模板物品" type="search" placeholder="搜索模板物品" value="'+TE.attr(TE.pick.filter.q)+'"><select id="pCategory" aria-label="物品种类"><option value="all">全部种类</option>'+cats.map(function(c){return '<option value="'+TE.attr(c)+'"'+(TE.pick.filter.category===c?' selected':'')+'>'+TE.esc(c)+'</option>';}).join('')+'</select><select id="pColor" aria-label="物品颜色"><option value="all">全部颜色</option>'+colors.map(function(c){return '<option value="'+TE.attr(c)+'"'+(TE.pick.filter.color===c?' selected':'')+'>'+TE.esc(c)+'</option>';}).join('')+'</select><span id="pCount" class="meta"></span></div><div class="desc">搜索、物品种类和颜色仅用于筛选模板。勾选代表加入当前模板名单。</div><div id="pTemplates" class="object-grid"></div></div></details>';
+      var filter=TE.pick.filter;
+      html+='<details class="card" open><summary>模板拾取</summary><div class="body">'+scopeControls
+        +'<div class="row pick-filters"><input id="pSearch" aria-label="搜索模板物品" type="search" placeholder="搜索模板物品" value="'+TE.attr(filter.q)+'">'
+        +filterSelect('pCategory','物品大类别','全部大类',cats,filter.category)
+        +filterSelect('pRegion','物品地区','全部地区',regions,filter.region)
+        +filterSelect('pColor','物品颜色','全部颜色',colors,filter.color)
+        +'<span id="pCount" class="meta"></span></div><div class="desc">勾选代表加入当前模板名单。</div><div id="pTemplates" class="object-grid"></div></div></details>';
       if(m.warning) html='<div class="banner warn">'+TE.esc(m.warning)+'</div>'+html;
       TE.el('canvas').innerHTML=html; TE.pick.bind(); TE.pick.renderTemplates();
     },
@@ -93,8 +117,11 @@ namespace SoulLink.TaskEdit
       var rows=TE.pick.filteredTemplates(), exact=new Set(list);
       TE.el('pCount').textContent=rows.length+' / '+TE.pick.model.templates.length;
       TE.el('pTemplates').innerHTML=rows.map(function(x){
-        var n=x.itemName||x.name;
-        return '<label class="object-option"><input type="checkbox" data-template="'+TE.attr(n)+'"'+(exact.has(n)?' checked':'')+'>'+TE.esc(n)+' <span class="badge tag">'+TE.esc(x.category||'未知')+' · '+TE.esc(x.color||'')+'</span></label>';
+        var n=x.itemName||x.name, alternate=x.alternateItemName;
+        var checked=exact.has(n)||(alternate&&exact.has(alternate));
+        var aliasAttribute=alternate?' data-template-alternate="'+TE.attr(alternate)+'"':'';
+        var tags=[x.category||'未知',x.region,x.color].filter(Boolean).map(TE.esc).join(' · ');
+        return '<label class="object-option"><input type="checkbox" data-template="'+TE.attr(n)+'"'+aliasAttribute+(checked?' checked':'')+'>'+TE.esc(x.displayName||n)+' <span class="badge tag">'+tags+'</span></label>';
       }).join('') || '<div class="desc">没有匹配的模板</div>';
     },
     listKeys:['blackList','fuzzyBlackList','blackModeAllowList','whiteModeAllowList','whiteModeExcludeList','whiteModeFuzzyExcludeList','templateBlackList'],
@@ -154,14 +181,23 @@ namespace SoulLink.TaskEdit
       });
       TE.el('pSearch').oninput=function(){TE.pick.filter.q=this.value;TE.pick.renderTemplates();};
       TE.el('pCategory').onchange=function(){TE.pick.filter.category=this.value;TE.pick.renderTemplates();};
+      TE.el('pRegion').onchange=function(){TE.pick.filter.region=this.value;TE.pick.renderTemplates();};
       TE.el('pColor').onchange=function(){TE.pick.filter.color=this.value;TE.pick.renderTemplates();};
       TE.el('pTemplates').onchange=function(event){
-        var n=event.target.getAttribute('data-template');
+        var box=event.target,n=box.getAttribute('data-template');
         if(n===null)return;
-        var a=TE.pick.templateList(), i=a.indexOf(n);
-        if(event.target.checked && i<0)a.push(n);
-        if(!event.target.checked && i>=0)a.splice(i,1);
-        TE.$$('[data-template]',this).forEach(function(box){if(box.getAttribute('data-template')===n)box.checked=event.target.checked;});
+        var a=TE.pick.templateList(),alternate=box.getAttribute('data-template-alternate');
+        if(box.checked){
+          if(!a.includes(n)&&!(alternate&&a.includes(alternate)))a.push(n);
+        }else{
+          for(var i=a.length-1;i>=0;i--){
+            if(a[i]===n||a[i]===alternate)a.splice(i,1);
+          }
+        }
+        TE.$$('[data-template]',this).forEach(function(other){
+          if(other.getAttribute('data-template')===n||other.getAttribute('data-template-alternate')===n)
+            other.checked=box.checked;
+        });
         dirty();
       };
       TE.$$('[data-add]').forEach(function(b){b.onclick=function(){var key=b.getAttribute('data-add'),id='add-'+key,arr=m[key],v=TE.el(id).value.trim();if(v&&!arr.includes(v)){arr.push(v);TE.pick.render();dirty();}};});TE.$$('[data-del]').forEach(function(b){b.onclick=function(){m[b.getAttribute('data-del')].splice(+b.getAttribute('data-index'),1);TE.pick.render();dirty();};});

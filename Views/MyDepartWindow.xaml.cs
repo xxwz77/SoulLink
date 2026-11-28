@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -152,17 +153,17 @@ namespace SoulLink.Views
             if (path.Length == 0)
             {
                 BgiPathText.Text = "（该账号还没配置 BGI 路径）";
-                BgiPathText.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x9B, 0x9B));
+                BgiPathText.Foreground = UiBrush.Get("RoseBrush");
             }
             else if (!File.Exists(path))
             {
                 BgiPathText.Text = path + "  ← 文件不存在";
-                BgiPathText.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x9B, 0x9B));
+                BgiPathText.Foreground = UiBrush.Get("RoseBrush");
             }
             else
             {
                 BgiPathText.Text = path;
-                BgiPathText.Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xE8, 0xC8));
+                BgiPathText.Foreground = UiBrush.Get("MintBrush");
             }
 
             // 一条龙候选：直接放字符串（原生 ComboBox 会正确显示选中项）
@@ -184,7 +185,7 @@ namespace SoulLink.Views
                 {
                     Text = "（该账号的 BGI 目录下没找到配置组）",
                     FontSize = 10.5,
-                    Foreground = (Brush)FindResource("TextMuted"),
+                    Foreground = UiBrush.Get("TextMuted"),
                     Margin = new Thickness(8, 8, 8, 8)
                 });
             }
@@ -324,15 +325,15 @@ namespace SoulLink.Views
                 row.Children.Add(new System.Windows.Shapes.Ellipse
                 {
                     Width = 6, Height = 6, VerticalAlignment = VerticalAlignment.Center,
-                    Fill = new SolidColorBrush(has
-                        ? Color.FromRgb(0x41, 0xF0, 0xC0)
-                        : Color.FromRgb(0x3A, 0x46, 0x66))
+                    Fill = has
+                        ? UiBrush.Get("MintBrush")
+                        : UiBrush.Get("TextSecondary")
                 });
 
                 var name = new TextBlock
                 {
                     Text = u, FontSize = 10.5, Width = 80,
-                    Foreground = (Brush)FindResource("TextSecondary"),
+                    Foreground = UiBrush.Get("TextSecondary"),
                     VerticalAlignment = VerticalAlignment.Center
                 };
                 Grid.SetColumn(name, 1);
@@ -342,8 +343,8 @@ namespace SoulLink.Views
                 {
                     Text = text, FontSize = 10.5,
                     Foreground = has
-                        ? (Brush)FindResource("TextPrimary")
-                        : (Brush)FindResource("TextMuted"),
+                        ? UiBrush.Get("TextPrimary")
+                        : UiBrush.Get("TextMuted"),
                     VerticalAlignment = VerticalAlignment.Center,
                     TextTrimming = TextTrimming.CharacterEllipsis
                 };

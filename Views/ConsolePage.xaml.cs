@@ -277,7 +277,7 @@ namespace SoulLink.Views
                 Text = "正在连接…", FontSize = 12.5, TextWrapping = TextWrapping.Wrap,
                 LineHeight = 20, TextAlignment = TextAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Foreground = (Brush)FindResource("TextSecondary")
+                Foreground = UiBrush.Get("TextSecondary")
             };
             _busyReconnectButton = new Button
             {
@@ -295,11 +295,11 @@ namespace SoulLink.Views
             panel.Children.Add(new ProgressBar
             {
                 IsIndeterminate = true, Width = 180, Height = 3, Margin = new Thickness(0,10,0,0),
-                Foreground = (Brush)FindResource("CyanBrush"), Background = new SolidColorBrush(Color.FromArgb(0x22,0xFF,0xFF,0xFF)),
+                Foreground = UiBrush.Get("CyanBrush"), Background = UiBrush.Get("TextPrimary", 0x22),
                 BorderThickness = new Thickness(0)
             });
             panel.Children.Add(_busyReconnectButton);
-            _busyOverlayContent = new Border { Background = new SolidColorBrush(Color.FromArgb(0xF2,0x05,0x09,0x13)), Child = panel };
+            _busyOverlayContent = new Border { Background = UiBrush.Get("DialogSurface", 0xF2), Child = panel };
             _busyOverlayWindow = new OwnedOverlayWindow(owner, OverlayAnchor, _busyOverlayContent, "连接动画", allowInactiveOwner: true);
         }
 
@@ -704,19 +704,19 @@ namespace SoulLink.Views
                 if (InputLabel != null)
                     InputLabel.Text = taken ? "已接管" : (locked ? "点击画面接管" : "未接管");
                 if (InputDot != null)
-                    InputDot.Fill = new SolidColorBrush(taken
-                        ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 亮青 = 已接管
+                    InputDot.Fill = taken
+                        ? UiBrush.Get("MintBrush")   // 亮青 = 已接管
                         : (locked
-                            ? Color.FromRgb(0xF0, 0xC0, 0x41) // 琥珀 = 等待点击接管
-                            : Color.FromRgb(0x6B, 0x7C, 0x9C))); // 灰 = 未接管
+                            ? UiBrush.Get("AmberBrush") // 琥珀 = 等待点击接管
+                            : UiBrush.Get("TextSecondary")); // 灰 = 未接管
                 if (InputIndicator != null)
                 {
-                    InputIndicator.Background = new SolidColorBrush(taken
-                        ? Color.FromArgb(0x2E, 0x41, 0xF0, 0xC0)
-                        : Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
-                    InputIndicator.BorderBrush = new SolidColorBrush(taken
-                        ? Color.FromArgb(0x77, 0x41, 0xF0, 0xC0)
-                        : Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
+                    InputIndicator.Background = taken
+                        ? UiBrush.Get("MintBrush", 0x2E)
+                        : UiBrush.Get("TextPrimary", 0x14);
+                    InputIndicator.BorderBrush = taken
+                        ? UiBrush.Get("MintBrush", 0x77)
+                        : UiBrush.Get("TextPrimary", 0x28);
                 }
             }
             catch { }
@@ -1626,12 +1626,12 @@ namespace SoulLink.Views
                 Padding = new Thickness(11, 6, 11, 6),
                 Margin = new Thickness(0, 0, 6, 0),
                 Cursor = Cursors.Hand,
-                Background = new SolidColorBrush(on
-                    ? Color.FromArgb(0x2E, 0x7C, 0x5C, 0xFF)
-                    : Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(on
-                    ? Color.FromArgb(0x77, 0x7C, 0x5C, 0xFF)
-                    : Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF)),
+                Background = on
+                    ? UiBrush.Get("DesktopAccent", 0x2E)
+                    : UiBrush.Get("TextPrimary", 0x12),
+                BorderBrush = on
+                    ? UiBrush.Get("DesktopAccent", 0x77)
+                    : UiBrush.Get("TextPrimary", 0x1C),
                 BorderThickness = new Thickness(1)
             };
 
@@ -1644,9 +1644,9 @@ namespace SoulLink.Views
                     FontSize = 7,
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(0, 0, 6, 0),
-                    Foreground = new SolidColorBrush(row.Console?.IsConnected == true
-                        ? Color.FromRgb(0x41, 0xF0, 0xC0)
-                        : Color.FromRgb(0x6B, 0x7C, 0x9C))
+                    Foreground = row.Console?.IsConnected == true
+                        ? UiBrush.Get("MintBrush")
+                        : UiBrush.Get("TextSecondary")
                 };
                 sp.Children.Add(dot);
                 row.ChipDot = dot;
@@ -1657,7 +1657,7 @@ namespace SoulLink.Views
                 Text = text,
                 FontSize = 11.5,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = on ? (Brush)FindResource("TextPrimary") : (Brush)FindResource("TextSecondary")
+                Foreground = on ? UiBrush.Get("TextPrimary") : UiBrush.Get("TextSecondary")
             };
             sp.Children.Add(label);
             border.Child = sp;
@@ -2021,12 +2021,12 @@ namespace SoulLink.Views
                 Padding = new Thickness(8, 7, 8, 7),
                 Margin = new Thickness(0, 0, 0, 5),
                 Cursor = Cursors.Hand,
-                Background = new SolidColorBrush(on
-                    ? Color.FromArgb(0x2E, 0x7C, 0x5C, 0xFF)
-                    : Color.FromArgb(0x0E, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(on
-                    ? Color.FromArgb(0x77, 0x7C, 0x5C, 0xFF)
-                    : Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)),
+                Background = on
+                    ? UiBrush.Get("DesktopAccent", 0x2E)
+                    : UiBrush.Get("TextPrimary", 0x0E),
+                BorderBrush = on
+                    ? UiBrush.Get("DesktopAccent", 0x77)
+                    : UiBrush.Get("TextPrimary", 0x18),
                 BorderThickness = new Thickness(1),
                 // 去掉焦点虚线框（用户反馈）
                 FocusVisualStyle = null,
@@ -2071,7 +2071,7 @@ namespace SoulLink.Views
                 FontSize = 11.5,
                 FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = (Brush)FindResource(on ? "TextPrimary" : "TextSecondary")
+                Foreground = UiBrush.Get(on ? "TextPrimary" : "TextSecondary")
             });
 
             string hostText = string.IsNullOrWhiteSpace(row.Account.RdpHost)
@@ -2083,7 +2083,7 @@ namespace SoulLink.Views
                 FontSize = 9,
                 Margin = new Thickness(0, 2, 0, 0),
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = (Brush)FindResource("TextMuted")
+                Foreground = UiBrush.Get("TextMuted")
             });
             Grid.SetColumn(textCol, 1);
             grid.Children.Add(textCol);
@@ -2096,9 +2096,9 @@ namespace SoulLink.Views
                 CornerRadius = new CornerRadius(4),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(6, 0, 2, 0),
-                Background = new SolidColorBrush(row.Console?.IsConnected == true
-                    ? Color.FromRgb(0x41, 0xF0, 0xC0)
-                    : Color.FromArgb(0x55, 0x8B, 0x9C, 0xC8)),
+                Background = row.Console?.IsConnected == true
+                    ? UiBrush.Get("MintBrush")
+                    : UiBrush.Get("TextSecondary", 0x55),
                 ToolTip = row.Console?.IsConnected == true ? "画面已连接" : "未连接"
             };
             Grid.SetColumn(dot, 2);
@@ -2118,7 +2118,7 @@ namespace SoulLink.Views
             {
                 Text = "⋮⋮",
                 FontSize = 13,
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -2152,11 +2152,11 @@ namespace SoulLink.Views
                 if (ev.Data.GetDataPresent("SoulLinkAccount"))
                 {
                     ev.Effects = DragDropEffects.Move;
-                    border.BorderBrush = (Brush)FindResource("CyanBrush");
+                    border.BorderBrush = UiBrush.Get("CyanBrush");
                 }
                 ev.Handled = true;
             };
-            border.DragLeave += (_, __) => border.BorderBrush = new SolidColorBrush(on ? Color.FromArgb(0x77, 0x7C, 0x5C, 0xFF) : Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
+            border.DragLeave += (_, __) => border.BorderBrush = on ? UiBrush.Get("DesktopAccent", 0x77) : UiBrush.Get("TextPrimary", 0x18);
             border.Drop += (_, ev) =>
             {
                 if (!ev.Data.GetDataPresent("SoulLinkAccount")) return;
@@ -2221,12 +2221,12 @@ namespace SoulLink.Views
                 Margin = new Thickness(0, 0, 0, 8),
                 Cursor = Cursors.Hand,
                 FocusVisualStyle = (Style)FindResource("NoFocusVisual"),
-                Background = new SolidColorBrush(on
-                    ? Color.FromArgb(0x2E, 0x7C, 0x5C, 0xFF)
-                    : Color.FromArgb(0x0E, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(on
-                    ? Color.FromArgb(0x77, 0x7C, 0x5C, 0xFF)
-                    : Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)),
+                Background = on
+                    ? UiBrush.Get("DesktopAccent", 0x2E)
+                    : UiBrush.Get("TextPrimary", 0x0E),
+                BorderBrush = on
+                    ? UiBrush.Get("DesktopAccent", 0x77)
+                    : UiBrush.Get("TextPrimary", 0x18),
                 BorderThickness = new Thickness(1)
             };
 
@@ -2238,7 +2238,7 @@ namespace SoulLink.Views
                 FontSize = 12,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 9, 0),
-                Foreground = (Brush)FindResource(on ? "TextPrimary" : "TextSecondary")
+                Foreground = UiBrush.Get(on ? "TextPrimary" : "TextSecondary")
             });
             sp.Children.Add(new TextBlock
             {
@@ -2246,7 +2246,7 @@ namespace SoulLink.Views
                 FontSize = 11.5,
                 VerticalAlignment = VerticalAlignment.Center,
                 FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal,
-                Foreground = (Brush)FindResource(on ? "TextPrimary" : "TextSecondary")
+                Foreground = UiBrush.Get(on ? "TextPrimary" : "TextSecondary")
             });
 
             border.Child = sp;
@@ -2829,22 +2829,22 @@ namespace SoulLink.Views
             if (mode == ConsoleInputMode.FreeLook)
             {
                 if (ModeLabel != null) ModeLabel.Text = "自由视角中";
-                if (ModeDot != null) ModeDot.Fill = new SolidColorBrush(Color.FromRgb(0x7C, 0x5C, 0xFF));
+                if (ModeDot != null) ModeDot.Fill = UiBrush.Get("DesktopAccent");
                 if (ModeIndicator != null)
                 {
-                    ModeIndicator.Background = new SolidColorBrush(Color.FromArgb(0x2E, 0x7C, 0x5C, 0xFF));
-                    ModeIndicator.BorderBrush = new SolidColorBrush(Color.FromArgb(0x77, 0x7C, 0x5C, 0xFF));
+                    ModeIndicator.Background = UiBrush.Get("DesktopAccent", 0x2E);
+                    ModeIndicator.BorderBrush = UiBrush.Get("DesktopAccent", 0x77);
                 }
                 UpdateInputIndicator(true);
             }
             else
             {
                 if (ModeLabel != null) ModeLabel.Text = "指针模式";
-                if (ModeDot != null) ModeDot.Fill = new SolidColorBrush(Color.FromRgb(0x6B, 0x7C, 0x9C));
+                if (ModeDot != null) ModeDot.Fill = UiBrush.Get("TextSecondary");
                 if (ModeIndicator != null)
                 {
-                    ModeIndicator.Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
-                    ModeIndicator.BorderBrush = new SolidColorBrush(Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
+                    ModeIndicator.Background = UiBrush.Get("TextPrimary", 0x14);
+                    ModeIndicator.BorderBrush = UiBrush.Get("TextPrimary", 0x28);
                 }
                 UpdateInputIndicator(false);
             }

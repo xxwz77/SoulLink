@@ -23,8 +23,8 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid MouseLeftButtonDown="DragArea">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <Border Width="42" Height="42" CornerRadius="12" Background="#224FE3FF" VerticalAlignment="Top">
-                            <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="21" Foreground="{StaticResource CyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Border Width="42" Height="42" CornerRadius="12" Background="{DynamicResource SubtleSurface}" VerticalAlignment="Top">
+                            <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="21" Foreground="{DynamicResource CyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <StackPanel Grid.Column="1" Margin="14,0,12,0">
                             <TextBlock Text="管理员代理服务" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
@@ -40,11 +40,11 @@
                         <Grid>
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <StackPanel Orientation="Horizontal">
-                                <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="{StaticResource AmberBrush}" VerticalAlignment="Center" />
+                                <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="{DynamicResource AmberBrush}" VerticalAlignment="Center" />
                                 <TextBlock x:Name="StatusTitle" Text="正在检测服务…" Margin="10,0,0,0" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
                             </StackPanel>
                             <TextBlock Grid.Row="1" x:Name="StatusText" Text="请稍候" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}" FontSize="11.5" LineHeight="20" Margin="0,12,0,14" />
-                            <Border Grid.Row="2" Background="#24050612" CornerRadius="10" Padding="12,9">
+                            <Border Grid.Row="2" Background="{DynamicResource FieldBackground}" CornerRadius="10" Padding="12,9">
                                 <Grid>
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                     <TextBlock Text="固定安装目录" FontSize="10" Foreground="{DynamicResource TextMuted}" />

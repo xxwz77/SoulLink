@@ -1,4 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
   <ItemGroup><Compile Include="../taskedit/BgiJson.cs" Link="BgiJson.cs" /><Compile Include="../taskedit/BgiPickList.cs" Link="BgiPickList.cs" /><Compile Include="../taskedit/BgiTemplatePick.cs" Link="BgiTemplatePick.cs" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="../taskedit/BgiPickTemplateCategories.cs" Link="BgiPickTemplateCategories.cs" />
+    <EmbeddedResource Include="../taskedit/PickTemplateCategories.json" LogicalName="SoulLink.TaskEdit.PickTemplateCategories.json" />
+  </ItemGroup>
 </Project>

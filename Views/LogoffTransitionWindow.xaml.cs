@@ -46,8 +46,11 @@ namespace SoulLink.Views
             var handle = new WindowInteropHelper(this).Handle;
             if (handle != IntPtr.Zero) Services.WindowCorners.ApplyRounded(handle, true);
             BringNavigationToFront();
-            _spinner = (Storyboard)Resources["SpinnerStoryboard"];
-            _spinner?.Begin(this, true);
+            if (!Services.ThemeManager.AnimationsDisabled)
+            {
+                _spinner = (Storyboard)Resources["SpinnerStoryboard"];
+                _spinner.Begin(this, true);
+            }
             if (Owner != null)
             {
                 Owner.LocationChanged += FollowOwner;
@@ -122,6 +125,12 @@ namespace SoulLink.Views
 
         private Task FadeToAsync(double value, int milliseconds)
         {
+            if (Services.ThemeManager.AnimationsDisabled)
+            {
+                BeginAnimation(OpacityProperty, null);
+                Opacity = value;
+                return Task.CompletedTask;
+            }
             var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var animation = new DoubleAnimation(value, TimeSpan.FromMilliseconds(milliseconds))
             {

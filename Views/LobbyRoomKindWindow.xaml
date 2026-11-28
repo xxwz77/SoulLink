@@ -7,8 +7,7 @@
         WindowStyle="None" AllowsTransparency="False" Background="{DynamicResource DialogSurface}"
         ShowInTaskbar="False" FontFamily="{StaticResource UiFont}">
 
-    <Border CornerRadius="16" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="10">
-                <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+    <Border CornerRadius="16" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="10" Background="{DynamicResource DialogSurface}">
 
         <Grid ClipToBounds="True">
             <ctl:AuroraBackdrop Opacity="0.48" />
@@ -21,12 +20,12 @@
 
             <!-- 私人房间 -->
             <Border x:Name="CardPrivateFour" CornerRadius="12" Padding="16,14" Margin="0,0,0,10"
-                    Background="#1AFFB14D" BorderBrush="#55FFB14D" BorderThickness="1"
+                    Background="{DynamicResource SubtleSurface}" BorderBrush="{DynamicResource AmberBrush}" BorderThickness="1"
                     Cursor="Hand" MouseLeftButtonUp="CardPrivateFour_Click">
                 <StackPanel>
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="私人房间" FontSize="14" FontWeight="Bold"
-                                   Foreground="#FFFFB14D" />
+                                   Foreground="{DynamicResource AmberBrush}" />
                         <TextBlock Text="  自定房间码 · 满 2-4 人发车" FontSize="10.5"
                                    Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" />
                     </StackPanel>
@@ -38,12 +37,12 @@
 
             <!-- 私人·大小号 -->
             <Border x:Name="CardPrivatePair" CornerRadius="12" Padding="16,14"
-                    Background="#1A41F0C0" BorderBrush="#5541F0C0" BorderThickness="1"
+                    Background="{DynamicResource SubtleSurface}" BorderBrush="{DynamicResource MintBrush}" BorderThickness="1"
                     Cursor="Hand" MouseLeftButtonUp="CardPrivatePair_Click">
                 <StackPanel>
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="私人·大小号" FontSize="14" FontWeight="Bold"
-                                   Foreground="#FF41F0C0" />
+                                   Foreground="{DynamicResource MintBrush}" />
                         <TextBlock Text="  一对房间 · 大号房 + 小号房" FontSize="10.5"
                                    Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" />
                     </StackPanel>

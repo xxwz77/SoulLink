@@ -76,13 +76,13 @@ namespace SoulLink.Controls
                     _hintBubble = new Border
                     {
                         CornerRadius = new CornerRadius(8), Padding = new Thickness(10, 7, 10, 7),
-                        Background = new SolidColorBrush(Color.FromArgb(0xE6, 0x10, 0x18, 0x30)),
-                        BorderBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xE3, 0xFF)), BorderThickness = new Thickness(1),
+                        Background = UiBrush.Get("DialogSurface", 0xE6),
+                        BorderBrush = UiBrush.Get("DesktopAccent"), BorderThickness = new Thickness(1),
                         IsHitTestVisible = false
                     };
                     _hintBubble.Child = new TextBlock
                     { FontSize = 11, TextWrapping = TextWrapping.Wrap, MaxWidth = 420,
-                      Foreground = new SolidColorBrush(Color.FromRgb(0xBF, 0xEF, 0xFF)) };
+                      Foreground = UiBrush.Get("DesktopAccent") };
                     Panel.SetZIndex(_hintBubble, 50);
                     Children.Add(_hintBubble);
                 }
@@ -228,33 +228,35 @@ namespace SoulLink.Controls
         /// 各类别的强调色。
         /// 触发器=紫、条件=青、执行器=绿、结束=琥珀（独立颜色，用户要求）。
         /// </summary>
-        private static Color AccentOf(FlowNodeKind kind) => kind switch
+        internal static string AccentResource(FlowNodeKind kind) => kind switch
         {
-            FlowNodeKind.Trigger => Color.FromRgb(0xA9, 0x7B, 0xFF),
-            FlowNodeKind.Condition => Color.FromRgb(0x4F, 0xE3, 0xFF),
-            FlowNodeKind.Terminate => Color.FromRgb(0xFF, 0xB1, 0x4D),   // 琥珀
-            _ => Color.FromRgb(0x41, 0xF0, 0xC0)
+            FlowNodeKind.Trigger => "MagentaBrush",
+            FlowNodeKind.Condition => "DesktopAccent",
+            FlowNodeKind.Terminate => "AmberBrush",   // 琥珀
+            _ => "MintBrush"
         };
 
         private void DrawNode(FlowNode n)
         {
-            Color accent = AccentOf(n.Kind);
+            string accent = AccentResource(n.Kind);
 
             // 亮 = 本触点当前成立；是否导通还由上方导线单独表达。
             bool lit = n.IsContact && TryLive(n.Id, out var live) && live.Value;
-            if (lit) accent = Color.FromRgb(0x41, 0xF0, 0xC0);
+            if (lit) accent = "MintBrush";
 
+            var glow = new System.Windows.Media.Effects.DropShadowEffect
+            { BlurRadius = 14, ShadowDepth = 0, Opacity = 0.28 };
+            UiBrush.BindColor(glow, System.Windows.Media.Effects.DropShadowEffect.ColorProperty, accent);
             var border = new Border
             {
                 Width = NodeW, Height = NodeH,
                 CornerRadius = new CornerRadius(12),
                 BorderThickness = new Thickness(1.5),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0xAA, accent.R, accent.G, accent.B)),
-                Background = new SolidColorBrush(Color.FromArgb(0xF2, 0x10, 0x18, 0x2E)),
+                BorderBrush = UiBrush.Get(accent, 0xAA),
+                Background = UiBrush.Get("DialogSurface", 0xF2),
                 Cursor = PaintMode ? Cursors.Cross : Cursors.Hand,
                 Tag = n,
-                Effect = new System.Windows.Media.Effects.DropShadowEffect
-                { Color = accent, BlurRadius = 14, ShadowDepth = 0, Opacity = 0.28 }
+                Effect = glow
             };
 
             var grid = new Grid();
@@ -265,7 +267,7 @@ namespace SoulLink.Controls
             grid.Children.Add(new Border
             {
                 CornerRadius = new CornerRadius(11, 0, 0, 11),
-                Background = new SolidColorBrush(Color.FromArgb(0xCC, accent.R, accent.G, accent.B))
+                Background = UiBrush.Get(accent, 0xCC)
             });
 
             var icon = new TextBlock
@@ -273,7 +275,7 @@ namespace SoulLink.Controls
                 Text = FlowNodeCatalog.GlyphOf(n.Type),
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
                 FontSize = 15,
-                Foreground = new SolidColorBrush(accent),
+                Foreground = UiBrush.Get(accent),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(11, 0, 0, 0)
             };
@@ -286,7 +288,7 @@ namespace SoulLink.Controls
             {
                 Text = n.Title,
                 FontSize = 12.5, FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xF2, 0xF5, 0xFF)),
+                Foreground = UiBrush.Get("TextPrimary"),
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
             string summary = SummaryOf(n);
@@ -295,9 +297,9 @@ namespace SoulLink.Controls
             var statusView = new TextBlock
             {
                 Text = summary, FontSize = 10,
-                Foreground = new SolidColorBrush(lit
-                    ? Color.FromRgb(0x6E, 0xF0, 0xC8)
-                    : Color.FromRgb(0x7A, 0x8C, 0xB4)),
+                Foreground = lit
+                    ? UiBrush.Get("MintBrush")
+                    : UiBrush.Get("TextSecondary"),
                 // ★ 允许两行：参数摘要常常较长（配置组名、一条龙名），
                 //   单行省略号会让人看不出到底选了哪个。
                 TextWrapping = TextWrapping.Wrap,
@@ -344,14 +346,14 @@ namespace SoulLink.Controls
             border.MouseRightButtonUp += (_, __) => NodeDeleteRequested?.Invoke(n);
         }
 
-        private static Ellipse BuildPort(Color accent, bool filled = true)
+        private static Ellipse BuildPort(string accent, bool filled = true)
         {
             return new Ellipse
             {
                 Width = 24, Height = 24,
-                Fill = filled ? new SolidColorBrush(accent)
-                              : new SolidColorBrush(Color.FromArgb(0x33, 0x10, 0x18, 0x2E)),
-                Stroke = new SolidColorBrush(Color.FromArgb(filled ? (byte)0xFF : (byte)0x99, accent.R, accent.G, accent.B)),
+                Fill = filled ? UiBrush.Get(accent)
+                              : UiBrush.Get("DialogSurface", 0x33),
+                Stroke = UiBrush.Get(accent, filled ? (byte)0xFF : (byte)0x99),
                 StrokeThickness = 2,
                 Cursor = filled ? Cursors.Cross : Cursors.Arrow
             };
@@ -363,11 +365,16 @@ namespace SoulLink.Controls
             {
                 case FlowNodeType.TrigSchedule:
                 {
-                    // 新格式是 time="HH:mm"，老流程是 hour/minute/second
-                    string tt = n.Get("time").Trim();
-                    if (tt.Length > 0) return tt;
-                    return n.GetInt("hour", 4).ToString("00") + ":"
-                         + n.GetInt("minute", 0).ToString("00");
+                    string period = PlcSchedule.Recurrence(n) switch
+                    {
+                        "weekly" => "每周",
+                        "monthly" => $"每月 {n.Get("dayOfMonth", "1")} 日",
+                        "yearly" => $"每年 {n.Get("month", "1")} 月 {n.Get("dayOfMonth", "1")} 日",
+                        "intervalDays" => $"每隔 {n.Get("intervalDays", "1")} 天",
+                        "once" => "仅一次",
+                        _ => "每天"
+                    };
+                    return period + " " + PlcSchedule.ClockText(n).Trim();
                 }
                 case FlowNodeType.TrigInterval:
                 {
@@ -427,7 +434,7 @@ namespace SoulLink.Controls
             var path = BuildBezier(x1, y1, x2, y2);
 
             bool powered = TryLive(from.Id, out var power) && power.Output;
-            path.Stroke = new SolidColorBrush(powered ? Color.FromArgb(0xEE, 0x41, 0xF0, 0xC0) : Color.FromArgb(0x88, 0x65, 0x75, 0x91));
+            path.Stroke = powered ? UiBrush.Get("MintBrush", 0xEE) : UiBrush.Get("TextSecondary", 0x88);
 
             path.Cursor = Cursors.Hand;
             path.ToolTip = "双击或右键删除这条连线";
@@ -495,7 +502,7 @@ namespace SoulLink.Controls
             return new Path
             {
                 Data = geo,
-                Stroke = new SolidColorBrush(Color.FromArgb(0x99, 0x4F, 0xE3, 0xFF)),
+                Stroke = UiBrush.Get("DesktopAccent", 0x99),
                 StrokeThickness = 2,
                 StrokeStartLineCap = PenLineCap.Round,
                 StrokeEndLineCap = PenLineCap.Round
@@ -514,7 +521,7 @@ namespace SoulLink.Controls
             return new Polygon
             {
                 Points = new PointCollection { p1, p2, p3 },
-                Fill = new SolidColorBrush(Color.FromArgb(0xCC, 0x4F, 0xE3, 0xFF)),
+                Fill = UiBrush.Get("DesktopAccent", 0xCC),
                 IsHitTestVisible = false
             };
         }
@@ -745,7 +752,7 @@ namespace SoulLink.Controls
             var preview = new Line
             {
                 X1 = start.X, Y1 = start.Y, X2 = end.X, Y2 = end.Y,
-                Stroke = new SolidColorBrush(Color.FromArgb(0xCC, 0x4F, 0xE3, 0xFF)),
+                Stroke = UiBrush.Get("DesktopAccent", 0xCC),
                 StrokeThickness = 2.5,
                 StrokeDashArray = new DoubleCollection { 4, 3 },
                 IsHitTestVisible = false
@@ -792,14 +799,14 @@ namespace SoulLink.Controls
                 bool unknown = node.IsContact && !state.Available;
                 string text = node.IsContact ? (unknown ? "⚠ 数据不可用 · " : lit ? "● 满足 · " : "○ 不满足 · ") + SummaryOf(node) : SummaryOf(node);
                 kv.Value.Status.Text = text;
-                kv.Value.Status.Foreground = new SolidColorBrush(unknown ? Color.FromRgb(0xFF,0xD9,0x8A) : lit ? Color.FromRgb(0x6E,0xF0,0xC8) : Color.FromRgb(0x7A,0x8C,0xB4));
-                kv.Value.Box.BorderBrush = new SolidColorBrush(unknown ? Color.FromRgb(0xFF,0xB1,0x4D) : lit ? Color.FromRgb(0x41,0xF0,0xC0) : AccentOf(node.Kind));
-                if (kv.Value.Out != null) kv.Value.Out.Fill = new SolidColorBrush(state?.Output == true ? Color.FromRgb(0x41,0xF0,0xC0) : Color.FromRgb(0x65,0x75,0x91));
+                kv.Value.Status.Foreground = unknown ? UiBrush.Get("AmberBrush") : lit ? UiBrush.Get("MintBrush") : UiBrush.Get("TextSecondary");
+                kv.Value.Box.BorderBrush = UiBrush.Get(unknown ? "AmberBrush" : lit ? "MintBrush" : AccentResource(node.Kind));
+                if (kv.Value.Out != null) kv.Value.Out.Fill = state?.Output == true ? UiBrush.Get("MintBrush") : UiBrush.Get("TextSecondary");
             }
             foreach (var item in _edgeViews)
             {
                 bool power = TryLive(item.Edge.From, out var st) && st.Output;
-                item.Path.Stroke = new SolidColorBrush(power ? Color.FromArgb(0xEE,0x41,0xF0,0xC0) : Color.FromArgb(0x88,0x65,0x75,0x91));
+                item.Path.Stroke = power ? UiBrush.Get("MintBrush", 0xEE) : UiBrush.Get("TextSecondary", 0x88);
                 item.Arrow.Fill = item.Path.Stroke; item.Dot.Fill = item.Path.Stroke;
             }
         }
@@ -912,13 +919,11 @@ namespace SoulLink.Controls
                 var node = _flow?.FindNode(kv.Key);
                 if (node == null) continue;
 
-                Color accent = AccentOf(node.Kind);
+                string accent = AccentResource(node.Kind);
                 if (_flow != null && node.IsContact && TryLive(node.Id, out var state) && state.Value)
-                    accent = Color.FromRgb(0x41, 0xF0, 0xC0);
+                    accent = "MintBrush";
 
-                kv.Value.BorderBrush = new SolidColorBrush(isTarget
-                    ? Color.FromRgb(0x4F, 0xE3, 0xFF)
-                    : Color.FromArgb(0xAA, accent.R, accent.G, accent.B));
+                kv.Value.BorderBrush = isTarget ? UiBrush.Get("DesktopAccent") : UiBrush.Get(accent, 0xAA);
                 kv.Value.BorderThickness = new Thickness(isTarget ? 2.5 : 1.5);
             }
         }
@@ -928,7 +933,7 @@ namespace SoulLink.Controls
             if (!PaintMode || _paintFrom == null) return;
             if (_nodeViews.TryGetValue(_paintFrom.Id, out var box))
             {
-                box.BorderBrush = new SolidColorBrush(Color.FromRgb(0x6E, 0xF0, 0xC8));
+                box.BorderBrush = UiBrush.Get("MintBrush");
                 box.BorderThickness = new Thickness(2.5);
                 box.Opacity = 1;
             }

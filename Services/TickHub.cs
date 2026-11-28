@@ -25,7 +25,7 @@ namespace SoulLink.Services
     ///   · 节拍本身在 Dispatcher 线程上（与原来 DispatcherTimer 一致），
     ///     订阅者若要做重活，自己切到后台线程（原有代码就是这么做的）。
     /// </summary>
-    public static class TickHub
+    public static partial class TickHub
     {
         private sealed class Sub
         {

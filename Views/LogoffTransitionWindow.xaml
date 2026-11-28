@@ -12,14 +12,14 @@
                              Duration="0:0:1.1" />
         </Storyboard>
     </Window.Resources>
-    <Border Background="#FF050811">
+    <Border Background="{DynamicResource DialogSurface}">
         <Grid>
             <Border Width="340" Height="220" VerticalAlignment="Center" HorizontalAlignment="Center"
-                    CornerRadius="22" Background="#0D8B6BFF" BorderBrush="#20FFFFFF" BorderThickness="1" />
+                    CornerRadius="22" Background="{DynamicResource SubtleSurface}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" />
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                 <Grid Width="54" Height="54" HorizontalAlignment="Center">
-                    <Ellipse Stroke="#227C8CFF" StrokeThickness="2" />
-                    <Ellipse x:Name="SpinnerArc" Stroke="{StaticResource CyanBrush}" StrokeThickness="2"
+                    <Ellipse Stroke="{DynamicResource StrokeSoft}" StrokeThickness="2" />
+                    <Ellipse x:Name="SpinnerArc" Stroke="{DynamicResource CyanBrush}" StrokeThickness="2"
                              StrokeDashArray="16 82" RenderTransformOrigin="0.5,0.5">
                         <Ellipse.RenderTransform>
                             <RotateTransform x:Name="SpinnerRotation" />
@@ -31,7 +31,7 @@
                 <TextBlock x:Name="DetailText" Text="正在安全关闭会话与画面" FontSize="11.5"
                            Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center" Margin="0,9,0,0" />
                 <ProgressBar IsIndeterminate="True" Width="150" Height="3" Margin="0,20,0,0"
-                             Foreground="{StaticResource CyanBrush}" Background="#18FFFFFF" BorderThickness="0" />
+                             Foreground="{DynamicResource CyanBrush}" Background="{DynamicResource SubtleSurface}" BorderThickness="0" />
             </StackPanel>
         </Grid>
     </Border>

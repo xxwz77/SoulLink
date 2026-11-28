@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -15,6 +16,7 @@ namespace SoulLink.Views
         private readonly AppConfig _cfg;
         private readonly ActionItem _result;
         private readonly List<Account> _accounts;
+        private readonly string? _scopedAccountId;
         private bool _loading;
 
         /// <summary>启动方式：0=无参数 1=启动 2=一条龙 3=配置组 4=自定义。</summary>
@@ -41,11 +43,16 @@ namespace SoulLink.Views
 
         public ActionItem Result => _result;
 
-        public ActionEditorWindow(ActionItem? existing, AppConfig cfg)
+        public ActionEditorWindow(ActionItem? existing, AppConfig cfg) : this(existing, cfg, null)
+        {
+        }
+
+        internal ActionEditorWindow(ActionItem? existing, AppConfig cfg, Account? scopedAccount)
         {
             InitializeComponent();
             _cfg = cfg;
             _accounts = AccountScope.Accounts(cfg);
+            _scopedAccountId = scopedAccount?.Id;
 
             // 用户名由用户直接输入，执行时再按用户名匹配会话。
             // 不做保存时校验，避免"想给还没登录的账号预先配动作"时被挡住。
@@ -65,9 +72,7 @@ namespace SoulLink.Views
                     //   一保存就把原有设置冲掉（定时设置"总是不生效"的根因之一）。
                     StopBgiFirst = existing.StopBgiFirst,
                     CloseGenshin = existing.CloseGenshin,
-                    StopWaitSeconds = existing.StopWaitSeconds,
-                    // Schedule 用深拷贝：避免编辑中途取消时把运行进度改坏
-                    Schedule = CloneSchedule(existing.Schedule)
+                    StopWaitSeconds = existing.StopWaitSeconds
                 };
 
             HeaderText.Text = existing == null ? "新建快捷动作" : "编辑快捷动作";
@@ -77,7 +82,14 @@ namespace SoulLink.Views
             // 下拉内容由 UserDrop_Click 动态构建（已保存账号）
 
             _loading = true;
-            if (!string.IsNullOrEmpty(_result.AccountId))
+            if (scopedAccount != null)
+            {
+                _result.AccountId = scopedAccount.Id;
+                UserBox.Text = scopedAccount.UserName;
+                UserBox.IsReadOnly = true;
+                UserDropButton.Visibility = Visibility.Collapsed;
+            }
+            else if (!string.IsNullOrEmpty(_result.AccountId))
             {
                 var acc = _accounts.FirstOrDefault(a => a.Id == _result.AccountId);
                 if (acc != null) UserBox.Text = acc.UserName;
@@ -89,11 +101,7 @@ namespace SoulLink.Views
             if (CloseGenshinCheck != null) CloseGenshinCheck.IsChecked = _result.CloseGenshin;
             if (StopWaitBox != null) StopWaitBox.Text = _result.StopWaitSeconds.ToString();
 
-            // ★ 必须先置 _ready：ApplyScheduleToUi 内部依赖 _ready 才会执行
-            //   ScheduleKind_Checked / ScheduleEnabled_Changed 的完整逻辑，
-            //   否则界面会停在"定时未启用 + 仅运行时"的错误状态。
             _ready = true;
-            ApplyScheduleToUi(_result.Schedule);
             // 会话 ID 不再手工维护：执行时统一按用户名查找当前会话
             KindOpen.IsChecked = _result.Kind == ActionKind.Launch;
             KindClose.IsChecked = _result.Kind == ActionKind.Close;
@@ -126,6 +134,8 @@ namespace SoulLink.Views
 
         private Account? MatchAccount(string user)
         {
+            if (_scopedAccountId is { } id)
+                return _cfg.Accounts.FirstOrDefault(account => account != null && account.Id == id && AccountScope.IsAllowed(account, _cfg));
             string bare = SessionService.BareName((user ?? "").Trim());
             if (bare.Length == 0) return null;
             return _accounts.FirstOrDefault(a =>
@@ -156,7 +166,7 @@ namespace SoulLink.Views
                     Text = "还没有保存过账号，直接输入用户名即可",
                     FontSize = 11.5,
                     Margin = new Thickness(10, 8, 10, 8),
-                    Foreground = (System.Windows.Media.Brush)FindResource("TextMuted")
+                    Foreground = UiBrush.Get("TextMuted")
                 });
             }
             else
@@ -183,7 +193,7 @@ namespace SoulLink.Views
                 Text = acc.UserName,
                 FontSize = 12.5,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary")
+                Foreground = UiBrush.Get("TextPrimary")
             });
 
             if (!string.IsNullOrWhiteSpace(acc.DisplayName))
@@ -193,13 +203,11 @@ namespace SoulLink.Views
                     Text = "　" + acc.DisplayName,
                     FontSize = 11,
                     VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary")
+                    Foreground = UiBrush.Get("TextSecondary")
                 });
             }
 
-            var hover = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromArgb(0x1F, 0x4F, 0xE3, 0xFF));
-            hover.Freeze();
+            var hover = UiBrush.Get("DesktopAccent", 0x1F);
 
             var row = new Border
             {
@@ -226,314 +234,6 @@ namespace SoulLink.Views
 
         /// <summary>上一次自动生成的名称（用于判断用户是否手动改过）。</summary>
         private string _lastAutoName = "";
-
-        /// <summary>深拷贝定时计划（编辑时用，避免动到原对象的运行进度）。</summary>
-        private static ScheduleSpec? CloneSchedule(ScheduleSpec? s)
-        {
-            if (s == null) return null;
-            return new ScheduleSpec
-            {
-                Enabled = s.Enabled,
-                UseWindowsTask = s.UseWindowsTask,
-                Kind = s.Kind,
-                Hour = s.Hour,
-                Minute = s.Minute,
-                Second = s.Second,
-                WeekDays = new List<int>(s.WeekDays),
-                DayOfMonth = s.DayOfMonth,
-                Month = s.Month,
-                IntervalSeconds = s.IntervalSeconds,
-                OnceAt = s.OnceAt,
-                PostRunDelaySeconds = s.PostRunDelaySeconds,
-                PostRunDelayUnit = s.PostRunDelayUnit,
-                RunCount = s.RunCount,
-                LastRunAt = s.LastRunAt,
-                Paused = s.Paused,
-                PauseReason = s.PauseReason
-            };
-        }
-
-        // ── 定时执行 ──────────────────────────────────────────────────────
-
-        /// <summary>启用/禁用定时区块。</summary>
-        private void ScheduleEnabled_Changed(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (ScheduleBody == null) return;
-                bool on = ScheduleEnabledCheck?.IsChecked == true;
-                ScheduleBody.IsEnabled = on;
-                ScheduleBody.Opacity = on ? 1.0 : 0.45;
-                RefreshScheduleSummary();
-                // ★ 勾上/取消时也要重算"下次执行"，
-                //   否则这块会一直停在"定时未启用"（用户实测）。
-                UpdateNextRunHint();
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// 切换定时类型。
-        ///
-        /// ★ 修复"点了每周之后切不动"：
-        ///   原来在本事件里根据 CurrentScheduleKind() 回写所有 ToggleButton 的 IsChecked，
-        ///   而回写又会再次触发 Checked → 递归互锁，其他按钮被强制取消后点不动。
-        ///   现在改为：**只认触发事件的那个按钮**，把其他按钮静默取消（用 _kindSyncing 防重入）。
-        /// </summary>
-        private bool _kindSyncing;
-
-        private void ScheduleKind_Checked(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (!_ready || TimeRow == null) return;
-                if (_kindSyncing) return;
-
-                // 谁是触发者就是当前类型
-                ScheduleKind k;
-                if (ReferenceEquals(sender, KindWeekly)) k = ScheduleKind.Weekly;
-                else if (ReferenceEquals(sender, KindMonthly)) k = ScheduleKind.Monthly;
-                else if (ReferenceEquals(sender, KindYearly)) k = ScheduleKind.Yearly;
-                else if (ReferenceEquals(sender, KindInterval)) k = ScheduleKind.Interval;
-                else if (ReferenceEquals(sender, KindOnce)) k = ScheduleKind.Once;
-                else k = ScheduleKind.Daily;
-
-                // 静默取消其他按钮（不触发它们的事件）
-                _kindSyncing = true;
-                try
-                {
-                    if (k != ScheduleKind.Daily && KindDaily.IsChecked == true) KindDaily.IsChecked = false;
-                    if (k != ScheduleKind.Weekly && KindWeekly.IsChecked == true) KindWeekly.IsChecked = false;
-                    if (k != ScheduleKind.Monthly && KindMonthly.IsChecked == true) KindMonthly.IsChecked = false;
-                    if (k != ScheduleKind.Yearly && KindYearly.IsChecked == true) KindYearly.IsChecked = false;
-                    if (k != ScheduleKind.Interval && KindInterval.IsChecked == true) KindInterval.IsChecked = false;
-                    if (k != ScheduleKind.Once && KindOnce.IsChecked == true) KindOnce.IsChecked = false;
-                }
-                finally { _kindSyncing = false; }
-
-                TimeRow.Visibility = (k == ScheduleKind.Interval || k == ScheduleKind.Once)
-                    ? Visibility.Collapsed : Visibility.Visible;
-                WeekRow.Visibility = k == ScheduleKind.Weekly ? Visibility.Visible : Visibility.Collapsed;
-                DayOfMonthRow.Visibility = (k == ScheduleKind.Monthly || k == ScheduleKind.Yearly)
-                    ? Visibility.Visible : Visibility.Collapsed;
-                IntervalRow.Visibility = k == ScheduleKind.Interval ? Visibility.Visible : Visibility.Collapsed;
-                OnceRow.Visibility = k == ScheduleKind.Once ? Visibility.Visible : Visibility.Collapsed;
-
-                bool showMonth = k == ScheduleKind.Yearly;
-                MonthLabel.Visibility = showMonth ? Visibility.Visible : Visibility.Collapsed;
-                MonthBox.Visibility = showMonth ? Visibility.Visible : Visibility.Collapsed;
-                MonthUnit.Visibility = showMonth ? Visibility.Visible : Visibility.Collapsed;
-                if (MonthLabel != null)
-                    MonthLabel.Text = showMonth ? "日期" : "日期";
-
-                RefreshScheduleSummary();
-                UpdateNextRunHint();
-            }
-            catch { }
-        }
-
-        private ScheduleKind CurrentScheduleKind()
-        {
-            if (KindWeekly?.IsChecked == true) return ScheduleKind.Weekly;
-            if (KindMonthly?.IsChecked == true) return ScheduleKind.Monthly;
-            if (KindYearly?.IsChecked == true) return ScheduleKind.Yearly;
-            if (KindInterval?.IsChecked == true) return ScheduleKind.Interval;
-            if (KindOnce?.IsChecked == true) return ScheduleKind.Once;
-            return ScheduleKind.Daily;
-        }
-
-        /// <summary>从界面读出一个完整计划。</summary>
-        private ScheduleSpec ReadScheduleFromUi()
-        {
-            var spec = new ScheduleSpec
-            {
-                Enabled = ScheduleEnabledCheck?.IsChecked == true,
-                UseWindowsTask = false,     // 已废弃：只保留进程内调度
-                Kind = CurrentScheduleKind()
-            };
-
-            int Hour = ParseInt(HourBox?.Text, 4, 0, 23);
-            int Minute = ParseInt(MinuteBox?.Text, 0, 0, 59);
-            int Second = ParseInt(SecondBox?.Text, 0, 0, 59);
-            spec.Hour = Hour; spec.Minute = Minute; spec.Second = Second;
-
-            spec.DayOfMonth = ParseInt(DayBox?.Text, 1, 1, 31);
-            spec.Month = ParseInt(MonthBox?.Text, 1, 1, 12);
-
-            // 星期
-            spec.WeekDays.Clear();
-            foreach (var child in WeekDayPanel.Children)
-            {
-                if (child is CheckBox cb && cb.IsChecked == true
-                    && cb.Tag is string tag && int.TryParse(tag, out int d))
-                    spec.WeekDays.Add(d);
-            }
-
-            // 间隔
-            int iv = ParseInt(IntervalBox?.Text, 60, 1, 86400 * 30);
-            int unit = 1;
-            if (IntervalUnitCombo?.SelectedItem is ComboBoxItem it && it.Tag is string ut
-                && int.TryParse(ut, out int u)) unit = u;
-            spec.IntervalSeconds = Math.Max(1, iv * unit);
-
-            // 只一次
-            if (DateTime.TryParse((OnceDateBox?.Text ?? "").Trim() + " " + (OnceTimeBox?.Text ?? "").Trim(),
-                    out DateTime once))
-                spec.OnceAt = once;
-            else spec.OnceAt = DateTime.Now.AddHours(1);
-
-            // 每次延后
-            int pd = ParseInt(PostDelayBox?.Text, 0, 0, 86400 * 365);
-            int pdUnit = 60;
-            if (PostDelayUnitCombo?.SelectedItem is ComboBoxItem pu && pu.Tag is string pt
-                && int.TryParse(pt, out int pv)) pdUnit = pv;
-            spec.PostRunDelaySeconds = Math.Max(0, pd * Math.Max(1, pdUnit));
-            spec.PostRunDelayUnit = pdUnit switch { 86400 => 3, 3600 => 2, 60 => 1, _ => 0 };
-
-            return spec;
-        }
-
-        /// <summary>把计划回填到界面。</summary>
-        private void ApplyScheduleToUi(ScheduleSpec? spec)
-        {
-            _scheduleUpdating = true;
-            try
-            {
-                if (spec == null)
-                {
-                    if (ScheduleEnabledCheck != null) ScheduleEnabledCheck.IsChecked = false;
-    
-                    ScheduleEnabled_Changed(null, null);
-                    return;
-                }
-
-                if (ScheduleEnabledCheck != null) ScheduleEnabledCheck.IsChecked = spec.Enabled;
-
-                if (HourBox != null) HourBox.Text = spec.Hour.ToString();
-                if (MinuteBox != null) MinuteBox.Text = spec.Minute.ToString();
-                if (SecondBox != null) SecondBox.Text = spec.Second.ToString();
-                if (DayBox != null) DayBox.Text = spec.DayOfMonth.ToString();
-                if (MonthBox != null) MonthBox.Text = spec.Month.ToString();
-
-                // 回填类型：先静默清空再设一个，避免触发互锁
-                _kindSyncing = true;
-                try
-                {
-                    KindDaily.IsChecked = false;
-                    KindWeekly.IsChecked = false;
-                    KindMonthly.IsChecked = false;
-                    KindYearly.IsChecked = false;
-                    KindInterval.IsChecked = false;
-                    KindOnce.IsChecked = false;
-                }
-                finally { _kindSyncing = false; }
-
-                switch (spec.Kind)
-                {
-                    case ScheduleKind.Weekly: KindWeekly.IsChecked = true; break;
-                    case ScheduleKind.Monthly: KindMonthly.IsChecked = true; break;
-                    case ScheduleKind.Yearly: KindYearly.IsChecked = true; break;
-                    case ScheduleKind.Interval: KindInterval.IsChecked = true; break;
-                    case ScheduleKind.Once: KindOnce.IsChecked = true; break;
-                    default: KindDaily.IsChecked = true; break;
-                }
-
-                foreach (var child in WeekDayPanel.Children)
-                    if (child is CheckBox cb && cb.Tag is string tag
-                        && int.TryParse(tag, out int d))
-                        cb.IsChecked = spec.WeekDays.Contains(d);
-
-                if (IntervalBox != null) IntervalBox.Text = Math.Max(1, spec.IntervalSeconds).ToString();
-                if (OnceDateBox != null) OnceDateBox.Text = spec.OnceAt.ToString("yyyy-MM-dd");
-                if (OnceTimeBox != null) OnceTimeBox.Text = spec.OnceAt.ToString("HH:mm:ss");
-
-                if (PostDelayBox != null)
-                {
-                    int unitSec = ScheduleSpec.UnitToSeconds(spec.PostRunDelayUnit);
-                    PostDelayBox.Text = (spec.PostRunDelaySeconds / Math.Max(1, unitSec)).ToString();
-                    PostDelayUnitCombo.SelectedIndex = spec.PostRunDelayUnit switch
-                    { 3 => 3, 2 => 2, 1 => 1, _ => 0 };
-                }
-
-                ScheduleKind_Checked(null, null);
-                ScheduleEnabled_Changed(null, null);
-            }
-            catch { }
-            finally
-            {
-                _scheduleUpdating = false;
-                RefreshScheduleSummary();
-                UpdateNextRunHint();     // 回填完成后立刻算一次
-            }
-        }
-
-        /// <summary>刷新折叠标题右侧的摘要。</summary>
-        private void RefreshScheduleSummary()
-        {
-            try
-            {
-                if (ScheduleSummary == null) return;
-                if (ScheduleEnabledCheck?.IsChecked != true)
-                {
-                    ScheduleSummary.Text = "（未启用）";
-                    return;
-                }
-                var spec = ReadScheduleFromUi();
-                ScheduleSummary.Text = "（" + spec.Display + "）";
-            }
-            catch { }
-        }
-
-        /// <summary>回填界面时的重入保护。</summary>
-        private bool _scheduleUpdating;
-
-        /// <summary>
-        /// 任何定时参数变化 → 实时重算"下次执行"。
-        /// ★ 原来只在切换类型时算一次，改了时间/延后都不刷新，
-        ///   界面一直显示"下次执行：—"。
-        /// </summary>
-        private void ScheduleInput_Changed(object sender, TextChangedEventArgs e)
-        {
-            if (!_ready || _scheduleUpdating) return;
-            RefreshScheduleSummary();
-            UpdateNextRunHint();
-        }
-
-        /// <summary>下拉（单位）变化 → 同样重算。</summary>
-        private void ScheduleUnit_Changed(object sender, SelectionChangedEventArgs e)
-        {
-            if (!_ready || _scheduleUpdating) return;
-            RefreshScheduleSummary();
-            UpdateNextRunHint();
-        }
-
-        /// <summary>刷新"下次执行"预览。</summary>
-        private void UpdateNextRunHint()
-        {
-            try
-            {
-                if (NextRunHint == null) return;
-                if (ScheduleEnabledCheck?.IsChecked != true)
-                {
-                    NextRunHint.Text = "定时未启用";
-                    return;
-                }
-                var spec = ReadScheduleFromUi();
-                var next = ScheduleCalculator.NextRun(spec);
-                NextRunHint.Text = next == null
-                    ? "下次执行：不会执行（可能已过期或未选星期）"
-                    : "下次执行：" + next.Value.ToString("yyyy-MM-dd HH:mm:ss")
-                      + (spec.PostRunDelaySeconds > 0 ? "　·　" + spec.PostRunDelayDisplay : "");
-            }
-            catch { }
-        }
-
-        private static int ParseInt(string? s, int fallback, int min, int max)
-        {
-            if (int.TryParse((s ?? "").Trim(), out int v))
-                return Math.Max(min, Math.Min(max, v));
-            return fallback;
-        }
 
         /// <summary>
         /// 按当前选择拼自动名称，例如：
@@ -605,14 +305,14 @@ namespace SoulLink.Views
                 UserHint.Text = string.IsNullOrEmpty(saved)
                     ? "账号已选中；没有保存密码（RDP 连接时可能需要手动输入）。"
                     : "账号已选中，RDP 连接时会用已保存的密码自动登录。";
-                UserHint.Foreground = (System.Windows.Media.Brush)FindResource("TextMuted");
+                UserHint.Foreground = UiBrush.Get("TextMuted");
             }
             else
             {
                 UserHint.Text = user.Length == 0
                     ? "输入 Windows 用户名（不带域名），已有的账号会自动带出。"
                     : "账号：" + user + " —— 保存后请到通用设置中配置凭据。";
-                UserHint.Foreground = (System.Windows.Media.Brush)FindResource("TextMuted");
+                UserHint.Foreground = UiBrush.Get("TextMuted");
             }
 
             // ★ 自动命名：名称空着或还是上次自动生成的就跟着刷新，
@@ -979,7 +679,7 @@ namespace SoulLink.Views
                     FontSize = 11.5,
                     Margin = new Thickness(10, 8, 10, 8),
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground = (System.Windows.Media.Brush)FindResource("TextMuted")
+                    Foreground = UiBrush.Get("TextMuted")
                 });
             }
             else
@@ -992,7 +692,7 @@ namespace SoulLink.Views
                         FontSize = 12,
                         Margin = new Thickness(9, 5, 9, 5),
                         IsChecked = _scriptGroups.Contains(n),
-                        Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary")
+                        Foreground = UiBrush.Get("TextPrimary")
                     };
                     string captured = n;
                     cb.Checked += (_, __) =>
@@ -1150,6 +850,7 @@ namespace SoulLink.Views
             var account = MatchAccount(user);
             if (account == null)
             {
+                if (_scopedAccountId != null) { ShowError("当前账号已不可用。"); return; }
                 account = new Account { UserName = user };
                 _cfg.Accounts.Add(account);
             }
@@ -1165,7 +866,6 @@ namespace SoulLink.Views
             _result.Arguments = BuildArguments();
             _result.Kind = CurrentKind;
             _result.DelaySeconds = Math.Max(0, delay);
-            _result.Schedule = ReadScheduleFromUi();
             _result.StopBgiFirst = StopBgiCheck?.IsChecked == true;
             _result.CloseGenshin = CloseGenshinCheck?.IsChecked == true;
             int stopWait;

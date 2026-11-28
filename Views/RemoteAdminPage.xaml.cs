@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -44,7 +45,8 @@ namespace SoulLink.Views
             try
             {
                 NewValidText.Text = hint;
-                NewValidText.Foreground = _hintFlash;
+                NewValidText.Foreground = UiBrush.Get("RoseBrush");
+                if (ThemeManager.AnimationsDisabled) return;
                 var fade = new System.Windows.Media.Animation.DoubleAnimation(1.0, 0.35, TimeSpan.FromMilliseconds(650))
                 {
                     AutoReverse = true,
@@ -54,13 +56,6 @@ namespace SoulLink.Views
             }
             catch { }
         }
-
-        /// <summary>提示行的"被点了一下"高亮色（比常驻错误色更亮）。</summary>
-        private static readonly System.Windows.Media.SolidColorBrush _hintFlash =
-            Freeze(new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0x8A, 0x8A)));
-
-        private static System.Windows.Media.SolidColorBrush Freeze(System.Windows.Media.SolidColorBrush b)
-        { b.Freeze(); return b; }
 
         private bool _loaded;
 
@@ -166,7 +161,7 @@ namespace SoulLink.Views
                 Margin = new Thickness(10, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 FontFamily = (FontFamily)FindResource("MonoFont"),
-                Foreground = (Brush)FindResource("TextPrimary")
+                Foreground = UiBrush.Get("TextPrimary")
             };
             Grid.SetColumn(name, 0);
             grid.Children.Add(name);
@@ -187,7 +182,7 @@ namespace SoulLink.Views
                 Text = u.PasswordNeverExpires ? "永不过期" : "会过期",
                 FontSize = 10.5,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = (Brush)FindResource(u.PasswordNeverExpires ? "TextSecondary" : "TextMuted")
+                Foreground = UiBrush.Get(u.PasswordNeverExpires ? "TextSecondary" : "TextMuted")
             };
             Grid.SetColumn(pwd, 3);
             grid.Children.Add(pwd);
@@ -199,7 +194,7 @@ namespace SoulLink.Views
                         + (IsReadOnly(u) ? " · 内置" : ""),
                 FontSize = 10.5,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = (Brush)FindResource(u.Hidden || !u.Enabled ? "TextMuted" : "TextSecondary")
+                Foreground = UiBrush.Get(u.Hidden || !u.Enabled ? "TextMuted" : "TextSecondary")
             };
             Grid.SetColumn(status, 4);
             grid.Children.Add(status);
@@ -212,7 +207,7 @@ namespace SoulLink.Views
                 Margin = new Thickness(0, 0, 10, 0)
             };
             if (IsReadOnly(u))
-                ops.Children.Add(new TextBlock { Text="仅供查看", FontSize=9.5, Foreground=(Brush)FindResource("TextMuted"), VerticalAlignment=VerticalAlignment.Center });
+                ops.Children.Add(new TextBlock { Text="仅供查看", FontSize=9.5, Foreground=UiBrush.Get("TextMuted"), VerticalAlignment=VerticalAlignment.Center });
             else
             {
                 if (!string.Equals(u.Name,SessionService.CurrentUser,StringComparison.OrdinalIgnoreCase))
@@ -228,7 +223,7 @@ namespace SoulLink.Views
             Grid.SetColumn(ops, 5);
             grid.Children.Add(ops);
 
-            var wrap = new Border { Child = grid, BorderBrush = new SolidColorBrush(Color.FromArgb(0x10, 255, 255, 255)),
+            var wrap = new Border { Child = grid, BorderBrush = UiBrush.Get("TextPrimary", 0x10),
                                     BorderThickness = new Thickness(0, 0, 0, 1) };
             return wrap;
         }
@@ -242,8 +237,8 @@ namespace SoulLink.Views
                 FontSize = 12,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = on ? new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0))
-                                : (Brush)FindResource("TextMuted")
+                Foreground = on ? UiBrush.Get("MintBrush")
+                                : UiBrush.Get("TextMuted")
             };
         }
 
@@ -428,10 +423,10 @@ namespace SoulLink.Views
             {
                 var st = RdpWrapService.GetStatus(WrapDirBox.Text?.Trim() ?? "");
                 WrapStatusText.Text = st.Summary;
-                WrapStatusText.Foreground = new SolidColorBrush(st.Installed && st.DllLoaded
-                    ? Color.FromRgb(0x41, 0xF0, 0xC0)
-                    : st.Installed ? Color.FromRgb(0xFF, 0xC8, 0x5B)
-                                   : Color.FromRgb(0xFF, 0x8A, 0x5B));
+                WrapStatusText.Foreground = st.Installed && st.DllLoaded
+                    ? UiBrush.Get("MintBrush")
+                    : st.Installed ? UiBrush.Get("AmberBrush")
+                                   : UiBrush.Get("RoseBrush");
 
                 WrapDetail.Text =
                     (st.DllExists ? "DLL✓" : "DLL✗") +

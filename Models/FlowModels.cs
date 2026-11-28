@@ -10,6 +10,7 @@ namespace SoulLink.Models
     {
         public string Id { get; set; } = Guid.NewGuid().ToString("N");
         public string Name { get; set; } = "新的自动化";
+        public bool? AutoName { get; set; }
         public string AccountId { get; set; } = "";
         public bool Enabled { get; set; } = true;
         public bool Paused { get; set; }
@@ -66,6 +67,22 @@ namespace SoulLink.Models
         public (int ok, int fail) TodayCounts(DateTime now)
             => string.Equals(StatDayKey, CurrentStatDayKey(now), StringComparison.Ordinal)
                 ? (TodayOkCount, TodayFailCount) : (0, 0);
+
+        public bool HasExecutedToday(DateTime now)
+        {
+            var (ok, fail) = TodayCounts(now);
+            if (ok > 0 || fail > 0) return true;
+
+            string day = CurrentStatDayKey(now);
+            return (LastActionResultAt is DateTime action && CurrentStatDayKey(action) == day)
+                || (LastRunAt is DateTime run && CurrentStatDayKey(run) == day);
+        }
+
+        public void ToggleAutomaticRun()
+        {
+            Paused = Enabled && !Paused;
+            Enabled = true;
+        }
 
         /// <summary>
         /// 记录一次执行结果（自动按业务日重置计数）。由 PlcScanEngine 每次动作执行后调用。
@@ -142,8 +159,10 @@ namespace SoulLink.Models
         /// <summary>定时触点已触发的累计次数（用于计算递增延时）。</summary>
         public Dictionary<string, int> ScheduleFireCount { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>定时触点当前延时段所属的业务日（跨日时把次数清零重新开始）。</summary>
+        /// <summary>旧版定时触点的业务日，用于保留升级当天的触发记录。</summary>
         public Dictionary<string, string> ScheduleCycleDay { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>定时触点最后触发的计划基准日。实际时刻可以受递增延时影响。</summary>
+        public Dictionary<string, DateTime> ScheduleLastTriggeredDay { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>TON 等待线圈的截止时刻；输入断开后清除。</summary>
         public Dictionary<string, DateTime> DelayUntil { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>本轮已命中的日志/定时/手动等瞬时信号；等待其它条件时不设超时。</summary>
@@ -205,6 +224,8 @@ namespace SoulLink.Models
             var time = now ?? DateTime.Now;
             if (!Enabled) return (false, "今日不会运行：流程未启用");
             if (Paused) return (false, "今日不会运行：流程已暂停" + (string.IsNullOrWhiteSpace(PauseReason) ? "" : "（" + PauseReason + "）"));
+            if (HasEnd && PlcLogic.IsDailyComplete(this, time))
+                return (false, "今日不会再运行：已完成，日界 " + (EndBoundaryHour ?? 0).ToString("00") + ":00 后恢复");
 
             // ★ 2.17.22：只有「手动」触点的流程永远不会自己跑。
             //   用户反馈"添加任务之后需要手动按一次开关才会自动执行"——
@@ -215,8 +236,6 @@ namespace SoulLink.Models
 
             if (!HasEnd)
                 return (true, "今日会运行：无「每天完成」，条件满足即可重复执行");
-            if (PlcLogic.IsDailyComplete(this, time))
-                return (false, "今日不会再运行：已完成，日界 " + (EndBoundaryHour ?? 0).ToString("00") + ":00 后恢复");
             return (true, "今日还会运行：每天一次，尚未执行");
         }
 
@@ -239,6 +258,8 @@ namespace SoulLink.Models
             .Select(e => e.From).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         public FlowNode? FindNode(string id) => Nodes.FirstOrDefault(n => n.Id == id);
 
+        internal AutomationFlow CopyCurrentState() => (AutomationFlow)MemberwiseClone();
+
         public bool IsLatched(string id) => false;
         public bool Latch(string id) => false;
         public void Arm() { }
@@ -257,6 +278,7 @@ namespace SoulLink.Models
             ContactPulseAt ??= new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
             ScheduleFireCount ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             ScheduleCycleDay ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            ScheduleLastTriggeredDay ??= new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
             DelayUntil ??= new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
             SatisfiedContacts ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             LogTriggers ??= new Dictionary<string, LogTriggerState>(StringComparer.OrdinalIgnoreCase);
@@ -408,6 +430,7 @@ namespace SoulLink.Models
         public bool Value { get; }
         public bool Available { get; }
         public PlcSignal(bool value, bool available = true) { Value = value; Available = available; }
+        internal DateTime? ScheduleDay { get; init; }
         public static implicit operator PlcSignal(bool value) => new(value, true);
     }
 

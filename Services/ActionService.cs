@@ -25,13 +25,14 @@ namespace SoulLink.Services
             error = "";
             var list = sessions.ToList();
 
-            SessionInfo? s = account.SessionId > 0
-                ? list.FirstOrDefault(x => x.Id == account.SessionId)
-                : SessionService.Find(list, account.UserName);
+            string user = SessionService.BareName(account.UserName);
+            SessionInfo? s = account.SessionId > 0 && user.Length > 0
+                ? list.FirstOrDefault(x => x.Id == account.SessionId && string.Equals(
+                    SessionService.BareName(x.UserName), user, StringComparison.OrdinalIgnoreCase))
+                : null;
 
-            // 固定会话失效时退回按用户名查找
-            if (s == null && account.SessionId > 0)
-                s = SessionService.Find(list, account.UserName);
+            // 会话 ID 可在注销后被其他用户复用；旧配置的固定会话必须核对用户名。
+            s ??= SessionService.Find(list, account.UserName);
 
             if (s == null && cfg.Settings.AllowCurrentSessionFallback && !cfg.Settings.OnlyAutomationAccounts
                 && string.Equals(SessionService.BareName(account.UserName), SessionService.CurrentUser,

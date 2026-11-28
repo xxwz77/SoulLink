@@ -32,7 +32,7 @@ namespace SoulLink.Models
         /// 运行时按目标账号的实际分辨率换算成像素坐标。
         /// 避免用户去猜 "960x540" 这种数字。
         /// </summary>
-        CursorPick = 11
+        CursorPick = 11, WeekDays = 12
     }
     public sealed class FlowParamDef
     {
@@ -67,13 +67,21 @@ namespace SoulLink.Models
         static FlowNodeCatalog()
         {
             D(FlowNodeType.TrigSchedule, FlowNodeKind.Condition, "定时·时刻",
-                "到达设定时刻后满足；可设置每次递增延时与复位周期", "\uE823",
+                "在计划日期到达时刻后触发一次，可设置递增延时与复位周期", "\uE823",
+                P("recurrence", "重复周期", "daily", FlowParamKind.Select, "", true,
+                    "每天|daily", "每周|weekly", "每月|monthly", "每年|yearly", "每隔 N 天|intervalDays", "仅一次|once"),
+                P("weekDays", "运行星期", "", FlowParamKind.WeekDays, "可选择多个星期", false),
+                P("month", "月份", "1", FlowParamKind.Number, "1–12", false),
+                P("dayOfMonth", "日期（每月几号）", "1", FlowParamKind.Number, "当月没有该日期时跳过", false),
+                P("startDate", "起始日期", "", hint: "yyyy-MM-dd", required: false),
+                P("intervalDays", "间隔（天）", "1", FlowParamKind.Number, "从起始日期开始计算", false),
                 P("time", "时刻", "04:00:00", hint: "HH:mm:ss（精确到秒）"),
                 P("stepSeconds", "下次执行延时（秒）", "0", FlowParamKind.Number,
                   "每触发一次，下次时刻往后推这么多秒；0=固定时刻", false),
                 P("resetAfter", "复位周期（次）", "0", FlowParamKind.Number,
                   "递增多少次后回到初始时刻；0=永不复位", false),
-                P("catchUpHours", "补跑窗口（小时）", "12", FlowParamKind.Number, "0=不限窗口", false));
+                P("catchUpHours", "当日补跑窗口（小时）", "12", FlowParamKind.Number, "0=当天不限时", false),
+                P("catchUpSeconds", "补跑窗口（秒）", "", FlowParamKind.Number, "精确秒数窗口可跨午夜；0=当天不限时", false));
             D(FlowNodeType.TrigInterval,FlowNodeKind.Condition,"定时·间隔","每到间隔时满足一次，随后恢复不满足","\uE916",P("intervalSeconds","间隔秒","600",FlowParamKind.Number));
             D(FlowNodeType.TrigSessionOnline,FlowNodeKind.Condition,"会话在线","目标账号的会话当前在线","\uE7EE");
             D(FlowNodeType.TrigManual,FlowNodeKind.Condition,"手动","仅点击「立即运行」时满足","\uE768");
@@ -108,7 +116,7 @@ namespace SoulLink.Models
             Alias(FlowNodeType.TrigScriptGroup,FlowNodeType.CondScriptGroupState);
             Alias(FlowNodeType.TrigDogfoodRoute,FlowNodeType.CondDogfoodRoute);
 
-            D(FlowNodeType.ActRunAction,FlowNodeKind.Action,"执行快捷动作","执行已保存动作；显式目标用户会覆盖动作原账号","\uE768",P("actionId","选择动作","",FlowParamKind.ActionPicker));
+            D(FlowNodeType.ActRunAction,FlowNodeKind.Action,"执行快捷动作","执行目标账号下已保存的快捷动作","\uE768",P("actionId","选择动作","",FlowParamKind.ActionPicker));
             D(FlowNodeType.ActStopBgi,FlowNodeKind.Action,"停止 BGI","优先目标账号停止热键；超时可能结束目标 BGI 进程","\uE71A");
             D(FlowNodeType.ActStartBgi,FlowNodeKind.Action,"启动 BGI","在目标会话启动 BetterGI；成功指启动请求已接受","\uE768",P("args","启动参数","",required:false));
             D(FlowNodeType.ActStartOneDragon,FlowNodeKind.Action,"执行一条龙","清场后启动指定一条龙；不代表任务已跑完","\uE8FD",P("name","一条龙名称（可空）","",FlowParamKind.OneDragonPicker,"留空=页面选定",false));

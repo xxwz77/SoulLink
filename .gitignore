@@ -172,6 +172,8 @@ tools/**/out/
 
 
 release-build/
+# 本地自定义主题图片保存在应用数据目录。
+**/custom-artwork/
 
 # ── 发布脚本的本地真实配置（含 COS 桶名/CDN 域名，永远不入库；2026-11-24）──
 scripts/publish-release.local.ps1

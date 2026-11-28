@@ -538,7 +538,7 @@ namespace SoulLink.Controls
    if (text.Length == 0)
    {
     ShieldColorPreview.Background = new SolidColorBrush(Color.FromArgb(0xCC, 0xF0, 0xC0, 0x41));
-    ShieldColorPreview.BorderBrush = new SolidColorBrush(Color.FromArgb(0x44, 0xFF, 0xFF, 0xFF));
+    ShieldColorPreview.BorderBrush = UiBrush.Get("StrokeMid");
     ShieldColorPreview.ToolTip = "留空 = 主题默认色";
     return;
    }
@@ -547,12 +547,12 @@ namespace SoulLink.Controls
    {
     // 解析失败：预览退回默认色并标红，但**不写配置** —— 别把非法值存进去。
     ShieldColorPreview.Background = new SolidColorBrush(Color.FromArgb(0xCC, 0xF0, 0xC0, 0x41));
-    ShieldColorPreview.BorderBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x8B));
+    ShieldColorPreview.BorderBrush = UiBrush.Get("RoseBrush");
     ShieldColorPreview.ToolTip = "颜色格式无法识别";
     return;
    }
    ShieldColorPreview.Background = new SolidColorBrush(c.Value);
-   ShieldColorPreview.BorderBrush = new SolidColorBrush(Color.FromArgb(0x44, 0xFF, 0xFF, 0xFF));
+   ShieldColorPreview.BorderBrush = UiBrush.Get("StrokeMid");
    ShieldColorPreview.ToolTip = SoulLink.Services.ColorText.Format(c.Value);
   }
 

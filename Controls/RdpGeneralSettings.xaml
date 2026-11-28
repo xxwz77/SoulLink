@@ -23,7 +23,7 @@
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="自由视角灵敏度" Style="{StaticResource Label}" VerticalAlignment="Center" />
       <TextBlock Grid.Column="1" x:Name="SensitivityText" Text="4.0x" Style="{StaticResource Mono}"
-                 Foreground="{StaticResource CyanBrush}" VerticalAlignment="Center" />
+                 Foreground="{DynamicResource CyanBrush}" VerticalAlignment="Center" />
      </Grid>
      <Slider x:Name="SensitivitySlider" Style="{StaticResource GlassSlider}"
              Minimum="1" Maximum="12" TickFrequency="0.1" SmallChange="0.1" LargeChange="0.5"
@@ -123,7 +123,7 @@
                Width="180" VerticalAlignment="Center" IsSnapToTickEnabled="True"
                ValueChanged="StreamFpsSlider_Changed" />
        <TextBlock x:Name="StreamFpsText" Text="30 帧/秒" Style="{StaticResource Mono}"
-                  Foreground="{StaticResource CyanBrush}" VerticalAlignment="Center" Margin="8,0,0,0" Width="70" />
+                  Foreground="{DynamicResource CyanBrush}" VerticalAlignment="Center" Margin="8,0,0,0" Width="70" />
       </StackPanel>
      </Grid>
 
@@ -191,7 +191,7 @@
                Width="180" VerticalAlignment="Center" IsSnapToTickEnabled="True"
                ValueChanged="BitrateSlider_Changed" />
        <TextBlock x:Name="BitrateText" Text="8 Mbps" Style="{StaticResource Mono}"
-                  Foreground="{StaticResource CyanBrush}" VerticalAlignment="Center" Margin="8,0,0,0" Width="70" />
+                  Foreground="{DynamicResource CyanBrush}" VerticalAlignment="Center" Margin="8,0,0,0" Width="70" />
       </StackPanel>
      </Grid>
 
@@ -231,7 +231,7 @@
                 Width="180" VerticalAlignment="Center" IsSnapToTickEnabled="True"
                 ValueChanged="VbvIncreaseSlider_Changed" />
         <TextBlock x:Name="VbvIncreaseText" Text="0%" Style="{StaticResource Mono}"
-                   Foreground="{StaticResource CyanBrush}" VerticalAlignment="Center" Margin="8,0,0,0" Width="50" />
+                   Foreground="{DynamicResource CyanBrush}" VerticalAlignment="Center" Margin="8,0,0,0" Width="50" />
        </StackPanel>
       </Grid>
 
@@ -267,7 +267,7 @@
       </Grid.ColumnDefinitions>
       <!-- 颜色预览块：跟着输入实时变色 -->
       <Border Grid.Column="0" x:Name="ShieldColorPreview" Width="34" Height="34" CornerRadius="8"
-              VerticalAlignment="Center" BorderThickness="1" BorderBrush="#44FFFFFF"
+              VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource StrokeMid}"
               Background="#CCF0C041" />
       <TextBox Grid.Column="1" x:Name="ShieldColorBox" Style="{StaticResource GlassTextBox}"
                Margin="10,0,10,0" VerticalAlignment="Center"
@@ -288,7 +288,7 @@
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="边框粗细" Style="{StaticResource Label}" VerticalAlignment="Center" />
       <TextBlock Grid.Column="1" x:Name="ShieldThicknessText" Text="2 px" Style="{StaticResource Mono}"
-                 Foreground="{StaticResource CyanBrush}" VerticalAlignment="Center" />
+                 Foreground="{DynamicResource CyanBrush}" VerticalAlignment="Center" />
      </Grid>
      <Slider x:Name="ShieldThicknessSlider" Style="{StaticResource GlassSlider}"
              Minimum="0" Maximum="8" TickFrequency="1" SmallChange="1" LargeChange="1"

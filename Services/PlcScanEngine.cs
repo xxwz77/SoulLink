@@ -275,8 +275,14 @@ namespace SoulLink.Services
                 //   ActionResults 一直留着上一次的结果，于是再点「立即运行一次」
                 //   只会重复报上一次的失败（实测 2026-11-20 15:52：
                 //   弹窗仍是 02:28 的"该会话没有已连接的注入通道"，按键根本没再发出）。
-                bool latchable = IsMomentary(n) && n.Type != FlowNodeType.TrigManual;
-                if (!liveOnly && live && latchable) flow.SatisfiedContacts.Add(n.Id);
+                bool momentary = IsMomentary(n) && n.Type != FlowNodeType.TrigManual;
+                bool latchable = momentary && n.GetBool("latch", true);
+                if (!liveOnly && live && momentary)
+                {
+                    bool newOccurrence = !latchable || flow.SatisfiedContacts.Add(n.Id);
+                    if (newOccurrence && signal.ScheduleDay is { } scheduledDay)
+                        PlcSchedule.MarkTriggered(flow, n, scheduledDay);
+                }
                 bool effective = !liveOnly && latchable && flow.SatisfiedContacts.Contains(n.Id) ? true : live;
                 signal = new PlcSignal(effective, signal.Available);
                 signals[n.Id] = signal;

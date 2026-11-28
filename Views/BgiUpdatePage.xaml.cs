@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -160,7 +161,7 @@ namespace SoulLink.Views
                 Text = vm.UserName,
                 FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("TextPrimary"),
+                Foreground = UiBrush.Get("TextPrimary"),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(10, 0, 0, 0)
             };
@@ -176,8 +177,8 @@ namespace SoulLink.Views
                 FontSize = 10.5,
                 FontFamily = new FontFamily("Consolas"),
                 Foreground = (vm.BgiPath.Length > 0 && File.Exists(vm.BgiPath))
-                    ? (Brush)FindResource("TextMuted")
-                    : new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x6B)),
+                    ? UiBrush.Get("TextMuted")
+                    : UiBrush.Get("AmberBrush"),
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(10, 0, 10, 0)
@@ -211,14 +212,15 @@ namespace SoulLink.Views
             Grid.SetColumn(btns, 3);
             grid.Children.Add(btns);
 
-            return new Border
+            var card = new Border
             {
                 Padding = new Thickness(10, 7, 10, 7),
                 CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromArgb(0x0C, 0xFF, 0xFF, 0xFF)),
                 Margin = new Thickness(0, 0, 0, 5),
                 Child = grid
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
+            return card;
         }
 
         // ══════════ 账号操作 ══════════

@@ -20,12 +20,14 @@ namespace SoulLink.Services
         private static readonly ConcurrentDictionary<string,MiyoushePullStatus> PullStatuses = new();
         private static readonly ConcurrentDictionary<string,DateTime> PausedUntil = new();
         private static readonly SemaphoreSlim NetworkGate = new(1,1);
+        internal static event Action<string, string>? LedgerRefreshed;
         private static int _running;
         internal static int Running => Volatile.Read(ref _running);
 
         internal static Func<string,MiyousheClient>? ClientFactoryForTest;
         internal static Func<string,string,MiyousheClient>? RegionClientFactoryForTest;
         internal static Func<int,Task>? DelayForTest;
+        internal static Func<DateTime>? LedgerNowForTest;
         internal static string EffectiveDsSalt(AppSettings? settings, string region)
             => region == "os"
                 ? settings?.MiyousheOsDsSalt ?? ""
@@ -162,17 +164,22 @@ namespace SoulLink.Services
         internal sealed record WorkResult(bool ok, string? error = null, string? state = null,
             string? account = null, int roles = 0, int signed = 0, int entries = 0, DateTime? retryAfter = null);
 
-        internal static async Task<WorkResult> RunForAccountAsync(string account,bool sign,bool ledger,CancellationToken ct,bool retryLogin = false)
+        internal static async Task<WorkResult> RunForAccountAsync(string account,bool sign,bool ledger,CancellationToken ct,
+            bool retryLogin = false, string? expectedLedgerUid = null)
         {
             RequireAccount(account);
             var credential = await MiyousheCredentialStore.LoadAsync(account,ct).ConfigureAwait(false);
-            if (credential == null) return new WorkResult(false, "未登录，请先扫码", "needs_login");
+            if (credential == null || (ledger && string.IsNullOrWhiteSpace(credential.CookieToken) &&
+                string.IsNullOrWhiteSpace(credential.RawCookie)))
+                return new WorkResult(false, "未登录，请先扫码", "needs_login");
             var lastCheck = await MiyousheStore.Shared.GetCredentialStateAsync(account,ct).ConfigureAwait(false);
             bool rejected = lastCheck is { State: "needs_login" } && lastCheck.UpdatedAtMs >= credential.UpdatedAt.ToUnixTimeMilliseconds();
             if (rejected && !retryLogin)
                 return new WorkResult(false, lastCheck!.Detail, "needs_login");
             if (!(rejected && retryLogin) && PausedUntil.TryGetValue(account,out var until) && until > DateTime.Now)
                 return new WorkResult(false, "账号处于退避期，请稍后重试或重新扫码", "failed", retryAfter: until);
+            if (expectedLedgerUid != null && GetDefaultRole(account) != expectedLedgerUid)
+                return new WorkResult(false, "默认角色已更改", "changed");
             if (!await NetworkGate.WaitAsync(0,ct).ConfigureAwait(false))
                 return new WorkResult(false, "另一账号任务进行中，请稍后重试", "queued");
             Interlocked.Exchange(ref _running,1);
@@ -183,10 +190,12 @@ namespace SoulLink.Services
                 var roles = await client.GetRolesAsync(account,credential,ct).ConfigureAwait(false);
                 if (roles.Count == 0) return new WorkResult(false, "米游社账号未绑定原神角色", "skipped");
                 string ledgerUid = ledger ? GetDefaultRole(account) : "";
+                if (expectedLedgerUid != null && ledgerUid != expectedLedgerUid)
+                    return new WorkResult(false, "默认角色已更改", "changed");
                 string ledgerError = "";
                 if (ledger && !roles.Any(r => r.GameUid == ledgerUid && ledgerUid.Length > 0))
                     ledgerError = ledgerUid.Length == 0 ? "请先为此账号设置默认原神角色" : "默认角色已不在该账号的角色列表，请重新选择";
-                if (!sign && ledgerError.Length > 0) return new WorkResult(false, ledgerError);
+                if (!sign && ledgerError.Length > 0) return new WorkResult(false, ledgerError, "default_role");
                 int signed=0, entries=0;
                 string? signError = null;
                 foreach (var role in roles)
@@ -216,7 +225,11 @@ namespace SoulLink.Services
                     }
                     if (!sign && role.GameUid != ledgerUid) continue;
                     if (ledger && ledgerError.Length == 0 && role.GameUid == ledgerUid)
-                        entries += await PullWithStatusAsync(client,account,credential,role,DateTime.Now.Month,ct).ConfigureAwait(false);
+                    {
+                        var now = LedgerNowForTest?.Invoke() ?? DateTime.Now;
+                        entries += await PullWithStatusAsync(client,account,credential,role,now,ct).ConfigureAwait(false);
+                        if (entries > 0 && MiyousheStore.Shared.IsHealthy) NotifyLedgerRefreshed(account, ledgerUid);
+                    }
                     await DelayAsync(ct).ConfigureAwait(false);
                 }
                 if (healthAtStart && !MiyousheStore.Shared.IsHealthy) throw new IOException("米游社数据库写入失败");
@@ -237,20 +250,38 @@ namespace SoulLink.Services
                 if (ledgerError.Length > 0) return new WorkResult(false, ledgerError, account: account, signed: signed, entries: entries);
                 return new WorkResult(true, account: account, roles: roles.Count, signed: signed, entries: entries);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 var latest = await MiyousheCredentialStore.LoadAsync(account,ct).ConfigureAwait(false);
                 if (latest?.UpdatedAt == credential.UpdatedAt)
                     await HandleFailureAsync(account,ex,ct).ConfigureAwait(false);
-                return new WorkResult(false, SafeError(ex));
+                string state = ex is MiyousheRequestException request && request.RequiresLogin ? "needs_login" : "failed";
+                return new WorkResult(false, SafeError(ex), state);
             }
-            finally { NetworkGate.Release(); Interlocked.Exchange(ref _running,0); }
+            finally { Interlocked.Exchange(ref _running,0); NetworkGate.Release(); }
+        }
+
+        private static void NotifyLedgerRefreshed(string account, string gameUid)
+        {
+            if (LedgerRefreshed is not { } handlers) return;
+            foreach (Action<string, string> handler in handlers.GetInvocationList())
+            {
+                try { handler(account, gameUid); }
+                catch (Exception) { LogBus.Warn("摩拉流水更新通知失败"); }
+            }
+        }
+
+        internal static DateTime[] LedgerMonthsForBusinessDay(DateTime now)
+        {
+            DateTime month = now.Date.AddDays(1 - now.Day);
+            DateTime businessDay = DogfoodRecordReader.CurrentBusinessDay(now);
+            return businessDay < month ? [month, month.AddMonths(-1)] : [month];
         }
 
         internal static IReadOnlyList<MiyoushePullStatus> Statuses() => new List<MiyoushePullStatus>(PullStatuses.Values);
-        internal static void ResetTest() { PausedUntil.Clear(); PullStatuses.Clear(); ClientFactoryForTest=null; DelayForTest=null; }
+        internal static void ResetTest() { PausedUntil.Clear(); PullStatuses.Clear(); ClientFactoryForTest=null; DelayForTest=null; LedgerNowForTest=null; }
         private static async Task<int> PullWithStatusAsync(MiyousheClient client,string account,MiyousheCredential credential,
-            MiyousheRole role,int month,CancellationToken ct)
+            MiyousheRole role,DateTime now,CancellationToken ct)
         {
             long start=NowMs(); string id=Guid.NewGuid().ToString("N");
             var status=new MiyoushePullStatus(id,account,role.GameUid,"running","逐条流水拉取中",0,0,start,start);
@@ -259,12 +290,16 @@ namespace SoulLink.Services
             MiyousheHost.NoteLedgerAttempt(account, role.GameUid, DateTimeOffset.FromUnixTimeMilliseconds(start));
             try
             {
-                await client.PullLedgerAsync(account,credential,role,month,async (pages,inserted,token) =>
+                foreach (DateTime month in LedgerMonthsForBusinessDay(now))
                 {
-                    status=status with { Pages=pages,Inserted=inserted,UpdatedAtMs=NowMs() };
-                    PullStatuses[account+"\u001f"+role.GameUid]=status;
-                    await MiyousheStore.Shared.SavePullStatusAsync(status,token).ConfigureAwait(false);
-                },ct).ConfigureAwait(false);
+                    int previousPages = status.Pages, previousInserted = status.Inserted;
+                    await client.PullLedgerAsync(account,credential,role,month,now.Date,async (pages,inserted,token) =>
+                    {
+                        status=status with { Pages=previousPages+pages,Inserted=previousInserted+inserted,UpdatedAtMs=NowMs() };
+                        PullStatuses[account+"\u001f"+role.GameUid]=status;
+                        await MiyousheStore.Shared.SavePullStatusAsync(status,token).ConfigureAwait(false);
+                    },ct).ConfigureAwait(false);
+                }
                 status=status with { State=status.Inserted>0?"inserted":"skipped",Detail=status.Inserted>0?"分页原始流水已入库":"接口无新增原始流水",UpdatedAtMs=NowMs() };
             }
             catch (Exception ex)

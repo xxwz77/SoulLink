@@ -49,7 +49,7 @@
                 <TextBlock x:Name="CountLabel" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="10,0,0,0" />
             </StackPanel>
 
-            <Border Grid.Row="2" Background="{DynamicResource FieldBackground}" BorderBrush="#3A769EB9"
+            <Border Grid.Row="2" Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource StrokeSoft}"
                     BorderThickness="1" CornerRadius="8">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -83,10 +83,10 @@
                                             </Border>
                                             <ControlTemplate.Triggers>
                                                 <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter TargetName="ItemBorder" Property="Background" Value="#245A8DA9" />
+                                                    <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource HoverFill}" />
                                                 </Trigger>
                                                 <Trigger Property="IsSelected" Value="True">
-                                                    <Setter TargetName="ItemBorder" Property="Background" Value="#555481A7" />
+                                                    <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource SelectedFill}" />
                                                 </Trigger>
                                             </ControlTemplate.Triggers>
                                         </ControlTemplate>

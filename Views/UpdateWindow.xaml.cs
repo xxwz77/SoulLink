@@ -27,9 +27,7 @@ namespace SoulLink.Views
 
             LocalVersionText.Text = "v" + CloudUpdater.CurrentVersion;
             RemoteVersionText.Text = "v" + manifest.Version;
-            NotesText.Text = string.IsNullOrWhiteSpace(manifest.Notes)
-                ? "本次更新没有提供说明。"
-                : manifest.Notes.Replace("\r\n", "\n").Trim();
+            NotesViewer.Document = ReleaseNotesDocument.Render(manifest.Notes, "本次更新没有提供说明。");
 
             Loaded += (_, _) => BtnConfirm.Focus();
         }

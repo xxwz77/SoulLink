@@ -12,6 +12,42 @@
         TextOptions.TextFormattingMode="Ideal">
 
     <Window.Resources>
+        <Style x:Key="DesktopNavButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Height" Value="43" />
+            <Setter Property="Margin" Value="0,0,5,4" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Plate" CornerRadius="0,7,7,0" Background="{TemplateBinding Background}">
+                            <Grid>
+                                <Border x:Name="Marker" Width="5" Visibility="Collapsed" HorizontalAlignment="Left"
+                                        CornerRadius="0,3,3,0" Background="{DynamicResource DesktopAccent}" />
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Plate" Property="Background" Value="{DynamicResource HoverFill}" />
+                            </Trigger>
+                            <Trigger Property="Selector.IsSelected" Value="True">
+                                <Setter TargetName="Plate" Property="Background" Value="{DynamicResource DesktopSelection}" />
+                                <Setter TargetName="Marker" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Plate" Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
+                                <Setter TargetName="Plate" Property="BorderThickness" Value="1" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Storyboard x:Key="FadeIn">
             <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.45">
                 <DoubleAnimation.EasingFunction>
@@ -29,56 +65,46 @@
     <Grid x:Name="RootLayer" Margin="0">
         <Border x:Name="Shell" CornerRadius="0" Background="{DynamicResource WindowBackground}" BorderThickness="0">
             <Grid>
-                <ctl:AuroraBackdrop x:Name="Backdrop" />
-
                 <!-- ★ 不再画内层边框：它的 Margin 会形成一圈矩形，和 DWM 的弧形边不一致，
                      看起来就是「圆角窗口里套了个方框」。圆角完全交给 DWM。 -->
 
                 <!-- ★ 顶部留 10px：DWM 圆角半径约 8px，内容顶到边缘会把角盖成方形 -->
                 <!-- ChromeGrid / TitleRow：RDP 全屏时由 SetChromeFullscreen 收纳为零 -->
-                <Grid x:Name="ChromeGrid" Margin="20,10,20,16">
+                <Grid x:Name="ChromeGrid">
                     <Grid.RowDefinitions>
-                        <RowDefinition x:Name="TitleRow" Height="64" />
+                        <RowDefinition x:Name="TitleRow" Height="49" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
                     <!-- ═══ 标题栏 ═══ -->
-                    <Grid Grid.Row="0" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                    <Grid Grid.Row="0" Background="{DynamicResource DesktopChrome}" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center"
+                        <Border Grid.ColumnSpan="3" Height="1" VerticalAlignment="Bottom" Background="{DynamicResource StrokeSoft}" />
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="19,0,0,0"
                                     WindowChrome.IsHitTestVisibleInChrome="True">
-                            <Grid Width="34" Height="34">
-                                <Ellipse Fill="#22FFFFFF" />
-                                <Ellipse Width="26" Height="26">
-                                    <Ellipse.Fill>
-                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                            <GradientStop Color="#FF7C5CFF" Offset="0" />
-                                            <GradientStop Color="#FF4FE3FF" Offset="1" />
-                                        </LinearGradientBrush>
-                                    </Ellipse.Fill>
-                                    <Ellipse.Effect>
-                                        <DropShadowEffect BlurRadius="18" ShadowDepth="0" Opacity="0.9" Color="#FF4FE3FF" />
-                                    </Ellipse.Effect>
-                                </Ellipse>
-                                <Ellipse Width="9" Height="9" Fill="#FFFFFFFF" />
+                            <Grid Width="28" Height="26">
+                                <Ellipse Width="16" Height="16" Stroke="{DynamicResource DesktopAccent}" StrokeThickness="2.2"
+                                         HorizontalAlignment="Left" />
+                                <Ellipse Width="16" Height="16" Stroke="{DynamicResource DesktopAccent}" StrokeThickness="2.2"
+                                         HorizontalAlignment="Right" />
                             </Grid>
                             <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="SoulLink" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
+                                    <TextBlock Text="SoulLink" FontSize="19" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" />
                                     <!-- ★ 挂机验证版标识：只有非默认身份才显示。
                                          没有它时两个窗口标题都是 SoulLink，分不清哪个在挂机
                                          （实测用户会点到错误的窗口操作）。 -->
                                     <Border x:Name="IdentityBadge" Visibility="Collapsed"
                                             CornerRadius="5" Padding="6,1" Margin="7,0,0,0"
                                             VerticalAlignment="Center"
-                                            Background="#2AFFB020" BorderBrush="#55FFB020" BorderThickness="1">
+                                            Background="Transparent" BorderBrush="{DynamicResource DesktopAccent}" BorderThickness="1">
                                         <TextBlock x:Name="IdentityBadgeText" Text="挂机版" FontSize="9.5"
-                                                   Foreground="#FFFFC24D" />
+                                                   Foreground="{DynamicResource DesktopAccent}" />
                                     </Border>
                                 </StackPanel>
                                 <!-- 版本号：点击检查更新；有新版时变琥珀色并显示红点 -->
@@ -88,38 +114,45 @@
                                      即使加 WindowChrome.IsHitTestVisibleInChrome 也不可靠
                                      （它不向下传递给嵌套的子元素，实测点击仍无反应）。
                                      Button 自带命中测试并会阻止拖动，最稳。 -->
-                                <Button x:Name="VersionButton" Click="VersionText_Click"
-                                        Cursor="Hand" ToolTip="点击检查更新"
-                                        WindowChrome.IsHitTestVisibleInChrome="True"
-                                        Background="Transparent" BorderThickness="0" Padding="0"
-                                        HorizontalAlignment="Left"
-                                        HorizontalContentAlignment="Left">
-                                    <Button.Template>
-                                        <ControlTemplate TargetType="Button">
-                                            <ContentPresenter />
-                                        </ControlTemplate>
-                                    </Button.Template>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Ellipse x:Name="UpdateDot" Width="6" Height="6" Margin="0,0,4,0"
-                                                 VerticalAlignment="Center" Visibility="Collapsed"
-                                                 Fill="{DynamicResource AmberBrush}" />
-                                        <TextBlock x:Name="VersionText" FontSize="10.5"
-                                                   Foreground="{DynamicResource TextMuted}" />
-                                        <!-- ★ 3.2.3：光靠版本号变琥珀色 + 一个小圆点，用户看不出是什么意思
-                                             （实测反馈："有更新的时候应该是有文字告诉别人有新版本"）。
-                                             这里直接写出文字，并显示目标版本号。 -->
-                                        <TextBlock x:Name="UpdateHintText" Margin="6,0,0,0" FontSize="10"
-                                                   VerticalAlignment="Center" Visibility="Collapsed"
-                                                   Foreground="{DynamicResource AmberBrush}"
-                                                   Text="有新版本" />
-                                    </StackPanel>
-                                </Button>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="VersionButton" Click="VersionText_Click"
+                                            Cursor="Hand" ToolTip="点击检查更新"
+                                            WindowChrome.IsHitTestVisibleInChrome="True"
+                                            Background="Transparent" BorderThickness="0" Padding="0"
+                                            HorizontalAlignment="Left" VerticalAlignment="Center"
+                                            HorizontalContentAlignment="Left">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <ContentPresenter />
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Ellipse x:Name="UpdateDot" Width="6" Height="6" Margin="0,0,4,0"
+                                                     VerticalAlignment="Center" Visibility="Collapsed"
+                                                     Fill="{DynamicResource AmberBrush}" />
+                                            <TextBlock x:Name="VersionText" FontSize="10.5"
+                                                       Foreground="{DynamicResource TextMuted}" />
+                                            <!-- ★ 3.2.3：光靠版本号变琥珀色 + 一个小圆点，用户看不出是什么意思
+                                                 （实测反馈："有更新的时候应该是有文字告诉别人有新版本"）。
+                                                 这里直接写出文字，并显示目标版本号。 -->
+                                            <TextBlock x:Name="UpdateHintText" Margin="6,0,0,0" FontSize="10"
+                                                       VerticalAlignment="Center" Visibility="Collapsed"
+                                                       Foreground="{DynamicResource AmberBrush}"
+                                                       Text="有新版本" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="ReleaseNotesButton" Margin="6,0,0,0" Padding="4,1"
+                                            Style="{StaticResource DesktopLink}" Click="ReleaseNotes_Click"
+                                            WindowChrome.IsHitTestVisibleInChrome="True" VerticalAlignment="Center"
+                                            Foreground="{DynamicResource DesktopAccent}" FontSize="10.5"
+                                            Content="更新说明" ToolTip="查看本版及历史更新" />
+                                </StackPanel>
                             </StackPanel>
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
                                     WindowChrome.IsHitTestVisibleInChrome="True">
-                            <Border CornerRadius="12" Padding="11,5" Margin="0,0,12,0" Background="{DynamicResource ButtonBackground}" BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1"
+                            <Border Padding="11,4" Margin="0,0,5,0" Background="Transparent"
                                     x:Name="EngineBadge" MouseLeftButtonUp="EngineBadge_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <!-- ★ 2026-11-24 修「引擎就绪」造假：XAML 默认值改中性态（检测中…+灰点），
@@ -137,8 +170,14 @@
                             </Border>
                             <Button x:Name="BtnCollapseNav" Style="{StaticResource WindowButton}"
                                     Width="34" Margin="0,0,6,0" Click="BtnToggleNav_Click"
-                                    ToolTip="收起 / 展开侧栏">
-                                <TextBlock Text="&#xE700;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                                    ToolTip="收起 / 展开侧栏 · 右键设置悬停展开">
+                                <Button.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem x:Name="AutoHideNavCheck" Header="鼠标悬停展开" IsCheckable="True"
+                                                  Checked="AutoHideNav_Changed" Unchecked="AutoHideNav_Changed" />
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                                <TextBlock x:Name="HamburgerGlyph" Text="&#xE700;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
                             </Button>
                             <Button x:Name="BtnMin" Style="{StaticResource WindowButton}" Click="BtnMin_Click" ToolTip="最小化">
                                 <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
@@ -153,264 +192,145 @@
                     </Grid>
 
                     <!-- ═══ 主体 ═══ -->
+                    <ctl:DesktopArtwork Grid.Row="1" x:Name="Backdrop" Region="Base" />
                     <Grid Grid.Row="1" x:Name="SideNavHost">
                         <Grid.ColumnDefinitions>
-                            <!-- ★ 图标栏固定 56 宽，列宽 76 = 56 + 20 间距。
-                                 ★ rail 不能再设 Margin：列宽已经包含间距，
-                                   再加 Margin 会把 rail 挤窄或者让间距消失（实测两者重叠）。
-                                 收起时放图标栏，展开时侧栏以浮层盖在上面，画面尺寸**永不变化**，所以不会闪。 -->
-                            <!-- ★ 展开时列宽跟着变，否则右侧内容会压住加宽后的侧栏（层级不够）。
-                                 收起 76 = 56(rail) + 20(间距)；展开 200 = 180(rail) + 20(间距)。 -->
-                            <ColumnDefinition x:Name="NavColumn" Width="76" />
+                            <ColumnDefinition x:Name="NavColumn" Width="210" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
-                        <!-- ① 图标栏：恒定 56px 宽，永远占位
-                             ★ 垂直必须与右侧内容卡片**完全等高**：主体 Grid 已经是内容区，
-                               上下边距由外层 Margin(20,10,20,16) 提供，这里不能再加 Margin，
-                               否则会比右卡矮一截（实测顶差 4 DIP、底差 16 DIP）。
-                             ★ 左边距**不能在这里加**：外层内容区已有 Margin(20,...)，
-                               再加一次会和右侧卡片错位（实测 rail 跑到 40 DIP，右卡仍是 20 DIP）。
-                               所以 Margin 只留右边距 20，把图标栏和内容卡片隔开。 -->
-                        <!-- ★ 侧栏：单个 Border，自身通过 Width 动画展开，不产生第二个窗口。
-                             展开时右侧出现文字，收起时只剩图标。
-                             这样彻底没有空域/翻边/越界/盖任务栏的问题。 -->
-                        <!-- ★ Grid.ColumnSpan="2"：让侧栏横跨两列并左对齐。
-                             这样它加宽时是**盖在右侧内容之上**，而不是把内容挤开
-                             （用户要求：侧栏层级最高，展开时覆盖内容，内容位置不变）。
-                             列宽保持 76 不变，右侧内容永远不动。 -->
                         <Border Grid.Column="0" Grid.ColumnSpan="2" x:Name="NavRail" Panel.ZIndex="99"
-                                Style="{StaticResource NavSurface}"
-                                HorizontalAlignment="Left" Width="56"
-                                Margin="0" Padding="3,12"
-                                ClipToBounds="True"
-                                MouseEnter="NavRail_MouseEnter" MouseLeave="NavRail_MouseLeave">
-                            <!-- A 方案仅作用于这个可展开菜单；不改全局主题，也不接管任何输入。 -->
-                            <Border.Resources>
-                                <Style TargetType="{x:Type ctl:NavigationOrnament}">
-                                    <Setter Property="VerticalAlignment" Value="Stretch" />
-                                    <Setter Property="IsHovered" Value="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" />
-                                    <Setter Property="MutedBrush" Value="{DynamicResource TextMuted}" />
-                                    <Setter Property="TextBrush" Value="{DynamicResource TextSecondary}" />
-                                    <Setter Property="CyanBrush" Value="{DynamicResource CyanBrush}" />
-                                    <Setter Property="VioletBrush" Value="{DynamicResource VioletBrush}" />
-                                </Style>
-                            </Border.Resources>
+                                HorizontalAlignment="Left" Width="210" Background="{DynamicResource NavBackground}"
+                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="0,0,1,0"
+                                ClipToBounds="True" MouseEnter="NavRail_MouseEnter" MouseLeave="NavRail_MouseLeave">
                             <Grid>
-                                <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-
-                                <!-- 上：图标 + 文字 -->
-                                <StackPanel Grid.Row="0" x:Name="RailIcons" VerticalAlignment="Top">
-                                    <!-- 汉堡：展开时文字显示「控制台」 -->
-                                    <Grid Height="36">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="54" />
+                                </Grid.RowDefinitions>
+                                <ctl:DesktopArtwork Region="Sidebar" Height="300" VerticalAlignment="Bottom" />
+                                <StackPanel x:Name="RailIcons" VerticalAlignment="Top" Margin="0,15,0,0">
+                                <Button x:Name="NavOverview" Tag="overview" ToolTip="概览" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click">
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="46" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <Button x:Name="BtnHamburger" Grid.Column="0" Style="{StaticResource WindowButton}"
-                                                Width="42" Height="36" HorizontalAlignment="Left"
-                                                Click="BtnToggleNav_Click" ToolTip="展开 / 收起侧栏">
-                                            <TextBlock x:Name="HamburgerGlyph" Text="&#xE700;"
-                                                       FontFamily="Segoe MDL2 Assets" FontSize="13" />
-                                        </Button>
-                                        <TextBlock x:Name="NavTitleText" Grid.Column="1" Text="控制台"
-                                                   Style="{StaticResource Caption}" VerticalAlignment="Center"
-                                                   Margin="6,0,0,0" Visibility="Collapsed" />
+                                        <TextBlock Text="&#xE80F;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="NavTextOverview" Grid.Column="1" Text="概览"
+                                                   VerticalAlignment="Center" FontSize="15" />
                                     </Grid>
-
-                                    <Border Height="1" Background="{DynamicResource StrokeSoft}" Margin="9,10,9,10" />
-
-                                    <!-- 导航行：图标 +（展开时）文字 -->
-                                    <Grid Height="38" Tag="launch" ToolTip="启动台"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                </Button>
+                                <Button x:Name="NavConsole" Tag="console" ToolTip="账号与会话" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click">
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="46" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphLaunch}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphLaunch}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphLaunch" Grid.Column="0" PageKey="launch" Width="42"
-                                                   />
-                                        <TextBlock x:Name="NavTextLaunch" Grid.Column="1" Text="启动台"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
+                                        <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="NavTextConsole" Grid.Column="1" Text="账号与会话"
+                                                   VerticalAlignment="Center" FontSize="15" />
                                     </Grid>
-                                    <Grid Height="38" Tag="console" ToolTip="中控台"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                </Button>
+                                <Button x:Name="NavRemote" Tag="remote" ToolTip="远程控制" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click">
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="46" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphConsole}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphConsole}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphConsole" Grid.Column="0" PageKey="console" Width="42"
-                                                   />
-                                        <TextBlock x:Name="NavTextConsole" Grid.Column="1" Text="中控台"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
+                                        <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="NavTextRemote" Grid.Column="1" Text="远程控制"
+                                                   VerticalAlignment="Center" FontSize="15" />
                                     </Grid>
-                                    <Grid Height="38" Tag="datacenter" ToolTip="数据中心"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                </Button>
+                                <Button x:Name="NavDataCenter" Tag="datacenter" ToolTip="数据中心" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click">
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="46" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphDataCenter}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphDataCenter}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphDataCenter" Grid.Column="0" PageKey="datacenter" Width="42"
-                                                   />
+                                        <TextBlock Text="&#xE1D3;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         <TextBlock x:Name="NavTextDataCenter" Grid.Column="1" Text="数据中心"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
+                                                   VerticalAlignment="Center" FontSize="15" />
                                     </Grid>
-                                    <Grid Height="38" Tag="update" ToolTip="更新 BGI"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                </Button>
+                                <Button x:Name="NavUpdate" Tag="update" ToolTip="更新" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click">
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="46" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphUpdate}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphUpdate}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphUpdate" Grid.Column="0" PageKey="update" Width="42"
-                                                   />
-                                        <TextBlock x:Name="NavTextUpdate" Grid.Column="1" Text="更新 BGI"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
+                                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="NavTextUpdate" Grid.Column="1" Text="更新"
+                                                   VerticalAlignment="Center" FontSize="15" />
                                     </Grid>
-                                    <Grid Height="38" Tag="routeupdate" ToolTip="路线更新"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                </Button>
+                                <Button x:Name="NavProcs" Tag="procs" ToolTip="会话瘦身" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click">
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="46" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphRouteUpdate}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphRouteUpdate}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphRouteUpdate" Grid.Column="0" PageKey="routeupdate" Width="42"
-                                                   />
-                                        <TextBlock x:Name="NavTextRouteUpdate" Grid.Column="1" Text="路线更新"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
-                                    </Grid>
-                                    <Grid Height="38" Tag="remote" ToolTip="远程管理"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphRemote}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphRemote}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphRemote" Grid.Column="0" PageKey="remote" Width="42" />
-                                        <TextBlock x:Name="NavTextRemote" Grid.Column="1" Text="远程管理"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" MouseLeftButtonUp="NavRow_Click" />
-                                    </Grid>
-                                    <Grid Height="38" Tag="sessions" ToolTip="联机大厅"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphSessions}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphSessions}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphSessions" Grid.Column="0" PageKey="sessions" Width="42"
-                                                   />
-                                        <TextBlock x:Name="NavTextSessions" Grid.Column="1" Text="联机大厅"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
-                                    </Grid>
-                                    <Grid Height="38" Tag="procs" ToolTip="会话瘦身"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphProcs}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphProcs}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphProcs" Grid.Column="0" PageKey="procs" Width="42"
-                                                   />
+                                        <TextBlock Text="&#xEA99;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         <TextBlock x:Name="NavTextProcs" Grid.Column="1" Text="会话瘦身"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
+                                                   VerticalAlignment="Center" FontSize="15" />
                                     </Grid>
-                                    <Grid Height="38" Tag="cli" ToolTip="命令行"
-                                          Background="Transparent" MouseLeftButtonUp="NavRow_Click">
+                                </Button>
+                                <Button x:Name="NavSessions" Tag="sessions" ToolTip="联机大厅" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click">
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="46" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <ctl:NavigationOrnament Grid.ColumnSpan="2" SelectionOnly="True"
-                                                                IsHovered="{Binding IsHovered, ElementName=NavGlyphCli}"
-                                                                IsLight="{Binding IsLight, ElementName=NavGlyphCli}" />
-                                        <ctl:NavigationOrnament x:Name="NavGlyphCli" Grid.Column="0" PageKey="cli" Width="42"
-                                                   />
-                                        <TextBlock x:Name="NavTextCli" Grid.Column="1" Text="命令行"
-                                                   VerticalAlignment="Center" Margin="6,0,0,0"
-                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12.5"
-                                                   Visibility="Collapsed" />
+                                        <TextBlock Text="&#xE716;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="NavTextSessions" Grid.Column="1" Text="联机大厅"
+                                                   VerticalAlignment="Center" FontSize="15" />
                                     </Grid>
-                                    <Border Height="1" Background="{DynamicResource StrokeSoft}" Margin="9,10,9,10" />
+                                </Button>
+                                <Button x:Name="NavCli" Tag="cli" ToolTip="命令行" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="46" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="NavTextCli" Grid.Column="1" Text="命令行"
+                                                   VerticalAlignment="Center" FontSize="15" />
+                                    </Grid>
+                                </Button>
                                 </StackPanel>
-
-                                <!-- 下：悬停开关 + 当前会话 + 主题/设置（贴底） -->
-                                <Grid Grid.Row="1" VerticalAlignment="Bottom">
-                                    <!-- ★ 必须有 4 行：分隔线 / 悬停开关 / 当前会话 / 主题设置。
-                                         少了第 4 行时 Row="3" 会回落到第 0 行，底部 UI 重叠（用户实测）。 -->
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
-
-                                    <!-- ★ 这两块原先在旧 Popup 面板里，重建侧栏时必须搬过来，
-                                         否则展开后看不到「鼠标悬停展开」和「当前会话」（用户实测丢失）。 -->
-                                    <Border x:Name="NavExpandedDivider" Grid.Row="0" Height="1" Background="{DynamicResource StrokeSoft}"
-                                            Margin="6,6,6,8" Visibility="Collapsed" />
-
-                                    <CheckBox Grid.Row="1" x:Name="AutoHideNavCheck" Style="{StaticResource GlassCheckBox}"
-                                              Content="鼠标悬停展开" Margin="6,0,0,8"
-                                              Visibility="Collapsed"
-                                              Checked="AutoHideNav_Changed" Unchecked="AutoHideNav_Changed" />
-
-                                    <Border x:Name="NavSessionPanel" Grid.Row="2" Style="{StaticResource GlassPanel}" Padding="10,8"
-                                            Margin="4,0,4,6"
-                                            Visibility="Collapsed">
-                                        <StackPanel>
-                                            <TextBlock Text="当前会话" Style="{StaticResource Caption}" />
-                                            <TextBlock x:Name="SelfSessionText" Text="—" Style="{StaticResource Mono}"
-                                                       Margin="0,3,0,0" />
-                                            <TextBlock x:Name="SelfUserText" Text="—" Style="{StaticResource Caption}"
-                                                       Margin="0,2,0,0" />
-                                        </StackPanel>
-                                    </Border>
-
-                                    <StackPanel Grid.Row="3">
-                                        <Button x:Name="BtnThemeBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                                HorizontalAlignment="Left" Click="BtnTheme_Click" ToolTip="主题：跟随系统">
-                                            <TextBlock x:Name="ThemeGlyphBottom" Text="&#xE708;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
-                                        </Button>
-                                        <Button x:Name="BtnSettingsBottom" Style="{StaticResource WindowButton}" Width="42" Height="38"
-                                                HorizontalAlignment="Left" Click="GeneralSettings_Click" ToolTip="应用设置">
-                                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource TextMuted}" />
-                                        </Button>
-                                    </StackPanel>
-                                </Grid>
+                                <Border Grid.Row="1" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="0,1,0,0" />
+                                <Button x:Name="NavSettings" Tag="settings" ToolTip="设置" Style="{StaticResource DesktopNavButton}"
+                                        Click="RailIcon_Click" Grid.Row="1" Margin="0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="46" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="NavTextSettings" Grid.Column="1" Text="设置"
+                                                   VerticalAlignment="Center" FontSize="15" />
+                                    </Grid>
+                                </Button>
+                                <TextBlock x:Name="SelfSessionText" Visibility="Collapsed" />
+                                <TextBlock x:Name="SelfUserText" Visibility="Collapsed" />
                             </Grid>
                         </Border>
 
@@ -421,11 +341,14 @@
                               Width="56" Height="0" IsHitTestVisible="False" />
 
                         <!-- 右侧页面容器 -->
-                        <Grid Grid.Column="1">
+                        <Grid Grid.Column="1" x:Name="PageHost" Margin="20,0,20,15">
+                            <Grid x:Name="PageOverview">
+                                <vm:OverviewPage x:Name="OverviewView" />
+                            </Grid>
                             <Grid x:Name="PageAutomation" Visibility="Collapsed">
                                 <vm:AutomationPage x:Name="AutomationView" />
                             </Grid>
-                            <Grid x:Name="PageLaunch" Visibility="Visible">
+                            <Grid x:Name="PageLaunch" Visibility="Collapsed">
                                 <vm:LaunchPage x:Name="LaunchView" />
                             </Grid>
                             <Grid x:Name="PageConsole" Visibility="Collapsed">
@@ -434,11 +357,21 @@
                             <Grid x:Name="PageDataCenter" Visibility="Collapsed">
                                 <vm:DataCenterPage x:Name="DataCenterView" />
                             </Grid>
-                            <Grid x:Name="PageUpdate" Visibility="Collapsed">
-                                <vm:BgiUpdatePage x:Name="UpdateView" />
-                            </Grid>
-                            <Grid x:Name="PageRouteUpdate" Visibility="Collapsed">
-                                <vm:RouteUpdatePage x:Name="RouteUpdateView" />
+                            <Grid x:Name="UpdateSection" Visibility="Collapsed">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Orientation="Horizontal" Margin="0,10,0,8">
+                                    <Button x:Name="UpdateBgiTab" Content="BetterGI 更新" Tag="update" Style="{StaticResource GhostButton}" Click="UpdateTab_Click" />
+                                    <Button x:Name="UpdateRouteTab" Content="路线更新" Tag="routeupdate" Margin="7,0,0,0" Style="{StaticResource GhostButton}" Click="UpdateTab_Click" />
+                                </StackPanel>
+                                <Grid x:Name="PageUpdate" Grid.Row="1" Visibility="Collapsed">
+                                    <vm:BgiUpdatePage x:Name="UpdateView" />
+                                </Grid>
+                                <Grid x:Name="PageRouteUpdate" Grid.Row="1" Visibility="Collapsed">
+                                    <vm:RouteUpdatePage x:Name="RouteUpdateView" />
+                                </Grid>
                             </Grid>
                             <Grid x:Name="PageRemote" Visibility="Collapsed">
                                 <vm:RemoteAdminPage x:Name="RemoteView" />

@@ -5,8 +5,7 @@
         Width="460" SizeToContent="Height" WindowStyle="None" AllowsTransparency="False"
         Background="{DynamicResource WindowBackground}" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
         ResizeMode="NoResize" FontFamily="{StaticResource UiFont}">
-    <Grid Margin="18">
-        <Grid.Effect><DropShadowEffect BlurRadius="34" ShadowDepth="0" Opacity="0.8" Color="#FF03050D" /></Grid.Effect>
+    <Grid Margin="18" Effect="{DynamicResource CardShadow}">
         <Border CornerRadius="20" Background="{DynamicResource WindowBackground}" BorderBrush="{DynamicResource StrokeMid}"
                 BorderThickness="1" ClipToBounds="True">
             <Grid>
@@ -14,7 +13,7 @@
                 <StackPanel Margin="26,24,26,22">
                     <Grid MouseLeftButtonDown="DragArea_MouseLeftButtonDown">
                         <TextBlock x:Name="IconText" Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="22"
-                                   Foreground="{StaticResource CyanBrush}" VerticalAlignment="Top" />
+                                   Foreground="{DynamicResource CyanBrush}" VerticalAlignment="Top" />
                         <TextBlock x:Name="TitleText" Text="SoulLink" FontSize="18" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextPrimary}" Margin="38,0,0,0" />
                     </Grid>

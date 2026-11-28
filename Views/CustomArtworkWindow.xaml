@@ -1,0 +1,118 @@
+<Window x:Class="SoulLink.Views.CustomArtworkWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctl="clr-namespace:SoulLink.Controls"
+        Title="自定义原图主题" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Width="1000" Height="660" MinWidth="630" MinHeight="460"
+        FontFamily="{StaticResource UiFont}" Background="{DynamicResource WindowBackground}"
+        Foreground="{DynamicResource TextPrimary}">
+    <Grid Margin="20,16,20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,12">
+            <TextBlock x:Name="ModeLabel" FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Foreground="{DynamicResource TextSecondary}" Margin="0,4,0,0"
+                       Text="拖动图片调整裁切位置，滚动鼠标或使用滑块缩放。预览采用主窗口背景的比例。" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="242" />
+            </Grid.ColumnDefinitions>
+
+            <Border Background="{DynamicResource DesktopChrome}" BorderBrush="{DynamicResource StrokeSoft}"
+                    BorderThickness="1" Padding="8" Margin="0,0,12,0" CornerRadius="12">
+                <Viewbox Stretch="Uniform">
+                    <Grid x:Name="PreviewHost" ClipToBounds="True" Width="680" Height="420">
+                        <Grid.Resources>
+                            <Style x:Key="PreviewCard" TargetType="Border">
+                                <Setter Property="Padding" Value="16,13" />
+                                <Setter Property="CornerRadius" Value="10" />
+                                <Setter Property="Background" Value="{DynamicResource CustomPreviewCard}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource CustomPreviewStroke}" />
+                                <Setter Property="BorderThickness" Value="1" />
+                            </Style>
+                        </Grid.Resources>
+                        <ctl:CustomArtworkCanvas x:Name="Canvas" Cursor="SizeAll" Focusable="True"
+                            AutomationProperties.Name="裁切预览，使用方向键移动、鼠标滚轮缩放"
+                            MouseLeftButtonDown="Canvas_DragStarted" MouseLeftButtonUp="Canvas_DragEnded"
+                            MouseMove="Canvas_Dragged" MouseWheel="Canvas_Zoomed" KeyDown="Canvas_KeyDown" />
+                        <StackPanel x:Name="PreviewCards" IsHitTestVisible="False" Width="132" Height="213"
+                                    VerticalAlignment="Bottom" HorizontalAlignment="Left" RenderTransformOrigin="0,1">
+                            <Border Style="{StaticResource PreviewCard}" Margin="0,0,0,8">
+                                <StackPanel>
+                                    <TextBlock Text="账号会话" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBlock Text="●  在线" Foreground="{DynamicResource CustomPreviewAccent}" Margin="0,7,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource PreviewCard}">
+                                <StackPanel>
+                                    <TextBlock Text="自动化" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBlock Text="下一次  08:30" Foreground="{DynamicResource CustomPreviewSecondary}" Margin="0,7,0,8" />
+                                    <Border Background="{DynamicResource CustomPreviewAccent}" CornerRadius="5" Padding="8,5"
+                                            HorizontalAlignment="Left">
+                                        <TextBlock Text="查看详情" Foreground="{DynamicResource CustomPreviewOnAccent}" />
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Viewbox>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource DesktopCard}" Padding="14,12">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,0,5,0">
+                        <TextBlock Text="背景图片" FontSize="15" FontWeight="SemiBold" />
+                        <Button x:Name="ChooseImageButton" Content="选择本地图片…" Click="ChooseImage_Click"
+                                Style="{StaticResource DesktopButton}" Padding="10,6" Margin="0,7,0,4" HorizontalAlignment="Left" />
+                        <TextBlock x:Name="ImageStatus" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
+
+                        <TextBlock x:Name="ZoomLabel" Text="缩放 100%" Margin="0,13,0,4" />
+                        <Slider x:Name="ZoomSlider" Minimum="1" Maximum="8" SmallChange="0.1" LargeChange="0.25"
+                                Style="{StaticResource GlassSlider}" AutomationProperties.Name="图片缩放"
+                                ValueChanged="ZoomSlider_Changed" />
+                        <Button x:Name="ResetButton" Content="重置裁切" Click="ResetCrop_Click" Style="{StaticResource DesktopLink}"
+                                HorizontalAlignment="Left" Padding="6,4" Margin="0,3,0,10" />
+
+                        <TextBlock Text="主题配色" FontSize="15" FontWeight="SemiBold" Margin="0,1,0,5" />
+                        <Label Content="强调色" Target="{Binding ElementName=AccentText}" Padding="0,4"
+                               Foreground="{DynamicResource TextPrimary}" />
+                        <DockPanel>
+                            <Button x:Name="AccentPicker" DockPanel.Dock="Right" Width="34" Margin="7,0,0,0" Click="Color_Click"
+                                    AutomationProperties.Name="选择强调色" Style="{StaticResource DesktopButton}">
+                                <Border x:Name="AccentSwatch" Width="16" Height="16" CornerRadius="3" />
+                            </Button>
+                            <TextBox x:Name="AccentText" Style="{StaticResource GlassTextBox}" MaxLength="7" TextChanged="Colors_Changed" />
+                        </DockPanel>
+                        <Label Content="卡片底色" Target="{Binding ElementName=SurfaceText}" Padding="0,4" Margin="0,3,0,0"
+                               Foreground="{DynamicResource TextPrimary}" />
+                        <DockPanel>
+                            <Button x:Name="SurfacePicker" DockPanel.Dock="Right" Width="34" Margin="7,0,0,0" Click="Color_Click"
+                                    AutomationProperties.Name="选择卡片底色" Style="{StaticResource DesktopButton}">
+                                <Border x:Name="SurfaceSwatch" Width="16" Height="16" CornerRadius="3" />
+                            </Button>
+                            <TextBox x:Name="SurfaceText" Style="{StaticResource GlassTextBox}" MaxLength="7" TextChanged="Colors_Changed" />
+                        </DockPanel>
+                        <TextBlock x:Name="ColorStatus" Foreground="{DynamicResource TextSecondary}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <DockPanel Grid.Row="2" Margin="0,12,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Content="取消" IsCancel="True" Style="{StaticResource DesktopButton}"
+                        MinWidth="82" Padding="12,8" Margin="0,0,8,0" />
+                <Button x:Name="ApplyButton" Content="应用主题" IsDefault="True" Click="Apply_Click"
+                        Style="{StaticResource PrimaryButton}" MinWidth="104" Padding="12,8" />
+            </StackPanel>
+            <TextBlock x:Name="Status" Margin="0,0,10,0" TextWrapping="Wrap" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextSecondary}" AutomationProperties.LiveSetting="Polite" />
+        </DockPanel>
+    </Grid>
+</Window>

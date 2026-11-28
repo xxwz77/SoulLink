@@ -12,7 +12,7 @@
              带 4 模块白边（二维码规范必需）、尺寸匹配窗口（460-40 margin=420 可用 > 390）、
              6px/模块在高 DPI（150%/200%）下仍清晰。Stretch=None 自然尺寸 + NearestNeighbor，
              不缩放不插值，定位角与静默区完整可见可扫。 -->
-        <Border Margin="0,12,0,12" BorderBrush="#20FFFFFF" BorderThickness="1"
+        <Border Margin="0,12,0,12" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1"
                 Background="White" HorizontalAlignment="Center" Padding="0">
             <Image x:Name="QrImage" Stretch="None" Margin="0"
                    RenderOptions.BitmapScalingMode="NearestNeighbor" />

@@ -6,6 +6,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -45,14 +46,27 @@
             </StackPanel>
         </Grid>
 
+        <Border x:Name="AccountScopeBar" Grid.Row="1" Visibility="Collapsed" Margin="0,0,0,8"
+                Padding="10,4" CornerRadius="8" Background="{DynamicResource DesktopPanel}"
+                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="全部账号" Style="{StaticResource DesktopLink}"
+                        Click="ShowAllAccounts_Click" />
+                <Button DockPanel.Dock="Right" Content="返回概览" Style="{StaticResource DesktopLink}"
+                        Click="ReturnToOverview_Click" />
+                <TextBlock x:Name="AccountScopeText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" />
+            </DockPanel>
+        </Border>
+
         <!-- 账号卡片列表 -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="AccountCardsScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="CardList" Margin="0,0,4,0" />
         </ScrollViewer>
 
         <!-- 底部说明 -->
-        <Border Grid.Row="2" Margin="0,10,0,0" CornerRadius="10" Background="#10FFFFFF"
-                BorderBrush="#20FFFFFF" BorderThickness="1" Padding="12,8">
+        <Border Grid.Row="3" Margin="0,10,0,0" CornerRadius="10" Background="{DynamicResource DesktopPanel}"
+                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" Padding="12,8">
             <TextBlock x:Name="FootNote" FontSize="10.5" TextWrapping="Wrap" LineHeight="17"
                        Foreground="{DynamicResource TextSecondary}" />
         </Border>

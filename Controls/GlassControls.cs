@@ -146,6 +146,7 @@ namespace SoulLink.Controls
         {
             Loaded += (_, __) => SyncPulse();
             Unloaded += (_, __) => StopPulse();
+            IsVisibleChanged += (_, __) => SyncPulse();
         }
 
         // ★★ 教训（2026-11-20 实测）：不要用 RepeatBehavior.Forever 的 Opacity 动画。★★
@@ -158,15 +159,17 @@ namespace SoulLink.Controls
         private DispatcherTimer? _timer;
         private double _phase;
 
+        internal void RefreshPulse() => SyncPulse();
+
         private void SyncPulse()
         {
-            if (!Pulse) { StopPulse(); return; }
             // 低档（全部静止）时不脉冲，但仍显示一个静态亮点的完整亮度。
             int tier = SoulLink.App.Config?.Settings?.EffectTier ?? 1;
-            if (!SoulLink.Models.AppSettings.EffectTierLevel.GlowPulse(tier))
+            if (!Pulse || !IsLoaded || !IsVisible || !SoulLink.Models.AppSettings.EffectTierLevel.GlowPulse(tier) ||
+                Environment.GetEnvironmentVariable("SOULLINK_NOANIM") == "1")
             {
                 StopPulse();
-                Opacity = 1.0;
+                InvalidateVisual();
                 return;
             }
             if (_timer != null) { if (!_timer.IsEnabled) _timer.Start(); return; }
@@ -174,6 +177,7 @@ namespace SoulLink.Controls
             _timer.Tick += (_, __) =>
             {
                 if (!Pulse) { StopPulse(); return; }
+                if (Window.GetWindow(this) is { IsActive: false }) return;
                 _phase += 0.18;
                 InvalidateVisual();
             };
@@ -193,7 +197,9 @@ namespace SoulLink.Controls
 
             // ★ 只用缓存画刷，避免每帧分配（旧实现是这里吃掉了 27 个点）。
             //   光晕整体透明度由 Opacity 动画负责，所以不再按脉冲值改 alpha。
+            if (_timer?.IsEnabled == true) dc.PushOpacity(.72 + .28 * Math.Cos(_phase));
             dc.DrawEllipse(HaloBrush(Color), null, center, d * 0.5, d * 0.5);
+            if (_timer?.IsEnabled == true) dc.Pop();
 
             if (_coreBrush == null || _coreColor != Color)
             {

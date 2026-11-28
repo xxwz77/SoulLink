@@ -1,6 +1,8 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -12,6 +14,7 @@ using System.Threading.Tasks;
 using System.Windows.Threading;
 using SoulLink.Models;
 using SoulLink.Services;
+using SoulLink.Theme;
 
 namespace SoulLink.Views
 {
@@ -31,6 +34,7 @@ namespace SoulLink.Views
     public partial class MainWindow : Window
     {
         private readonly Dictionary<string, UIElement> _pages = new Dictionary<string, UIElement>();
+        private readonly MainPageCards _mainPageCards = new();
         private bool _closingToTray;
         private bool _initialized;
         private bool _suppressNav;
@@ -50,6 +54,7 @@ namespace SoulLink.Views
         public MainWindow()
         {
             InitializeComponent();
+            ApplyMainPageCardTheme();
 
             // ── ★ 必须是非分层窗口 ──
             // 实测：AllowsTransparency=True 的分层窗口里，RDP ActiveX 控件能连上、
@@ -57,9 +62,7 @@ namespace SoulLink.Views
             // 所以这里默认不开透明，改用不透明的深色底 + 圆角裁剪。
             ApplyOpaqueMode();
 
-            if (Environment.GetEnvironmentVariable("SOULLINK_NOANIM") == "1")
-                Backdrop.Visibility = Visibility.Collapsed;
-
+            _pages["overview"] = PageOverview;
             _pages["automation"] = PageAutomation;
             _pages["launch"] = PageLaunch;
             _pages["console"] = PageConsole;
@@ -141,16 +144,10 @@ namespace SoulLink.Views
                 (user, kind, wait) => ConsoleView.RunSessionOpAsync(user, kind, wait);
 
             UpdateMaxGlyph();
-            UpdateThemeGlyph();
-            foreach (var button in RailIcons.FindChildren<Button>())
-            {
-                button.MouseEnter += RailIcon_HoverChanged;
-                button.MouseLeave += RailIcon_HoverChanged;
-            }
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, __) =>
             {
                 if (App.Config.Settings.ThemeMode == 0)
-                    Dispatcher.Invoke(() => { ThemeManager.Apply(); Background = (System.Windows.Media.Brush)Application.Current.Resources["WindowBackground"]; });
+                    Dispatcher.Invoke(ThemeManager.Apply);
 
                 // 强调色会随用户换主题/换壁纸变化，重新取一次，不用等下次激活。
                 try { Dispatcher.BeginInvoke(new Action(UpdateBorderColor)); } catch { }
@@ -159,23 +156,14 @@ namespace SoulLink.Views
             // 恢复上次的侧栏偏好
             try
             {
-                var st0 = ConfigStore.LoadState();
-                _autoHide = st0.NavAutoHide;
+                _autoHide = state.NavAutoHide;
                 AutoHideNavCheck.IsChecked = _autoHide;
-
-                // 构造阶段主窗口还没有前台 HWND，不能展开独立原生浮层。
-                // 先以 56px 图标栏完成布局，Loaded 后再恢复用户的展开偏好。
-                _navCollapsed = true;
-                _navTextVisible = false;
+                _navCollapsed = _autoHide || state.NavCollapsed;
+                _navTextVisible = !_navCollapsed;
+                NavRail.Width = _navCollapsed ? 56 : 210;
+                NavColumn.Width = new GridLength(NavRail.Width);
                 ApplyNavTextVisibility();
-                if (!_autoHide && !st0.NavCollapsed)
-                    Loaded += (_, __) => Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        if (IsActive) SetNavCollapsed(false, "启动恢复");
-                        else Activated += RestoreExpandedNavOnFirstActivation;
-                    }));
-                // 确保首帧文字状态与宽度一致（否则收起态文字仍可见，会压到右侧内容）
-                ApplyNavTextVisibility();
+                UpdateRailHighlight();
             }
             catch { }
 
@@ -185,6 +173,14 @@ namespace SoulLink.Views
 
             if (!string.IsNullOrEmpty(App.StartupPage)) SelectPage(App.StartupPage);
         }
+
+        internal void ApplyMainPageCardTheme()
+        {
+            PreviewCardTransparency();
+            _mainPageCards.ApplyTheme(PageHost.Resources);
+        }
+
+        internal void PreviewCardTransparency() => _mainPageCards.PreviewTransparency(App.Config.Settings.CardTransparency);
 
         /// <summary>
         /// 用 DWM 给窗口做系统级圆角（Windows 11）。
@@ -214,6 +210,7 @@ namespace SoulLink.Views
         private Thickness _fsChromeMargin;
         private GridLength _fsTitleHeight;
         private GridLength _fsNavWidth;
+        private Thickness _fsPageMargin;
         private Visibility _fsNavRailVisibility;
         private bool _fsNavWasCollapsed;
         private bool _chromeFullscreen;
@@ -238,6 +235,7 @@ namespace SoulLink.Views
                 _fsChromeMargin = ChromeGrid.Margin;
                 _fsTitleHeight = TitleRow.Height;
                 _fsNavWidth = NavColumn.Width;
+                _fsPageMargin = PageHost.Margin;
                 _fsNavRailVisibility = NavRail.Visibility;
                 _fsNavWasCollapsed = _navCollapsed;
 
@@ -245,6 +243,7 @@ namespace SoulLink.Views
 
                 ChromeGrid.Margin = new Thickness(0);
                 TitleRow.Height = new GridLength(0);
+                PageHost.Margin = new Thickness(0);
                 NavColumn.Width = new GridLength(0);
                 NavRail.Visibility = Visibility.Collapsed;
             }
@@ -255,6 +254,7 @@ namespace SoulLink.Views
 
                 ChromeGrid.Margin = _fsChromeMargin;
                 TitleRow.Height = _fsTitleHeight;
+                PageHost.Margin = _fsPageMargin;
                 NavColumn.Width = _fsNavWidth;
                 NavRail.Visibility = _fsNavRailVisibility;
 
@@ -441,9 +441,7 @@ namespace SoulLink.Views
                 WindowStyle = WindowStyle.None;
                 ResizeMode = ResizeMode.CanResize;
 
-                var deep = new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(0x05, 0x07, 0x0F));
-                Background = (System.Windows.Media.Brush)Application.Current.Resources["WindowBackground"];
+                SetResourceReference(BackgroundProperty, "WindowBackground");
 
                 // 圆角仍交给 DWM；缩放、客户区与最大化使用 WPF 自带的 WindowChrome。
                 // 不再另行拦截 WM_NCCALCSIZE / WM_NCHITTEST，避免两套几何互相覆盖。
@@ -484,7 +482,6 @@ namespace SoulLink.Views
                 Shell.CornerRadius = new CornerRadius(0);
                 Shell.BorderThickness = new Thickness(0);
                 Shell.SetResourceReference(BackgroundProperty, "WindowBackground");
-                Background = (System.Windows.Media.Brush)Application.Current.Resources["WindowBackground"];
             }
             catch (Exception ex)
             {
@@ -502,9 +499,8 @@ namespace SoulLink.Views
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             App.Breadcrumb("MainWindow.Loaded");
-            TryBeginStoryboard(FindResource("FadeIn") as Storyboard);
-
-            Backdrop.Visibility = Visibility.Visible;
+            if (!ThemeManager.AnimationsDisabled)
+                TryBeginStoryboard(FindResource("FadeIn") as Storyboard);
 
             _ = System.Threading.Tasks.Task.Run(async () =>
             {
@@ -512,27 +508,7 @@ namespace SoulLink.Views
                 await Dispatcher.InvokeAsync(() => LaunchView.RefreshSessions());
             });
 
-            // ★ 只有"没被 --page 指定过页面"时才强制回到启动台。
-            //   原来这里无条件 Activate()，而它在 --page 处理之后执行，
-            //   会把命令行指定的页面覆盖掉（实测 --page=console 无效，
-            //   启动后仍停在启动台，中控台从未初始化 → RDP 画面永远不显示）。
-            if (!_startupPageApplied)
-            {
-                try
-                {
-                    LaunchView.Activate();
-                    App.Breadcrumb("LaunchView activated");
-                }
-                catch (Exception ex)
-                {
-                    App.AppendErrorLog("LaunchView.Activate", ex);
-                    App.Breadcrumb("LaunchView.Activate FAILED: " + ex.Message);
-                }
-            }
-            else
-            {
-                App.Breadcrumb("startup page preserved (--page)");
-            }
+            if (!_startupPageApplied) SetActivePage("overview");
         }
 
         private bool _startupPageApplied;
@@ -635,7 +611,7 @@ namespace SoulLink.Views
                 if (hasUpdate)
                 {
                     string ver = _pendingUpdate?.Version ?? "";
-                    VersionText.Foreground = (Brush)FindResource("AmberBrush");
+                    VersionText.Foreground = UiBrush.Get("AmberBrush");
                     VersionText.ToolTip = "发现新版本 " + ver + "，点击查看";
                     if (UpdateDot != null) UpdateDot.Visibility = Visibility.Visible;
 
@@ -648,7 +624,7 @@ namespace SoulLink.Views
                 }
                 else
                 {
-                    VersionText.Foreground = (Brush)FindResource("TextMuted");
+                    VersionText.Foreground = UiBrush.Get("TextMuted");
                     VersionText.ToolTip = "点击检查更新";
                     if (UpdateDot != null) UpdateDot.Visibility = Visibility.Collapsed;
                     if (UpdateHintText != null) UpdateHintText.Visibility = Visibility.Collapsed;
@@ -656,6 +632,8 @@ namespace SoulLink.Views
             }
             catch { }
         }
+
+        private void ReleaseNotes_Click(object sender, RoutedEventArgs e) => ReleaseNotesWindow.ShowFor(this);
 
         private async void VersionText_Click(object sender, RoutedEventArgs e)
         {
@@ -730,13 +708,13 @@ namespace SoulLink.Views
             {
                 if (ok)
                 {
-                    EngineDot.Color = System.Windows.Media.Color.FromRgb(0x41, 0xF0, 0xC0);
+                    UiBrush.BindColor(EngineDot, GlowDot.ColorProperty, "MintBrush");
                     EngineText.Text = "引擎就绪";
                     SetEngineTooltip(detail);
                 }
                 else
                 {
-                    EngineDot.Color = System.Windows.Media.Color.FromRgb(0xFF, 0x6B, 0x6B);
+                    UiBrush.BindColor(EngineDot, GlowDot.ColorProperty, "RoseBrush");
                     EngineText.Text = "引擎异常";
                     SetEngineTooltip(detail.Length > 0 ? detail : "需要管理员权限");
                 }
@@ -754,20 +732,20 @@ namespace SoulLink.Views
         /// </summary>
         private void RenderEngine(EngineState state, string detail, string tooltip)
         {
-            var (color, text) = state switch
+            var (resource, text) = state switch
             {
-                EngineState.Ready => (System.Windows.Media.Color.FromRgb(0x41, 0xF0, 0xC0), "引擎就绪"),
-                EngineState.NotInstalled => (System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B), "引擎待安装"),
-                EngineState.NotRunning => (System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B), "引擎未运行"),
-                EngineState.AgentNeedsUpdate => (System.Windows.Media.Color.FromRgb(0xFF, 0x9B, 0x4D), "注入代理待更新"),
-                EngineState.ServiceNeedsUpdate => (System.Windows.Media.Color.FromRgb(0xFF, 0x9B, 0x4D), "Windows 服务待更新"),
-                EngineState.ComponentsNeedUpdate => (System.Windows.Media.Color.FromRgb(0xFF, 0x9B, 0x4D), "服务与代理待更新"),
+                EngineState.Ready => ("MintBrush", "引擎就绪"),
+                EngineState.NotInstalled => ("AmberBrush", "引擎待安装"),
+                EngineState.NotRunning => ("AmberBrush", "引擎未运行"),
+                EngineState.AgentNeedsUpdate => ("AmberBrush", "注入代理待更新"),
+                EngineState.ServiceNeedsUpdate => ("AmberBrush", "Windows 服务待更新"),
+                EngineState.ComponentsNeedUpdate => ("AmberBrush", "服务与代理待更新"),
                 // ★ 2026-11-24 P0-A：通道断 = 非绿（琥珀）。用户原话「界面一片绿，啥也用不了」——
                 //   服务在跑、版本对，但 relay 管道断了/代理死了，绝不能显示绿色。
-                EngineState.ChannelDown => (System.Windows.Media.Color.FromRgb(0xFF, 0xC4, 0x6B), "通道未建立"),
-                _ => (System.Windows.Media.Color.FromRgb(0xFF, 0x6B, 0x6B), "引擎异常"),
+                EngineState.ChannelDown => ("AmberBrush", "通道未建立"),
+                _ => ("RoseBrush", "引擎异常"),
             };
-            EngineDot.Color = color;
+            UiBrush.BindColor(EngineDot, GlowDot.ColorProperty, resource);
             EngineText.Text = text;
             EngineBadge.Cursor = AgentSync.RequiresUpdate(state) ? Cursors.Hand : null;
             SetEngineTooltip(string.IsNullOrWhiteSpace(detail) ? tooltip : tooltip + "\n" + detail);
@@ -775,7 +753,11 @@ namespace SoulLink.Views
 
         private void EngineBadge_Click(object sender, MouseButtonEventArgs e)
         {
-            if (EngineBadge.Cursor == Cursors.Hand) NavigateTo("settings");
+            if (EngineBadge.Cursor == Cursors.Hand)
+            {
+                NavigateTo("settings");
+                SettingsView.ShowGeneralSettings();
+            }
         }
 
         /// <summary>把三方版本 Tooltip 写到 EngineBadge；非 Broker 通道只有说明文字。</summary>
@@ -859,20 +841,9 @@ namespace SoulLink.Views
         private void AutoHideNav_Changed(object sender, RoutedEventArgs e)
         {
             if (!_initialized) return;
-            _autoHide = AutoHideNavCheck.IsChecked == true;
-            if (_autoHide) SetNavCollapsed(true, "开启自动收起");
+            _autoHide = AutoHideNavCheck.IsChecked;
+            SetNavCollapsed(_autoHide, "切换悬停展开");
             SaveNavPref();
-        }
-
-        /// <summary>导航行点击（Grid 行，Tag 为页面标识）。</summary>
-        private void NavRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
-        {
-            if (sender is FrameworkElement fe && fe.Tag is string tag)
-            {
-                App.Breadcrumb("NavRow_Click -> " + tag);
-                NavigateTo(tag);
-                SetNavCollapsed(true, "点图标切页");
-            }
         }
 
         private void BtnToggleNav_Click(object sender, RoutedEventArgs e)
@@ -881,47 +852,16 @@ namespace SoulLink.Views
             SaveNavPref();
         }
 
-        private void RailIcon_HoverChanged(object sender, MouseEventArgs e)
-        {
-            if (sender is not Button button || button.Tag is not string tag) return;
-            bool hovered = button.IsMouseOver;
-            if (button.Content is TextBlock glyph)
-                glyph.Foreground = hovered ? (Brush)FindResource("CyanBrush") : (Brush)FindResource("TextMuted");
-            // 展开态文字已在 NavRail 内，处理同一批元素
-        }
-
         private void RailIcon_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button b && b.Tag is string tag)
-            {
-                NavigateTo(tag);
-                SetNavCollapsed(true, "点图标切页");
-            }
+            if (sender is not Button { Tag: string tag }) return;
+            NavigateTo(tag);
+            if (_autoHide) SetNavCollapsed(true, "点图标切页");
         }
 
-        private void BtnTheme_Click(object sender, RoutedEventArgs e)
+        private void UpdateTab_Click(object sender, RoutedEventArgs e)
         {
-            int mode = App.Config.Settings.ThemeMode;
-            App.Config.Settings.ThemeMode = (mode + 1) % 3;
-            ConfigStore.Save(App.Config);
-            ThemeManager.Apply();
-            Background = (System.Windows.Media.Brush)Application.Current.Resources["WindowBackground"];
-            UpdateThemeGlyph();
-            LogBus.Info("主题模式", App.Config.Settings.ThemeMode == 0 ? "跟随系统" : App.Config.Settings.ThemeMode == 1 ? "浅色" : "深色");
-        }
-
-        private void UpdateThemeGlyph()
-        {
-            if (ThemeGlyphBottom == null || BtnThemeBottom == null) return;
-            int mode = App.Config.Settings.ThemeMode;
-            ThemeGlyphBottom.Text = mode == 0 ? "\uE793" : mode == 1 ? "\uE706" : "\uE708";
-            BtnThemeBottom.ToolTip = "主题：" + (mode == 0 ? "跟随系统" : mode == 1 ? "浅色" : "深色") + "（点击切换）";
-        }
-
-        private void GeneralSettings_Click(object sender, RoutedEventArgs e)
-        {
-            SetNavCollapsed(true, "打开通用设置");
-            NavigateTo("settings");
+            if (sender is Button { Tag: string tag }) NavigateTo(tag);
         }
 
         /// <summary>
@@ -999,12 +939,6 @@ namespace SoulLink.Views
         /// 展开 / 收起侧栏。展开时使用归主窗口所有的独立 HWND 浮层，
         /// 收起时把同一个 NavRail 放回主窗口，不复制导航按钮或业务逻辑。
         /// </summary>
-        private void RestoreExpandedNavOnFirstActivation(object? sender, EventArgs e)
-        {
-            Activated -= RestoreExpandedNavOnFirstActivation;
-            if (!_autoHide && _navCollapsed) SetNavCollapsed(false, "启动恢复");
-        }
-
         /// <summary>
         /// 当前页面是否含 HWND 空域（RDP 的 WindowsFormsHost）。
         ///
@@ -1023,7 +957,7 @@ namespace SoulLink.Views
         /// </summary>
         private bool PageNeedsOverlayNav()
         {
-            return string.Equals(_activePage, "console", StringComparison.OrdinalIgnoreCase);
+            return _autoHide && string.Equals(_activePage, "console", StringComparison.OrdinalIgnoreCase);
         }
 
         private void EnsureNavOverlayWindow()
@@ -1057,7 +991,7 @@ namespace SoulLink.Views
             _navOverlayWindow?.HideOverlay();
             if (_navOverlayWindow != null) _navOverlayWindow.Content = null;
             NavRail.ClearValue(FrameworkElement.WidthProperty);
-            NavRail.Width = 56;
+            NavRail.Width = _navCollapsed ? 56 : 210;
             Grid.SetColumn(NavRail, 0);
             Grid.SetColumnSpan(NavRail, 2);
             SideNavHost.Children.Add(NavRail);
@@ -1180,46 +1114,36 @@ namespace SoulLink.Views
                 if (collapsed && !useOverlay) RestoreNavRail();
 
                 const double collapsedWidth = 56;
-                const double expandedWidth = 180;
+                const double expandedWidth = 210;
                 double target = collapsed ? collapsedWidth : expandedWidth;
+                if (!_chromeFullscreen)
+                    NavColumn.Width = new GridLength(_autoHide ? collapsedWidth : target);
 
-                // 侧栏变宽会挤压右侧内容，用动画让过程平滑
-                // Freeze the current visual width before replacing an animation, so
-                // rapid expand/collapse never jumps back to a stale base value.
                 double currentWidth = NavRail.ActualWidth > 0 ? NavRail.ActualWidth : target;
                 NavRail.BeginAnimation(FrameworkElement.WidthProperty, null);
-                NavRail.Width = currentWidth;
-                var anim = new System.Windows.Media.Animation.DoubleAnimation
+                NavRail.Width = target;
+                bool animate = _autoHide && !ThemeManager.AnimationsDisabled;
+                if (animate && Math.Abs(currentWidth - target) > .5)
                 {
-                    From = currentWidth,
-                    To = target,
-                    FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop,
-                    Duration = TimeSpan.FromMilliseconds(collapsed ? 140 : 170),
-                    EasingFunction = new System.Windows.Media.Animation.CubicEase
-                    { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
-                };
-                anim.Completed += (_, __) =>
+                    var animation = new DoubleAnimation(currentWidth, target, TimeSpan.FromMilliseconds(160))
+                    {
+                        FillBehavior = FillBehavior.Stop,
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                    };
+                    NavRail.BeginAnimation(FrameworkElement.WidthProperty, animation);
+                }
+
+                if (useOverlay)
                 {
-                    if (_navCollapsed != collapsed) return;
-                    NavRail.BeginAnimation(FrameworkElement.WidthProperty, null);
-                    NavRail.Width = target;
-                    if (!collapsed && useOverlay)
-                        _navOverlayWindow?.UpdateOverlaySize(target, SideNavHost.ActualHeight);
-                };
-                NavRail.BeginAnimation(FrameworkElement.WidthProperty, anim);
+                    if (animate) BeginNavOverlaySync(!collapsed);
+                    else if (collapsed) RestoreNavRail();
+                    else
+                    {
+                        _navOverlayWindow?.ShowOverlay(target, SideNavHost.ActualHeight);
+                        _navOverlayWindow?.BringToFront();
+                    }
+                }
 
-                // 只有浮层模式才需要 16ms 的同步定时器（它一直在 BringToFront）。
-                // 普通页面没有浮层，启动它只会白白刷新窗口。
-                if (useOverlay) BeginNavOverlaySync(!collapsed);
-
-                // ★ 列宽必须一起变：NavRail 在 Column 0，列宽固定 76 时，
-                //   加宽后的侧栏会被 Column 1 的内容压住（用户实测"被别的界面挡住"）。
-                // ★ 列宽固定 76 不变：侧栏已改为 ColumnSpan=2 覆盖在内容之上，
-                //   不再挤压右侧内容（用户明确要求"覆盖，不挤压"）。
-
-                // ★ 文字显隐必须与宽度同步，且要在动画**开始前**就定好。
-                //   收起时立刻隐藏（否则文字会溢出栏外压到右侧内容，实测）；
-                //   展开时立刻显示（栏宽跟着动画涨，文字有空间）。
                 _navTextVisible = !collapsed;
                 ApplyNavTextVisibility();
             }
@@ -1233,12 +1157,6 @@ namespace SoulLink.Views
             if (HamburgerGlyph != null)
                 HamburgerGlyph.Text = collapsed ? "\uE700" : "\uE76B";
 
-            if (BtnHamburger != null)
-                BtnHamburger.Background = collapsed
-                    ? System.Windows.Media.Brushes.Transparent
-                    : new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromArgb(0x33, 0x7C, 0x5C, 0xFF));
-
             if (changed) App.Breadcrumb("侧栏 " + (collapsed ? "收起" : "展开") + " · " + reason);
         }
 
@@ -1251,40 +1169,17 @@ namespace SoulLink.Views
         private void ApplyNavTextVisibility()
         {
             var vis = _navTextVisible ? Visibility.Visible : Visibility.Collapsed;
-            if (AutoHideNavCheck != null) AutoHideNavCheck.Visibility = vis;
-            if (NavExpandedDivider != null) NavExpandedDivider.Visibility = vis;
-            if (NavSessionPanel != null) NavSessionPanel.Visibility = vis;
-            foreach (var t in new FrameworkElement?[]
+            foreach (var label in new[]
             {
-                NavTitleText, NavTextLaunch, NavTextConsole,
-                NavTextDataCenter, NavTextUpdate, NavTextRouteUpdate, NavTextRemote, NavTextSessions, NavTextProcs, NavTextCli
+                NavTextOverview, NavTextConsole, NavTextRemote, NavTextDataCenter, NavTextUpdate,
+                NavTextProcs, NavTextSessions, NavTextCli, NavTextSettings
             })
-            {
-                if (t != null) t.Visibility = vis;
-            }
+                label.Visibility = vis;
         }
 
-        /// <summary>
-        /// 侧栏两态的圆角：
-        ///   收起 = 独立卡片，四角全圆；
-        ///   展开 = 图标栏 + Popup 面板拼成一张卡，图标栏右侧两角必须变直角，
-        ///          否则面板的直角边会紧贴着图标栏的圆角，中间露出豁口。
-        /// </summary>
         internal void UpdateNavSurfaceShape(bool collapsed)
         {
-            try
-            {
-                // ★ 单窗口方案：NavRail 就是一个整体卡片，展开/收起只是宽度变化，
-                //   圆角始终一致，不再需要"拼接两个窗口"的直角/去边框处理。
-                if (NavRail != null)
-                    NavRail.CornerRadius = new CornerRadius(14);
-
-                // 旧的 Popup 面板已停用，这里不再做任何定位计算。
-            }
-            catch (Exception ex)
-            {
-                App.AppendErrorLog("MainWindow.UpdateNavSurfaceShape", ex);
-            }
+            NavRail.CornerRadius = new CornerRadius(0);
         }
 
         private void SaveNavPref()
@@ -1416,12 +1311,15 @@ namespace SoulLink.Views
         // ── 导航 ──────────────────────────────────────────────────────────────
 
         /// <summary>当前所在页面（用于导航按钮高亮）。</summary>
-        private string _activePage = "launch";
+        private string _activePage = "overview";
 
         /// <summary>切页：只改 Visibility + 高亮图标，不重建页面。</summary>
-        private void SetActivePage(string tag)
+        private void SetActivePage(string tag, string? accountId = null)
         {
-            if (!_pages.TryGetValue(tag, out var page)) return;
+            if (!_pages.ContainsKey(tag)) return;
+
+            if (tag != "overview" && _activePage == "overview") OverviewView.OnPageDeactivated();
+            if (tag != "datacenter" && _activePage == "datacenter") DataCenterView.OnPageDeactivated();
 
             // ★ 离开控制台页必须先退全屏：全屏下导航已收纳，但自动化/热键仍可能
             //   触发切页——那样其它页面会在全屏窗口里铺开且没有返回入口。
@@ -1434,6 +1332,7 @@ namespace SoulLink.Views
                 kv.Value.Visibility = kv.Key == tag ? Visibility.Visible : Visibility.Collapsed;
 
             _activePage = tag;
+            UpdateSection.Visibility = tag is "update" or "routeupdate" ? Visibility.Visible : Visibility.Collapsed;
             UpdateRailHighlight();
 
 
@@ -1464,6 +1363,7 @@ namespace SoulLink.Views
 
             switch (tag)
             {
+                case "overview": OverviewView.OnPageActivated(); break;
                 case "automation": AutomationView.Activate(); break;
                 case "console":
                     // ★ Activate() 里有初始化逻辑（建列表、挂会话监控、Broker 重置），
@@ -1471,7 +1371,8 @@ namespace SoulLink.Views
                     ConsoleView.Activate();
                     ConsoleView.OnPageActivated();
                     break;
-                case "datacenter": DataCenterView.Activate(); break;
+                case "datacenter": DataCenterView.OnPageActivated(accountId); break;
+                case "launch": LaunchView.Activate(accountId); break;
                 case "remote": RemoteView.ReloadAsync(); break;
                 case "update": UpdateView.Reload(); break;
                 case "routeupdate": RouteUpdateView.Reload(); break;
@@ -1488,57 +1389,32 @@ namespace SoulLink.Views
         /// <summary>高亮左侧图标栏里当前所在的页。</summary>
         private void UpdateRailHighlight()
         {
-            try
+            string section = _activePage switch
             {
-                if (RailIcons == null) return;
-
-                var primary = (System.Windows.Media.Brush)FindResource("TextPrimary");
-
-                // ★ 文字与图标要分开取色：
-                //   原来两者都用 muted（#7A8CB4E0，仅 48% 不透明），
-                //   在展开的深色面板上文字几乎糊在一起（用户反馈"文字颜色不对"）。
-                //   图标用 muted 作次级元素，文字用 secondary 保证可读。
-                var textIdle = (System.Windows.Media.Brush)FindResource("TextSecondary");
-                // 图标和选中底色由菜单专用装饰层读取现有主题画刷，不修改主题资源。
-
-                // ★ 导航行现在是 Grid（图标+文字），不再是 Button。
-                //   原来只处理 Button，导致选中高亮完全失效（用户实测）。
-                foreach (var child in RailIcons.Children)
-                {
-                    if (child is not Grid row || row.Tag is not string t) continue;
-
-                    bool on = t == _activePage;
-                    // A 方案：装饰只作用于本菜单行，原 Grid 的尺寸和点击处理不变。
-                    row.Background = System.Windows.Media.Brushes.Transparent;
-                    // 只更新既有装饰层的显示状态；悬停与尺寸由侧栏内部的纯样式绑定提供。
-                    foreach (var el in row.Children)
-                    {
-                        if (el is SoulLink.Controls.NavigationOrnament navGlyph)
-                        {
-                            navGlyph.IsSelected = on;
-                            navGlyph.IsLight = !SoulLink.Services.ThemeManager.IsDark;
-                        }
-                        else if (el is System.Windows.Controls.TextBlock tb)
-                        {
-                            tb.Foreground = on ? primary : textIdle;
-                        }
-                    }
-                }
-            }
-            catch { }
+                "launch" or "automation" => "overview",
+                "routeupdate" => "update",
+                _ => _activePage
+            };
+            foreach (var button in RailIcons.Children.OfType<Button>())
+                System.Windows.Controls.Primitives.Selector.SetIsSelected(button, (string)button.Tag == section);
+            System.Windows.Controls.Primitives.Selector.SetIsSelected(NavSettings, section == "settings");
+            UpdateBgiTab.SetResourceReference(Control.ForegroundProperty, _activePage == "update" ? "DesktopAccent" : "TextPrimary");
+            UpdateRouteTab.SetResourceReference(Control.ForegroundProperty, _activePage == "routeupdate" ? "DesktopAccent" : "TextPrimary");
         }
 
+        internal Task<(bool Ok, string Message)> RunOverviewActionAsync(ActionItem action) => LaunchView.RunOverviewActionAsync(action);
+        internal void CreateOverviewAction(Account account) => LaunchView.CreateOverviewAction(account);
+        internal void CreateOverviewFlow(Account account) => LaunchView.CreateOverviewFlow(account);
+        internal void EditOverviewFlow(AutomationFlow flow, Account account) => LaunchView.EditOverviewFlow(flow, account);
+        internal void NavigateToOverviewProfile(string profileId)
+        {
+            SetActivePage("automation");
+            AutomationView.SelectProfile(profileId);
+        }
 
-        /// <summary>供控制台页跳回某个页面。</summary>
-        /// <summary>
-        /// 切页。
-        /// ★ 只改 Visibility，绝不重建页面——中控台里挂着 RDP 控件和注入通道，
-        ///   重建会让画面和注入一起失效（第一版切回来就点不进画面，就是这个原因）。
-        /// </summary>
-        /// <summary>
-        /// 切页。
-        /// ★ 只改 Visibility，绝不重建页面——中控台里挂着 RDP 控件和注入通道。
-        /// </summary>
+        internal void NavigateToAccountData(string accountId) => SetActivePage("datacenter", accountId);
+        internal void NavigateToAccountActions(string accountId) => SetActivePage("launch", accountId);
+
         public void NavigateTo(string tag)
         {
             SetActivePage(tag);

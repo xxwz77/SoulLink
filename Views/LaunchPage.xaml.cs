@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -23,6 +24,9 @@ namespace SoulLink.Views
 
         private readonly ObservableCollection<ActionVm> _actions = new ObservableCollection<ActionVm>();
         private readonly ObservableCollection<SessionVm> _sessions = new ObservableCollection<SessionVm>();
+        private string? _managedActionAccountId;
+        private bool _findManagedActionSession;
+        private bool _selectingManagedActionSession;
         private bool _busy;
         private bool _compactLayout;
         private ScrollViewer? _sessionScroller;
@@ -151,8 +155,12 @@ namespace SoulLink.Views
             BgiLogWatcher.ChannelStateMayHaveChanged += OnChannelStateMayHaveChanged;
         }
 
-        public void Activate()
+        public void Activate(string? actionAccountId = null)
         {
+            if (_managedActionAccountId != actionAccountId) RunHint.Visibility = Visibility.Collapsed;
+            _managedActionAccountId = actionAccountId;
+            _findManagedActionSession = actionAccountId != null && !SelectManagedActionSession();
+            if (_findManagedActionSession) SessionList.SelectedItem = null;
             ReloadActions();
             // TickHub 自行管理节拍，无需手动启停。
             RefreshSessions();
@@ -183,13 +191,52 @@ namespace SoulLink.Views
 
         // ══════════ 数据加载 ══════════
 
+        private Account? FindActionAccount()
+        {
+            var accounts = AccountScope.Accounts();
+            if (_managedActionAccountId is { } id) return accounts.FirstOrDefault(account => account.Id == id);
+            if (SessionList.SelectedItem is not SessionVm session) return null;
+
+            string user = SessionService.BareName(session.Session.UserName);
+            if (string.IsNullOrWhiteSpace(user)) return null;
+            var matches = accounts.Where(account => !string.IsNullOrWhiteSpace(account.Id) &&
+                string.Equals(SessionService.BareName(account.UserName), user, StringComparison.OrdinalIgnoreCase))
+                .Take(2).ToArray();
+            return matches.Length == 1 ? matches[0] : null;
+        }
+
+        private bool CanManageAction(ActionItem action)
+            => FindActionAccount() is { } account &&
+                action.AccountId == account.Id && App.Config.Actions.Contains(action);
+
+        private bool SelectManagedActionSession()
+        {
+            if (FindActionAccount() is not { } account) return false;
+            var session = _sessions.FirstOrDefault(vm => string.Equals(SessionService.BareName(vm.Session.UserName),
+                SessionService.BareName(account.UserName), StringComparison.OrdinalIgnoreCase));
+            if (session == null) return false;
+            _selectingManagedActionSession = true;
+            try { SessionList.SelectedItem = session; }
+            finally { _selectingManagedActionSession = false; }
+            return true;
+        }
+
         public void ReloadActions()
         {
+            var config = App.Config;
+            var account = FindActionAccount();
             string? keepId = (ActionList.SelectedItem as ActionVm)?.Model.Id;
             _actions.Clear();
-            foreach (var a in App.Config.Actions)
-                _actions.Add(new ActionVm(a, App.Config));
+            if (account != null)
+                foreach (var action in config.Actions.Where(action => action?.AccountId == account.Id))
+                    _actions.Add(new ActionVm(action));
 
+            ActionHeading.Text = account == null ? "快捷动作" : $"快捷动作 · {account.Caption}";
+            ActionHeading.ToolTip = account?.Caption;
+            BtnNewAction.IsEnabled = account != null;
+            EmptyActionTitle.Text = account != null ? "当前账号暂无快捷动作"
+                : SessionList.SelectedItem == null && _managedActionAccountId == null ? "请选择一个账号" : "当前账号未配置";
+            EmptyActionHelp.Visibility = BtnNewAction.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
             EmptyHintHost.Visibility = _actions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
             var sel = _actions.FirstOrDefault(v => v.Model.Id == keepId) ?? _actions.FirstOrDefault();
@@ -213,7 +260,8 @@ namespace SoulLink.Views
             if (_refreshingSessions) return;
             _refreshingSessions = true;
 
-            var spin = FindResource("SpinRefresh") as System.Windows.Media.Animation.Storyboard;
+            var spin = ThemeManager.AnimationsDisabled
+                ? null : FindResource("SpinRefresh") as System.Windows.Media.Animation.Storyboard;
             try { spin?.Begin(RefreshGlyph); } catch { }
 
             _ = Task.Run(async () =>
@@ -415,8 +463,14 @@ namespace SoulLink.Views
                     ? "当前没有任何用户登录会话。请先让目标账号登录（RDP 或切换用户）。"
                     : "共 " + users.Count + " 个会话在线 · 点击查看其中运行的程序。";
 
+                if (_findManagedActionSession)
+                {
+                    _findManagedActionSession = false;
+                    SelectManagedActionSession();
+                }
+
                 // ★ 首次进入时默认选中主会话，让左栏显示"所有账号总览"。
-                if (SessionList.SelectedItem == null && _sessions.Count > 0)
+                if (SessionList.SelectedItem == null && _managedActionAccountId == null && _sessions.Count > 0)
                 {
                     SessionVm? mainVm = null;
                     foreach (var vm in _sessions)
@@ -450,48 +504,50 @@ namespace SoulLink.Views
 
         private void SessionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (e.Source != SessionList) return;
+            RunHint.Visibility = Visibility.Collapsed;
             // ★ 点击会话不再跳转到"会话进程"页，改为在本页下方显示该账号的 BGI 实时日志。
             //   挂机场景下看日志比看进程列表更有用，也避免来回切页。
             if (SessionList.SelectedItem is SessionVm vm)
             {
+                if (!_selectingManagedActionSession) _managedActionAccountId = null;
+                _findManagedActionSession = false;
                 _logSession = vm.Session;
                 _logText = "";
                 LogText.Text = "";
 
 
-                // ★ 左栏内容随所选会话切换：
-                //   · 主会话（用户自己的桌面）→ 显示"快捷动作"（动作列表 + 状态）
-                //   · 其他会话（挂机账号）    → 隐藏快捷动作，只显示该账号的运行状态
-                //   避免"看着 A1，左边却是主用户的快捷动作"这种误导。
+                StatusPanel.Visibility = Visibility.Visible;
                 ApplyLeftPanelMode(vm.Session);
-                RefreshAutomationList();
-
                 RefreshSelectedLog(force: true);
             }
+            else
+            {
+                _logSession = null;
+                _logText = "";
+                LogText.Text = "";
+                LogTitle.Text = "BGI 实时日志";
+                LogMeta.Text = "请选择在线会话";
+                StatusPanel.Visibility = Visibility.Collapsed;
+                PageSubtitle.Text = "选择在线会话查看其 BGI 运行情况";
+                StopFollower();
+                StopStatusFollower();
+            }
+            ReloadActions();
+            RefreshAutomationList();
         }
 
-        /// <summary>
-        /// 按所选会话切换左栏内容。
-        ///
-        /// ★ 主会话（console，用户自己的桌面）：
-        ///     显示快捷动作 + **所有挂机账号的运行监控总览**。
-        ///     主会话本身不跑 BGI，看它自己的状态没有意义。
-        ///   其他会话（挂机账号）：
-        ///     隐藏快捷动作，只显示该账号的详细运行状态。
-        /// </summary>
+        /// <summary>按所选会话显示运行总览或单账号状态。</summary>
         private void ApplyLeftPanelMode(SessionInfo sess)
         {
             try
             {
                 bool isMain = sess.IsConsoleSession;
 
-                ActionPanel.Visibility = isMain ? Visibility.Visible : Visibility.Collapsed;
-
                 // 页面标题固定为"运行状态"（左栏主题），只切换副标题
                 if (isMain)
                 {
-                    PageSubtitle.Text = "所有挂机账号的运行情况 · 下方为快捷动作";
-                    BtnNewAction.Visibility = Visibility.Visible;
+                    PageSubtitle.Text = "所有挂机账号的运行情况";
 
                     // 总览模式
                     OverviewPanel.Visibility = Visibility.Visible;
@@ -502,7 +558,6 @@ namespace SoulLink.Views
                 else
                 {
                     PageSubtitle.Text = sess.UserName + " · 该账号的 BGI 运行情况";
-                    BtnNewAction.Visibility = Visibility.Collapsed;
 
                     // 单账号模式
                     OverviewPanel.Visibility = Visibility.Collapsed;
@@ -610,9 +665,8 @@ namespace SoulLink.Views
                                         Margin = new Thickness(0, 0, 0, 6),
                                         Padding = new Thickness(10, 8, 10, 8),
                                         CornerRadius = new CornerRadius(8),
-                                        Background = new System.Windows.Media.SolidColorBrush(
-                                            System.Windows.Media.Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF))
                                     };
+                                    card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
                                     // 三行结构（与单账号详情一致）：
                                     //   ① A1 · 联机锄地-融合      （账号 · 配置组/脚本）
                                     //   ② 第 2/3 轮 · 思          （轮次 / 角色）
@@ -631,8 +685,7 @@ namespace SoulLink.Views
                                         VerticalAlignment = System.Windows.VerticalAlignment.Top,
                                         HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
                                         Margin = new Thickness(8, 1, 0, 0),
-                                        Foreground = new System.Windows.Media.SolidColorBrush(
-                                            System.Windows.Media.Color.FromRgb(0x9F, 0xE8, 0xC8)),
+                                        Foreground = UiBrush.Get("MintBrush"),
                                         Visibility = Visibility.Collapsed
                                     };
                                     System.Windows.Controls.Grid.SetColumn(todayLine, 1);
@@ -655,21 +708,21 @@ namespace SoulLink.Views
                                         FontSize = 11.5,
                                         FontWeight = System.Windows.FontWeights.SemiBold,
                                         TextWrapping = TextWrapping.Wrap,
-                                        Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary")
+                                        Foreground = UiBrush.Get("TextPrimary")
                                     };
                                     var l2 = new System.Windows.Controls.TextBlock
                                     {
                                         FontSize = 10,
                                         Margin = new Thickness(0, 3, 0, 0),
                                         TextWrapping = TextWrapping.Wrap,
-                                        Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush")
+                                        Foreground = UiBrush.Get("CyanBrush")
                                     };
                                     var l3 = new System.Windows.Controls.TextBlock
                                     {
                                         FontSize = 9.5,
                                         Margin = new Thickness(0, 2, 0, 0),
                                         TextWrapping = TextWrapping.Wrap,
-                                        Foreground = (System.Windows.Media.Brush)FindResource("TextMuted")
+                                        Foreground = UiBrush.Get("TextMuted")
                                     };
                                     sp.Children.Add(l1);
                                     sp.Children.Add(l2);
@@ -828,13 +881,7 @@ namespace SoulLink.Views
                                             : ranToday ? "今天运行过，当前已退出"
                                                        : "今日还未运行 BetterGI";
                                         if (row.Line2.Text != txt) row.Line2.Text = txt;
-                                        row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
-                                            !bound
-                                                ? (ThemeManager.IsDark ? Color.FromRgb(0xFF, 0xB4, 0x7A)
-                                                                       : Color.FromRgb(0xC0, 0x5A, 0x1E))   // 琥珀：未绑定
-                                            : ranToday
-                                                ? System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B)   // 橙：跑过但退出了
-                                                : ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85)); // 灰：今天没跑
+                                        row.Line2.Foreground = UiBrush.Get(!bound || ranToday ? "AmberBrush" : "TextSecondary");
                                         row.Line2.Visibility = Visibility.Visible;
                                     }
                                     if (row.Line3 != null)
@@ -876,8 +923,7 @@ namespace SoulLink.Views
                                     {
                                         string txt2 = accountState.StoppedAt.ToString("HH:mm:ss") + " 停止 · BGI 仍在运行";
                                         if (row.Line2.Text != txt2) row.Line2.Text = txt2;
-                                        row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
-                                            System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B));   // 橙：已停
+                                        row.Line2.Foreground = UiBrush.Get("AmberBrush");   // 橙：已停
                                         row.Line2.Visibility = Visibility.Visible;
                                     }
                                     if (row.Line3 != null)
@@ -900,8 +946,7 @@ namespace SoulLink.Views
                                             : "BGI 已启动，等待任务开始";
                                         if (row.Line2.Text != waitText)
                                             row.Line2.Text = waitText;
-                                        row.Line2.Foreground = new System.Windows.Media.SolidColorBrush(
-                                            System.Windows.Media.Color.FromRgb(0xF0, 0xC4, 0x6B));
+                                        row.Line2.Foreground = UiBrush.Get("AmberBrush");
                                         row.Line2.Visibility = Visibility.Visible;
                                     }
                                     if (row.Line3 != null)
@@ -923,7 +968,7 @@ namespace SoulLink.Views
                                     if (row.Line2 != null)
                                     {
                                         if (row.Line2.Text != rl) row.Line2.Text = rl;
-                                        row.Line2.Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush");
+                                        row.Line2.Foreground = UiBrush.Get("CyanBrush");
                                         row.Line2.Visibility = rl.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
                                     }
 
@@ -932,10 +977,8 @@ namespace SoulLink.Views
                                     {
                                         if (row.Line3.Text != prob) row.Line3.Text = prob;
                                         row.Line3.Foreground = st.FailedGroup.Length > 0 || st.LastError.Length > 0
-                                            ? new System.Windows.Media.SolidColorBrush(
-                                                ThemeManager.IsDark ? Color.FromRgb(0xFF, 0x7B, 0x7B) : Color.FromRgb(0xB4, 0x3F, 0x66))
-                                            : new System.Windows.Media.SolidColorBrush(
-                                                ThemeManager.IsDark ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85));
+                                            ? UiBrush.Get("RoseBrush")
+                                            : UiBrush.Get("TextSecondary");
                                     }
                                     continue;
                                 }
@@ -950,7 +993,7 @@ namespace SoulLink.Views
                                 if (row.Line2 != null)
                                 {
                                     if (row.Line2.Text != roundLine) row.Line2.Text = roundLine;
-                                    row.Line2.Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush");
+                                    row.Line2.Foreground = UiBrush.Get("CyanBrush");
                                     row.Line2.Visibility = Visibility.Visible;
                                 }
 
@@ -976,7 +1019,7 @@ namespace SoulLink.Views
                                 if (row.Line3 != null)
                                 {
                                     if (row.Line3.Text != routeLine) row.Line3.Text = routeLine;
-                                    row.Line3.Foreground = (System.Windows.Media.Brush)FindResource("TextMuted");
+                                    row.Line3.Foreground = UiBrush.Get("TextMuted");
                                     // ★ 没有路线信息就折叠，避免卡片留一块空白
                                     row.Line3.Visibility = routeLine.Length > 0
                                         ? Visibility.Visible : Visibility.Collapsed;
@@ -1397,7 +1440,7 @@ namespace SoulLink.Views
                     {
                         Text = "今天还没有拾取记录。",
                         FontSize = 10,
-                        Foreground = (System.Windows.Media.Brush)FindResource("TextMuted")
+                        Foreground = UiBrush.Get("TextMuted")
                     });
                     return;
                 }
@@ -1421,7 +1464,7 @@ namespace SoulLink.Views
                         Text = name + "　" + total + " 件",
                         FontSize = 10,
                         FontWeight = System.Windows.FontWeights.SemiBold,
-                        Foreground = (System.Windows.Media.Brush)FindResource("CyanBrush"),
+                        Foreground = UiBrush.Get("CyanBrush"),
                         TextWrapping = TextWrapping.Wrap,
                         Margin = new Thickness(0, first ? 0 : 10, 0, 2)
                     };
@@ -1442,7 +1485,7 @@ namespace SoulLink.Views
                         Text = string.Join(" · ", parts),
                         FontSize = 10.5,
                         FontWeight = System.Windows.FontWeights.Normal,
-                        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+                        Foreground = UiBrush.Get("TextSecondary"),
                         TextWrapping = TextWrapping.Wrap,
                         LineHeight = 17
                     };
@@ -1611,10 +1654,8 @@ namespace SoulLink.Views
                     if (_bgiStatus.FailCount > 0) et += " · 失败 " + _bgiStatus.FailCount + " 次";
                     SetText(StatusError, et);
                     StatusError.Foreground = _bgiStatus.FailCount > 0
-                        ? new System.Windows.Media.SolidColorBrush(
-                            ThemeManager.IsDark ? Color.FromRgb(0xFF, 0x7B, 0x7B) : Color.FromRgb(0xB4, 0x3F, 0x66))
-                        : new System.Windows.Media.SolidColorBrush(
-                            ThemeManager.IsDark ? Color.FromRgb(0xFF, 0xD5, 0x4A) : Color.FromRgb(0x96, 0x67, 0x16));
+                        ? UiBrush.Get("RoseBrush")
+                        : UiBrush.Get("AmberBrush");
                     StatusErrorTitle.Visibility = Visibility.Visible;
                     StatusError.Visibility = Visibility.Visible;
                 }
@@ -1808,46 +1849,48 @@ namespace SoulLink.Views
 
         // ══════════ 执行 ══════════
 
-        private async void RunSelected_Click(object sender, RoutedEventArgs e)
-        {
-            if (ActionList.SelectedItem is not ActionVm vm) return;
-            await RunAsync(vm);
-        }
-
         private async void RunAction_Click(object sender, RoutedEventArgs e)
         {
-            if ((sender as Button)?.Tag is ActionVm vm)
+            if ((sender as Button)?.Tag is ActionVm vm && CanManageAction(vm.Model))
             {
                 ActionList.SelectedItem = vm;
-                await RunAsync(vm);
+                await RunAsync(vm.Model, showRunHint: true);
             }
         }
 
-        private async Task RunAsync(ActionVm vm)
+        internal Task<(bool Ok, string Message)> RunOverviewActionAsync(ActionItem action)
+            => RunAsync(action, showRunHint: false);
+
+        internal void CreateOverviewAction(Account account) => ShowEditor(null, account);
+
+        internal void EditOverviewFlow(AutomationFlow flow, Account account) => OpenFlowEditor(flow, account);
+
+        private async Task<(bool Ok, string Message)> RunAsync(ActionItem action, bool showRunHint)
         {
-            if (_busy) return;
+            if (_busy) return (false, "已有动作正在执行");
             _busy = true;
             // 执行结果统一走日志总线 + 顶部状态提示（底部操作区已移除）
-            SetRunHint("执行中…「" + vm.Model.Name + "」", ok: null);
+            if (showRunHint) SetRunHint("执行中…「" + action.Name + "」", ok: null);
 
             try
             {
-                LogBus.Write(LogLevel.Run, "执行「" + vm.Model.Name + "」");
-                var result = await Task.Run(() => ActionService.ExecuteAsync(vm.Model, App.Config));
+                LogBus.Write(LogLevel.Run, "执行「" + action.Name + "」");
+                var result = await Task.Run(() => ActionService.ExecuteAsync(action, App.Config));
                 LogBus.Write(result.Ok ? LogLevel.Ok : LogLevel.Error, result.Message,
                     result.Command + Environment.NewLine + "耗时 " + result.ElapsedMs + " ms");
 
-                SetRunHint((result.Ok ? "✓ " : "✕ ") + vm.Model.Name + " · " + result.Message, result.Ok);
-                vm.Refresh();
-                RefreshBadges();
+                if (showRunHint && CanManageAction(action))
+                    SetRunHint((result.Ok ? "✓ " : "✕ ") + action.Name + " · " + result.Message, result.Ok);
 
-                if (result.Ok && vm.Model.Kind != ActionKind.Launch)
+                if (result.Ok && action.Kind != ActionKind.Launch)
                     RefreshSessions();
+                return (result.Ok, result.Message);
             }
             catch (Exception ex)
             {
                 LogBus.Error("执行失败：" + ex.Message);
-                SetRunHint("✕ " + ex.Message, false);
+                if (showRunHint && CanManageAction(action)) SetRunHint("✕ " + ex.Message, false);
+                return (false, ex.Message);
             }
             finally
             {
@@ -1864,8 +1907,7 @@ namespace SoulLink.Views
             try
             {
                 RunHint.Text = text;
-                RunHint.Foreground = (Brush)FindResource(
-                    ok == null ? "TextMuted" : (ok.Value ? "MintBrush" : "RoseBrush"));
+                RunHint.Foreground = UiBrush.Get(ok == null ? "TextMuted" : ok.Value ? "MintBrush" : "RoseBrush");
                 RunHint.Visibility = Visibility.Visible;
 
                 // 成功提示 6 秒后自动淡出，避免一直占位
@@ -1886,47 +1928,22 @@ namespace SoulLink.Views
 
         // ══════════ 编辑动作 ══════════
 
-        private void NewAction_Click(object sender, RoutedEventArgs e) => ShowEditor(null);
+        private void NewAction_Click(object sender, RoutedEventArgs e) => ShowManagedActionEditor(null);
 
         private void EditAction_Click(object sender, RoutedEventArgs e)
         {
-            if ((sender as Button)?.Tag is ActionVm vm) ShowEditor(vm.Model);
+            if ((sender as Button)?.Tag is ActionVm vm) ShowManagedActionEditor(vm.Model);
         }
 
-        /// <summary>
-        /// 暂停 / 恢复定时执行。
-        /// ★ 暂停只是把 Paused 置 true，不动原有计划；
-        ///   恢复时如果计划任务已被手动删除，会尝试重建。
-        /// </summary>
-        private void PauseSchedule_Click(object sender, RoutedEventArgs e)
+        private void ShowManagedActionEditor(ActionItem? existing)
         {
-            if ((sender as Button)?.Tag is not ActionVm vm) return;
-            var spec = vm.Model.Schedule;
-            if (spec == null) return;
-
-            try
-            {
-                spec.Paused = !spec.Paused;
-                spec.PauseReason = spec.Paused ? "手动暂停" : "";
-                ConfigStore.Save(App.Config);
-
-                LogBus.Ok(spec.Paused
-                    ? "已暂停「" + vm.Model.Name + "」的定时执行"
-                    : "已恢复「" + vm.Model.Name + "」的定时执行");
-
-                ReloadActions();
-            }
-            catch (Exception ex)
-            {
-                LogBus.Error("切换定时状态失败：" + ex.Message);
-            }
+            if (existing != null && !CanManageAction(existing)) return;
+            if (FindActionAccount() is { } account) ShowEditor(existing, account);
         }
 
-
-
-        private void ShowEditor(ActionItem? existing)
+        private void ShowEditor(ActionItem? existing, Account? scopedAccount)
         {
-            var dlg = new ActionEditorWindow(existing, App.Config) { Owner = Window.GetWindow(this) };
+            var dlg = new ActionEditorWindow(existing, App.Config, scopedAccount) { Owner = Window.GetWindow(this) };
             if (dlg.ShowDialog() == true)
             {
                 if (existing == null)
@@ -1951,7 +1968,6 @@ namespace SoulLink.Views
                         target.StopBgiFirst = dlg.Result.StopBgiFirst;
                         target.CloseGenshin = dlg.Result.CloseGenshin;
                         target.StopWaitSeconds = dlg.Result.StopWaitSeconds;
-                        target.Schedule = dlg.Result.Schedule;
                     }
                     else
                     {
@@ -1967,8 +1983,8 @@ namespace SoulLink.Views
         }
 
         // Compare the rendered values, including command targets (configuration objects can be replaced).
-        private readonly record struct CardState(AutomationFlow Flow, string Name, string Summary,
-            bool Paused, bool Waiting, bool Done, bool? FreshResult, int Ok, int Fail);
+        private readonly record struct CardState(AutomationFlow Flow, string Name, string Summary, AutomationStatusPresentation Status,
+            bool Paused, int Ok, int Fail);
         private Account? _renderedAccount;
         private List<CardState>? _renderedCards;
 
@@ -1988,10 +2004,8 @@ namespace SoulLink.Views
                     {
                         if (f.AccountId != account.Id) continue;
                         var (ok, fail) = f.TodayCounts(now);
-                        bool fresh = f.LastActionResultAt is DateTime at && (now - at).TotalMilliseconds <= LastResultHoldMs;
-                        bool done = f.IsDailyComplete;
-                        cards.Add(new(f, f.DisplayName, AutomationSummary(f, fresh, done), f.Paused || !f.Enabled,
-                            !string.IsNullOrEmpty(f.WaitingChannel), done, fresh ? f.LastRunOk : null, ok, fail));
+                        var status = AutomationStatusPresentation.ForFlow(f, now);
+                        cards.Add(new(f, f.DisplayName, AutomationSummary(f, status.Text), status, f.Paused || !f.Enabled, ok, fail));
                     }
                 }
                 var meta = session == null ? "（先选一个账号）" : account == null ? "该账号还没有配置"
@@ -2005,7 +2019,7 @@ namespace SoulLink.Views
                 if (account != null)
                 {
                     if (cards.Count == 0)
-                        AutomationList.Children.Add(new TextBlock { Text = "暂无自动化任务", FontSize = 10.5, Foreground = (Brush)FindResource("TextMuted"), Margin = new Thickness(4,5,4,5) });
+                        AutomationList.Children.Add(new TextBlock { Text = "暂无自动化任务", FontSize = 10.5, Foreground = UiBrush.Get("TextMuted"), Margin = new Thickness(4,5,4,5) });
                     foreach (var card in cards)
                         AutomationList.Children.Add(BuildAutomationCard(card, account));
                 }
@@ -2013,54 +2027,6 @@ namespace SoulLink.Views
                 _renderedCards = cards;
             }
             catch { }
-        }
-
-        /// <summary>
-        /// 执行结果（绿/红）在灯上保留多久。超过就回到蓝色等待态。
-        ///
-        /// ★ 用户要求"根据状态交替才对"：每轮执行完闪一下绿/红再回蓝，
-        ///   才能看出"这轮跑过了、现在又在等下一轮"。
-        ///
-        /// ★★ 取值必须**短于界面刷新周期**，否则灯会一直停在绿/红 ★★
-        ///
-        ///   这条踩过两次，记清楚：
-        ///     · 第一次取 6 秒 —— 比执行间隔（2s/3s）还长，每轮扫描时上一次结果
-        ///       仍然"新鲜" → 永远绿；
-        ///     · 第二次取 1.5 秒 —— 比执行间隔短了，但仍**大于界面 1 秒的重建周期**，
-        ///       每次重建都恰好落在保鲜期内 → 实测仍是"焊死"（见探针 12 秒采样）。
-        ///
-        ///   正确关系是：**保鲜期 < 刷新周期 < 执行间隔**。
-        ///   这里取 700ms：界面每 1 秒重建一次，于是必然出现
-        ///   "这次看到绿/红、下次看到蓝" 的交替（实测 2s/3s 间隔都能交替）。
-        /// </summary>
-        private const double LastResultHoldMs = 700;
-
-        /// <summary>
-        /// 清除「今日已完成」标记：清掉 END 锁存，让该流程今天还能再自动跑。
-        ///
-        /// ★ 只对**有 END 节点**的流程有效（无 END 的流程是循环流程，本来就没有今日锁存）。
-        /// ★ 同时清掉本轮的运行状态，避免"标记清了但 PlcPower/ActionResults 还卡着"，
-        ///   导致清完仍然不动（2.17.24 修过类似的"失败结果卡死"，这里一并处理）。
-        /// </summary>
-        private void ClearTodayMark(AutomationFlow f)
-        {
-            try
-            {
-                PlcLogic.ClearDailyLatch(f);
-                f.RunComplete = false;
-                f.ToggleTodayRequested = null;
-                f.RunResetRequested = false;
-                FlowRunLifecycle.StartRun(f, DateTime.Now);
-                ConfigStore.Save(App.Config);
-
-                LogBus.Info("已清除今日标记", "「" + f.DisplayName + "」今天可以重新自动运行");
-                RefreshAutomationList();
-            }
-            catch (Exception ex)
-            {
-                App.AppendErrorLog("ClearTodayMark", ex);
-                LogBus.Error("清除今日标记失败", ex.Message);
-            }
         }
 
         private Border BuildAutomationCard(CardState state, Account account)
@@ -2073,50 +2039,13 @@ namespace SoulLink.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // ★★ 2.17.29 状态灯：五色 ★★
-            //
-            //   蓝 = 等待（常态；流程已启用，正在等条件）
-            //   黄 = 暂停（被暂停或未启用）
-            //   绿 = 执行成功（**刚刚**执行完，闪过即回蓝）
-            //   红 = 执行失败（**刚刚**执行失败，闪过即回蓝）
-            //   橙 = 今日完成（有 END 节点，且今日标记已写入 → 今天不会再自动跑）
-            //
-            //   ★ 橙色的优先级最高（次于暂停）：它表示"今天到此为止"这个**确定的**事实，
-            //     比"刚刚执行成功"更该被看到 —— 否则用户会以为还在跑、干等一天。
-            //   ★ 橙色灯与暂停灯**形变不同**（见 dot 的旋转/描边），避免黄橙混淆。
-            bool doneToday = state.Done;
-            // ★ 2.17.30：正在等注入通道 → 黄灯（等待中），并且保持提示不消失。
-            //   用户要求："执行要加个判断，需要等待通道建立，标黄灯，保持提示，
-            //   等到通道真正建立。" 等待期间绝不能显示成红色失败。
-            bool waitingChannel = state.Waiting;
-            Color dotColor =
-                paused ? Color.FromRgb(0xFF, 0xC4, 0x6B)                            // 黄 = 暂停 / 未启用
-                : waitingChannel ? Color.FromRgb(0xFF, 0xC4, 0x6B)                    // 黄 = 等待通道建立
-                : doneToday ? Color.FromRgb(0xFF, 0x9F, 0x43)                        // 橙 = 今日完成（END 已锁存）
-                : (state.FreshResult == false) ? Color.FromRgb(0xFF, 0x6B, 0x8B)  // 红 = 刚失败
-                : (state.FreshResult == true) ? Color.FromRgb(0x41, 0xF0, 0xC0)   // 绿 = 刚成功
-                : Color.FromRgb(0x4F, 0xE3, 0xFF);                                  // 蓝 = 等待（常态）
-
             var dot = new Ellipse
             {
                 Width = 8, Height = 8,
                 VerticalAlignment = VerticalAlignment.Center,
-                Fill = new SolidColorBrush(dotColor)
+                Fill = state.Status.Indicator
             };
-
-            // ★★ 2.17.29：今日完成（橙）时，灯本身变成**可点击**的清除入口 ★★
-            //
-            //   用户要求："若存在 END 节点，且标记为今日已执行的任务，需要增加橙色，
-            //   今日完成，点击可以清除今日标记。"
-            //   把点击挂在灯上而不是再加一个按钮：橙色只在这一种状态下出现，
-            //   点它 = 清除今日标记，语义自洽，也不占额外横向空间（卡片本来就挤）。
-            // ★★ 2.17.32：2.17.29 把清除入口做成了"点那个 8px 的橙点"，
-            //   实测用户完全没发现它可以点（截图里橙点只是个小圆点）。
-            //   现在改成名称行后面一个**显式的胶囊按钮**「今日完成」，
-            //   点它清除今日标记 —— 与"自动运行/运行一次"同级可见。
-            FrameworkElement dotHost = dot;
-            Grid.SetColumn(dotHost, 0);
-            grid.Children.Add(dotHost);
+            grid.Children.Add(dot);
 
             // 名称 + 说明
             var sp = new StackPanel { Margin = new Thickness(9, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -2130,7 +2059,7 @@ namespace SoulLink.Views
                 Text = state.Name,
                 FontSize = 11.5,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("TextPrimary"),
+                Foreground = UiBrush.Get("TextPrimary"),
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center
             });
@@ -2143,7 +2072,7 @@ namespace SoulLink.Views
                 {
                     Text = "  " + todayOk,
                     FontSize = 9.5, FontWeight = FontWeights.SemiBold,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0)),   // 绿 = 今日成功次数
+                    Foreground = UiBrush.Get("MintBrush"),   // 绿 = 今日成功次数
                     VerticalAlignment = VerticalAlignment.Center,
                     ToolTip = "今日成功 " + todayOk + " 次"
                 });
@@ -2151,7 +2080,7 @@ namespace SoulLink.Views
                 {
                     Text = " / " + todayFail,
                     FontSize = 9.5, FontWeight = FontWeights.SemiBold,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x8B)),   // 红 = 今日失败次数
+                    Foreground = UiBrush.Get("RoseBrush"),   // 红 = 今日失败次数
                     VerticalAlignment = VerticalAlignment.Center,
                     ToolTip = "今日失败 " + todayFail + " 次"
                 });
@@ -2161,7 +2090,7 @@ namespace SoulLink.Views
             {
                 Text = state.Summary,
                 FontSize = 9.5,
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Margin = new Thickness(0, 2, 0, 0)
             });
@@ -2171,39 +2100,18 @@ namespace SoulLink.Views
             // 按钮组
             var btns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
 
-            // ★★ 2.17.32：「今日完成」显式按钮（仅 END 流程且今日已锁存时出现）★★
-            //
-            //   用户原话（2.17.29 那版）："我添加了一个今日执行一次的，没出现今日完成按钮"
-            //   —— 因为那版把清除入口藏在 8px 的橙点里，既没有文字也没有按钮外观。
-            //   现在做成胶囊按钮：橙色描边 + 文字「今日完成」，点一下清除标记。
-            if (doneToday)
+            if (state.Status.DoneToday)
             {
-                var btnToday = new Button
+                var btnToday = new AutomationTodayButton
                 {
-                    Style = (Style)FindResource("PillButton"),
-                    Height = 26, MinWidth = 86, Padding = new Thickness(9, 0, 9, 0),
                     Margin = new Thickness(0, 0, 6, 0),
-                    Background = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0x9F, 0x43)),
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(0xC0, 0xFF, 0x9F, 0x43)),
-                    ToolTip = "今日已完成（END 已锁存），今天不会再自动执行。点击清除今日标记，今天可以重新运行。",
-                    Tag = f
+                    IsEnabled = state.Status.CanClearToday
                 };
-                var todaySp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-                todaySp.Children.Add(new TextBlock
+                btnToday.Click += (_, _) =>
                 {
-                    Text = "\uE73E",   // CheckMark
-                    FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xC1, 0x7A)),
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-                todaySp.Children.Add(new TextBlock
-                {
-                    Text = "今日完成", FontSize = 10.5, Margin = new Thickness(5, 0, 0, 0),
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xC1, 0x7A)),
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-                btnToday.Content = todaySp;
-                btnToday.Click += (_, __) => ClearTodayMark(f);
+                    AutomationStatusPresentation.ClearToday(App.Config, f, DateTime.Now);
+                    RefreshAutomationList();
+                };
                 btns.Children.Add(btnToday);
             }
 
@@ -2225,12 +2133,12 @@ namespace SoulLink.Views
                 Style = (Style)FindResource("PillButton"),
                 Height = 26, MinWidth = 78, Padding = new Thickness(9, 0, 9, 0),
                 Content = BuildAutoSwitchContent(!paused),
-                Background = new SolidColorBrush(paused
-                    ? Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)
-                    : Color.FromArgb(0x30, 0x41, 0xF0, 0xC0)),
-                BorderBrush = new SolidColorBrush(paused
-                    ? Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)
-                    : Color.FromArgb(0x90, 0x41, 0xF0, 0xC0)),
+                Background = paused
+                    ? UiBrush.Get("TextPrimary", 0x22)
+                    : UiBrush.Get("MintBrush", 0x30),
+                BorderBrush = paused
+                    ? UiBrush.Get("TextPrimary", 0x40)
+                    : UiBrush.Get("MintBrush", 0x90),
                 ToolTip = paused
                     ? "自动运行：已停止。点击恢复——之后会按条件自动执行，不需要再点。".Replace("恢复", "开启")
                     : "自动运行：开启中。条件满足时自动执行；点击可停止（停止后只能手动运行一次）。",
@@ -2238,8 +2146,7 @@ namespace SoulLink.Views
             };
             btnPause.Click += (_, __) =>
             {
-                if (!f.Enabled) { f.Enabled = true; f.Paused = false; }
-                else f.Paused = !f.Paused;
+                f.ToggleAutomaticRun();
                 ConfigStore.Save(App.Config);
                 RefreshAutomationList();
             };
@@ -2314,11 +2221,11 @@ namespace SoulLink.Views
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(9, 7, 8, 7),
                 Margin = new Thickness(0, 0, 0, 5),
-                Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
                 Cursor = Cursors.Hand,
                 Child = grid,
                 Tag = f
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
 
             // 点卡片 → 打开编辑器
             card.MouseLeftButtonUp += (_, ev) =>
@@ -2349,15 +2256,11 @@ namespace SoulLink.Views
         ///   用户明确要求：「自动化应该要的，不然怎么控制，只是不显示运行数据之类的」
         ///   —— 流程列表是控制入口必须保留，但主用户不该被呈现成挂机目标。
         /// </summary>
-        private static string AutomationSummary(AutomationFlow f, bool fresh, bool done)
+        private static string AutomationSummary(AutomationFlow f, string state)
         {
             int contacts = f.Nodes.Count(n => n.IsContact);
             int outs = f.Nodes.Count(n => n.Kind == FlowNodeKind.Action);
             string structure = contacts + " 个条件 · " + outs + " 个动作";
-
-            // ★ 2.17.23：摘要第一优先显示"上次执行结果"，与灯色一一对应：
-            //   绿=成功 / 红=失败 / 蓝=等待（还没执行过）/ 黄=暂停。
-            string state = DescribeLastRun(f, fresh, done);
 
             // 主用户（被全局排除）不显示**触点实时满足数**（那是挂机目标的运行数据），
             // 但"上次执行成功还是失败"是控制状态，必须给出来。
@@ -2377,14 +2280,14 @@ namespace SoulLink.Views
                 Text = on ? "\uE769" : "\uE768",
                 FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(on ? Color.FromRgb(0x41, 0xF0, 0xC0) : Color.FromRgb(0x8B, 0x9C, 0xC8))
+                Foreground = on ? UiBrush.Get("MintBrush") : UiBrush.Get("TextSecondary")
             });
             sp.Children.Add(new TextBlock
             {
                 Text = on ? "自动运行" : "已停止",
                 FontSize = 10.5, Margin = new Thickness(5, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(on ? Color.FromRgb(0x9D, 0xFF, 0xE0) : Color.FromRgb(0x8B, 0x9C, 0xC8))
+                Foreground = on ? UiBrush.Get("MintBrush") : UiBrush.Get("TextSecondary")
             });
             return sp;
         }
@@ -2398,56 +2301,17 @@ namespace SoulLink.Views
                 Text = "\uE945",   // LightningBolt：一次性触发
                 FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD6, 0xF0))
+                Foreground = UiBrush.Get("TextSecondary")
             });
             sp.Children.Add(new TextBlock
             {
                 Text = "运行一次",
                 FontSize = 10.5, Margin = new Thickness(5, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD6, 0xF0))
+                Foreground = UiBrush.Get("TextSecondary")
             });
             return sp;
         }
-        /// <summary>
-        /// 用一句话描述"上一次执行是什么结果"，措辞与状态灯颜色严格对应：
-        /// 绿=执行成功 / 红=执行失败 / 蓝=等待 / 黄=暂停。
-        /// </summary>
-        private static string DescribeLastRun(AutomationFlow f, bool fresh, bool done)
-        {
-            // ★ 2.17.30：等待通道的提示优先级最高 —— 用户要求"保持提示"，
-            //   否则这条信息会被"执行成功/等待下一次"盖掉。
-            if (!string.IsNullOrEmpty(f.WaitingChannel)) return f.WaitingChannel;
-
-            if (f.Paused) return "暂停中" + (string.IsNullOrWhiteSpace(f.PauseReason) ? "" : "（" + f.PauseReason + "）");
-            if (!f.Enabled) return "暂停：流程未启用";
-
-            string when = f.LastActionResultAt?.ToString("HH:mm:ss") ?? "";
-            string action = string.IsNullOrWhiteSpace(f.LastRunAction) ? "" : "「" + f.LastRunAction + "」";
-
-            // ★ 2.17.27：与灯一致 —— 结果只在保鲜期内显示，之后回到"等待"，
-            //   这样灯和文字会随每一轮执行交替变化，而不是焊死在某一次结果上。
-            if (fresh && f.LastRunOk == true)
-                return "执行成功" + action + (when.Length > 0 ? " · " + when : "");
-            if (fresh && f.LastRunOk == false)
-                return "执行失败" + action + "：" + (string.IsNullOrWhiteSpace(f.LastRunError) ? "未提供原因" : f.LastRunError)
-                       + (when.Length > 0 ? " · " + when : "");
-
-            // ★ 2.17.29：今日已完成（橙灯）必须明说，否则用户会以为还在等条件。
-            //   有 END 的流程完成后当天不再自动扫描，这是**确定**的终止态。
-            if (done)
-                return "今日已完成 · 点击橙点可清除标记，今天重新运行";
-
-            // 有过结果但已过期：说明刚刚跑过一轮，现在又在等下一轮
-            if (f.LastRunOk.HasValue && when.Length > 0)
-                return "等待下一次 · 上次" + (f.LastRunOk == true ? "成功" : "失败") + " " + when;
-
-            // 还没执行过 → 等待。顺带说清"它会不会自己跑"。
-            return f.NeedsManualTrigger
-                ? "等待：只连了「手动」触点，点「立即运行一次」才执行"
-                : "等待：条件满足时自动执行";
-        }
-
         /// <summary>取流程所属账号的用户名（找不到返回空，视为不在管理范围内）。</summary>
         private static string OwnerUserNameOf(AutomationFlow f)
         {
@@ -2484,33 +2348,26 @@ namespace SoulLink.Views
                     ConfigStore.Save(App.Config);
                 }
 
-                var flow = new AutomationFlow
-                {
-                    AccountId = account.Id,
-                    Name = account.UserName + " 自动化",
-                    // ★ 记录创建时间：定时触发器据此判断"这个时间点是否属于本流程"，
-                    //   避免"10:00 新建 04:00 的流程，当天立刻补跑"。
-                    CreatedAt = DateTime.Now,
-                    // ★★ 2.17.25：新建 = 自动运行已开启 ★★
-                    //   用户要求"新建跟重启就要自动跑，除非用户暂停或者删除"。
-                    //   这两个字段本来就是默认值，这里显式写出来是为了让意图可见，
-                    //   避免以后有人改默认值又把"新建即暂停"带回来。
-                    Enabled = true,
-                    Paused = false
-                };
-
-                // ★ 用户要求：只有点了保存才真正入库，
-                //   不要在主页留下空白流程。
-                //   所以这里先**不加**进 App.Config，由编辑器在保存时添加。
-                bool isNew = true;
-
-                OpenFlowEditor(flow, account, isNew);
-                RefreshAutomationList();
+                CreateOverviewFlow(account);
             }
             catch (Exception ex)
             {
                 MessageBox.Show("新建流程失败：" + ex.Message, "SoulLink");
             }
+        }
+
+        internal void CreateOverviewFlow(Account account)
+        {
+            var flow = new AutomationFlow
+            {
+                AccountId = account.Id,
+                Name = account.UserName + " 自动化",
+                CreatedAt = DateTime.Now,
+                Enabled = true,
+                Paused = false
+            };
+            OpenFlowEditor(flow, account, isNew: true);
+            RefreshAutomationList();
         }
 
         private void OpenFlowEditor(AutomationFlow flow, Account account, bool isNew = false)
@@ -2522,7 +2379,6 @@ namespace SoulLink.Views
                     Owner = Window.GetWindow(this)
                 };
                 dlg.ShowDialog();
-                ConfigStore.Save(App.Config);
                 RefreshAutomationList();
             }
             catch (Exception ex)
@@ -2567,11 +2423,10 @@ namespace SoulLink.Views
 
         private void DeleteAction_Click(object sender, RoutedEventArgs e)
         {
-            if (ActionList.SelectedItem is not ActionVm vm) return;
+            if (sender is not Button { Tag: ActionVm vm } || !CanManageAction(vm.Model)) return;
             var r = MessageBox.Show("确定删除动作「" + vm.Model.Name + "」？", "SoulLink",
                 MessageBoxButton.OKCancel, MessageBoxImage.Question);
-            if (r != MessageBoxResult.OK) return;
-            App.Config.Actions.RemoveAll(a => a.Id == vm.Model.Id);
+            if (r != MessageBoxResult.OK || !CanManageAction(vm.Model) || !App.Config.Actions.Remove(vm.Model)) return;
             ConfigStore.Save(App.Config);
             ReloadActions();
         }
@@ -2591,7 +2446,6 @@ namespace SoulLink.Views
             if (dlg.ShowDialog() == true)
             {
                 vm.Model.ExePath = dlg.FileName;
-                vm.Refresh();
                 ConfigStore.Save(App.Config);
                 // 刷新列表显示
                 var idx = _actions.IndexOf(vm);
@@ -2617,19 +2471,6 @@ namespace SoulLink.Views
 
         private void RefreshSessions_Click(object sender, RoutedEventArgs e) => RefreshSessions(force: true);
 
-        /// <summary>列表项绑定不会自动感知属性变化，这里就地重建一次以刷新显示。</summary>
-        private void RefreshBadges()
-        {
-            var selected = ActionList.SelectedItem;
-            var items = _actions.ToList();
-            _actions.Clear();
-            foreach (var i in items) _actions.Add(i);
-            if (selected != null)
-            {
-                var again = _actions.FirstOrDefault(v => v.Model.Id == ((ActionVm)selected).Model.Id);
-                if (again != null) ActionList.SelectedItem = again;
-            }
-        }
     }
 
     // ══════════ 视图模型 ══════════
@@ -2637,133 +2478,12 @@ namespace SoulLink.Views
     public class ActionVm
     {
         public ActionItem Model { get; }
-        private readonly AppConfig _cfg;
-
-        public ActionVm(ActionItem model, AppConfig cfg)
-        {
-            Model = model;
-            _cfg = cfg;
-        }
+        public ActionVm(ActionItem model) => Model = model;
 
         public string Name => Model.Name;
-
-        public string AccountName
-        {
-            get
-            {
-                var a = _cfg.Accounts.FirstOrDefault(x => x.Id == Model.AccountId);
-                return a == null ? "未绑定账号" : a.UserName;
-            }
-        }
+        public string AccessibleName => $"执行快捷动作，{Name}";
 
         public string ExeName => string.IsNullOrWhiteSpace(Model.ExePath) ? "未设置程序" : Path.GetFileName(Model.ExePath);
-
-        // ── 定时执行（只有配了定时的动作才显示相关元素）──────────────
-
-        /// <summary>是否配置了定时（决定界面是否显示定时相关元素）。</summary>
-        public bool HasSchedule => Model.Schedule != null && Model.Schedule.Enabled;
-
-        /// <summary>定时相关控件的可见性：非定时任务不显示。</summary>
-        public System.Windows.Visibility ScheduleVisibility
-            => HasSchedule ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
-
-        /// <summary>定时是否暂停。</summary>
-        public bool SchedulePaused => Model.Schedule?.Paused == true;
-
-        /// <summary>显示用：下一次执行时刻。</summary>
-        public string NextRunText
-        {
-            get
-            {
-                if (!HasSchedule) return "";
-                if (SchedulePaused)
-                {
-                    string reason = Model.Schedule?.PauseReason ?? "";
-                    return string.IsNullOrEmpty(reason) ? "已暂停" : ("已暂停（" + reason + "）");
-                }
-                // 计划任务在系统里被禁用：提示但不算暂停
-                if (Model.Schedule?.PauseReason == "系统里已禁用")
-                    return "系统里已禁用";
-                var next = Services.ScheduleCalculator.NextRun(Model.Schedule);
-                if (next == null) return "已暂停（无后续执行）";
-                return "下次 " + FormatNext(next.Value);
-            }
-        }
-
-        /// <summary>
-        /// 下次执行的文字颜色：暂停→灰，临期→青，其余→次要色。
-        ///
-        /// ★ 2.17.51（.NET 11 迁移）：原来每次求值都 new 一个画刷。
-        ///   颜色只有 4 种且恒定，改为复用冻结的静态实例，像素结果不变。
-        ///   注意灰/淡蓝两档随主题走，所以按 IsDark 各备一份。
-        /// </summary>
-        public System.Windows.Media.Brush NextRunBrush
-        {
-            get
-            {
-                if (!HasSchedule) return System.Windows.Media.Brushes.Transparent;
-                bool dark = ThemeManager.IsDark;
-                if (SchedulePaused) return dark ? NextRunMutedDark : NextRunMutedLight;
-                var next = Services.ScheduleCalculator.NextRun(Model.Schedule);
-                if (next == null) return dark ? NextRunMutedDark : NextRunMutedLight;
-                var span = next.Value - DateTime.Now;
-                if (span.TotalMinutes <= 10) return NextRunSoon;   // 快到了：绿
-                return NextRunNormal;                              // 常态：淡蓝
-            }
-        }
-
-        private static readonly System.Windows.Media.SolidColorBrush NextRunMutedDark = ActionVm.Frozen(0x8B, 0x9C, 0xC8);
-        private static readonly System.Windows.Media.SolidColorBrush NextRunMutedLight = ActionVm.Frozen(0x6B, 0x60, 0x85);
-        private static readonly System.Windows.Media.SolidColorBrush NextRunSoon = ActionVm.Frozen(0x41, 0xF0, 0xC0);
-        private static readonly System.Windows.Media.SolidColorBrush NextRunNormal = ActionVm.Frozen(0xB4, 0xC2, 0xE8);
-
-        /// <summary>暂停按钮图标：未暂停显示暂停⏸，已暂停显示播放▶。</summary>
-        public string PauseGlyph => SchedulePaused ? "\uE768" : "\uE769";
-
-        /// <summary>暂停按钮提示。</summary>
-        public string PauseTip => SchedulePaused ? "恢复定时执行" : "暂停定时执行";
-
-        // ── 2.17.26：把「定时开关」做成带文字和颜色的胶囊，和「立即执行」分开 ──
-        //
-        //   原来两者都是同一个灰色 IconButton，而且都用 ▶/⏸ 图标：
-        //   「暂停定时」显示 ⏸、「立即执行」显示 ▶，用户根本分不清
-        //   哪个管"定时计划"、哪个是"现在跑一次"。
-
-        /// <summary>定时开关上的文字。</summary>
-        public string ScheduleToggleText => SchedulePaused ? "定时已停" : "定时生效";
-
-        /// <summary>定时开关的文字颜色。</summary>
-        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
-        public System.Windows.Media.Brush ScheduleToggleFg
-            => SchedulePaused ? ToggleFgPaused : ToggleFgActive;
-
-        /// <summary>定时开关的底色：生效=青绿半透，已停=灰半透。</summary>
-        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
-        public System.Windows.Media.Brush ScheduleToggleBg
-            => SchedulePaused ? ToggleBgPaused : ToggleBgActive;
-
-        /// <summary>定时开关的描边。</summary>
-        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
-        public System.Windows.Media.Brush ScheduleToggleBorder
-            => SchedulePaused ? ToggleBorderPaused : ToggleBorderActive;
-
-        private static readonly System.Windows.Media.SolidColorBrush ToggleFgPaused = ActionVm.Frozen(0x8B, 0x9C, 0xC8);
-        private static readonly System.Windows.Media.SolidColorBrush ToggleFgActive = ActionVm.Frozen(0x9D, 0xFF, 0xE0);
-        private static readonly System.Windows.Media.SolidColorBrush ToggleBgPaused = ActionVm.FrozenArgb(0x22, 0xFF, 0xFF, 0xFF);
-        private static readonly System.Windows.Media.SolidColorBrush ToggleBgActive = ActionVm.FrozenArgb(0x30, 0x41, 0xF0, 0xC0);
-        private static readonly System.Windows.Media.SolidColorBrush ToggleBorderPaused = ActionVm.FrozenArgb(0x40, 0xFF, 0xFF, 0xFF);
-        private static readonly System.Windows.Media.SolidColorBrush ToggleBorderActive = ActionVm.FrozenArgb(0x90, 0x41, 0xF0, 0xC0);
-
-        /// <summary>把时间格式化成"今天 04:00:00 / 明天 04:01:00 / 11-18 04:02:00"。</summary>
-        private static string FormatNext(DateTime t)
-        {
-            string hms = t.ToString("HH:mm:ss");
-            var today = DateTime.Now.Date;
-            if (t.Date == today) return "今天 " + hms;
-            if (t.Date == today.AddDays(1)) return "明天 " + hms;
-            if (t.Date == today.AddDays(2)) return "后天 " + hms;
-            return t.ToString("MM-dd") + " " + hms;
-        }
 
         public string Icon
         {
@@ -2791,54 +2511,32 @@ namespace SoulLink.Views
             }
         }
 
-        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
         public Brush BadgeBg
         {
             get
             {
                 switch (Model.Kind)
                 {
-                    case ActionKind.Close: return BadgeBgClose;
-                    case ActionKind.Restart: return BadgeBgRestart;
-                    default: return BadgeBgLaunch;
+                    case ActionKind.Close: return UiBrush.Get("RoseBrush", 0x33);
+                    case ActionKind.Restart: return UiBrush.Get("AmberBrush", 0x33);
+                    default: return UiBrush.Get("MintBrush", 0x33);
                 }
             }
         }
 
-        /// <remarks>★ 2.17.51：改成复用冻结实例（原为每次求值 new），颜色完全一致。</remarks>
         public Brush BadgeFg
         {
             get
             {
                 switch (Model.Kind)
                 {
-                    case ActionKind.Close: return BadgeFgClose;
-                    case ActionKind.Restart: return BadgeFgRestart;
-                    default: return BadgeFgLaunch;
+                    case ActionKind.Close: return UiBrush.Get("RoseBrush");
+                    case ActionKind.Restart: return UiBrush.Get("AmberBrush");
+                    default: return UiBrush.Get("MintBrush");
                 }
             }
         }
 
-        private static readonly SolidColorBrush BadgeBgClose = FrozenArgb(0x33, 0xFF, 0x6B, 0x8B);
-        private static readonly SolidColorBrush BadgeBgRestart = FrozenArgb(0x33, 0xFF, 0xC4, 0x6B);
-        private static readonly SolidColorBrush BadgeBgLaunch = FrozenArgb(0x33, 0x41, 0xF0, 0xC0);
-        private static readonly SolidColorBrush BadgeFgClose = Frozen(0xFF, 0xB4, 0xC4);
-        private static readonly SolidColorBrush BadgeFgRestart = Frozen(0xFF, 0xDC, 0x9E);
-        private static readonly SolidColorBrush BadgeFgLaunch = Frozen(0x9D, 0xFF, 0xE0);
-
-        internal static SolidColorBrush Frozen(byte r, byte g, byte b) => FrozenArgb(0xFF, r, g, b);
-
-        internal static SolidColorBrush FrozenArgb(byte a, byte r, byte g, byte b)
-        {
-            var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-            brush.Freeze();
-            return brush;
-        }
-
-        public void Refresh()
-        {
-            // 简单起见由父级重建列表；这里保留占位以避免模板绑定失效
-        }
     }
 
     public class SessionVm : System.ComponentModel.INotifyPropertyChanged
@@ -2857,6 +2555,7 @@ namespace SoulLink.Views
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(SideText)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsActive)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(DotColor)));
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(DotBrush)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IdleBrush)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(BgiLevel)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(StateText)));
@@ -2939,17 +2638,9 @@ namespace SoulLink.Views
         ///   断开 → 橙色
         ///   其它 → 灰蓝
         /// </summary>
-        public Color DotColor
-        {
-            get
-            {
-                // 主会话始终按"在线"处理（用户就在这个桌面上操作）
-                if (Session.IsConsoleSession || Session.IsActive)
-                    return Color.FromRgb(0x41, 0xF0, 0xC0);                         // 绿
-                if (Session.IsDisconnected) return Color.FromRgb(0xFF, 0xC4, 0x6B); // 断开：橙
-                return (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85);                             // 其它：灰蓝
-            }
-        }
+        public SolidColorBrush DotBrush => UiBrush.Get(Session.IsConsoleSession || Session.IsActive
+            ? "MintBrush" : Session.IsDisconnected ? "AmberBrush" : "TextMuted");
+        public Color DotColor => DotBrush.Color;
 
         /// <summary>
         /// BGI 日志最后写入时间（由外部按会话号填充）。
@@ -3012,22 +2703,7 @@ namespace SoulLink.Views
         }
 
         /// <summary>连接状态文字的颜色 —— 跟随系统状态，**不受 BGI 影响**。</summary>
-        public System.Windows.Media.Brush StateBrush
-        {
-            get
-            {
-                Color c;
-                if (Session.IsConsoleSession || Session.IsActive)
-                    c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8F, 0xE8, 0xD0) : Color.FromRgb(0x17, 0x78, 0x65);      // 在线/当前会话：绿
-                else if (Session.IsDisconnected)
-                    c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0xD5, 0x4A) : Color.FromRgb(0x96, 0x67, 0x16);      // 离线：黄
-                else
-                    c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85);      // 其它：灰蓝
-                var b = new System.Windows.Media.SolidColorBrush(c);
-                b.Freeze();
-                return b;
-            }
-        }
+        public System.Windows.Media.Brush StateBrush => DotBrush;
 
         /// <summary>
         /// 该用户是否在 **RDP 配置的账号列表**里。
@@ -3132,20 +2808,7 @@ namespace SoulLink.Views
         }
 
         /// <summary>通道状态颜色：就绪绿、未投送灰蓝、失败红。</summary>
-        public System.Windows.Media.Brush ChannelBrush
-        {
-            get
-            {
-                Color c = HasChannel
-                    ? (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8F, 0xE8, 0xD0) : Color.FromRgb(0x17, 0x78, 0x65)     // 就绪：绿
-                    : ChannelError.Length > 0
-                        ? (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0x9B, 0x9B) : Color.FromRgb(0xB4, 0x3F, 0x66)  // 失败：红
-                        : (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8B, 0x9C, 0xC8) : Color.FromRgb(0x6B, 0x60, 0x85); // 未投送：灰蓝
-                var b = new System.Windows.Media.SolidColorBrush(c);
-                b.Freeze();
-                return b;
-            }
-        }
+        public System.Windows.Media.Brush ChannelBrush => UiBrush.Get(HasChannel ? "MintBrush" : ChannelError.Length > 0 ? "RoseBrush" : "TextMuted");
 
         /// <summary>
         /// **BGI 活跃度**文字（单行显示时用，与连接状态用固定颜色圆点隔开）。
@@ -3174,39 +2837,14 @@ namespace SoulLink.Views
         }
 
         /// <summary>BGI 行的颜色，按活跃度分级。</summary>
-        public System.Windows.Media.Brush BgiBrush
+        public System.Windows.Media.Brush BgiBrush => UiBrush.Get(BgiLevel switch
         {
-            get
-            {
-                Color c;
-                switch (BgiLevel)
-                {
-                    case 0: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8F, 0xE8, 0xD0) : Color.FromRgb(0x17, 0x78, 0x65); break;   // 绿
-                    case 1: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0xD5, 0x4A) : Color.FromRgb(0x96, 0x67, 0x16); break;   // 黄
-                    default: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0x7B, 0x7B) : Color.FromRgb(0xB4, 0x3F, 0x66); break;  // 红
-                }
-                var b = new System.Windows.Media.SolidColorBrush(c);
-                b.Freeze();
-                return b;
-            }
-        }
+            0 => "MintBrush",
+            1 => "AmberBrush",
+            _ => "RoseBrush"
+        });
 
         /// <summary>"空闲"文字的颜色，按 BGI 活跃度分级。</summary>
-        public System.Windows.Media.Brush IdleBrush
-        {
-            get
-            {
-                Color c;
-                switch (BgiLevel)
-                {
-                    case 0: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0x8F, 0xE8, 0xD0) : Color.FromRgb(0x17, 0x78, 0x65); break;   // 绿
-                    case 1: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0xD5, 0x4A) : Color.FromRgb(0x96, 0x67, 0x16); break;   // 黄
-                    default: c = (global::SoulLink.Services.ThemeManager.IsDark) ? Color.FromRgb(0xFF, 0x7B, 0x7B) : Color.FromRgb(0xB4, 0x3F, 0x66); break;  // 红
-                }
-                var b = new System.Windows.Media.SolidColorBrush(c);
-                b.Freeze();
-                return b;
-            }
-        }
+        public System.Windows.Media.Brush IdleBrush => BgiBrush;
     }
 }

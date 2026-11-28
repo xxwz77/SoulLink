@@ -235,7 +235,7 @@ namespace SoulLink.Controls
                 {
                     Width = hole.Width, Height = hole.Height,
                     RadiusX = 12, RadiusY = 12,
-                    Stroke = new SolidColorBrush(Color.FromArgb(220, 79, 227, 255)),
+                    Stroke = UiBrush.Get("DesktopAccent", 220),
                     StrokeThickness = 1.6, IsHitTestVisible = false
                 };
                 Add(ring, hole.X, hole.Y);
@@ -316,19 +316,19 @@ namespace SoulLink.Controls
             {
                 Width = 340, Height = 318, CornerRadius = new CornerRadius(15),
                 Padding = new Thickness(21, 17, 21, 16),
-                Background = new SolidColorBrush(Color.FromRgb(15, 26, 45)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(175, 79, 227, 255)),
+                Background = UiBrush.Get("DialogSurface"),
+                BorderBrush = UiBrush.Get("DesktopAccent", 175),
                 BorderThickness = new Thickness(1), Tag = "GuidePanel",
                 Effect = new System.Windows.Media.Effects.DropShadowEffect
                 { Color = Colors.Black, BlurRadius = 25, Opacity = .5, ShadowDepth = 0 }
             };
             var stack = new StackPanel();
             stack.Children.Add(Text("STEP " + (index + 1).ToString("00") + "  /  06",
-                10.5, CyanBrush, FontWeights.SemiBold));
+                10.5, AccentInk, FontWeights.SemiBold));
             stack.Children.Add(new TextBlock
             {
                 Text = step.Title, FontSize = 20, FontWeight = FontWeights.SemiBold,
-                Foreground = BrushOf(White), Margin = new Thickness(0, 8, 0, 10),
+                Foreground = UiBrush.Get(PrimaryInk), Margin = new Thickness(0, 8, 0, 10),
                 TextWrapping = TextWrapping.Wrap
             });
             foreach (string line in step.Lines)
@@ -338,26 +338,26 @@ namespace SoulLink.Controls
                 row.ColumnDefinitions.Add(new ColumnDefinition());
                 row.Children.Add(new Ellipse
                 {
-                    Width = 5, Height = 5, Fill = BrushOf(CyanBrush),
+                    Width = 5, Height = 5, Fill = UiBrush.Get(AccentInk),
                     HorizontalAlignment = HorizontalAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(2, 8, 0, 0)
                 });
-                var text = Text(line, 13, Color.FromRgb(218, 231, 247));
+                var text = Text(line, 13, "TextSecondary");
                 text.LineHeight = 22; Grid.SetColumn(text, 1); row.Children.Add(text);
                 stack.Children.Add(row);
             }
             var tip = new Border
             {
                 CornerRadius = new CornerRadius(8), Padding = new Thickness(10, 8, 10, 8),
-                Background = new SolidColorBrush(Color.FromArgb(24, 79, 227, 255)),
+                Background = UiBrush.Get("DesktopAccent", 24),
                 Margin = new Thickness(0, 12, 0, 10)
             };
-            var tipText = Text("记住 · " + step.Tip, 11.2, Color.FromRgb(159, 190, 219));
+            var tipText = Text("记住 · " + step.Tip, 11.2, "TextSecondary");
             tipText.LineHeight = 18; tip.Child = tipText; stack.Children.Add(tip);
             var noMore = new CheckBox
             {
                 IsChecked = _noMore(), FontSize = 10.5,
-                Foreground = ColorBrush(135, 160, 190),
+                Foreground = UiBrush.Get("TextMuted"),
                 Content = new TextBlock
                 {
                     Text = "以后不再自动显示（可在左侧「使用说明」重播）",
@@ -429,15 +429,15 @@ namespace SoulLink.Controls
             var path = new Path
             {
                 Data = Curve(from, c1, c2, target),
-                Stroke = new SolidColorBrush(Color.FromArgb(220, 79, 227, 255)),
+                Stroke = UiBrush.Get("DesktopAccent", 220),
                 StrokeThickness = 1.8, StrokeDashArray = new DoubleCollection { 4, 4 },
                 IsHitTestVisible = false
             };
             Children.Add(path);
             var dot = new Ellipse
             {
-                Width = 11, Height = 11, Fill = BrushOf(CyanBrush),
-                Stroke = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)), StrokeThickness = 3,
+                Width = 11, Height = 11, Fill = UiBrush.Get(AccentInk),
+                Stroke = UiBrush.Get("TextPrimary", 80), StrokeThickness = 3,
                 IsHitTestVisible = false
             };
             Add(dot, target.X - 5.5, target.Y - 5.5);
@@ -451,7 +451,7 @@ namespace SoulLink.Controls
         private void BuildProgress(double w)
         {
             var group = new StackPanel { Orientation = Orientation.Horizontal, IsHitTestVisible = false };
-            group.Children.Add(Text((_index + 1).ToString("00") + " / 06", 11, White, FontWeights.SemiBold));
+            group.Children.Add(Text((_index + 1).ToString("00") + " / 06", 11, PrimaryInk, FontWeights.SemiBold));
             for (int i = 0; i < _steps.Count; i++)
             {
                 group.Children.Add(new Border
@@ -459,7 +459,7 @@ namespace SoulLink.Controls
                     Width = i == _index ? 30 : 18, Height = 3, CornerRadius = new CornerRadius(2),
                     Margin = new Thickness(i == 0 ? 14 : 6, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
-                    Background = i <= _index ? BrushOf(CyanBrush) : ColorBrush(49, 68, 92)
+                    Background = i <= _index ? UiBrush.Get(AccentInk) : UiBrush.Get("StrokeMid")
                 });
             }
             group.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
@@ -483,10 +483,10 @@ namespace SoulLink.Controls
         {
             var b = new Border
             {
-                Background = ColorBrush(13, 25, 43), CornerRadius = new CornerRadius(7),
+                Background = UiBrush.Get("PopupBackground"), CornerRadius = new CornerRadius(7),
                 Padding = new Thickness(9, 5, 9, 5), IsHitTestVisible = false
             };
-            b.Child = Text("交互演示 · 不执行真实动作", 10, Color.FromRgb(153, 182, 210));
+            b.Child = Text("交互演示 · 不执行真实动作", 10, "TextSecondary");
             b.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Add(b, w - b.DesiredSize.Width - 26, 18);
         }
@@ -501,7 +501,7 @@ namespace SoulLink.Controls
             };
             string key = primary ? "PrimaryButton" : "GhostButton";
             if (TryFindResource(key) is Style style) b.Style = style;
-            else { b.Background = primary ? BrushOf(CyanBrush) : ColorBrush(23, 37, 59); b.Foreground = primary ? ColorBrush(4, 20, 34) : BrushOf(White); }
+            else { b.Background = primary ? UiBrush.Get(AccentInk) : UiBrush.Get("ButtonBackground"); b.Foreground = primary ? UiBrush.Get("ControlAccentText") : UiBrush.Get(PrimaryInk); }
             b.Click += (_, _) => action(); return b;
         }
 
@@ -511,7 +511,7 @@ namespace SoulLink.Controls
             double x = c.X, right = c.Right, top = c.Y + 66;
             var nodes = new List<DemoNode>();
             DemoNode Node(double nx, double ny, string kind, string title, string summary,
-                Color accent, string state = "")
+                string accent, string state = "")
             {
                 var n = DrawNode(layer, nx, ny, kind, title, summary, accent, state);
                 nodes.Add(n); _demoBounds.Add(n.Bounds); return n;
@@ -520,13 +520,13 @@ namespace SoulLink.Controls
             {
                 DrawLink(layer, a.Bounds, b.Bounds, animated, animated ? .75 : 0);
             }
-            void Badge(string text, double bx, double by, Color color, double width = 250)
+            void Badge(string text, double bx, double by, string color, double width = 250)
             {
                 var border = new Border
                 {
                     Width = width, MinHeight = 32, CornerRadius = new CornerRadius(8),
-                    Background = new SolidColorBrush(Color.FromArgb(245, 16, 32, 51)),
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(100, color.R, color.G, color.B)),
+                    Background = UiBrush.Get("PopupBackground"),
+                    BorderBrush = UiBrush.Get(color, 100),
                     BorderThickness = new Thickness(1), Padding = new Thickness(9, 6, 9, 6)
                 };
                 border.Child = Text(text, 11, color, FontWeights.SemiBold, HorizontalAlignment.Center);
@@ -536,41 +536,41 @@ namespace SoulLink.Controls
             if (index == 0)
             {
                 double nx = c.X + c.Width / 2 - 125;
-                var n = Node(nx, top + 122, "条件", "会话在线", "目标账号的 Windows 会话处于活动状态", CyanBrushColor, "● 满足");
-                Badge("① 左侧选择「条件」   →   ② 添加「会话在线」", nx - 25, top + 24, CyanBrushColor, 300);
-                Badge("③ 在右侧选择目标账号", nx - 10, top + 242, Color.FromRgb(165, 184, 213), 270);
+                var n = Node(nx, top + 122, "条件", "会话在线", "目标账号的 Windows 会话处于活动状态", AccentInk, "● 满足");
+                Badge("① 左侧选择「条件」   →   ② 添加「会话在线」", nx - 25, top + 24, AccentInk, 300);
+                Badge("③ 在右侧选择目标账号", nx - 10, top + 242, "TextSecondary", 270);
                 DrawPointer(layer, new Point(Math.Max(45, c.X - 85), top + 38),
                     new Point(nx + 112, top + 145), 0, 1.5);
                 return TargetRect(_steps[0].Target());
             }
             if (index == 1)
             {
-                var a = Node(x + 32, top + 66, "条件", "会话在线", "目标账号的会话当前在线", CyanBrushColor, "● 满足");
-                var b = Node(right - 282, top + 280, "动作", "执行一条龙", "启动指定的一条龙配置", GreenBrush, "请求已接受");
+                var a = Node(x + 32, top + 66, "条件", "会话在线", "目标账号的会话当前在线", AccentInk, "● 满足");
+                var b = Node(right - 282, top + 280, "动作", "执行一条龙", "启动指定的一条龙配置", SuccessInk, "请求已接受");
                 Link(a, b, true);
-                Badge("下方出口  →  下一模块", c.X + c.Width / 2 - 118, top + 214, CyanBrushColor, 236);
+                Badge("下方出口  →  下一模块", c.X + c.Width / 2 - 118, top + 214, AccentInk, 236);
                 return b.Bounds;
             }
             if (index == 2)
             {
                 bool wide = c.Width > 520;
                 double ax = wide ? c.X + (c.Width - 524) / 2 : c.X + c.Width / 2 - 125;
-                var a = Node(ax, top + 80, "条件", "会话在线", "读取到当前会话状态", CyanBrushColor, "● 满足");
-                var b = Node(wide ? ax + 274 : ax, top + (wide ? 80 : 198), "条件", "BGI 是否运行", "目标账号的 BGI 进程未运行", CyanBrushColor, "○ 不满足");
+                var a = Node(ax, top + 80, "条件", "会话在线", "读取到当前会话状态", AccentInk, "● 满足");
+                var b = Node(wide ? ax + 274 : ax, top + (wide ? 80 : 198), "条件", "BGI 是否运行", "目标账号的 BGI 进程未运行", AccentInk, "○ 不满足");
                 Badge("⚠ 数据不可用 ≠ 不满足；不会按满足处理",
-                    c.X + c.Width / 2 - 185, top + (wide ? 236 : 326), AmberBrush, 370);
+                    c.X + c.Width / 2 - 185, top + (wide ? 236 : 326), WarningInk, 370);
                 Badge("绿色只表示此刻成立，不表示已经执行",
-                    c.X + c.Width / 2 - 165, top + (wide ? 292 : 380), Color.FromRgb(161, 183, 211), 330);
+                    c.X + c.Width / 2 - 165, top + (wide ? 292 : 380), "TextSecondary", 330);
                 return Rect.Union(a.Bounds, b.Bounds);
             }
             if (index == 3)
             {
-                var a = Node(x + 24, top + 44, "动作", "执行一条龙", "启动请求已接受", GreenBrush, "请求已接受");
-                var wait = Node(Math.Min(right - 274, w - 640), top + 186, "动作", "等待 5 秒", "输入断开后会重新计时", GreenBrush, "等待中");
-                var done = Node(x + 90, top + 330, "条件", "配置组状态", "选择要观察的配置组", CyanBrushColor, "执行中");
+                var a = Node(x + 24, top + 44, "动作", "执行一条龙", "启动请求已接受", SuccessInk, "请求已接受");
+                var wait = Node(Math.Min(right - 274, w - 640), top + 186, "动作", "等待 5 秒", "输入断开后会重新计时", SuccessInk, "等待中");
+                var done = Node(x + 90, top + 330, "条件", "配置组状态", "选择要观察的配置组", AccentInk, "执行中");
                 Link(a, wait); Link(wait, done);
                 Badge("启动成功 ≠ 任务完成；继续读取真实结果",
-                    c.X + c.Width / 2 - 185, top + 438, GreenBrush, 370);
+                    c.X + c.Width / 2 - 185, top + 438, SuccessInk, 370);
                 _animations.Add(t =>
                 {
                     bool finished = t >= 2.4;
@@ -583,8 +583,8 @@ namespace SoulLink.Controls
             {
                 double ny = Math.Max(top + 260, c.Bottom - 204);
                 double nx = c.X + (c.Width - 524) / 2;
-                var a = Node(Math.Max(c.X + 8, nx), ny, "动作", "配置组状态确认", "等待实际任务完成", GreenBrush, "已完成");
-                var b = Node(Math.Max(c.X + 8, nx) + 274, ny, "结束", "每天完成", "所选动作全部成功后锁存", AmberBrush, "今天已完成");
+                var a = Node(Math.Max(c.X + 8, nx), ny, "动作", "配置组状态确认", "等待实际任务完成", SuccessInk, "已完成");
+                var b = Node(Math.Max(c.X + 8, nx) + 274, ny, "结束", "每天完成", "所选动作全部成功后锁存", WarningInk, "今天已完成");
                 Link(a, b);
                 if (!p.IsEmpty)
                 {
@@ -592,24 +592,24 @@ namespace SoulLink.Controls
                     var panel = new Border
                     {
                         Width = pw, Height = 260, CornerRadius = new CornerRadius(11),
-                        Background = ColorBrush(16, 30, 50),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(120, 255, 177, 77)),
+                        Background = UiBrush.Get("DialogSurface"),
+                        BorderBrush = UiBrush.Get("AmberBrush", 120),
                         BorderThickness = new Thickness(1), Padding = new Thickness(16)
                     };
                     var s = new StackPanel();
-                    s.Children.Add(Text("每天完成 · 节点属性（示例）", 13, AmberBrush, FontWeights.SemiBold));
-                    s.Children.Add(Text("日界", 11, Color.FromRgb(151, 175, 205), margin: new Thickness(0, 21, 0, 6)));
-                    var day = new Border { Height = 38, CornerRadius = new CornerRadius(7), Background = ColorBrush(27, 43, 66), Padding = new Thickness(10, 7, 10, 7) };
-                    day.Child = Text("04:00                                         ⌄", 12, White); s.Children.Add(day);
+                    s.Children.Add(Text("每天完成 · 节点属性（示例）", 13, WarningInk, FontWeights.SemiBold));
+                    s.Children.Add(Text("日界", 11, "TextSecondary", margin: new Thickness(0, 21, 0, 6)));
+                    var day = new Border { Height = 38, CornerRadius = new CornerRadius(7), Background = UiBrush.Get("InputBg"), Padding = new Thickness(10, 7, 10, 7) };
+                    day.Child = Text("04:00                                         ⌄", 12, PrimaryInk); s.Children.Add(day);
                     var check = new CheckBox
                     {
                         Content = "今天运行这个流程", IsChecked = false, FontSize = 12,
-                        Foreground = BrushOf(White), Margin = new Thickness(0, 20, 0, 9)
+                        Foreground = UiBrush.Get(PrimaryInk), Margin = new Thickness(0, 20, 0, 9)
                     };
                     if (TryFindResource("GlassCheckBox") is Style style) check.Style = style;
                     s.Children.Add(check);
                     s.Children.Add(Text("取消勾选：今天不再运行\n到日界后自动开始新一轮", 10.5,
-                        Color.FromRgb(158, 181, 207), margin: new Thickness(0, 8, 0, 0)));
+                        "TextSecondary", margin: new Thickness(0, 8, 0, 0)));
                     panel.Child = s; Add(panel, px, py, layer);
                     _demoBounds.Add(new Rect(px, py, pw, 260));
                     p = new Rect(px, py, pw, 260);
@@ -617,23 +617,23 @@ namespace SoulLink.Controls
                 return p.IsEmpty ? Rect.Union(a.Bounds, b.Bounds) : p;
             }
             double fx = c.X + c.Width / 2 - 125;
-            var n1 = Node(fx, top + 8, "条件", "会话在线", "此刻满足", CyanBrushColor, "● 满足");
-            var n2 = Node(fx, top + 116, "动作", "执行一条龙", "启动请求已接受", GreenBrush, "已执行");
-            var n3 = Node(fx, top + 224, "条件", "配置组状态", "确认任务实际完成", CyanBrushColor, "● 已完成");
-            var n4 = Node(fx, top + 332, "结束", "每天完成", "到日界自动开始新一轮", AmberBrush, "✓ 可以运行");
+            var n1 = Node(fx, top + 8, "条件", "会话在线", "此刻满足", AccentInk, "● 满足");
+            var n2 = Node(fx, top + 116, "动作", "执行一条龙", "启动请求已接受", SuccessInk, "已执行");
+            var n3 = Node(fx, top + 224, "条件", "配置组状态", "确认任务实际完成", AccentInk, "● 已完成");
+            var n4 = Node(fx, top + 332, "结束", "每天完成", "到日界自动开始新一轮", WarningInk, "✓ 可以运行");
             Link(n1, n2); Link(n2, n3); Link(n3, n4);
             return n4.Bounds;
         }
 
         private DemoNode DrawNode(Canvas layer, double x, double y, string kind,
-            string title, string summary, Color accent, string state)
+            string title, string summary, string accent, string state)
         {
             const double nw = 250, nh = 86;
             var card = new Border
             {
                 Width = nw, Height = nh, CornerRadius = new CornerRadius(12),
-                Background = ColorBrush(18, 33, 54),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(175, accent.R, accent.G, accent.B)),
+                Background = UiBrush.Get("DialogSurface"),
+                BorderBrush = UiBrush.Get(accent, 175),
                 BorderThickness = new Thickness(1.2), Tag = "DemoNode"
             };
             var grid = new Grid();
@@ -642,11 +642,11 @@ namespace SoulLink.Controls
             grid.Children.Add(new Border
             {
                 CornerRadius = new CornerRadius(12, 0, 0, 12),
-                Background = new SolidColorBrush(accent)
+                Background = UiBrush.Get(accent)
             });
             var stack = new StackPanel { Margin = new Thickness(14, 10, 10, 8) };
-            stack.Children.Add(Text(kind + "  /  " + title, 14, White, FontWeights.SemiBold));
-            var summaryText = Text(summary, 10.5, Color.FromRgb(148, 173, 203), margin: new Thickness(0, 9, 0, 0));
+            stack.Children.Add(Text(kind + "  /  " + title, 14, PrimaryInk, FontWeights.SemiBold));
+            var summaryText = Text(summary, 10.5, "TextSecondary", margin: new Thickness(0, 9, 0, 0));
             summaryText.MaxWidth = 205; summaryText.TextWrapping = TextWrapping.Wrap;
             stack.Children.Add(summaryText);
             Grid.SetColumn(stack, 1); grid.Children.Add(stack); card.Child = grid;
@@ -656,8 +656,8 @@ namespace SoulLink.Controls
             if (state.Length > 0) Add(status, x + nw - 108, y + nh - 22, layer);
             var port = new Ellipse
             {
-                Width = 13, Height = 13, Fill = new SolidColorBrush(accent),
-                Stroke = ColorBrush(214, 243, 255), StrokeThickness = 1.5
+                Width = 13, Height = 13, Fill = UiBrush.Get(accent),
+                Stroke = UiBrush.Get("StrokeMid"), StrokeThickness = 1.5
             };
             Add(port, x + nw / 2 - 6.5, y + nh - 6.5, layer);
             var node = new DemoNode
@@ -672,10 +672,10 @@ namespace SoulLink.Controls
         private static void SetNodeState(DemoNode node, string state, bool success)
         {
             node.State.Text = state;
-            var color = success ? GreenBrush : Color.FromRgb(148, 173, 203);
-            node.State.Foreground = new SolidColorBrush(color);
-            node.Port.Fill = new SolidColorBrush(color);
-            node.Card.BorderBrush = new SolidColorBrush(success ? GreenBrush : Color.FromRgb(79, 227, 255));
+            var color = success ? SuccessInk : "TextSecondary";
+            node.State.Foreground = UiBrush.Get(color);
+            node.Port.Fill = UiBrush.Get(color);
+            node.Card.BorderBrush = UiBrush.Get(success ? SuccessInk : AccentInk);
         }
 
         private void DrawLink(Canvas layer, Rect a, Rect b, bool animated, double delay)
@@ -689,7 +689,7 @@ namespace SoulLink.Controls
             double length = GeometryLength(geometry);
             var path = new Path
             {
-                Data = geometry, Stroke = BrushOf(GreenBrush),
+                Data = geometry, Stroke = UiBrush.Get(SuccessInk),
                 StrokeThickness = 2.2, StrokeStartLineCap = PenLineCap.Round,
                 StrokeEndLineCap = PenLineCap.Round
             };
@@ -711,7 +711,7 @@ namespace SoulLink.Controls
             pointer.Children.Add(new Path
             {
                 Data = PathGeometry.Parse("M 2,2 L 2,25 L 8,19 L 14,31 L 19,28 L 13,17 L 24,16 Z"),
-                Fill = BrushOf(White), Stroke = ColorBrush(17, 35, 55), StrokeThickness = 1.5
+                Fill = UiBrush.Get(PrimaryInk), Stroke = UiBrush.Get("DialogSurface"), StrokeThickness = 1.5
             });
             layer.Children.Add(pointer);
             _animations.Add(t =>
@@ -780,23 +780,18 @@ namespace SoulLink.Controls
             SetLeft(element, x); SetTop(element, y); (parent ?? this).Children.Add(element);
         }
 
-        private static TextBlock Text(string text, double size, Color color,
+        private static TextBlock Text(string text, double size, string color,
             FontWeight? weight = null, HorizontalAlignment alignment = HorizontalAlignment.Left,
             Thickness? margin = null) => new()
         {
-            Text = text, FontSize = size, Foreground = new SolidColorBrush(color),
+            Text = text, FontSize = size, Foreground = UiBrush.Get(color),
             FontWeight = weight ?? FontWeights.Normal, TextWrapping = TextWrapping.Wrap,
             HorizontalAlignment = alignment, Margin = margin ?? new Thickness(0)
         };
 
-        private static readonly Color CyanBrush = Color.FromRgb(79, 227, 255);
-        private static readonly Color White = Color.FromRgb(239, 246, 255);
-        private static readonly Color GreenBrush = Color.FromRgb(65, 240, 192);
-        private static readonly Color AmberBrush = Color.FromRgb(255, 177, 77);
-        private static readonly Color CyanBrushColor = CyanBrush;
-        private static readonly Color GreenColor = GreenBrush;
-        private static readonly Color AmberColor = AmberBrush;
-        private static Brush BrushOf(Color color) => new SolidColorBrush(color);
-        private static SolidColorBrush ColorBrush(byte r, byte g, byte b) => new(Color.FromRgb(r, g, b));
+        private const string AccentInk = "DesktopAccent";
+        private const string PrimaryInk = "TextPrimary";
+        private const string SuccessInk = "MintBrush";
+        private const string WarningInk = "AmberBrush";
     }
 }

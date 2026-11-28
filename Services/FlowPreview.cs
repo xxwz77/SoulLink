@@ -18,6 +18,11 @@ namespace SoulLink.Services
                 Id=source.Id, AccountId=source.AccountId, Enabled=source.Enabled, Paused=source.Paused,
                 DayBoundaryHour=source.DayBoundaryHour, EngineVersion=2, LifecycleVersion=1,
                 DailyLatchKey=source.DailyLatchKey, RunComplete=source.RunComplete, RunDayKey=source.RunDayKey,
+                CreatedAt=source.CreatedAt,
+                ScheduleFireCount=new(source.ScheduleFireCount, StringComparer.OrdinalIgnoreCase),
+                ScheduleCycleDay=new(source.ScheduleCycleDay, StringComparer.OrdinalIgnoreCase),
+                ScheduleLastTriggeredDay=new(source.ScheduleLastTriggeredDay, StringComparer.OrdinalIgnoreCase),
+                SatisfiedContacts=new(source.SatisfiedContacts, StringComparer.OrdinalIgnoreCase),
                 Nodes=source.Nodes.Select(n => new FlowNode
                 {
                     Id=n.Id, Kind=n.Kind, Type=n.Type, X=n.X, Y=n.Y, Logic=n.Logic, Negated=n.Negated,
@@ -40,7 +45,9 @@ namespace SoulLink.Services
                 if (n.IsContact)
                 {
                     var signal = values[n.Id];
-                    var state = PlcLogic.Evaluate(n, sources, signal.Value);
+                    bool pendingSchedule = n.Type == FlowNodeType.TrigSchedule && signal.Available
+                        && n.GetBool("latch", true) && flow.SatisfiedContacts.Contains(n.Id);
+                    var state = PlcLogic.Evaluate(n, sources, signal.Value || pendingSchedule);
                     state.Available = signal.Available;
                     state.Value = signal.Value;
                     states[n.Id] = state;

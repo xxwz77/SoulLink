@@ -36,7 +36,7 @@
                                 <TextBlock x:Name="LayoutLabel" Text="单个" FontSize="11" VerticalAlignment="Center"
                                            Margin="0,0,4,0" />
                                 <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="8"
-                                           VerticalAlignment="Center" Foreground="#77FFFFFF" />
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
                             </StackPanel>
                             <Button.ContextMenu>
                                 <ContextMenu x:Name="LayoutMenu">
@@ -58,13 +58,13 @@
                             <TextBlock x:Name="BtnGameModeLabel" Text="游戏模式" FontSize="11" />
                         </Button>
                         <!-- 自由视角状态指示；快捷键仍可随时退出。 -->
-                        <Border x:Name="ModeIndicator" Background="#14FFFFFF"
-                                BorderBrush="#28FFFFFF" BorderThickness="1" CornerRadius="9"
+                        <Border x:Name="ModeIndicator" Background="{DynamicResource HoverFill}"
+                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" CornerRadius="9"
                                 Padding="10,5" Margin="8,0,0,0" VerticalAlignment="Center"
                                 ToolTip="当前输入模式（只作提示，切换请用热键）">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse x:Name="ModeDot" Width="7" Height="7" VerticalAlignment="Center"
-                                         Margin="0,0,6,0" Fill="#FF6B7C9C" />
+                                         Margin="0,0,6,0" Fill="{DynamicResource TextSecondary}" />
                                 <TextBlock x:Name="ModeLabel" Text="指针模式" FontSize="11" VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextSecondary}" />
                             </StackPanel>
@@ -102,13 +102,13 @@
                             </StackPanel>
                         </Button>
                         <!-- 键鼠状态：固定指示器（只显示当前状态，不承载一次性消息） -->
-                        <Border x:Name="InputIndicator" Background="#14FFFFFF"
-                                BorderBrush="#28FFFFFF" BorderThickness="1" CornerRadius="9"
+                        <Border x:Name="InputIndicator" Background="{DynamicResource HoverFill}"
+                                BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" CornerRadius="9"
                                 Padding="10,5" Margin="8,0,10,0" VerticalAlignment="Center"
                                 ToolTip="当前键鼠接管状态">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse x:Name="InputDot" Width="7" Height="7" VerticalAlignment="Center"
-                                         Margin="0,0,6,0" Fill="#FF6B7C9C" />
+                                         Margin="0,0,6,0" Fill="{DynamicResource TextSecondary}" />
                                 <TextBlock x:Name="InputLabel" Text="未接管" FontSize="11"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextSecondary}" />
@@ -194,7 +194,7 @@
                         <Grid x:Name="NoSelectionHint" VerticalAlignment="Center" HorizontalAlignment="Center">
                             <StackPanel>
                                 <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="38"
-                                           HorizontalAlignment="Center" Foreground="#33FFFFFF" />
+                                           HorizontalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
                                 <TextBlock Text="从左侧选一个用户进行配置" FontSize="13"
                                            HorizontalAlignment="Center" Margin="0,12,0,0"
                                            Foreground="{DynamicResource TextSecondary}" />
@@ -402,7 +402,7 @@
                      平时高度为 0（完全不影响画面），鼠标进入顶部热区后
                      把这一行撑到 46px，RDP 同步下移让出空间。 -->
                 <Border x:Name="FullScreenMenuBar" Grid.Row="0" Visibility="Collapsed"
-                        Background="#F2101420" BorderBrush="#33FFFFFF" BorderThickness="0,0,0,1"
+                        Background="{DynamicResource DialogSurface}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="0,0,0,1"
                         Padding="12,6" ClipToBounds="True">
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -421,7 +421,7 @@
                                     <TextBlock x:Name="FullScreenTitle" Text="全屏" FontSize="11.5"
                                                VerticalAlignment="Center" Margin="0,0,4,0" />
                                     <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="8"
-                                               VerticalAlignment="Center" Foreground="#77FFFFFF" />
+                                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
                                 </StackPanel>
                                 <Button.ContextMenu>
                                     <ContextMenu x:Name="FullScreenSwitchMenu" />
@@ -444,7 +444,7 @@
                 <!-- ★ 不要黑色背景：画布留空的地方应当露出主题动画底图。
                      只有画面格子本身（RDP 内容 / 未连接时的暗色底）是深色。 -->
                 <Border Grid.Row="1" CornerRadius="16" ClipToBounds="True"
-                        BorderBrush="#26FFFFFF" BorderThickness="1">
+                        BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
                     <Grid>
                         <!-- ★ 这个 Grid 只给保护层 / 连接动画当锚点：
                              它的尺寸严格等于外框内边，与 ScrollViewer 叠在一起铺满。
@@ -481,8 +481,8 @@
                                 IsSnapToTickEnabled="True" TickFrequency="0.5" SmallChange="0.5"
                                 VerticalAlignment="Center" ValueChanged="SensSlider_ValueChanged" />
                         <TextBlock x:Name="SensText" Text="4.0x" FontSize="10.5" VerticalAlignment="Center"
-                                   Foreground="{StaticResource CyanBrush}" Margin="6,0,14,0" Width="34" />
-                        <Border Width="1" Background="#28FFFFFF" Margin="0,2" />
+                                   Foreground="{DynamicResource CyanBrush}" Margin="6,0,14,0" Width="34" />
+                        <Border Width="1" Background="{DynamicResource HoverFill}" Margin="0,2" />
                         <TextBlock Text="锁定热键" FontSize="10.5" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextMuted}" Margin="14,0,6,0" />
                         <ctl:HotkeyRecorder x:Name="HotkeyBtn" Width="140" Height="28"

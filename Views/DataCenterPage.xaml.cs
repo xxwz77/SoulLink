@@ -1,13 +1,14 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
-using System.Windows.Threading;
 using System.Threading;
 using System.Threading.Tasks;
+using SoulLink.Models;
 using SoulLink.Services;
 
 namespace SoulLink.Views
@@ -22,8 +23,9 @@ namespace SoulLink.Views
     /// </summary>
     public partial class DataCenterPage : UserControl
     {
-        private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
-        private bool _active;
+        private IDisposable? _refreshTick;
+        private string? _focusedAccountId;
+        private string? _shownFocusUser;
         private readonly Dictionary<string, BgiAccountData> _bgiSnapshots = new(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _bgiSnapshotGate = new(1, 1);
         private DateTime _lastBgiSnapshotAt;
@@ -138,16 +140,16 @@ namespace SoulLink.Views
             = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>原地刷新所有账号的时间戳文本（每次 Tick 调，开销 ~微秒级）。</summary>
-        private void RefreshLiveStamps()
+        private void RefreshLiveStamps(IEnumerable<Account> accounts)
         {
             if (_liveStamps.Count == 0) return;
             try
             {
-                foreach (var acc in AccountScope.Accounts(App.Config))
+                foreach (var acc in accounts)
                 {
                     if (string.IsNullOrWhiteSpace(acc.UserName)) continue;
                     if (!_liveStamps.TryGetValue(acc.UserName, out var refs)) continue;
-                    var st = AccountStateCenter.Get(acc.Id) ?? AccountStateCenter.GetByUser(acc.UserName);
+                    var st = GetDisplayState(acc);
                     if (st == null) continue;
 
                     string logText = string.IsNullOrWhiteSpace(st.BgiLogFile) ? "—"
@@ -170,17 +172,17 @@ namespace SoulLink.Views
         /// 把"界面会显示的东西"压成一个字符串。
         /// ★ 只要它没变，重建出来的视觉树和现在完全一样，纯属白烧 CPU。
         /// </summary>
-        private string BuildSignature()
+        private string BuildSignature(IEnumerable<Account> accounts)
         {
             var sb = new System.Text.StringBuilder(512);
             try
             {
-                foreach (var a in AccountScope.Accounts(App.Config))
+                foreach (var a in accounts)
                 {
+                    sb.Append(a.Id).Append('|').Append(a.UserName).Append('|').Append(a.Caption).Append('|');
                     var st = AccountStateCenter.Get(a.Id);
-                    if (st == null) { sb.Append(a.UserName).Append("|null;"); continue; }
-                    sb.Append(a.UserName).Append('|')
-                      .Append(st.SessionId).Append(',')
+                    if (st == null) { sb.Append("null;"); continue; }
+                    sb.Append(st.SessionId).Append(',')
                       .Append(st.SessionState).Append(',')
                       .Append(st.BgiRunning).Append(',')
                       .Append(st.BgiPid).Append(',')
@@ -232,48 +234,69 @@ namespace SoulLink.Views
         public DataCenterPage()
         {
             InitializeComponent();
-            Loaded += (_, __) => { _timer.Start(); };
-            Unloaded += (_, __) => { _timer.Stop(); };
-            _timer.Tick += (_, __) =>
-            {
-                if (!IsVisible) return;
-                _ = RefreshBgiSnapshotsAsync();
-
-                // ★★ t70：**先原地刷新时间戳**（不重建视觉树），再做签名判断。
-                //   这样即使签名没变（结构没变），用户也能看到「数据在采」。
-                RefreshLiveStamps();
-
-                // ★ 2.17.45：只有数据真的变了才重建视觉树。
-                string sig = BuildSignature();
-                if (sig == _lastSignature) return;
-                _lastSignature = sig;
-
-                // ★★ t64 根治（系统级黑屏的直接原因，已用实测确认）：
-                //   **给整页重建加强制间隔**。
-                //
-                //   实测证据链：
-                //     · A1 跑配置组时 CurrentGroup 每秒变 → 签名每秒变 → 每秒 Rebuild
-                //     · Rebuild = CardList.Children.Clear() + 重建全部账号卡片
-                //       （每卡片 7~11 个控件 + 配置组网格 + 米游社行 + 2 个表格）
-                //     · 4 个账号 = 每秒丢弃重建**上百个视觉树节点**
-                //     · WPF 全量 Measure/Arrange/Render → 每帧提交大 surface 给 DWM
-                //     · 持续 GPU 抖动 + DWM 合成压力 → **整个桌面黑屏**
-                //   （对照：SoulLink 停掉后 DWM 从「8秒涨2.19s」恢复到「10秒涨0.98s」）
-                //
-                //   修法：重建至少间隔 3 秒。中间的签名变化只记录不重建，
-                //   等冷却期过了再一次性应用 —— 状态显示最多延迟 3 秒，
-                //   但绝不会把 GPU/DWM 按在地上摩擦。
-                var now = DateTime.UtcNow;
-                if ((now - _lastRebuildAt).TotalMilliseconds < RebuildMinIntervalMs)
-                {
-                    // 冷却中：保留签名（下次比对会继续触发），但不重建
-                    _lastSignature = "";   // 让下次 tick 重新判定
-                    return;
-                }
-                _lastRebuildAt = now;
-                Rebuild();
-            };
+            Unloaded += (_, _) => OnPageDeactivated();
         }
+
+        private void RefreshVisibleData()
+        {
+            if (!IsVisible) return;
+            _ = RefreshBgiSnapshotsAsync();
+
+            var accounts = AccountScope.Accounts(App.Config);
+            var focused = FindFocusedAccount(accounts);
+            // 删除或管理范围变化时优先移除旧卡片，常规状态更新仍使用重建冷却时间。
+            if (_focusedAccountId != null && focused?.UserName != _shownFocusUser)
+            {
+                Rebuild();
+                return;
+            }
+
+            // 时间戳原地更新，限制整页重建频率以避免持续触发 DWM 合成。
+            IEnumerable<Account> displayAccounts = _focusedAccountId == null ? accounts
+                : focused == null ? Array.Empty<Account>() : new[] { focused };
+            RefreshLiveStamps(displayAccounts);
+            string signature = BuildSignature(displayAccounts);
+            if (signature == _lastSignature) return;
+            var now = DateTime.UtcNow;
+            if ((now - _lastRebuildAt).TotalMilliseconds < RebuildMinIntervalMs) return;
+            _lastSignature = signature;
+            _lastRebuildAt = now;
+            Rebuild();
+        }
+
+        private Account? FindFocusedAccount(IEnumerable<Account> accounts)
+            => _focusedAccountId == null ? null : accounts.FirstOrDefault(account =>
+                account.Id == _focusedAccountId && !string.IsNullOrWhiteSpace(account.UserName));
+
+        private AccountState? GetDisplayState(Account account)
+        {
+            var state = AccountStateCenter.Get(account.Id);
+            if (_focusedAccountId == null) return state ?? AccountStateCenter.GetByUser(account.UserName);
+            return state != null && string.Equals(state.UserName, account.UserName, StringComparison.OrdinalIgnoreCase) ? state : null;
+        }
+
+        private static AccountState EmptyState(Account account)
+            => new() { AccountId = account.Id, UserName = account.UserName, Caption = account.Caption };
+
+        internal void OnPageActivated(string? accountId)
+        {
+            if (_focusedAccountId != accountId) AccountCardsScroll.ScrollToTop();
+            _focusedAccountId = accountId;
+            _refreshTick ??= TickHub.Register("DataCenter", 1, RefreshVisibleData);
+            Activate();
+        }
+
+        internal void OnPageDeactivated()
+        {
+            _refreshTick?.Dispose();
+            _refreshTick = null;
+        }
+
+        private void ReturnToOverview_Click(object sender, RoutedEventArgs e)
+            => (Window.GetWindow(this) as MainWindow)?.NavigateTo("overview");
+
+        private void ShowAllAccounts_Click(object sender, RoutedEventArgs e)
+            => (Window.GetWindow(this) as MainWindow)?.NavigateTo("datacenter");
 
         private bool _loadingMoraInterval;
 
@@ -287,8 +310,8 @@ namespace SoulLink.Views
             }
             finally { _loadingMoraInterval = false; }
 
-            try { _timer.Start(); } catch { }
             _ = RefreshBgiSnapshotsAsync();
+            _lastSignature = "";
             Rebuild();
         }
 
@@ -321,22 +344,30 @@ namespace SoulLink.Views
         {
             try
             {
-                // ★ 不显示"主用户"（SoulLink 自己运行所在会话的那个账号）：
-                //   它不是挂机目标，列出来只会干扰核对。
-                // 配置中心以保存的账号为权威：离线、没有独立会话、当前主账号也显示。
-                // 在线状态只作为卡片字段，不能决定这个账号是否存在。
-                var states = AccountScope.Accounts(App.Config)
+                // 账号是否显示由配置和管理范围决定。离线账号也保留卡片。
+                var accounts = AccountScope.Accounts(App.Config);
+                var allStates = accounts
                     .Where(a => !string.IsNullOrWhiteSpace(a.UserName))
                     .GroupBy(a => a.UserName, StringComparer.OrdinalIgnoreCase)
                     .Select(g => g.First())
                     .Select(a => AccountStateCenter.Get(a.Id) ?? AccountStateCenter.GetByUser(a.UserName)
-                        ?? new AccountState { AccountId = a.Id, UserName = a.UserName, Caption = a.Caption })
+                        ?? EmptyState(a))
                     .OrderBy(s => s.Caption, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                    .ToArray();
+
+                var focused = FindFocusedAccount(accounts);
+                _shownFocusUser = focused?.UserName;
+                AccountScopeBar.Visibility = _focusedAccountId == null ? Visibility.Collapsed : Visibility.Visible;
+                AccountScopeText.Text = _focusedAccountId == null ? "" : focused == null ? "当前账号不可查看"
+                    : $"当前账号：{focused.Caption}";
+                AccountScopeText.ToolTip = focused?.UserName;
+
+                var states = _focusedAccountId == null ? allStates
+                    : focused == null ? Array.Empty<AccountState>() : new[] { GetDisplayState(focused) ?? EmptyState(focused) };
 
                 var refresh = AccountStateCenter.LastRefresh;
                 double age = (DateTime.Now - refresh).TotalSeconds;
-                SubTitle.Text = states.Count + " 个账号 · 快照"
+                SubTitle.Text = states.Length + " 个账号 · 快照"
                     + (refresh == DateTime.MinValue ? "尚未生成" : age.ToString("0.0") + " 秒前更新")
                     + " · 每 " + (AccountStateCenter.RefreshMs / 1000.0).ToString("0.#") + " 秒刷新";
 
@@ -351,26 +382,28 @@ namespace SoulLink.Views
                 _liveStamps.Clear();   // t70：旧 TextBlock 即将丢弃，引用不能留
                 CardList.Children.Clear();
 
-                if (states.Count == 0)
+                if (states.Length == 0)
                 {
                     CardList.Children.Add(new TextBlock
                     {
-                        Text = "还没有账号状态。确认配置里有账号，且状态中心已启动。",
+                        Text = _focusedAccountId == null
+                            ? "还没有账号状态。确认配置里有账号，且状态中心已启动。"
+                            : "所选账号已移除、超出当前管理范围，或未配置 Windows 用户名。",
                         Margin = new Thickness(4, 10, 4, 10),
                         FontSize = 11.5,
-                        Foreground = (Brush)FindResource("TextMuted")
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = UiBrush.Get("TextMuted")
                     });
-                    return;
                 }
 
                 // ★ t52：异步预载 run.db 今日记录（不阻塞首帧）。
                 // ★ t71：加 3 秒节流 —— 原来每次 Rebuild 都查一遍 DB，
                 //   而签名变化时 Rebuild 可能连续触发（配置组切换、状态变化…），
                 //   查询过于频繁。3 秒足够跟上「配置组切换」这种低频变化。
-                if ((DateTime.UtcNow - _lastSqliteQuery).TotalMilliseconds >= SqliteQueryMinIntervalMs)
+                if (allStates.Length > 0 && (DateTime.UtcNow - _lastSqliteQuery).TotalMilliseconds >= SqliteQueryMinIntervalMs)
                 {
                     _lastSqliteQuery = DateTime.UtcNow;
-                    _ = EnsureSqliteTodayRunsAsync(states);
+                    _ = EnsureSqliteTodayRunsAsync(allStates);
                 }
 
                 foreach (var st in states) CardList.Children.Add(BuildCard(st));
@@ -442,12 +475,12 @@ namespace SoulLink.Views
             var card = new Border
             {
                 CornerRadius = new CornerRadius(12),
-                Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x20, 0xFF, 0xFF, 0xFF)),
+                BorderBrush = UiBrush.Get("TextPrimary", 0x20),
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(14, 12, 14, 12),
                 Margin = new Thickness(0, 0, 0, 8)
             };
+            card.SetResourceReference(Border.BackgroundProperty, "DesktopPanel");
 
             var root = new Grid();
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -461,8 +494,8 @@ namespace SoulLink.Views
             {
                 Width = 8, Height = 8, VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
-                Fill = st.BgiRunning ? new SolidColorBrush(Color.FromRgb(0x41, 0xF0, 0xC0))
-                                     : new SolidColorBrush(Color.FromRgb(0x6B, 0x7C, 0x9C))
+                Fill = st.BgiRunning ? UiBrush.Get("MintBrush")
+                                     : UiBrush.Get("TextSecondary")
             });
             head.Children.Add(new TextBlock
             {
@@ -470,7 +503,7 @@ namespace SoulLink.Views
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = (Brush)FindResource("TextPrimary")
+                Foreground = UiBrush.Get("TextPrimary")
             });
             if (!string.Equals(st.Caption, st.UserName, StringComparison.OrdinalIgnoreCase))
             {
@@ -480,7 +513,7 @@ namespace SoulLink.Views
                     FontSize = 11,
                     Margin = new Thickness(4, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = (Brush)FindResource("TextSecondary")
+                    Foreground = UiBrush.Get("TextSecondary")
                 });
             }
             Grid.SetRow(head,0);
@@ -574,7 +607,7 @@ namespace SoulLink.Views
                 Margin = new Thickness(0, 12, 0, 0),
                 Padding = new Thickness(0, 8, 0, 0),
                 BorderThickness = new Thickness(0, 1, 0, 0),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x20, 0xFF, 0xFF, 0xFF))
+                BorderBrush = UiBrush.Get("TextPrimary", 0x20)
             };
             var panel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
 
@@ -585,7 +618,7 @@ namespace SoulLink.Views
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 10, 0),
-                Foreground = (Brush)FindResource("TextPrimary")
+                Foreground = UiBrush.Get("TextPrimary")
             });
 
             // ★ t2：有缓存就按缓存值渲染（不先画占位，因此没有「…→uid」的跳变）
@@ -596,8 +629,8 @@ namespace SoulLink.Views
                 FontSize = 10.5,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = cached && view!.Stored
-                    ? new SolidColorBrush(Color.FromRgb(0x6E, 0xF0, 0xC8))
-                    : (Brush)FindResource("TextSecondary")
+                    ? UiBrush.Get("MintBrush")
+                    : UiBrush.Get("TextSecondary")
             };
             panel.Children.Add(status);
             // 记下「当前活在视觉树里」的那个块：异步回来只改它，不改整页。
@@ -829,8 +862,8 @@ namespace SoulLink.Views
             try
             {
                 live.Foreground = stored
-                    ? new SolidColorBrush(Color.FromRgb(0x6E, 0xF0, 0xC8))
-                    : (Brush)FindResource("TextSecondary");
+                    ? UiBrush.Get("MintBrush")
+                    : UiBrush.Get("TextSecondary");
             }
             catch { }
         }
@@ -886,7 +919,7 @@ namespace SoulLink.Views
         private UIElement BuildAutomationData(AccountState st)
         {
             var panel = new StackPanel { Margin = new Thickness(0,14,0,0) };
-            panel.Children.Add(new TextBlock { Text="自动化使用的数据", FontSize=11.5, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary"), Margin=new Thickness(0,0,0,7) });
+            panel.Children.Add(new TextBlock { Text="自动化使用的数据", FontSize=11.5, FontWeight=FontWeights.SemiBold, Foreground=UiBrush.Get("TextPrimary"), Margin=new Thickness(0,0,0,7) });
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width=new GridLength(1,GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width=new GridLength(360), MinWidth=280 });
@@ -988,12 +1021,12 @@ namespace SoulLink.Views
             // ★ 未绑定 BGI 路径：不读任何文件，明确告诉用户"没绑定"而不是"没数据"。
             if (!st.Bound)
             {
-                panel.Children.Add(new TextBlock { Text="配置组", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary") });
+                panel.Children.Add(new TextBlock { Text="配置组", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=UiBrush.Get("TextPrimary") });
                 panel.Children.Add(new TextBlock
                 {
                     Text = "未绑定 BGI 路径 · 不读取日志\n请到「设置 → BetterGI 路径」点一次「从进程取」",
                     FontSize=10.5, TextWrapping=TextWrapping.Wrap,
-                    Foreground=(Brush)FindResource("TextMuted"), Margin=new Thickness(0,5,0,0)
+                    Foreground=UiBrush.Get("TextMuted"), Margin=new Thickness(0,5,0,0)
                 });
                 return panel;
             }
@@ -1056,10 +1089,10 @@ namespace SoulLink.Views
                 head += " · 已停止"
                      + (st.LastGroup.Length > 0 ? "（上一个：" + st.LastGroup + "）" : "")
                      + "（" + st.StoppedAt.ToString("HH:mm:ss") + "）";
-            panel.Children.Add(new TextBlock { Text=head, FontSize=11, FontWeight=FontWeights.SemiBold, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextPrimary") });
-            panel.Children.Add(new TextBlock { Text="来源：run.db（今日运行记录）" + (st.GroupsSource.Length>0 ? " · 实时增量 " + st.GroupsUpdatedAt.ToString("HH:mm:ss") : ""), FontSize=9.5, TextWrapping=TextWrapping.Wrap, Foreground=(Brush)FindResource("TextMuted"), Margin=new Thickness(0,3,0,5) });
+            panel.Children.Add(new TextBlock { Text=head, FontSize=11, FontWeight=FontWeights.SemiBold, TextWrapping=TextWrapping.Wrap, Foreground=UiBrush.Get("TextPrimary") });
+            panel.Children.Add(new TextBlock { Text="来源：run.db（今日运行记录）" + (st.GroupsSource.Length>0 ? " · 实时增量 " + st.GroupsUpdatedAt.ToString("HH:mm:ss") : ""), FontSize=9.5, TextWrapping=TextWrapping.Wrap, Foreground=UiBrush.Get("TextMuted"), Margin=new Thickness(0,3,0,5) });
             if (groups.Count == 0)
-            { panel.Children.Add(new TextBlock { Text="今日暂无配置组运行记录", FontSize=10.5, Foreground=(Brush)FindResource("TextMuted") }); return panel; }
+            { panel.Children.Add(new TextBlock { Text="今日暂无配置组运行记录", FontSize=10.5, Foreground=UiBrush.Get("TextMuted") }); return panel; }
             const int columns = 3;
             var grid = new Grid();
             for (int i=0;i<columns;i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width=new GridLength(1,GridUnitType.Star) });
@@ -1145,7 +1178,7 @@ namespace SoulLink.Views
         private List<UIElement> BuildGroupCardChildren(GroupAggregate agg, string accountKey)
         {
             var last = agg.Last;
-            var (accent, _) = GroupColors(last.State);
+            Brush accent = GroupAccent(last.State);
             string state = StateText(last.State);
             string times = TimeText(last);
             // ★ 2026-11-26 用户要求：「有轮次要记录轮次，没轮次只记录配置组启动次数」。
@@ -1167,7 +1200,7 @@ namespace SoulLink.Views
             list.Add(new TextBlock
             {
                 Text = meta, FontSize = 9.5, TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 2, 0, 0), Foreground = (Brush)FindResource("TextSecondary")
+                Margin = new Thickness(0, 2, 0, 0), Foreground = UiBrush.Get("TextSecondary")
             });
             string key = accountKey + "\u001f" + agg.Name;
             if (_expandedGroups.Contains(key) && agg.Runs.Count > 1)
@@ -1178,7 +1211,7 @@ namespace SoulLink.Views
         private Border BuildGroupCard(GroupAggregate agg, string accountKey)
         {
             var last = agg.Last;
-            var (accent, fill) = GroupColors(last.State);
+            Brush accent = GroupAccent(last.State);
 
             var stack = new StackPanel();
             foreach (UIElement child in BuildGroupCardChildren(agg, accountKey)) stack.Children.Add(child);
@@ -1187,11 +1220,12 @@ namespace SoulLink.Views
             var card = new Border
             {
                 Padding = new Thickness(8,5,8,5), Margin = new Thickness(0,3,7,3),
-                Background = fill, BorderBrush = accent, BorderThickness = new Thickness(1),
+                BorderBrush = accent, BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 ToolTip = last.Detail.Length > 0 ? last.Detail : (agg.Runs.Count > 1 ? "点击展开今日全部运行" : null),
                 Child = stack
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
             card.Cursor = System.Windows.Input.Cursors.Hand;
             // ★★ t60 修复（展开后自动收起 + 无法操作下拉框）：
             //
@@ -1231,13 +1265,16 @@ namespace SoulLink.Views
             //   已经加过一次了。两处都加 = 展开后「今日全部运行」整块出现两遍。
             //   展开列表只由 BuildGroupCardChildren 负责，此处不再重复添加。
 
-            if (last.State == ScriptGroupState.Running)
+            if (last.State == ScriptGroupState.Running && !ThemeManager.AnimationsDisabled)
             {
-                card.RenderTransformOrigin = new Point(0.5,0.5);
-                card.RenderTransform = new ScaleTransform(1,1);
+                var outline = new SolidColorBrush();
+                UiBrush.BindColor(outline, SolidColorBrush.ColorProperty, "DesktopAccent");
+                card.BorderBrush = outline;
                 var pulse = new System.Windows.Media.Animation.DoubleAnimation
                 { From=0.82, To=1, Duration=TimeSpan.FromMilliseconds(900), AutoReverse=true, RepeatBehavior=System.Windows.Media.Animation.RepeatBehavior.Forever };
-                card.BeginAnimation(OpacityProperty,pulse);
+                card.IsVisibleChanged += (_, _) => outline.BeginAnimation(Brush.OpacityProperty,
+                    card.IsVisible && !ThemeManager.AnimationsDisabled ? pulse : null);
+                if (card.IsVisible) outline.BeginAnimation(Brush.OpacityProperty, pulse);
             }
             return card;
         }
@@ -1249,7 +1286,7 @@ namespace SoulLink.Views
             list.Children.Add(new TextBlock
             {
                 Text = "今日全部运行（" + agg.Runs.Count + " 次）",
-                FontSize = 9.5, Foreground = (Brush)FindResource("TextMuted"), Margin = new Thickness(0,0,0,2)
+                FontSize = 9.5, Foreground = UiBrush.Get("TextMuted"), Margin = new Thickness(0,0,0,2)
             });
             int shown = Math.Min(agg.Runs.Count, 40);          // 兜底：单组最多列 40 行
             for (int i = 0; i < shown; i++)
@@ -1270,14 +1307,14 @@ namespace SoulLink.Views
                 list.Children.Add(new TextBlock
                 {
                     Text = line, FontSize = 9.5, TextWrapping = TextWrapping.Wrap,
-                    Foreground = GroupColors(r.State).accent
+                    Foreground = GroupAccent(r.State)
                 });
             }
             if (agg.Runs.Count > shown)
                 list.Children.Add(new TextBlock
                 {
                     Text = "… 另有 " + (agg.Runs.Count - shown) + " 次未列出",
-                    FontSize = 9.5, Foreground = (Brush)FindResource("TextMuted")
+                    FontSize = 9.5, Foreground = UiBrush.Get("TextMuted")
                 });
             return list;
         }
@@ -1303,15 +1340,15 @@ namespace SoulLink.Views
         private static string FmtDur(TimeSpan d)
             => d.TotalHours >= 1 ? ((int)d.TotalHours) + ":" + d.ToString(@"mm\:ss") : d.ToString(@"mm\:ss");
 
-        private static (Brush accent, Brush fill) GroupColors(ScriptGroupState state)
+        private static Brush GroupAccent(ScriptGroupState state)
         {
             return state switch
             {
-                ScriptGroupState.Running => (new SolidColorBrush(Color.FromRgb(0x4F,0xE3,0xFF)),new SolidColorBrush(Color.FromArgb(0x18,0x4F,0xE3,0xFF))),
-                ScriptGroupState.Finished => (new SolidColorBrush(Color.FromRgb(0x6E,0xF0,0xC8)),new SolidColorBrush(Color.FromArgb(0x14,0x41,0xF0,0xC0))),
-                ScriptGroupState.Failed => (new SolidColorBrush(Color.FromRgb(0xFF,0x9B,0x9B)),new SolidColorBrush(Color.FromArgb(0x1C,0xFF,0x7B,0x7B))),
-                ScriptGroupState.Cancelled or ScriptGroupState.Interrupted => (new SolidColorBrush(Color.FromRgb(0xE7,0xC6,0x76)),new SolidColorBrush(Color.FromArgb(0x12,0xE7,0xC6,0x76))),
-                _ => (new SolidColorBrush(Color.FromRgb(0x7A,0x8C,0xB4)),new SolidColorBrush(Color.FromArgb(0x10,0xFF,0xFF,0xFF)))
+                ScriptGroupState.Running => UiBrush.Get("DesktopAccent"),
+                ScriptGroupState.Finished => UiBrush.Get("MintBrush"),
+                ScriptGroupState.Failed => UiBrush.Get("RoseBrush"),
+                ScriptGroupState.Cancelled or ScriptGroupState.Interrupted => UiBrush.Get("AmberBrush"),
+                _ => UiBrush.Get("TextSecondary")
             };
         }
 
@@ -1350,7 +1387,7 @@ namespace SoulLink.Views
                 st.DogfoodRecords.FirstOrDefault(r => DogfoodRecordReader.ForDay(r, DateTime.Now, 4).IsValid)
                     ?? st.DogfoodRecords.FirstOrDefault() ?? new DogfoodRecord(),
                 DateTime.Now, 4);
-            panel.Children.Add(new TextBlock { Text="狗粮记录 · 日界 04:00", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary") });
+            panel.Children.Add(new TextBlock { Text="狗粮记录 · 日界 04:00", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=UiBrush.Get("TextPrimary") });
             string route = rec.Route switch { DogfoodEndingRoute.EndingA=>"A：走联机",DogfoodEndingRoute.EndingB=>"B：自己跑",_=>"无有效记录" };
             string dayKey = rec.BusinessDay == DateTime.MinValue ? "—" : rec.BusinessDay.ToString("yyyy-MM-dd");
             panel.Children.Add(new TextBlock
@@ -1362,7 +1399,7 @@ namespace SoulLink.Views
                      + "\n" + DescribeDogfoodFreshness(st)
                      + "\n" + st.DogfoodRecordPath,
                 FontSize = 10.5, TextWrapping = TextWrapping.Wrap,
-                Foreground = (Brush)FindResource("TextSecondary"), Margin = new Thickness(0, 5, 0, 0)
+                Foreground = UiBrush.Get("TextSecondary"), Margin = new Thickness(0, 5, 0, 0)
             });
 
             // ── 今日各组收益分解（2026-11-26 用户要求：两个数据分别显示 + 汇总，共三行）──
@@ -1407,7 +1444,7 @@ namespace SoulLink.Views
                 void AddRow(string label, long exp, long mora, bool bold)
                 {
                     grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    var brush = bold ? (Brush)FindResource("TextPrimary") : (Brush)FindResource("TextSecondary");
+                    var brush = bold ? UiBrush.Get("TextPrimary") : UiBrush.Get("TextSecondary");
                     var w = bold ? FontWeights.SemiBold : FontWeights.Normal;
                     var cells = new[]
                     {
@@ -1449,11 +1486,11 @@ namespace SoulLink.Views
         private UIElement BuildHotkeyTable(BgiAccountData data)
         {
             var panel = new StackPanel { Margin = new Thickness(20,0,0,0) };
-            panel.Children.Add(new TextBlock { Text="快捷键", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary"), Margin=new Thickness(0,0,0,5) });
+            panel.Children.Add(new TextBlock { Text="快捷键", FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=UiBrush.Get("TextPrimary"), Margin=new Thickness(0,0,0,5) });
             var entries = data.DisplayHotkeys.Where(x => x.Name.Length > 0 && x.Key.Length > 0).OrderBy(x => x.Name,StringComparer.OrdinalIgnoreCase).ToList();
             if (entries.Count == 0)
             {
-                panel.Children.Add(new TextBlock { Text="没有已设置的快捷键", FontSize=10.5, Foreground=(Brush)FindResource("TextMuted") });
+                panel.Children.Add(new TextBlock { Text="没有已设置的快捷键", FontSize=10.5, Foreground=UiBrush.Get("TextMuted") });
                 return panel;
             }
             var table = new Grid();
@@ -1462,8 +1499,8 @@ namespace SoulLink.Views
             for (int i=0;i<entries.Count;i++)
             {
                 table.RowDefinitions.Add(new RowDefinition { Height=GridLength.Auto });
-                var name = new TextBlock { Text=entries[i].Name, FontSize=10.5, Foreground=(Brush)FindResource("TextSecondary"), Margin=new Thickness(0,3,8,3) };
-                var key = new TextBlock { Text=entries[i].Key, FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=(Brush)FindResource("TextPrimary"), Margin=new Thickness(0,3,0,3) };
+                var name = new TextBlock { Text=entries[i].Name, FontSize=10.5, Foreground=UiBrush.Get("TextSecondary"), Margin=new Thickness(0,3,8,3) };
+                var key = new TextBlock { Text=entries[i].Key, FontSize=11, FontWeight=FontWeights.SemiBold, Foreground=UiBrush.Get("TextPrimary"), Margin=new Thickness(0,3,0,3) };
                 Grid.SetRow(name,i); Grid.SetRow(key,i); Grid.SetColumn(key,1);
                 table.Children.Add(name); table.Children.Add(key);
             }
@@ -1598,7 +1635,7 @@ namespace SoulLink.Views
                 FontSize = 10.5,
                 Margin = new Thickness(0, 2, 0, 2),
                 VerticalAlignment = VerticalAlignment.Top,
-                Foreground = (Brush)FindResource("TextSecondary")
+                Foreground = UiBrush.Get("TextSecondary")
             };
             Grid.SetRow(lab, rowIdx);
             Grid.SetColumn(lab, 0);
@@ -1611,7 +1648,7 @@ namespace SoulLink.Views
                 Margin = new Thickness(0, 2, 0, 2),
                 VerticalAlignment = VerticalAlignment.Top,
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = (Brush)FindResource("TextPrimary")
+                Foreground = UiBrush.Get("TextPrimary")
             };
             if (mono) val.FontFamily = (FontFamily)FindResource("MonoFont");
             Grid.SetRow(val, rowIdx);

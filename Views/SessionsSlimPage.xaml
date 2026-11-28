@@ -15,21 +15,21 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
                         <Grid>
-                            <Border x:Name="Track" CornerRadius="12" Background="#33FFFFFF"
-                                    BorderBrush="#44FFFFFF" BorderThickness="1" />
-                            <Ellipse x:Name="Knob" Width="18" Height="18" Fill="#B0C2E8FF"
+                            <Border x:Name="Track" CornerRadius="12" Background="{DynamicResource HoverFill}"
+                                    BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" />
+                            <Ellipse x:Name="Knob" Width="18" Height="18" Fill="{DynamicResource TextSecondary}"
                                      HorizontalAlignment="Left" Margin="3,0,0,0" />
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Track" Property="Background" Value="#4D4FE3FF" />
-                                <Setter TargetName="Track" Property="BorderBrush" Value="#AA4FE3FF" />
-                                <Setter TargetName="Knob" Property="Fill" Value="#FFFFFFFF" />
+                                <Setter TargetName="Track" Property="Background" Value="{DynamicResource SelectedFill}" />
+                                <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
+                                <Setter TargetName="Knob" Property="Fill" Value="{DynamicResource TextSecondary}" />
                                 <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
                                 <Setter TargetName="Knob" Property="Margin" Value="0,0,3,0" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Track" Property="BorderBrush" Value="#77FFFFFF" />
+                                <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource StrokeMid}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -39,8 +39,7 @@
     </Window.Resources>
 
     <Grid Margin="0">
-        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True">
-            <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+        <Border CornerRadius="20" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" ClipToBounds="True" Background="{DynamicResource DialogSurface}">
 
             <Grid Margin="26,18,26,20">
                 <Grid.RowDefinitions>
@@ -70,7 +69,7 @@
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE7F7;" FontFamily="Segoe MDL2 Assets" FontSize="13"
-                                               Foreground="{StaticResource MintBrush}" VerticalAlignment="Center" />
+                                               Foreground="{DynamicResource MintBrush}" VerticalAlignment="Center" />
                                     <TextBlock Text="按账号隔离" FontSize="14" FontWeight="SemiBold"
                                                Foreground="{DynamicResource TextPrimary}" Margin="7,0,0,0" VerticalAlignment="Center" />
                                 </StackPanel>
@@ -117,20 +116,20 @@
 
                         <!-- ════════ 区块 B：全机设置（默认关闭，警告色）════════ -->
                         <Border Margin="0,26,0,0" CornerRadius="14" Padding="18,16"
-                                Background="#2AFFC46B" BorderBrush="{StaticResource AmberBrush}" BorderThickness="2">
+                                Background="{DynamicResource SubtleSurface}" BorderBrush="{DynamicResource AmberBrush}" BorderThickness="2">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                               Foreground="{StaticResource AmberBrush}" VerticalAlignment="Center" />
+                                               Foreground="{DynamicResource AmberBrush}" VerticalAlignment="Center" />
                                     <TextBlock Text="全机设置（慎用）" FontSize="14" FontWeight="SemiBold"
-                                               Foreground="{StaticResource AmberBrush}" Margin="7,0,0,0" VerticalAlignment="Center" />
+                                               Foreground="{DynamicResource AmberBrush}" Margin="7,0,0,0" VerticalAlignment="Center" />
                                 </StackPanel>
 
                                 <!-- 警告块：单独一块，不与说明混排 -->
-                                <Border Margin="0,12,0,0" CornerRadius="10" Padding="12,10" Background="#33FFC46B">
+                                <Border Margin="0,12,0,0" CornerRadius="10" Padding="12,10" Background="{DynamicResource SubtleSurface}">
                                     <StackPanel>
                                         <TextBlock Text="⚠ 这是 Windows 机器级设置，会影响这台电脑上的【所有用户】——包括你自己的主控制台。"
-                                                   FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AmberBrush}"
+                                                   FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AmberBrush}"
                                                    TextWrapping="Wrap" LineHeight="19" />
                                         <TextBlock Margin="0,6,0,0" FontSize="10.5" Foreground="{DynamicResource TextSecondary}"
                                                    TextWrapping="Wrap" LineHeight="18"
@@ -184,7 +183,7 @@
 
                                     <Border Grid.Row="0" Grid.ColumnSpan="2" Padding="0,4" Background="Transparent">
                                         <TextBlock Text="按账号（清理外围进程）" FontSize="11" FontWeight="SemiBold"
-                                                   Foreground="{StaticResource MintBrush}" />
+                                                   Foreground="{DynamicResource MintBrush}" />
                                     </Border>
 
                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="浏览器窗口（msedge）" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" Margin="0,7,0,0" />
@@ -196,7 +195,7 @@
 
                                     <Border Grid.Row="4" Grid.ColumnSpan="2" Padding="0,8,0,2" Background="Transparent" Margin="0,6,0,0">
                                         <TextBlock Text="全机设置（任务栏搜索 + 小组件，按会话）" FontSize="11" FontWeight="SemiBold"
-                                                   Foreground="{StaticResource AmberBrush}" />
+                                                   Foreground="{DynamicResource AmberBrush}" />
                                     </Border>
 
                                     <TextBlock Grid.Row="5" Grid.Column="0" Text="任务栏搜索块 + 小组件块（含其浏览器内核子进程）" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" />

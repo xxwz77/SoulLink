@@ -20,8 +20,8 @@
                                 <Setter TargetName="OptionBorder" Property="Background" Value="{DynamicResource ButtonBackground}" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="OptionBorder" Property="Background" Value="#3053BBD7" />
-                                <Setter TargetName="OptionBorder" Property="BorderBrush" Value="#706DD1E7" />
+                                <Setter TargetName="OptionBorder" Property="Background" Value="{DynamicResource SelectedFill}" />
+                                <Setter TargetName="OptionBorder" Property="BorderBrush" Value="{DynamicResource DesktopAccent}" />
                                 <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
                                 <Setter Property="FontWeight" Value="SemiBold" />
                             </Trigger>
@@ -90,7 +90,7 @@
                         <DataTemplate>
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="{Binding Session.UserName}" FontSize="12.5" />
-                                <TextBlock Text="{Binding TagText}" FontSize="10.5" Foreground="#8899B8E0" Margin="7,1,0,0" />
+                                <TextBlock Text="{Binding TagText}" FontSize="10.5" Foreground="{DynamicResource TextSecondary}" Margin="7,1,0,0" />
                             </StackPanel>
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
@@ -108,7 +108,7 @@
             </Grid>
 
             <Border CornerRadius="12" Margin="0,0,0,12" Padding="14,12"
-                    Background="{DynamicResource FieldBackground}" BorderBrush="#28FFFFFF" BorderThickness="1">
+                    Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -154,7 +154,7 @@
 
             <!-- ★ 白名单透明化：明确告诉用户会动哪些、不会动哪些 -->
             <Border CornerRadius="10" Margin="0,0,0,10" Padding="12,9"
-                    Background="{DynamicResource ButtonBackground}">
+                    Background="{DynamicResource PanelBackground}">
                 <StackPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -234,7 +234,7 @@
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                <Border Height="320" CornerRadius="12" Background="#0CFFFFFF" BorderBrush="#1EFFFFFF" BorderThickness="1" Padding="2">
+                <Border Height="320" CornerRadius="12" Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource StrokeSoft}" BorderThickness="1" Padding="2">
                     <DataGrid x:Name="Grid" AutoGenerateColumns="False" IsReadOnly="True"
                               HeadersVisibility="Column" GridLinesVisibility="None" Background="Transparent"
                               BorderThickness="0" SelectionMode="Extended" EnableRowVirtualization="True"
@@ -247,16 +247,16 @@
                             <Setter Property="FontSize" Value="11" />
                             <Setter Property="Padding" Value="10,8" />
                             <Setter Property="BorderThickness" Value="0,0,0,1" />
-                            <Setter Property="BorderBrush" Value="#22FFFFFF" />
+                            <Setter Property="BorderBrush" Value="{DynamicResource StrokeSoft}" />
                         </Style>
                         <Style TargetType="DataGridRow">
                             <Setter Property="Background" Value="Transparent" />
                             <Style.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter Property="Background" Value="#14FFFFFF" />
+                                    <Setter Property="Background" Value="{DynamicResource HoverFill}" />
                                 </Trigger>
                                 <Trigger Property="IsSelected" Value="True">
-                                    <Setter Property="Background" Value="#3055E0FF" />
+                                    <Setter Property="Background" Value="{DynamicResource SelectedFill}" />
                                 </Trigger>
                             </Style.Triggers>
                         </Style>
@@ -359,7 +359,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <Separator Margin="0,8" Background="#1EFFFFFF" />
+                        <Separator Margin="0,8" Background="{DynamicResource SubtleSurface}" />
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />

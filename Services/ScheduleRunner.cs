@@ -8,21 +8,7 @@ using System.Threading;
 namespace SoulLink.Services
 {
     /// <summary>
-    /// 进程内定时调度器。
-    ///
-    /// 适用场景：动作的定时计划没有勾选"写入 Windows 计划任务"，
-    /// 或勾了但当前 SoulLink 正在运行 —— 由本调度器负责按时触发。
-    ///
-    /// 设计要点：
-    ///   1. 每 5 秒扫一遍所有动作，判断下次执行时间是否已到。
-    ///   2. 触发后立刻 MarkRunCompleted 累计 RunCount，避免重复触发。
-    ///   3. 用 _running 集合防重入。
-    ///   4. 暂停的动作直接跳过。
-    ///   5. 执行都走 ActionService.ExecuteAsync，只影响目标账号。
-    /// </summary>
-    /// <summary>
-    /// 全局单例持有者：保证整个进程只有一个调度器，
-    /// 无论窗口重建多少次都不会重复计时。
+    /// 全局自动化调度器。窗口重建沿用同一个实例。
     /// </summary>
     public static class ScheduleRunnerHost
     {
@@ -114,15 +100,7 @@ namespace SoulLink.Services
             foreach (var f in cfg.Automations) { f.EnsurePlcModel(); f.Disarm(); }
         }
 
-        /// <summary>
-        /// 检查所有自动化流程，满足触发器的就执行。
-        ///
-        /// ★ 与"定时动作"的区别：
-        ///   · 定时动作只认时间；
-        ///   · 自动化流程可以按 会话上线 / BGI空闲 / 日志匹配 / 手动 触发，
-        ///     并且先过条件（AND/OR）再执行动作链。
-        /// </summary>
-        private void TickAutomations(AppConfig cfg, DateTime now)
+        private void TickAutomations(AppConfig cfg)
         {
             try
             {
@@ -186,7 +164,6 @@ namespace SoulLink.Services
             catch (Exception ex) { LogBus.Error("自动化流程调度异常", ex.Message); }
         }
 
-        /// <summary>一轮扫描：找出到点该执行的动作 + 该触发的自动化流程。</summary>
         private void Tick()
         {
             if (_disposed) return;
@@ -194,63 +171,8 @@ namespace SoulLink.Services
             {
                 var cfg = _configGetter();
                 if (cfg == null) return;
-                var now = DateTime.Now;
-
                 CleanupNonPersisted(cfg);
-
-                TickAutomations(cfg, now);
-
-                foreach (var action in cfg.Actions.ToList())
-                {
-                    var spec = action.Schedule;
-                    if (spec == null || !spec.Enabled || spec.Paused) continue;
-                    // 勾了"写入计划任务"的交给系统，进程内不抢着执行
-                    // UseWindowsTask 已废弃，永远为 false；保留判断以防旧配置
-
-                    string id = action.Id ?? action.Name;
-                    lock (_sync) { if (_running.Contains(id)) continue; }
-
-                    var next = ScheduleCalculator.NextRun(spec, now);
-                    if (next == null) continue;
-                    if (now < next.Value.AddSeconds(-2)) continue;
-
-                    lock (_sync) { _running.Add(id); }
-
-                    DateTime? following = null;
-                    try
-                    {
-                        following = ScheduleCalculator.MarkRunCompleted(spec, now);
-                        ConfigStore.Save(cfg);
-                    }
-                    catch { }
-
-                    LogBus.Info("定时触发「" + action.Name + "」",
-                        "计划：" + spec.Display
-                        + (following != null ? "　下次：" + following.Value.ToString("MM-dd HH:mm:ss") : ""));
-
-                    var act = action;
-                    _ = Task.Run(async () =>
-                    {
-                        // ★ T12：任务执行期间跳过工作集回收（同 TickAutomations）。
-                        WorkingSetTrim.BeginTask();
-                        try
-                        {
-                            var result = await ActionService.ExecuteAsync(act, cfg).ConfigureAwait(false);
-                            LogBus.Write(result.Ok ? LogLevel.Ok : LogLevel.Error,
-                                "定时执行「" + act.Name + "」" + (result.Ok ? "成功" : "失败"),
-                                result.Message);
-                        }
-                        catch (Exception ex)
-                        {
-                            LogBus.Error("定时执行「" + act.Name + "」异常：" + ex.Message);
-                        }
-                        finally
-                        {
-                            lock (_sync) { _running.Remove(id); }
-                            WorkingSetTrim.EndTask();
-                        }
-                    });
-                }
+                TickAutomations(cfg);
             }
             catch (Exception ex)
             {

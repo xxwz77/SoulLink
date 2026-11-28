@@ -8,8 +8,7 @@
         ShowInTaskbar="False" FontFamily="{StaticResource UiFont}"
         ResizeMode="NoResize">
 
-    <Border CornerRadius="14" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="0">
-                <Border.Background><SolidColorBrush Color="{Binding Color, Source={StaticResource DialogSurface}}" /></Border.Background>
+    <Border CornerRadius="14" BorderBrush="{DynamicResource StrokeMid}" BorderThickness="1" Margin="0" Background="{DynamicResource DialogSurface}">
 
         <Grid ClipToBounds="True">
             <ctl:AuroraBackdrop Opacity="0.48" />
@@ -18,7 +17,7 @@
             <StackPanel Orientation="Horizontal">
                 <TextBlock x:Name="IconText" Text="&#xE946;" FontFamily="Segoe MDL2 Assets"
                            FontSize="16" VerticalAlignment="Center"
-                           Foreground="{StaticResource CyanBrush}" />
+                           Foreground="{DynamicResource CyanBrush}" />
                 <TextBlock x:Name="TitleText" Text="提示" FontSize="15" FontWeight="SemiBold"
                            Foreground="{DynamicResource TextPrimary}"
                            Margin="10,0,0,0" VerticalAlignment="Center" />
@@ -34,6 +33,11 @@
 
             <!-- 按钮 -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                <Button x:Name="BtnNo" Style="{StaticResource GhostButton}"
+                        Padding="20,8" Margin="0,0,10,0" Click="No_Click"
+                        Visibility="Collapsed">
+                    <TextBlock Text="不保存" FontSize="12" />
+                </Button>
                 <Button x:Name="BtnCancel" Style="{StaticResource GhostButton}"
                         Padding="20,8" Margin="0,0,10,0" Click="Cancel_Click"
                         Visibility="Collapsed">
@@ -41,7 +45,7 @@
                 </Button>
                 <Button x:Name="BtnOk" Style="{StaticResource PrimaryButton}"
                         Padding="24,8" Click="Ok_Click">
-                    <TextBlock Text="确定" FontSize="12.5" FontWeight="SemiBold" />
+                    <TextBlock x:Name="OkLabel" Text="确定" FontSize="12.5" FontWeight="SemiBold" />
                 </Button>
             </StackPanel>
         </StackPanel>

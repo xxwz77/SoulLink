@@ -104,7 +104,7 @@ table.grid tr.drop-after td{border-bottom:2px solid var(--acc)}
 .field label{flex:0 0 200px;color:var(--fg2);font-size:13px;padding-top:4px;word-break:break-word}
 .field .ctl{flex:1;min-width:0}
 .field .desc{color:var(--fg3);font-size:11px;margin-top:2px}
-input[type=text],input[type=number],select,textarea{
+input[type=text],input[type=search],input[type=number],select,textarea{
   width:100%;max-width:520px;padding:5px 9px;border-radius:7px;border:1px solid var(--line2);
   background:var(--panel2);color:var(--fg);font-size:13px;font-family:inherit}
 input[type=number]{max-width:140px}
@@ -184,6 +184,10 @@ table.week th.weekend{color:var(--err)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .loading{color:var(--fg3);padding:26px;text-align:center;font-size:13px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pick-filters{margin-top:8px}
+.pick-filters input[type=search]{max-width:16rem}
+.pick-filters select{width:auto;min-width:7.5rem;max-width:100%}
+#pCount{white-space:nowrap}
 .grow{flex:1}
 .dragon-layout{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:16px;align-items:start}
 @media(max-width:800px){.dragon-layout{grid-template-columns:minmax(0,1fr)}}
@@ -196,6 +200,10 @@ table.week th.weekend{color:var(--err)}
   .canvas{padding:12px 10px}
   .field{flex-direction:column;gap:4px}
   .field label{flex:none;padding-top:0}
+  .pick-filters input[type=search]{max-width:none}
+  .pick-filters select{flex:1 1 6rem;min-width:0}
+  .pick-filters #pCategory{flex-basis:6.5rem}
+  .pick-filters #pColor{flex-basis:5rem}
 }
 .js-settings .card>.body{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:12px;align-items:start}
 .js-settings .body>.field{display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:12px;margin:0;min-width:0;border:1px solid var(--line);border-radius:8px}

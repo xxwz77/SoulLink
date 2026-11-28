@@ -5,6 +5,8 @@
 - 主程序版本取自 `SoulLink.csproj`。代理和 Windows Broker 分别使用各自项目的版本，组件有行为或依赖变化时才升各自版本。
 - GitHub Actions 手动运行只构建测试产物。推送与项目版本一致的 `v主版本` 标签时，Actions 用锁定的 .NET SDK 构建 Windows x64 版，先把四个 ZIP 上传到草稿，核对大小和 SHA-256 后再公开发布。已发布的同名版本不得覆盖。
 - 发布前检查该标签所含提交，遵循 AGENTS.md 的桌面端、Android 和服务器分流规则。包从干净的发布输出按允许列表生成。用户配置、账号数据、日志、`dist/`、`Server/`、密钥和服务器部署文件禁止进包。
+- 每次正式发版前，在 [更新说明](RELEASE-NOTES.md) 顶部添加与 `SoulLink.csproj` 版本完全一致的 `## vX.Y.Z` 章节，写明本版面向用户的功能、改进和修复，保留之前的章节。更新说明会随软件离线提供，并作为 GitHub Release 正文公开，须按公开文档检查。
+- 构建前可用 `pwsh -File scripts/publish-release.ps1 -Tag vX.Y.Z -ValidateNotesOnly` 单独验证版本与说明。正式发布会校验说明、草稿正文和四个 ZIP 后再公开。
 - 本地验证命令为 `pwsh -File scripts/publish-release.ps1 -Tag v3.3.67`。默认生成到 `artifacts/github-release/`，可用 `-OutputDirectory` 指定路径。
 
 ## 下载和应用内更新

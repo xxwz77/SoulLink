@@ -710,7 +710,7 @@ namespace SoulLink
                 try { Services.MiyousheHost.Start(); }
                 catch (Exception ex) { LogBus.Error("启动米游社宿主失败：" + ex.Message); }
 
-                // 启动进程内定时调度器（只处理"仅运行时"的计划）
+                // 启动进程内自动化流程扫描。
                 try
                 {
                     ScheduleRunnerHost.StartOnce(() => Config);

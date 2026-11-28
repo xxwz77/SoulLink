@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -85,8 +86,8 @@ namespace SoulLink.Views
 
             OutputText.Text = sb.ToString().TrimEnd();
             OutputText.Foreground = resp.Ok
-                ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x9D, 0xFF, 0xE0))
-                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0xB4, 0xC4));
+                ? UiBrush.Get("MintBrush")
+                : UiBrush.Get("RoseBrush");
         }
     }
 }

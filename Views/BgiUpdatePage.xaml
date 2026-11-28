@@ -191,9 +191,9 @@
                 <!-- 总进度条 -->
                 <StackPanel Grid.Row="1" Margin="2,0,2,12">
                     <Grid Height="6">
-                        <Border CornerRadius="3" Background="#18FFFFFF" />
+                        <Border CornerRadius="3" Background="{DynamicResource SubtleSurface}" />
                         <Border x:Name="ProgressFill" CornerRadius="3"
-                                Background="{StaticResource CyanBrush}"
+                                Background="{DynamicResource CyanBrush}"
                                 HorizontalAlignment="Left" Width="0" />
                     </Grid>
                     <TextBlock x:Name="ProgressText" Text="等待开始"

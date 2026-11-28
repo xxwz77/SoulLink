@@ -1,4 +1,5 @@
 using System.Windows;
+using SoulLink.Controls;
 
 namespace SoulLink.Views
 {
@@ -22,8 +23,7 @@ namespace SoulLink.Views
             if (isError)
             {
                 IconText.Text = "\uEA39";
-                IconText.Foreground = new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(0xFF, 0x9B, 0x9B));
+                IconText.Foreground = UiBrush.Get("RoseBrush");
             }
 
             if (showCancel)
@@ -37,7 +37,28 @@ namespace SoulLink.Views
             };
         }
 
-        private void Ok_Click(object sender, RoutedEventArgs e) => DialogResult = true;
+        internal MessageBoxResult Choice { get; private set; } = MessageBoxResult.Cancel;
+
+        internal void ShowSaveOptions()
+        {
+            BtnNo.Visibility = Visibility.Visible;
+            BtnCancel.Visibility = Visibility.Visible;
+            BtnCancel.IsCancel = true;
+            OkLabel.Text = "保存";
+        }
+
+        private void Ok_Click(object sender, RoutedEventArgs e)
+        {
+            Choice = MessageBoxResult.Yes;
+            DialogResult = true;
+        }
+
+        private void No_Click(object sender, RoutedEventArgs e)
+        {
+            Choice = MessageBoxResult.No;
+            DialogResult = false;
+        }
+
         private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
     }
 
@@ -67,17 +88,15 @@ namespace SoulLink.Views
 
         /// <summary>
         /// 是/否/取消 三选。
-        /// 返回 Yes（确定）、No（取消按钮当作"否"）、Cancel（关闭窗口）。
+        /// 保存、不保存和取消是独立选择。关闭对话框等同取消。
         /// </summary>
         public static System.Windows.MessageBoxResult YesNoCancel(
             Window? owner, string title, string body)
         {
-            var w = new ThemedMessageWindow(title, body, true) { Owner = owner };
-            bool? r = w.ShowDialog();
-
-            // 点了确定 = Yes；点了取消 = No；直接关窗口 = Cancel
-            if (r == true) return System.Windows.MessageBoxResult.Yes;
-            return System.Windows.MessageBoxResult.No;
+            var w = new ThemedMessageWindow(title, body) { Owner = owner };
+            w.ShowSaveOptions();
+            w.ShowDialog();
+            return w.Choice;
         }
     }
 }

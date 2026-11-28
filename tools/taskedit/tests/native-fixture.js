@@ -1,15 +1,26 @@
 'use strict';
+const legacyFlower='来自何处的待放之', fullFlower='来自何处的待放之花';
 const db = {
   '/version': {channel:'TeaBag', productVersion:'1.0', root:'C:/Fixture/BGI'}, '/groups': ['Demo', '演示路线', '每周任务'], '/onedragons': ['Flow'],
   '/groups/Demo': {name:'Demo', projects:[{name:'test', type:'Javascript', status:'Disabled', allowJsHTTPHash:'abc', custom:7}]},
   '/jssettings': {ok:true,declared:true,settingsUi:[{type:'input-text',name:'label',label:'Label'}]},
   '/onedragons/Flow': {Name:'Flow', Period:'每日', PartyName:'演示队伍', DomainName:'演示秘境', MinResinToKeep:20, TaskDefinitions:{a:'First', b:'Second'}, TaskOrder:['a','b'], TaskEnabledList:{a:false,b:true}, NextTaskId:'', custom:7},
   '/picklists': {ok:true,enabled:true,mode:'Blacklist',blacklistModePickEnabled:false,whitelistModeDoNotPickEnabled:false,blackList:[],fuzzyBlackList:[],autoPickConfig:{enabled:true,mode:'Blacklist',customNative:9}},
-  '/templatelists': {ok:true,blackList:['北陆长柄武器原胚'],whiteList:['精锻用魔矿'],mode:'Blacklist',templates:[{itemName:'北陆长柄武器原胚',name:'北陆长柄武器原胚',color:'purple',category:'武器材料'},{itemName:'精锻用魔矿',name:'精锻用魔矿',color:'blue',category:'矿物'},{itemName:'松茸',name:'松茸',color:'green',category:'食材'}]}
+  '/templatelists': {ok:true,blackList:['北陆长柄武器原胚'],whiteList:['精锻用魔矿'],mode:'Blacklist',templates:[
+    {itemName:'北陆长柄武器原胚',color:'purple',category:'武器材料',region:'通属地区'},
+    {itemName:'精锻用魔矿',color:'blue',category:'武器强化材料',region:'通属地区'},
+    {itemName:'精锻用良矿',color:'green',category:'武器强化材料',region:'通属地区'},
+    {itemName:'松茸',color:'green',category:'食材',region:'通属地区'},
+    {itemName:'夜泊石',color:'green',category:'地方特产',region:'璃月'},
+    {itemName:'风车菊',color:'green',category:'地方特产',region:'蒙德'},
+    {name:'金鱼草',color:'green',category:'食材',region:'蒙德'},
+    {itemName:legacyFlower,displayName:fullFlower,alternateItemName:fullFlower,color:'green',category:'怪物掉落',region:'通属地区'},
+    {itemName:fullFlower,displayName:fullFlower,alternateItemName:legacyFlower,color:'blue',category:'怪物掉落',region:'通属地区'}
+  ]}
 };
 db['/picklists'].templates=db['/templatelists'].templates;
-db['/picklists'].templateBlackList=['北陆长柄武器原胚'];
-const groupTemplates={ok:true,blackList:['松茸'],whiteList:[]};
+db['/picklists'].templateBlackList=['北陆长柄武器原胚',legacyFlower];
+const groupTemplates={ok:true,blackList:['松茸',fullFlower],whiteList:[]};
 const requests=[]; const operations=[]; const errors=[]; let state='stopped',fault='',relaunch=false;
 const rejected=error=>Response.json({ok:false,error},{status:503});
 window.addEventListener('error',e=>errors.push(e.message)); window.addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
@@ -37,16 +48,37 @@ window.addEventListener('load',()=>setTimeout(async()=>{
   const viewport=new URLSearchParams(location.search).get('viewport');
   if(viewport==='picker'||viewport==='mobile-picker'){
     q('[data-tab=pick]').click();for(let i=0;i<30&&!q('#pCategory');i++)await tick();
-    check(q('#pCategory')&&q('#pColor')&&q('#pEnabled').checked,'native configuration and filter controls');
+    check(q('#pCategory')&&q('#pRegion')&&q('#pColor')&&q('#pEnabled').checked,'native configuration and filter controls');
+    const [searchBounds,categoryBounds,regionBounds,colorBounds]=['#pSearch','#pCategory','#pRegion','#pColor'].map(id=>q(id).getBoundingClientRect());
+    check(regionBounds.top===categoryBounds.top&&colorBounds.top===categoryBounds.top,'all three filter controls share a row');
+    check(viewport==='mobile-picker'?categoryBounds.top>=searchBounds.bottom:Math.abs(searchBounds.top-categoryBounds.top)<=2,'search fits desktop filter row and wraps on mobile');
     function change(selector,value){const el=q(selector);el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}));}
-    change('#pCategory','矿物');change('#pColor','green');
-    check(!q('[data-template]'),'color intersects category');
+    const visible=()=>Array.from(document.querySelectorAll('[data-template]'),el=>el.dataset.template).join();
+    check(Array.from(q('#pRegion').options,o=>o.value).join()==='all,蒙德,璃月,稻妻,须弥,枫丹,纳塔,挪德卡莱,至冬,通属地区','all nine region options');
+    change('#pRegion','蒙德');
+    check(visible()==='风车菊,金鱼草','region filters independently');
+    change('#pCategory','地方特产');change('#pColor','green');
+    check(visible()==='风车菊','category, region and color intersect');
     change('#pColor','blue');
-    const search=q('#pSearch');search.focus();search.value='魔矿';search.dispatchEvent(new Event('input',{bubbles:true}));
+    check(!visible(),'an incompatible color empties the filtered list');
+    change('#pColor','all');change('#pRegion','all');
+    check(visible()==='夜泊石,风车菊','clearing region and color preserves category');
+    change('#pCategory','all');change('#pRegion','通属地区');
+    check(visible()===['北陆长柄武器原胚','精锻用魔矿','精锻用良矿','松茸',legacyFlower,fullFlower].join(),'common region filters independently');
+    change('#pCategory','武器强化材料');
+    check(visible()==='精锻用魔矿,精锻用良矿','common region intersects category');
+    change('#pColor','blue');
+    const search=q('#pSearch');search.focus();
+    function typeSearch(value){const input=q('#pSearch');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}
+    typeSearch('良矿');
+    check(!visible(),'search does not match a template excluded by color');
+    typeSearch('魔矿');
+    check(visible()==='精锻用魔矿'&&q('#pCount').textContent==='1 / 9','search and filters combine with accurate counts');
     check(q('#pSearch')===search&&document.activeElement===search,'search retains focus');
     check(!TE.dirty.any(),'filters do not dirty native settings');
     q('[data-template="精锻用魔矿"]').click();
     change('#pMode','Whitelist');
+    check(q('#pRegion').value==='通属地区','render preserves the selected region');
     check(q('[data-template="精锻用魔矿"]').checked,'OCR mode must not change template selections');
     change('#pTemplateScope','Demo');await tick();
     check(!q('[data-template="精锻用魔矿"]').checked,'group blacklist independent of global');
@@ -55,13 +87,28 @@ window.addEventListener('load',()=>setTimeout(async()=>{
     check(!q('[data-template="精锻用魔矿"]').checked,'white selection must not appear in black list');
     q('#saveBtn').click();await tick();
     const saved=db['/picklists'];
-    check(saved.blackList.length===0&&saved.templateBlackList.includes('精锻用魔矿'),'global template list saved separately from OCR');
-    check(groupTemplates.whiteList.includes('精锻用魔矿')&&groupTemplates.blackList.join()==='松茸','group modes persisted separately');
+    check(saved.blackList.length===0&&saved.templateBlackList.includes('精锻用魔矿')&&saved.templateBlackList.includes(legacyFlower),'global template list saved separately from OCR with its original keys');
+    check(groupTemplates.whiteList.includes('精锻用魔矿')&&groupTemplates.blackList.join()===['松茸',fullFlower].join(),'group modes persisted separately');
     check(saved.autoPickConfig.mode==='Whitelist'&&saved.autoPickConfig.customNative===9,'native config save');
     check(!TE.dirty.any()&&Object.keys(TE.pick.groupPayload()).length===0,'saved snapshot reset');
     change('#pTemplateScope','');change('#pTemplateScope','Demo');await tick();
     q('[data-template-mode="whiteList"]').click();
     check(q('[data-template="精锻用魔矿"]').checked,'group white selection restored from disk model');
+    change('#pTemplateScope','');change('#pCategory','怪物掉落');change('#pColor','all');typeSearch('之花');
+    check(visible()===[legacyFlower,fullFlower].join(),'complete name finds both catalog spellings');
+    const flowerBox=name=>q('[data-template="'+name+'"]');
+    check(flowerBox(legacyFlower).parentNode.textContent.includes(fullFlower),'legacy catalog key displays complete name');
+    check(flowerBox(legacyFlower).checked&&flowerBox(fullFlower).checked,'legacy selection matches both spellings');
+    flowerBox(fullFlower).click();
+    check(!flowerBox(legacyFlower).checked&&!flowerBox(fullFlower).checked,'clearing either spelling clears both rows');
+    flowerBox(fullFlower).click();
+    q('#saveBtn').click();await tick();
+    check(db['/picklists'].templateBlackList.includes(fullFlower)&&!db['/picklists'].templateBlackList.includes(legacyFlower),'new catalog writes its exact key');
+    change('#pTemplateScope','Demo');await tick();
+    check(flowerBox(legacyFlower).checked&&flowerBox(fullFlower).checked,'complete selection matches both spellings');
+    flowerBox(legacyFlower).click();flowerBox(legacyFlower).click();
+    q('#saveBtn').click();await tick();
+    check(groupTemplates.blackList.includes(legacyFlower)&&!groupTemplates.blackList.includes(fullFlower),'legacy catalog writes its exact key');
     check(document.documentElement.scrollWidth<=innerWidth,'picker fits viewport');
     check(!errors.length,errors.join(' | '));output.textContent='PASS';return;
   }

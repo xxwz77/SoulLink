@@ -10,16 +10,19 @@ namespace SoulLink.Views
 {
  public partial class AutomationPage : UserControl
  {
+  private sealed record ProfileRow(string Id, string Name, string Summary);
   private AutomationProfile? _current;
   private bool _busy;
   public AutomationPage() { InitializeComponent(); }
   public void Activate()
   {
-   ProfileList.ItemsSource = App.Config.AutomationProfiles.Select(p => new { p.Id, p.Name, Summary = (p.Enabled ? "每天 " + p.DailyTime : "手动") + " · " + p.AccountIds.Count + " 用户 · " + p.ActionIds.Count + " 步骤" }).ToList();
-   if (_current != null) ProfileList.SelectedItem = ProfileList.Items.Cast<object>().FirstOrDefault(x => (string)x.GetType().GetProperty("Id")!.GetValue(x)! == _current.Id);
+   ProfileList.ItemsSource = App.Config.AutomationProfiles.Select(p => new ProfileRow(p.Id, p.Name,
+    (p.Enabled ? "每天 " + p.DailyTime : "手动") + " · " + p.AccountIds.Count + " 用户 · " + p.ActionIds.Count + " 步骤")).ToList();
+   if (_current != null) SelectProfile(_current.Id);
   }
+  internal void SelectProfile(string id) => ProfileList.SelectedItem = ProfileList.Items.OfType<ProfileRow>().FirstOrDefault(row => row.Id == id);
   private void New_Click(object sender, RoutedEventArgs e) { _current = new AutomationProfile(); Load(_current); }
-  private void ProfileList_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (ProfileList.SelectedItem == null) return; string id = (string)ProfileList.SelectedItem.GetType().GetProperty("Id")!.GetValue(ProfileList.SelectedItem)!; _current = App.Config.AutomationProfiles.FirstOrDefault(p => p.Id == id); if (_current != null) Load(_current); }
+  private void ProfileList_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (ProfileList.SelectedItem is not ProfileRow row) return; _current = App.Config.AutomationProfiles.FirstOrDefault(p => p.Id == row.Id); if (_current != null) Load(_current); }
   private void Load(AutomationProfile profile)
   {
    ProfileName.Text = profile.Name; ScheduleEnabled.IsChecked = profile.Enabled; ScheduleTime.Text = profile.DailyTime;

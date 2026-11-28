@@ -1,4 +1,5 @@
 using System;
+using SoulLink.Controls;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -174,14 +175,15 @@ namespace SoulLink.Views
             Grid.SetColumn(btns, 2);
             grid.Children.Add(btns);
 
-            return new Border
+            var card = new Border
             {
                 Padding = new Thickness(6, 5, 6, 5),
                 CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromArgb(0x0C, 0xFF, 0xFF, 0xFF)),
                 Margin = new Thickness(0, 0, 0, 5),
                 Child = grid
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
+            return card;
         }
 
         private void AddTargetRow(RouteUpdateTarget model, bool focus)
@@ -455,13 +457,13 @@ namespace SoulLink.Views
             {
                 CloudStatus.Text = text;
                 CloudStatus.Foreground = error
-                    ? new SolidColorBrush(Color.FromRgb(0xF0, 0x6B, 0x6B))
-                    : (Brush)FindResource("TextSecondary");
+                    ? UiBrush.Get("RoseBrush")
+                    : UiBrush.Get("TextSecondary");
 
                 if (CloudDot != null)
                     CloudDot.Fill = error
-                        ? new SolidColorBrush(Color.FromRgb(0xF0, 0x6B, 0x6B))
-                        : (Brush)FindResource("MintBrush");
+                        ? UiBrush.Get("RoseBrush")
+                        : UiBrush.Get("MintBrush");
             }
             catch { }
         }
@@ -571,7 +573,7 @@ namespace SoulLink.Views
                 Text = f.Name,
                 FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("TextPrimary"),
+                Foreground = UiBrush.Get("TextPrimary"),
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Margin = new Thickness(10, 0, 10, 0)
@@ -584,7 +586,7 @@ namespace SoulLink.Views
                 Text = f.FileCount + " 个文件 · " + RouteUpdater.Size(f.TotalBytes),
                 FontSize = 10.5,
                 FontFamily = new FontFamily("Consolas"),
-                Foreground = (Brush)FindResource("TextMuted"),
+                Foreground = UiBrush.Get("TextMuted"),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 10, 0)
             };
@@ -597,31 +599,31 @@ namespace SoulLink.Views
                 FontSize = 10.5,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = f.Replaces
-                    ? new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x6B))
-                    : new SolidColorBrush(Color.FromRgb(0x6B, 0xD8, 0xC4)),
+                    ? UiBrush.Get("AmberBrush")
+                    : UiBrush.Get("MintBrush"),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 10, 0)
             };
             Grid.SetColumn(tag, 2);
             grid.Children.Add(tag);
 
-            return new Border
+            var card = new Border
             {
                 Padding = new Thickness(0, 7, 0, 7),
                 CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromArgb(0x0C, 0xFF, 0xFF, 0xFF)),
                 Margin = new Thickness(0, 0, 0, 5),
                 Child = grid
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
+            return card;
         }
 
         private Border InfoRow(string text, bool warn)
         {
-            return new Border
+            var card = new Border
             {
                 Padding = new Thickness(10, 7, 10, 7),
                 CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromArgb(0x0C, 0xFF, 0xFF, 0xFF)),
                 Margin = new Thickness(0, 0, 0, 5),
                 Child = new TextBlock
                 {
@@ -629,10 +631,12 @@ namespace SoulLink.Views
                     FontSize = 11,
                     TextWrapping = TextWrapping.Wrap,
                     Foreground = warn
-                        ? new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x6B))
-                        : (Brush)FindResource("TextSecondary")
+                        ? UiBrush.Get("AmberBrush")
+                        : UiBrush.Get("TextSecondary")
                 }
             };
+            card.SetResourceReference(Border.BackgroundProperty, "PanelBackground");
+            return card;
         }
 
         // ══════════ 定时 ══════════

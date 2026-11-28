@@ -16,7 +16,7 @@ namespace SoulLink.Services
             public bool Ok => Issues.Count == 0;
             public string ToText() => string.Join("\n", Issues.Select(i => (i.IsError ? "✕ " : "⚠ ") + i.Message));
         }
-        public static Report Validate(AutomationFlow flow, AppConfig? cfg = null)
+        public static Report Validate(AutomationFlow flow, AppConfig? cfg = null, Func<string, string?>? draftBgiPath = null)
         {
             var r = new Report(); if (flow == null) { r.Issues.Add(new Issue { IsError=true, Message="流程为空" }); return r; }
             flow.EnsurePlcModel();
@@ -48,29 +48,15 @@ namespace SoulLink.Services
                 //   原来这处会让引用主用户的流程直接校验失败 → 整个流程拒绝运行。
                 //   用户原话：「不能停啊，它是主控」—— 主控自己的自动化必须能跑。
                 //   （"不把主用户当投送目标"由 SystemLauncher / RequestHandler 负责。）
-                if (n.Get("user").Length > 0 && cfg != null
+                if (n.Type != FlowNodeType.ActRunAction && n.Get("user").Length > 0 && cfg != null
                     && !cfg.Accounts.Any(a => string.Equals(a.UserName, SessionService.BareName(n.Get("user")), StringComparison.OrdinalIgnoreCase)))
                     Field(n,"user","「"+n.Title+"」的目标账号不存在；不会回退操作其它账号");
-                if (n.Type == FlowNodeType.TrigSchedule)
-                {
-                    // ★ 2.17.41：时刻精确到秒，格式 HH:mm:ss（也接受 HH:mm）
-                    string tv = n.Get("time", "04:00:00");
-                    var seg = tv.Trim().Split(':');
-                    bool okTime = (seg.Length == 2 || seg.Length == 3)
-                        && int.TryParse(seg[0], out int hh) && hh >= 0 && hh <= 23
-                        && int.TryParse(seg[1], out int mi) && mi >= 0 && mi <= 59
-                        && (seg.Length == 2
-                            || (int.TryParse(seg[2], out int ss) && ss >= 0 && ss <= 59));
-                    if (!okTime) Field(n, "time", "「" + n.Title + "」的时刻必须是 HH:mm:ss（0-23:0-59:0-59）");
-
-                    if (n.GetInt("stepSeconds", 0) < 0) Field(n, "stepSeconds", "「" + n.Title + "」的延时步长不能为负");
-                    if (n.GetInt("stepSeconds", 0) > 86400) Field(n, "stepSeconds", "「" + n.Title + "」的延时步长不能超过 1 天");
-                    if (n.GetInt("resetAfter", 0) < 0) Field(n, "resetAfter", "「" + n.Title + "」的复位周期不能为负");
-                    if (n.GetInt("resetAfter", 0) > 999) Field(n, "resetAfter", "「" + n.Title + "」的复位周期不能超过 999 次");
-                }
+                if (n.Type == FlowNodeType.TrigSchedule && PlcSchedule.Validate(n) is { } scheduleIssue)
+                    Field(n, scheduleIssue.Field, "「" + n.Title + "」" + scheduleIssue.Message);
                 if (n.Type == FlowNodeType.CondTimeRange && (!TimeSpan.TryParse(n.Get("from"),out _) || !TimeSpan.TryParse(n.Get("to"),out _))) Error(n,"时间段必须是 HH:mm");
-                foreach (var p in def.Params.Where(p=>p.Kind==FlowParamKind.Number && n.Get(p.Key).Length>0))
-                    if (!double.TryParse(n.Get(p.Key),out var v) || v<0) Error(n,"「"+n.Title+"」的「"+p.Label+"」必须是非负数字");
+                if (n.Type != FlowNodeType.TrigSchedule)
+                    foreach (var p in def.Params.Where(p=>p.Kind==FlowParamKind.Number && n.Get(p.Key).Length>0))
+                        if (!double.TryParse(n.Get(p.Key),out var v) || v<0) Error(n,"「"+n.Title+"」的「"+p.Label+"」必须是非负数字");
                 if (n.Type == FlowNodeType.ActDelay && n.GetInt("seconds",0)>3600) Error(n,"等待最长 3600 秒");
                 if (n.GetBool("isRegex",false) && n.Get("pattern").Length>0)
                     try { _=new System.Text.RegularExpressions.Regex(n.Get("pattern")); } catch(Exception ex) { Error(n,"正则无效："+ex.Message); }
@@ -78,7 +64,7 @@ namespace SoulLink.Services
                 {
                     string user = n.Get("user");
                     if (user.Length == 0) user=cfg.Accounts.FirstOrDefault(a=>a.Id==flow.AccountId)?.UserName ?? "";
-                    string path=BgiPathResolver.GetPath(user);
+                    string path=draftBgiPath?.Invoke(user) ?? BgiPathResolver.GetPath(user);
                     if (path.Length == 0) r.Issues.Add(new Issue{Node=n,IsError=true,Message="「"+n.Title+"」找不到目标账号 BGI 路径",Target="bgi"});
                     else if (!System.IO.File.Exists(path)) r.Issues.Add(new Issue{Node=n,IsError=true,Message="「"+n.Title+"」BGI 路径不存在："+path,Target="bgi"});
                 }
@@ -90,11 +76,14 @@ namespace SoulLink.Services
                     && !BgiDataDependency.IsSatisfied(n, flow, cfg))
                 {
                     string u = BgiDataDependency.EffectiveUser(n, flow, cfg);
-                    Field(n, "user", "「" + n.Title + "」的目标账号"
-                        + (u.Length == 0 ? "（流程账号）" : "「" + u + "」")
-                        + " 未绑定 BGI 路径，拿不到日志数据");
+                    if (draftBgiPath?.Invoke(u) is not { Length: > 0 })
+                        Field(n, "user", "「" + n.Title + "」的目标账号"
+                            + (u.Length == 0 ? "（流程账号）" : "「" + u + "」")
+                            + " 未绑定 BGI 路径，拿不到日志数据");
                 }
-                if (n.Type == FlowNodeType.ActRunAction && cfg != null && !cfg.Actions.Any(a=>a.Id==n.Get("actionId"))) Field(n,"actionId","快捷动作不存在");
+                if (n.Type == FlowNodeType.ActRunAction && cfg != null &&
+                    FlowActionBinding.Resolve(n, flow.AccountId, cfg, out string actionField, out string actionError) == null)
+                    Field(n, actionField, "「" + n.Title + "」" + actionError);
             }
             if (HasCycle(flow)) Error(null,"连线形成循环，请改成从上到下依次执行");
             var reachable=new HashSet<string>(StringComparer.OrdinalIgnoreCase);

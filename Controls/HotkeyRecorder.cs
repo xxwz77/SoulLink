@@ -64,8 +64,7 @@ namespace SoulLink.Controls
             MouseDown += OnRecMouseDown;
 
             Content = "请按组合键…（Esc 取消）";
-            Background = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromArgb(0x33, 0x7C, 0x5C, 0xFF));
+            Background = UiBrush.Get("DesktopAccent", 0x33);
         }
 
         private void StopRecording()

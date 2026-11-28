@@ -64,14 +64,15 @@
                     </Grid.RowDefinitions>
 
                     <Grid Grid.Row="0" Margin="2,0,2,8">
-                        <TextBlock Text="快捷动作" FontSize="12" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="ActionHeading" Text="快捷动作" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"
+                                   HorizontalAlignment="Left" MaxWidth="150" TextTrimming="CharacterEllipsis" />
                         <!-- 执行结果提示：出现在标题行中间，6 秒后自动消失 -->
                         <TextBlock x:Name="RunHint" Text="" FontSize="10.5"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    TextTrimming="CharacterEllipsis" MaxWidth="260"
                                    Visibility="Collapsed" Margin="70,0,70,0" />
-                        <Button x:Name="BtnNewAction" Style="{StaticResource GhostButton}"
+                        <Button x:Name="BtnNewAction" Style="{StaticResource GhostButton}" IsEnabled="False"
                                 HorizontalAlignment="Right" Padding="10,5"
                                 Click="NewAction_Click" ToolTip="新建动作">
                             <StackPanel Orientation="Horizontal">
@@ -97,92 +98,40 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
-                                <Border Grid.Column="0" Width="36" Height="36" CornerRadius="11" VerticalAlignment="Center">
-                                    <Border.Background>
-                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                            <GradientStop Color="#336C5CE7" Offset="0" />
-                                            <GradientStop Color="#334FE3FF" Offset="1" />
-                                        </LinearGradientBrush>
-                                    </Border.Background>
-                                    <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               Foreground="#FFEAF3FF" />
-                                </Border>
+                                <Button Grid.Column="0" Grid.ColumnSpan="2" Style="{StaticResource GhostButton}"
+                                        Click="RunAction_Click" Tag="{Binding}" Padding="6,4" Margin="0,0,5,0"
+                                        AutomationProperties.Name="{Binding AccessibleName}" ToolTip="立即执行一次"
+                                        HorizontalContentAlignment="Stretch">
+                                    <DockPanel>
+                                        <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="10"
+                                                VerticalAlignment="Center" Background="{DynamicResource AccentGradientSoft}">
+                                            <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextPrimary}" />
+                                        </Border>
+                                        <StackPanel Margin="9,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}" FontSize="13.5" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding ExeName}" FontSize="11" Margin="0,3,0,0"
+                                                       Foreground="{DynamicResource TextMuted}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Button>
 
-                                <StackPanel Grid.Column="1" Margin="12,0,10,0" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Name}" FontSize="13.5" FontWeight="SemiBold"
-                                               Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis" />
-                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
-                                        <TextBlock Text="{Binding AccountName}" FontSize="11" Foreground="{StaticResource CyanBrush}" />
-                                        <TextBlock Text=" · " FontSize="11" Foreground="{DynamicResource TextMuted}" />
-                                        <TextBlock Text="{Binding ExeName}" FontSize="11" Foreground="{DynamicResource TextMuted}"
-                                                   TextTrimming="CharacterEllipsis" MaxWidth="190" />
-                                    </StackPanel>
-
-                                    <!-- 定时信息：只有配了定时的动作才显示 -->
-                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0"
-                                                Visibility="{Binding ScheduleVisibility}">
-                                        <TextBlock Text="&#xE823;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                                                   VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" />
-                                        <TextBlock Text="{Binding NextRunText}" FontSize="10.5"
-                                                   Foreground="{Binding NextRunBrush}"
-                                                   VerticalAlignment="Center" Margin="5,0,0,0" />
-
-                                    </StackPanel>
-                                </StackPanel>
-
-                                <!-- ★★ 2.17.26：四个按钮必须各有各的样子 ★★
-                                     原来全是同一个灰色 IconButton + 30x30，
-                                     而「定时暂停/恢复」和「立即执行」用的都是 ▶/⏸，
-                                     肉眼完全分不清哪个是"定时计划"、哪个是"现在跑一次"。
-                                     现在按语义分三档：
-                                       · 定时开关 = 胶囊 + 文字（绿=定时生效 / 灰=定时已暂停）
-                                       · 立即执行 = 胶囊 + ⚡ + "执行"（一次性，中性色）
-                                       · 编辑/删除 = 小图标，中性色，删除 hover 变红 -->
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                     <Border CornerRadius="7" Padding="8,3" Background="{Binding BadgeBg}" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding KindText}" FontSize="10.5" Foreground="{Binding BadgeFg}" FontWeight="SemiBold" />
                                     </Border>
 
-                                    <!-- 定时开关：只有配了定时的动作才显示（胶囊，带文字） -->
-                                    <Button Style="{StaticResource PillButton}" Height="26" MinWidth="72"
-                                            Margin="6,0,0,0" Padding="9,0,9,0"
-                                            Click="PauseSchedule_Click" Tag="{Binding}"
-                                            ToolTip="{Binding PauseTip}"
-                                            Background="{Binding ScheduleToggleBg}"
-                                            BorderBrush="{Binding ScheduleToggleBorder}"
-                                            Visibility="{Binding ScheduleVisibility}">
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="{Binding PauseGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                                                       VerticalAlignment="Center" Foreground="{Binding ScheduleToggleFg}" />
-                                            <TextBlock Text="{Binding ScheduleToggleText}" FontSize="10.5" Margin="5,0,0,0"
-                                                       VerticalAlignment="Center" Foreground="{Binding ScheduleToggleFg}" />
-                                        </StackPanel>
-                                    </Button>
-
-                                    <!-- 立即执行：胶囊 + ⚡ + 文字（一次性，与定时开关无关） -->
-                                    <Button Style="{StaticResource PillButton}" Height="26" MinWidth="64"
-                                            Margin="6,0,0,0" Padding="9,0,9,0"
-                                            Click="RunAction_Click" Tag="{Binding}"
-                                            ToolTip="立即执行一次（不影响定时计划）"
-                                            Background="#1FFFFFFF" BorderBrush="#40FFFFFF">
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="&#xE945;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                                                       VerticalAlignment="Center" Foreground="#FFC8D6F0" />
-                                            <TextBlock Text="执行" FontSize="10.5" Margin="5,0,0,0"
-                                                       VerticalAlignment="Center" Foreground="#FFC8D6F0" />
-                                        </StackPanel>
-                                    </Button>
-
                                     <Button Style="{StaticResource IconButton}" Width="30" Height="30" Margin="4,0,0,0"
-                                            Click="EditAction_Click" Tag="{Binding}" ToolTip="编辑">
+                                            Click="EditAction_Click" Tag="{Binding}" ToolTip="编辑" AutomationProperties.Name="编辑快捷动作">
                                         <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                                   Foreground="#FF9FB0D0" />
+                                                   Foreground="{DynamicResource TextSecondary}" />
                                     </Button>
                                     <Button Style="{StaticResource IconButton}" Width="30" Height="30" Margin="2,0,0,0"
-                                            Click="DeleteAction_Click" Tag="{Binding}" ToolTip="删除">
+                                            Click="DeleteAction_Click" Tag="{Binding}" ToolTip="删除" AutomationProperties.Name="删除快捷动作">
                                         <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                                   Foreground="#FFD08AA0" />
+                                                   Foreground="{DynamicResource RoseBrush}" />
                                     </Button>
                                 </StackPanel>
                             </Grid>
@@ -192,32 +141,21 @@
 
                     <!-- 空状态提示：叠在动作列表区域内 -->
                     <StackPanel x:Name="EmptyHintHost" Grid.Row="1" IsHitTestVisible="False"
-                                Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                HorizontalAlignment="Center" VerticalAlignment="Center">
                         <Grid Width="66" Height="66" HorizontalAlignment="Center">
-                            <Ellipse Stroke="#33C8E0FF" StrokeThickness="1.5" />
-                            <Ellipse Width="40" Height="40">
-                                <Ellipse.Fill>
-                                    <RadialGradientBrush>
-                                        <GradientStop Color="#5533C3FF" Offset="0" />
-                                        <GradientStop Color="#00113355" Offset="1" />
-                                    </RadialGradientBrush>
-                                </Ellipse.Fill>
-                            </Ellipse>
-                            <Ellipse Width="7" Height="7" Fill="#FF9FE8FF">
-                                <Ellipse.Effect>
-                                    <DropShadowEffect BlurRadius="16" ShadowDepth="0" Opacity="1" Color="#FF4FE3FF" />
-                                </Ellipse.Effect>
-                            </Ellipse>
+                            <Ellipse Stroke="{DynamicResource StrokeSoft}" StrokeThickness="1.5" />
+                            <Ellipse Width="40" Height="40" Fill="{DynamicResource SubtleSurface}" />
+                            <Ellipse Width="7" Height="7" Fill="{DynamicResource DesktopAccent}" Effect="{DynamicResource GlowCyan}" />
                         </Grid>
-                        <TextBlock Text="还没有快捷动作" FontSize="13" Foreground="{DynamicResource TextSecondary}"
+                        <TextBlock x:Name="EmptyActionTitle" Text="请选择一个账号" FontSize="13" Foreground="{DynamicResource TextSecondary}"
                                    HorizontalAlignment="Center" Margin="0,12,0,0" />
-                        <TextBlock Text="点上方「新建」，只需要：账号 + 程序路径" FontSize="11.5"
+                        <TextBlock x:Name="EmptyActionHelp" Text="点击上方「新建」为此账号添加动作" FontSize="11.5" Visibility="Collapsed"
                                    Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center" Margin="0,5,0,0" />
                     </StackPanel>
                 </Grid>
 
                 <!-- 运行状态（当前所选会话的 BGI 运行情况） -->
-                <Border Grid.Row="1" x:Name="StatusPanel" Style="{StaticResource GlassPanel}"
+                <Border Grid.Row="1" x:Name="StatusPanel" Style="{StaticResource GlassPanel}" Visibility="Collapsed"
                         Padding="14,12" Margin="0,0,0,12">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -252,7 +190,7 @@
                                            Foreground="{DynamicResource TextMuted}" />
                                 <TextBlock Grid.Row="1" x:Name="StatusGroup" Text="—"
                                            FontSize="11.5" FontWeight="SemiBold"
-                                           Foreground="{StaticResource CyanBrush}"
+                                           Foreground="{DynamicResource CyanBrush}"
                                            TextWrapping="Wrap" Margin="0,3,0,0" />
                             </Grid>
 
@@ -303,7 +241,7 @@
                             <!-- ③ 本次拾取：独占整行。点标题可展开"全天 / 按配置组" -->
                             <Border x:Name="StatusPicksBox" Grid.Row="3" Grid.ColumnSpan="2"
                                     Margin="0,8,0,0" Padding="10,8" CornerRadius="8"
-                                    Background="#1AB8E6C8" Visibility="Collapsed">
+                                    Background="{DynamicResource PanelBackground}" Visibility="Collapsed">
                                 <StackPanel>
                                     <Grid x:Name="PicksHeader" Background="Transparent"
                                           Cursor="Hand" MouseLeftButtonUp="PicksHeader_Click">
@@ -321,7 +259,7 @@
                                                    VerticalAlignment="Top" Margin="8,0,0,0" />
                                     </Grid>
                                     <TextBlock x:Name="StatusPicks" Text=""
-                                               FontSize="11.5" Foreground="#FFC8F0D8"
+                                               FontSize="11.5" Foreground="{DynamicResource MintBrush}"
                                                TextWrapping="Wrap" LineHeight="19"
                                                Margin="0,4,0,0" />
 
@@ -329,7 +267,7 @@
                                          组名用粗体+亮色，材料用细体+暗色，视觉上分层 -->
                                     <Border x:Name="DailyPicksPanel" Visibility="Collapsed"
                                             Margin="0,8,0,0" Padding="9,8" CornerRadius="6"
-                                            Background="{DynamicResource FieldBackground}">
+                                            Background="{DynamicResource PanelBackground}">
                                         <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto"
                                                       HorizontalScrollBarVisibility="Disabled">
                                             <StackPanel x:Name="DailyPicksList" />
@@ -341,9 +279,9 @@
                             <!-- ④ 异常/失败信息：单独一行，红色，只在出问题时显示 -->
                             <Border x:Name="StatusProblemBox" Grid.Row="2" Grid.ColumnSpan="2"
                                     Margin="0,6,0,0" Padding="8,6" CornerRadius="6"
-                                    Background="#2AFF6B6B" Visibility="Collapsed">
+                                    Background="{DynamicResource PanelBackground}" Visibility="Collapsed">
                                 <TextBlock x:Name="StatusProblem" Text=""
-                                           FontSize="10" Foreground="#FFFFB4B4"
+                                           FontSize="10" Foreground="{DynamicResource RoseBrush}"
                                            TextWrapping="Wrap" />
                             </Border>
                         </Grid>
@@ -446,7 +384,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <ctl:GlowDot Grid.Column="0" Width="16" Height="16" VerticalAlignment="Center"
-                                             Color="{Binding DotColor}" Pulse="{Binding IsActive}" />
+                                             Color="{Binding DotBrush.Color}" Pulse="{Binding IsActive}" />
                                 <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
                                     <!-- 优先显示备注名：A2 · 山客 -->
                                     <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold"
@@ -469,7 +407,7 @@
                                                    Visibility="{Binding BgiVisibility}" />
                                     </StackPanel>
                                 </StackPanel>
-                                <Border Grid.Column="2" CornerRadius="6" Padding="7,2" Background="#1CFFFFFF" VerticalAlignment="Center">
+                                <Border Grid.Column="2" CornerRadius="6" Padding="7,2" Background="{DynamicResource SubtleSurface}" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding SideText}" FontSize="10" Foreground="{DynamicResource TextSecondary}" />
                                 </Border>
                             </Grid>
@@ -489,7 +427,7 @@
                         <Grid Grid.Row="0">
                             <TextBlock x:Name="LogTitle" Text="原始日志"
                                        FontSize="11" FontWeight="SemiBold"
-                                       Foreground="{StaticResource CyanBrush}" />
+                                       Foreground="{DynamicResource CyanBrush}" />
                             <TextBlock x:Name="LogMeta" Text="点击上方会话查看"
                                        FontSize="10" Foreground="{DynamicResource TextMuted}"
                                        HorizontalAlignment="Right" VerticalAlignment="Center" />
