@@ -23,6 +23,13 @@ namespace SoulLink.Services
         public string MouseButton { get; set; } = "";
 
         public bool IsMouse => !string.IsNullOrEmpty(MouseButton);
+        internal bool IsBareEscape => !IsMouse && Key == 0x1B && ToModifiers() == 0;
+
+        internal static HotkeySpec? ParseRdpHotkey(string? value, string? escapeFallback = null)
+        {
+            var spec = Parse(value);
+            return spec?.IsBareEscape == true ? Parse(escapeFallback) : spec;
+        }
 
         public override string ToString()
         {

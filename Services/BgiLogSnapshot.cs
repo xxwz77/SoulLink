@@ -5,6 +5,10 @@ using System.Text;
 
 namespace SoulLink.Services
 {
+    // Published after a log chunk finishes. Web and mobile readers never traverse live parser state.
+    internal sealed record BgiSessionProgress(int ProcessId, string Group, string Task, string Route,
+        string Round, string RunRole, string Eta, int PickTotal, BgiLiveActivity Activity);
+
     /// <summary>
     /// BGI 日志的**唯一读取者**与**不可变快照**。
     ///

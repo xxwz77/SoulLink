@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -98,32 +97,6 @@ namespace SoulLink.Services
     /// </summary>
     public static class RouteLedger
     {
-        // ── 配置组事件锚点（与 ScriptGroupTracker 同一套，实测 20261117）──
-        private static readonly Regex RxStart = new(
-            @"配置组\s*""(?<g>[^""]+)""\s*加载完成[，,]\s*共\s*(?<n>\d+)\s*个脚本[，,]\s*开始执行",
-            RegexOptions.Compiled);
-        private static readonly Regex RxFinish = new(
-            @"配置组\s*""(?<g>[^""]+)""\s*执行结束", RegexOptions.Compiled);
-        private static readonly Regex RxFail = new(
-            @"配置组\s*""(?<g>[^""]+)""\s*未成功完成[，,]?\s*结果\s*[:：]\s*(?<r>\S*)",
-            RegexOptions.Compiled);
-        private static readonly Regex RxCancel = new(
-            @"取消执行配置组\s*[:：]\s*""(?<g>[^""]+)""", RegexOptions.Compiled);
-
-        // ── 收益锚点（与 DailyStatsCache 同一套，20261114 实测）────────
-        private static readonly Regex RxExp = new(
-            @"(?<!JS 通知关闭，消息被拦截:\s*)(?:狗粮路线获取狗粮经验\s*[:：]\s*(?<v1>\d+)|[\u4e00-\u9fa5]{1,6}可获得(?<v2>\d+)经验)",
-            RegexOptions.Compiled);
-        private static readonly Regex RxMora = new(
-            @"(?<!JS 通知关闭，消息被拦截:\s*)(?:狗粮路线获取摩拉\s*[:：]\s*(?<v1>\d+)|[\u4e00-\u9fa5]{1,6}获得(?<v2>\d+)摩拉(?!鼬))",
-            RegexOptions.Compiled);
-        private static readonly Regex RxPick = new(
-            @"交互或拾取\s*[:：]\s*""(?<item>[^""]+)""", RegexOptions.Compiled);
-
-        private static readonly Regex RxTs = new(
-            @"^\[(?<date>\d{4}-\d{2}-\d{2}[ T])?(?<time>\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?)\]",
-            RegexOptions.Compiled);
-
         // ── 状态机：账号 → 当前打开的运行窗口（每组串行，同一账号同时只跑一组）──
         private sealed class OpenRun
         {
@@ -174,56 +147,46 @@ namespace SoulLink.Services
         /// </summary>
         public static void Feed(string userName, string logText)
         {
-            if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrEmpty(logText)) return;
+            if (!string.IsNullOrEmpty(logText)) Feed(userName, new BgiLogBatch(logText));
+        }
+
+        internal static void Feed(string userName, BgiLogBatch batch)
+        {
+            if (string.IsNullOrWhiteSpace(userName) || batch.Text.Length == 0) return;
 
             var events = new List<(int pos, Action apply)>();
-            var now = DateTime.Now;
+            foreach (var e in batch.GroupEvents)
+            {
+                if (!ValidGroup(e.Name)) continue;
+                DateTime at = batch.TimestampAt(e.Position);
+                if (e.Kind == BgiGroupEventKind.Start)
+                {
+                    events.Add((e.Position, () => StartGroup(userName, e.Name, e.ScriptCount, at)));
+                    continue;
+                }
 
-            foreach (Match m in RxStart.Matches(logText))
-            {
-                string g = m.Groups["g"].Value.Trim();
-                int n = int.TryParse(m.Groups["n"].Value, out int c) ? c : 0;
-                if (!ValidGroup(g)) continue;
-                DateTime at = StampOf(logText, m.Index, now);
-                events.Add((m.Index, () => StartGroup(userName, g, n, at)));
+                string state = e.Kind switch
+                {
+                    BgiGroupEventKind.Finish => "Finished",
+                    BgiGroupEventKind.Cancel => "Cancelled",
+                    _ => string.Equals(e.Result, "Cancelled", StringComparison.OrdinalIgnoreCase) ? "Cancelled" : "Failed"
+                };
+                string result = e.Kind == BgiGroupEventKind.Cancel ? "Cancelled" : e.Result;
+                events.Add((e.Position, () => EndGroup(userName, e.Name, state, result, at)));
             }
-            foreach (Match m in RxFinish.Matches(logText))
+            foreach (Match m in batch.ExpMatches)
             {
-                string g = m.Groups["g"].Value.Trim();
-                if (!ValidGroup(g)) continue;
-                DateTime at = StampOf(logText, m.Index, now);
-                events.Add((m.Index, () => EndGroup(userName, g, "Finished", "", at)));
-            }
-            foreach (Match m in RxFail.Matches(logText))
-            {
-                string g = m.Groups["g"].Value.Trim();
-                string r = m.Groups["r"].Value.Trim();
-                if (!ValidGroup(g)) continue;
-                DateTime at = StampOf(logText, m.Index, now);
-                string state = string.Equals(r, "Cancelled", StringComparison.OrdinalIgnoreCase)
-                    ? "Cancelled" : "Failed";
-                events.Add((m.Index, () => EndGroup(userName, g, state, r, at)));
-            }
-            foreach (Match m in RxCancel.Matches(logText))
-            {
-                string g = m.Groups["g"].Value.Trim();
-                if (!ValidGroup(g)) continue;
-                DateTime at = StampOf(logText, m.Index, now);
-                events.Add((m.Index, () => EndGroup(userName, g, "Cancelled", "Cancelled", at)));
-            }
-            foreach (Match m in RxExp.Matches(logText))
-            {
-                long v = ParseV(m);
+                long v = BgiLogParser.RewardValue(m);
                 if (v <= 0) continue;
                 events.Add((m.Index, () => Accumulate(userName, addExp: v)));
             }
-            foreach (Match m in RxMora.Matches(logText))
+            foreach (Match m in batch.MoraMatches)
             {
-                long v = ParseV(m);
+                long v = BgiLogParser.RewardValue(m);
                 if (v <= 0) continue;
                 events.Add((m.Index, () => Accumulate(userName, addMora: v)));
             }
-            foreach (Match m in RxPick.Matches(logText))
+            foreach (Match m in batch.PickMatches)
             {
                 string item = m.Groups["item"].Value.Trim();
                 if (item.Length == 0 || item == "无有效结果") continue;
@@ -231,9 +194,7 @@ namespace SoulLink.Services
             }
 
             if (events.Count == 0) return;
-
             events.Sort((a, b) => a.pos.CompareTo(b.pos));
-
             lock (StateLock)
             {
                 foreach (var (_, apply) in events) apply();
@@ -248,15 +209,6 @@ namespace SoulLink.Services
             run.Picks += addPicks;
         }
 
-        private static long ParseV(Match m)
-        {
-            if (long.TryParse(m.Groups["v1"].Value, out var a) && a > 0) return a;
-            if (long.TryParse(m.Groups["v2"].Value, out var b) && b > 0) return b;
-            return 0;
-        }
-
-        // 注意：Start/End 这些闭包在 StateLock 内执行，且每次直接读写 OpenRuns，
-        // 所以上面的 `run` 局部变量只在收益/拾取累加里用到；组边界事件自己重取。
         private static void StartGroup(string user, string g, int n, DateTime at)
         {
             DateTime ts = at == DateTime.MinValue ? DateTime.Now : at;
@@ -391,29 +343,7 @@ namespace SoulLink.Services
             return set;
         }
 
-        internal static bool ValidGroup(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name)) return false;
-            return !name.Equals("The operation was canceled.", StringComparison.OrdinalIgnoreCase)
-                && !name.Equals("OperationCanceledException", StringComparison.OrdinalIgnoreCase)
-                && !name.Contains("Exception", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static DateTime StampOf(string text, int position, DateTime now)
-        {
-            int start = text.LastIndexOf('\n', Math.Max(0, position - 1));
-            start = start < 0 ? 0 : start + 1;
-            string prefix = text.Substring(start, Math.Min(120, Math.Max(0, position - start)));
-            var m = RxTs.Match(prefix);
-            if (!m.Success) return DateTime.MinValue;
-            string date = m.Groups["date"].Success ? m.Groups["date"].Value.Trim() : "";
-            string time = m.Groups["time"].Value;
-            string stamp = (date.Length > 0 ? date + " " : now.ToString("yyyy-MM-dd") + " ") + time;
-            if (!DateTime.TryParse(stamp, CultureInfo.InvariantCulture,
-                    DateTimeStyles.AllowWhiteSpaces, out var at)) return DateTime.MinValue;
-            if (date.Length == 0 && at > now.AddSeconds(2)) at = at.AddDays(-1);
-            return at;
-        }
+        internal static bool ValidGroup(string name) => BgiLogParser.ValidGroupName(name);
 
         // ═══════════════════════════════════════════════════════════════
         //  读取侧：网页 / APP / 统计页只读
@@ -478,10 +408,10 @@ namespace SoulLink.Services
 
         /// <summary>近 N 天按组名聚合：平均收益、失败次数、总次数（最小预聚合形态）。</summary>
         public static List<RouteLedgerGroupSummary> GroupSummary(string userName, int days)
-        {
-            var recs = Query(userName, days);
-            return recs
-                .GroupBy(r => r.Group, StringComparer.OrdinalIgnoreCase)
+            => GroupSummary(Query(userName, days));
+
+        internal static List<RouteLedgerGroupSummary> GroupSummary(IEnumerable<RouteLedgerRecord> records)
+            => records.GroupBy(r => r.Group, StringComparer.OrdinalIgnoreCase)
                 .Select(g => new RouteLedgerGroupSummary
                 {
                     Group = g.Key,
@@ -495,6 +425,5 @@ namespace SoulLink.Services
                 .OrderByDescending(s => s.Failures)
                 .ThenBy(s => s.Group, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-        }
     }
 }

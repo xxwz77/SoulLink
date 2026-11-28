@@ -79,13 +79,40 @@ internal static class Program
         RunRecordCollector.Feed(firstAccount, laterPick + end, todayFile);
         await RunRecordStore.FlushAsync();
 
+        var firstPass = (await RunRecordStore.QueryRunsAsync(firstAccount, 7))
+            .Where(r => r.GroupName == group).ToDictionary(r => r.RunId);
+        var pickCounts = new Dictionary<string, int>();
+        foreach (var run in firstPass.Values)
+            pickCounts[run.RunId] = (await RunRecordStore.QueryPickEventsAsync(run.RunId)).Count;
+
+        // Repeat the exact historical batch as after a restart. The live state's prior
+        // run and the other account's identically named run must be left alone.
+        RunRecordCollector.ResetForTest();
+        using (RunRecordCollector.EnterBackfillMode())
+        {
+            RunRecordCollector.OnFileChanged(firstAccount, yesterdayFile);
+            RunRecordCollector.Feed(firstAccount, start + pick + end, yesterdayFile);
+            RunRecordCollector.CloseOpenForBackfill(firstAccount, yesterdayFile);
+        }
+        await RunRecordStore.FlushAsync();
+
         var firstRuns = (await RunRecordStore.QueryRunsAsync(firstAccount, 7)).Where(r => r.GroupName == group).ToArray();
         var secondRuns = (await RunRecordStore.QueryRunsAsync(secondAccount, 7)).Where(r => r.GroupName == group).ToArray();
         bool IsRun(RunRecord row, DateTime day, int picks) =>
             row.StartDay == $"{day:yyyy-MM-dd}" && row.EndDay == row.StartDay && row.Picks == picks && row.State == "Finished";
         bool passed = firstRuns.Length == 2 && firstRuns.Any(r => IsRun(r, yesterday, 1))
             && firstRuns.Any(r => IsRun(r, today, 2)) && secondRuns.Length == 1 && IsRun(secondRuns[0], today, 1);
+        bool replayUnchanged = firstRuns.Length == firstPass.Count;
+        foreach (var row in firstRuns)
+        {
+            replayUnchanged &= firstPass.TryGetValue(row.RunId, out var before) &&
+                row.StartAtMs == before.StartAtMs && row.EndAtMs == before.EndAtMs &&
+                row.Picks == before.Picks &&
+                (await RunRecordStore.QueryPickEventsAsync(row.RunId)).Count == pickCounts[row.RunId];
+        }
         Console.WriteLine(passed ? "PASS: account/day isolation" : "FAIL: account/day isolation");
+        Console.WriteLine(replayUnchanged ? "PASS: historical replay is idempotent" : "FAIL: historical replay changed results");
+        passed &= replayUnchanged;
         if (!passed)
             foreach (var row in firstRuns.Concat(secondRuns)) Console.WriteLine($"{row.Account} {Describe(row)}");
         return passed ? 0 : 1;

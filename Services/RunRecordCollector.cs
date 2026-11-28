@@ -125,18 +125,6 @@ namespace SoulLink.Services
 
         // ── 正则锚点（契约 §1；全部来自实测日志样本）──────────────────
 
-        // 配置组边界（与 RouteLedger/ScriptGroupTracker 同源）
-        private static readonly Regex RxGroupStart = new(
-            @"配置组\s*""(?<g>[^""]+)""\s*加载完成[，,]\s*共\s*(?<n>\d+)\s*个脚本[，,]\s*开始执行",
-            RegexOptions.Compiled);
-        private static readonly Regex RxGroupFinish = new(
-            @"配置组\s*""(?<g>[^""]+)""\s*执行结束", RegexOptions.Compiled);
-        private static readonly Regex RxGroupFail = new(
-            @"配置组\s*""(?<g>[^""]+)""\s*未成功完成[，,]?\s*结果\s*[:：]\s*(?<r>\S*)",
-            RegexOptions.Compiled);
-        private static readonly Regex RxGroupCancel = new(
-            @"取消执行配置组\s*[:：]\s*""(?<g>[^""]+)""", RegexOptions.Compiled);
-
         // 脚本边界：结束带「耗时: …」
         private static readonly Regex RxScriptStart = new(
             @"→\s*开始执行(?:JS脚本|独立任务)\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
@@ -152,9 +140,6 @@ namespace SoulLink.Services
             @"当前组\s+(?<path>\S+)\s+共\s+(?<n>\d+)\s*条路线", RegexOptions.Compiled);
         private static readonly Regex RxTraverseStart = new(
             @"开始遍历路线[，,]?\s*共\s*(?<n>\d+)\s*条", RegexOptions.Compiled);
-        private static readonly Regex RxRouteLoopEnter = new(
-            @"进入路线循环\s*[,，]?\s*count\s*=\s*(?<c>\d+)\s*[,，]?\s*route\s*=\s*""(?<name>[^""]+)""",
-            RegexOptions.Compiled);
 
         // ── t6 A) 路线锚点族补齐 ────────────────────────────────────────────
         //   地图追踪任务（script 层）：→ 开始执行地图追踪任务: "X.json"（实测 A4 20261124 L2449/2965/3844/4291）
@@ -213,33 +198,15 @@ namespace SoulLink.Services
         private static readonly Regex RxDogfoodMora = new(
             @"(?:狗粮路线获取摩拉|收益[：:]\s*经验\s*\S+\s*[，,]\s*摩拉)\s*[:：]?\s*(?<v>\d+)", RegexOptions.Compiled);
 
-        // 路线结束：无「耗时」的脚本执行结束，name 等于当前打开的路线
-        private static readonly Regex RxScriptEndPlain = new(
-            @"→\s*脚本执行结束\s*[:：]\s*""(?<name>[^""]+)""", RegexOptions.Compiled);
-
-        // 拾取 / 收益（与 RouteLedger 同源）
-        private static readonly Regex RxPick = new(
-            @"交互或拾取\s*[:：]\s*""(?<item>[^""]+)""", RegexOptions.Compiled);
-
         // ── t6 硬要求二：三类拾取事件（「没拾到」也必须记录）────────────────
-        //   picked   = 交互或拾取:"物品"（RxPick，语义不变）
+        //   picked   = 交互或拾取:"物品"
         //   no_target= 无有效结果，不交互（实测 A1 20261125 无引号格式，2680+ 次）
         //   skipped  = 识别到"X"，不交互（物品名原话照抄，1698+ 次）
         private static readonly Regex RxNoTarget = new(
             @"无有效结果\s*[,，]\s*不交互", RegexOptions.Compiled);
         private static readonly Regex RxSkipped = new(
             @"识别到\s*""(?<item>[^""]+)""\s*[,，]\s*不交互", RegexOptions.Compiled);
-        private static readonly Regex RxExp = new(
-            @"(?<!JS 通知关闭，消息被拦截:\s*)(?:狗粮路线获取狗粮经验\s*[:：]\s*(?<v1>\d+)|[\u4e00-\u9fa5]{1,6}可获得(?<v2>\d+)经验)",
-            RegexOptions.Compiled);
-        private static readonly Regex RxMora = new(
-            @"(?<!JS 通知关闭，消息被拦截:\s*)(?:狗粮路线获取摩拉\s*[:：]\s*(?<v1>\d+)|[\u4e00-\u9fa5]{1,6}获得(?<v2>\d+)摩拉(?!鼬))",
-            RegexOptions.Compiled);
 
-        // 行首时间戳 [HH:mm:ss.fff]（无日期；日期来自文件名 YYYYMMDD）
-        private static readonly Regex RxLineTs = new(
-            @"^\[(?<date>\d{4}-\d{2}-\d{2}[ T])?(?<time>\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?)\]\s*(?:\[(?<level>[A-Za-z]{3,5})\])?",
-            RegexOptions.Compiled);
         // 错误头：[HH:mm:ss.fff] [ERR] ... <logger/category>
         private static readonly Regex RxErrHeader = new(
             @"^\[\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?\]\s*\[ERR\]", RegexOptions.Compiled);
@@ -407,24 +374,9 @@ namespace SoulLink.Services
         internal static bool TryFileDay(string srcFile, out long fileDayMs)
         {
             fileDayMs = 0;
-            if (string.IsNullOrWhiteSpace(srcFile)) return false;
-            string name = System.IO.Path.GetFileNameWithoutExtension(srcFile);
-            int at = name.LastIndexOf("impact", StringComparison.OrdinalIgnoreCase);
-            string digits = at >= 0 && at + 6 <= name.Length
-                ? new string(name.Substring(at + 6).TakeWhile(char.IsDigit).ToArray())
-                : "";
-            if (digits.Length != 8) return false;
-            if (!int.TryParse(digits[..4], out int y)
-                || !int.TryParse(digits.Substring(4, 2), out int mo)
-                || !int.TryParse(digits.Substring(6, 2), out int d)) return false;
-            try
-            {
-                var day = new DateTime(y, mo, d, 0, 0, 0, DateTimeKind.Unspecified);
-                if (day.Year < 2000 || day.Year > 2999) return false;
-                fileDayMs = ToMs(day);
-                return true;
-            }
-            catch { return false; }
+            if (!BgiLogParser.TryFileDate(srcFile, out var day)) return false;
+            fileDayMs = ToMs(day);
+            return true;
         }
 
         /// <summary>
@@ -450,7 +402,7 @@ namespace SoulLink.Services
         ///   · LastRawMs 只用于时钟倒退的可观测（不参与计算），保留给跨文件/重扫诊断；
         ///   · 真跨天由 OnFileChanged（换文件）处理 —— 那是唯一合法的跨天边界，已有实现。
         /// </summary>
-        private static bool ResolveTs(DayClock clock, string timeText, out long ms)
+        private static bool ResolveTs(DayClock clock, ReadOnlySpan<char> timeText, out long ms)
         {
             ms = 0;
             if (!TimeSpan.TryParse(timeText, CultureInfo.InvariantCulture, out var ts)) return false;
@@ -463,28 +415,6 @@ namespace SoulLink.Services
             return true;
         }
 
-        /// <summary>定位某位置所在行行首的 [时间戳]，返回其绝对毫秒。</summary>
-        private static bool StampAt(string text, int position, DayClock clock, out long ms)
-        {
-            ms = 0;
-            int start = text.LastIndexOf('\n', Math.Max(0, position - 1));
-            start = start < 0 ? 0 : start + 1;
-            int len = Math.Min(80, text.Length - start);
-            if (len <= 0) return false;
-            string prefix = text.Substring(start, len);
-            var m = RxLineTs.Match(prefix);
-            if (!m.Success) return false;
-            string date = m.Groups["date"].Success ? m.Groups["date"].Value.TrimEnd(' ', 'T') : "";
-            string time = m.Groups["time"].Value;
-            if (date.Length > 0)
-            {
-                // 行内显式日期（罕见）：权威，直接解析
-                if (DateTime.TryParse(date + " " + time, CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AllowWhiteSpaces, out var at))
-                { ms = ToMs(at); clock.LastMs = ms; return true; }
-            }
-            return ResolveTs(clock, time, out ms);
-        }
         // ── t8 原始事实归档（同 chunk、同一次逐行遍历，不读文件）────────────
         private const int RawLineCharLimit = 16 * 1024;
         private static readonly Dictionary<string,long> RawByteOffsets = new(StringComparer.OrdinalIgnoreCase);
@@ -492,26 +422,17 @@ namespace SoulLink.Services
         private static string RawHashOf(string text)
             => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)))[..32];
 
-        private static void ArchiveRawLine(string user, string raw, int lineStart, long lineMs,
-            string level, string srcFile, List<RawEvent> output, long chunkOffset, string anchor,
-            string currentChunkText, int currentChunkLength, long fileSize, long fileWriteTicks)
+        private static void ArchiveRawLine(string user, string raw, string line, int lineStart, long lineMs,
+            string level, string srcFile, List<RawEvent> output, long chunkOffset, string anchor, Match stamp,
+            string rawFileKey, string sourceDay, long fileSize, long fileWriteTicks)
         {
-            string line = raw.TrimEnd('\r');
-            int terminatorBytes = 0;
-            if (lineStart + raw.Length < currentChunkLength)
-            {
-                bool crlf = lineStart + raw.Length + 1 < currentChunkLength
-                    && currentChunkText[lineStart + raw.Length] == '\r'
-                    && currentChunkText[lineStart + raw.Length + 1] == '\n';
-                terminatorBytes = crlf ? 2 : 1;
-            }
-            int byteLength = Encoding.UTF8.GetByteCount(raw) + terminatorBytes;
+            // The raw line includes CR when present. The batch only gives the collector LF-terminated lines.
+            int byteLength = Encoding.UTF8.GetByteCount(raw) + 1;
             long byteOffset;
             lock (StateLock)
             {
-                string key = user + "\u001f" + BaseName(srcFile);
-                byteOffset = RawByteOffsets.TryGetValue(key, out long prior) ? prior : 0;
-                RawByteOffsets[key] = byteOffset + byteLength;
+                byteOffset = RawByteOffsets.TryGetValue(rawFileKey, out long prior) ? prior : 0;
+                RawByteOffsets[rawFileKey] = byteOffset + byteLength;
             }
             // Even discarded lines consume bytes, but they do not need a content hash or logger.
             if (anchor.Length == 0 && level is not ("ERR" or "WRN" or "FTL")) return;
@@ -520,12 +441,11 @@ namespace SoulLink.Services
             long collected = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             string rawId = string.Join('\u001f', user, BaseName(srcFile), "chunk", chunkOffset, lineStart);
             string logger = "";
-            var m = RxLineTs.Match(line);
-            if (m.Success)
+            if (stamp.Success)
             {
-                int close = line.IndexOf(']', m.Index + m.Length);
-                if (close > m.Index + m.Length)
-                    logger = line[(m.Index + m.Length)..close].Trim();
+                int close = line.IndexOf(']', stamp.Index + stamp.Length);
+                if (close > stamp.Index + stamp.Length)
+                    logger = line[(stamp.Index + stamp.Length)..close].Trim();
             }
             output.Add(new RawEvent
             {
@@ -539,29 +459,9 @@ namespace SoulLink.Services
                 ByteOffset = byteOffset, ByteLength = byteLength,
                 FileSizeAtCollection = fileSize, FileWriteAtCollectionTicks = fileWriteTicks,
                 Anchor = anchor, CollectedAtMs = collected, ContentHash = hash, Occurrence = 0,
-                SourceDay = TryFileDay(srcFile, out long rawFileDay) ? DayOf(rawFileDay) : ""
+                SourceDay = sourceDay
             });
         }
-
-        private static string AnchorOf(string line)
-        {
-            // 只复用采集器已有锚点定义，不在 Store 重跑正则。
-            var tags = new List<string>(4);
-            void Add(bool hit, string tag) { if (hit && !tags.Contains(tag)) tags.Add(tag); }
-            Add(RxGroupStart.IsMatch(line),"run_start"); Add(RxGroupFinish.IsMatch(line),"run_finish");
-            Add(RxGroupFail.IsMatch(line),"run_fail"); Add(RxGroupCancel.IsMatch(line),"run_cancel");
-            Add(RxScriptStart.IsMatch(line),"script_start"); Add(RxScriptEndDur.IsMatch(line)||RxScriptEndPlain.IsMatch(line),"script_end");
-            Add(RxRouteLoopEnter.IsMatch(line),"route_start"); Add(RxMapTrackingStart.IsMatch(line),"map_tracking");
-            Add(RxCdLineStart.IsMatch(line)||RxCdLineOk.IsMatch(line),"cd_line");
-            Add(RxRouteIdxStart.IsMatch(line)||RxRouteIdxDone.IsMatch(line),"route_index");
-            Add(RxRoutePlanCount.IsMatch(line),"route_plan"); Add(RxPathGroupHeader.IsMatch(line)||RxTraverseStart.IsMatch(line),"route_context");
-            Add(RxPick.IsMatch(line),"picked"); Add(RxNoTarget.IsMatch(line),"no_target"); Add(RxSkipped.IsMatch(line),"skipped");
-            Add(RxExp.IsMatch(line),"exp"); Add(RxMora.IsMatch(line),"mora");
-            return string.Join(",",tags);
-        }
-
-        private static bool IsPickRawLine(string line)
-            => RxPick.IsMatch(line) || RxNoTarget.IsMatch(line) || RxSkipped.IsMatch(line);
 
         // ── 对外 API ────────────────────────────────────────────────────
 
@@ -774,11 +674,17 @@ namespace SoulLink.Services
         public static void Feed(string userName, string logText, string srcFile,
             long fileSize = 0, long fileWriteTicks = 0)
         {
-            if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrEmpty(logText)) return;
+            if (!string.IsNullOrEmpty(logText))
+                Feed(userName, new BgiLogBatch(logText, srcFile), srcFile, fileSize, fileWriteTicks);
+        }
 
+        internal static void Feed(string userName, BgiLogBatch batch, string srcFile,
+            long fileSize = 0, long fileWriteTicks = 0)
+        {
+            if (string.IsNullOrWhiteSpace(userName) || batch.Text.Length == 0) return;
             try
             {
-                List<Ev> events = ScanEvents(userName, logText, srcFile, fileSize, fileWriteTicks);
+                List<Ev> events = ScanEvents(userName, batch, srcFile, fileSize, fileWriteTicks);
                 if (events.Count > 0)
                 {
                     events.Sort((a, b) => a.Pos.CompareTo(b.Pos));
@@ -815,7 +721,7 @@ namespace SoulLink.Services
         }
 
         /// <summary>扫一个 chunk：逐行解析时间戳 + 错误块 + 全部锚点匹配。</summary>
-        private static List<Ev> ScanEvents(string user, string logText, string srcFile, long fileSize = 0, long fileWriteTicks = 0)
+        private static List<Ev> ScanEvents(string user, BgiLogBatch batch, string srcFile, long fileSize = 0, long fileWriteTicks = 0)
         {
             var events = new List<Ev>();
             var rawEvents = new List<RawEvent>();
@@ -847,7 +753,8 @@ namespace SoulLink.Services
             //
             //   修法：**每次 Feed 都按 srcFile 校验**。文件名日期与 clock 不一致就重置天轴
             //   （LastRawMs 也归零，避免时钟倒退误判）。日志文件名自带日期是权威依据。
-            if (TryFileDay(srcFile, out long feedFileDay) && feedFileDay > 0)
+            long feedFileDay = batch.FileDay is DateTime fileDay ? ToMs(fileDay) : 0;
+            if (feedFileDay > 0)
             {
                 if (clock.FileDayMs != feedFileDay)
                 {
@@ -865,45 +772,41 @@ namespace SoulLink.Services
             }
 
             long lastMs = clock.LastMs;
-            var lines = SplitLines(logText);
+            var lines = batch.Lines;
+            string sourceDay = feedFileDay > 0 ? DayOf(feedFileDay) : "";
             long? firstLineMs = null;
 
-            foreach (var (raw, lineStart) in lines)
+            // Only LF-terminated lines are considered in the collector. Other consumers can use the last partial line.
+            for (int i = 0; i < lines.Length - 1; i++)
             {
-                string line = raw.TrimEnd('\r');
+                ref var logLine = ref lines[i];
+                string line = logLine.Text;
+                int lineStart = logLine.Start;
                 long lineMs = lastMs;
-                string level = "";
-                bool hasTsHead = false;
+                var stamp = logLine.Timestamp;
+                string level = stamp.Success ? stamp.Groups["level"].Value : "";
 
-                if (line.Length > 0)
+                if (stamp.Success && ResolveTs(clock, stamp.Groups["time"].ValueSpan, out long ms))
                 {
-                    var m = RxLineTs.Match(line);
-                    if (m.Success)
+                    if (ms < lastMs - 12 * 3600_000)
                     {
-                        hasTsHead = line[0] == '[';
-                        level = m.Groups["level"].Value;
-                        if (ResolveTs(clock, m.Groups["time"].Value, out long ms))
-                        {
-                            if (ms < lastMs - 12 * 3600_000)
-                            {
-                                rawChunkOffset = 0;
-                                lock (StateLock) { RawChunkSequences[rawFileKey] = 0; RawByteOffsets[rawFileKey] = 0; }
-                            }
-                            lineMs = ms; lastMs = ms;
-                            firstLineMs ??= ms;
-                        }
+                        rawChunkOffset = 0;
+                        lock (StateLock) { RawChunkSequences[rawFileKey] = 0; RawByteOffsets[rawFileKey] = 0; }
                     }
+                    lineMs = ms;
+                    lastMs = ms;
+                    firstLineMs ??= ms;
                 }
 
-                // t8：同一行原文先入归档；无锚点、异常样式组名、无有效结果均不丢。
-                ArchiveRawLine(user, raw, lineStart, lineMs, level, srcFile, rawEvents, rawChunkOffset, AnchorOf(line), logText, logText.Length, fileSize, fileWriteTicks);
-                // [ERR] 块累积：头行开块，续行（无时间戳头）附加
-                ScanErrBlock(user, errors, line, lineMs, level, hasTsHead, srcFile, lineStart, events);
+                ScanErrBlock(user, errors, line, lineMs, level, stamp.Success, srcFile, lineStart, events);
 
-                // 其余锚点：单行匹配 → 生成事件
                 int firstEvent = events.Count;
-                ScanAnchors(user, line, lineMs, lineStart, srcFile, events, rawChunkOffset);
-                for (int i = firstEvent; i < events.Count; i++) events[i].TsMs = lineMs;
+                var anchor = ScanAnchors(user, line, logLine.Pick, lineMs, lineStart, srcFile, events, rawChunkOffset);
+                for (int j = firstEvent; j < events.Count; j++) events[j].TsMs = lineMs;
+
+                // Keep the syntactic anchor even when the state machine rejects its captured values.
+                ArchiveRawLine(user, logLine.Raw, line, lineStart, lineMs, level, srcFile, rawEvents,
+                    rawChunkOffset, anchor, stamp, rawFileKey, sourceDay, fileSize, fileWriteTicks);
             }
 
             lock (StateLock)
@@ -917,21 +820,6 @@ namespace SoulLink.Services
             return events;
         }
 
-        private static List<(string raw, int start)> SplitLines(string text)
-        {
-            var list = new List<(string, int)>(Math.Min(4096, text.Length / 64 + 8));
-            int start = 0;
-            for (int i = 0; i <= text.Length; i++)
-            {
-                if (i < text.Length && text[i] == '\n')
-                {
-                    list.Add((text.Substring(start, i - start), start));
-                    start = i + 1;
-                }
-            }
-            return list;
-        }
-
         private static DayClock GetClock(string user)
         {
             if (!Clocks.TryGetValue(user, out var c))
@@ -943,25 +831,38 @@ namespace SoulLink.Services
         }
 
         /// <summary>单行锚点匹配（除 ERR 块外全部边界事件）。</summary>
-        private static void ScanAnchors(string user, string line, long lineMs, int lineStart,
+        private static string ScanAnchors(string user, string line, Match pick, long lineMs, int lineStart,
             string srcFile, List<Ev> events, long chunkOffset)
         {
-            if (line.Length == 0) return;
+            if (line.Length == 0) return "";
+            List<string>? tags = null;
 
-            foreach (Match m in RxGroupStart.Matches(line))
+            void AddTag(string tag)
+            {
+                tags ??= new List<string>(4);
+                if (!tags.Contains(tag)) tags.Add(tag);
+            }
+
+            Match Tag(Match match, string tag)
+            {
+                if (match.Success) AddTag(tag);
+                return match;
+            }
+
+            for (Match m = Tag(BgiLogParser.GroupStart.Match(line), "run_start"); m.Success; m = m.NextMatch())
             {
                 string g = m.Groups["g"].Value.Trim();
                 int n = int.TryParse(m.Groups["n"].Value, out int c) ? c : 0;
                 if (!ValidGroup(g)) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => StartGroup(user, g, n, lineMs, srcFile) });
             }
-            foreach (Match m in RxGroupFinish.Matches(line))
+            for (Match m = Tag(BgiLogParser.GroupFinish.Match(line), "run_finish"); m.Success; m = m.NextMatch())
             {
                 string g = m.Groups["g"].Value.Trim();
                 if (!ValidGroup(g)) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => EndGroup(user, g, "Finished", "", lineMs, srcFile) });
             }
-            foreach (Match m in RxGroupFail.Matches(line))
+            for (Match m = Tag(BgiLogParser.GroupFail.Match(line), "run_fail"); m.Success; m = m.NextMatch())
             {
                 string g = m.Groups["g"].Value.Trim();
                 string r = m.Groups["r"].Value.Trim();
@@ -970,14 +871,14 @@ namespace SoulLink.Services
                     ? "Cancelled" : "Failed";
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => EndGroup(user, g, state, r, lineMs, srcFile) });
             }
-            foreach (Match m in RxGroupCancel.Matches(line))
+            for (Match m = Tag(BgiLogParser.GroupCancel.Match(line), "run_cancel"); m.Success; m = m.NextMatch())
             {
                 string g = m.Groups["g"].Value.Trim();
                 if (!ValidGroup(g)) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => EndGroup(user, g, "Cancelled", "Cancelled", lineMs, srcFile) });
             }
 
-            foreach (Match m in RxScriptStart.Matches(line))
+            for (Match m = Tag(RxScriptStart.Match(line), "script_start"); m.Success; m = m.NextMatch())
             {
                 string name = m.Groups["name"].Value.Trim();
                 if (name.Length == 0) continue;
@@ -985,7 +886,7 @@ namespace SoulLink.Services
             }
 
             // 脚本结束（带耗时）→ 关 script 窗口；不带耗时且名字 == 当前打开路线 → 关 route 窗口
-            var meDur = RxScriptEndDur.Match(line);
+            var meDur = Tag(RxScriptEndDur.Match(line), "script_end");
             if (meDur.Success)
             {
                 string name = meDur.Groups["name"].Value.Trim();
@@ -994,7 +895,7 @@ namespace SoulLink.Services
             }
             else
             {
-                foreach (Match m in RxScriptEndPlain.Matches(line))
+                for (Match m = Tag(BgiLogParser.ScriptEndPlain.Match(line), "script_end"); m.Success; m = m.NextMatch())
                 {
                     string name = m.Groups["name"].Value.Trim();
                     if (name.Length == 0) continue;
@@ -1002,7 +903,7 @@ namespace SoulLink.Services
                 }
             }
 
-            foreach (Match m in RxRouteLoopEnter.Matches(line))
+            for (Match m = Tag(BgiLogParser.RouteLoopEnter.Match(line), "route_start"); m.Success; m = m.NextMatch())
             {
                 string name = m.Groups["name"].Value.Trim();
                 if (name.Length == 0) continue;
@@ -1012,7 +913,7 @@ namespace SoulLink.Services
             // ── t6 A) 新锚点族：地图追踪任务（script 层，第三类 script）────────
             //   ★ 与「进入路线循环 route="X"」成对出现（相隔约 12 行，同一事实的两个阶段）：
             //     若当前窗口已是同名路线 → 视为该路线的执行阶段（Touch），不另开 script 窗。
-            foreach (Match m in RxMapTrackingStart.Matches(line))
+            for (Match m = Tag(RxMapTrackingStart.Match(line), "map_tracking"); m.Success; m = m.NextMatch())
             {
                 string name = m.Groups["name"].Value.Trim();
                 if (name.Length == 0) continue;
@@ -1042,13 +943,13 @@ namespace SoulLink.Services
             // ── t6 A) 激活CD 线路层（kind="cd_line"；独立于 script/route 两层）──
             //   开始：挤掉前一线路（结构性边界）；成功：正常收尾 Finished。
             //   失败由 ERR 块归并（HasError→Failed + detail 由 err 表承载原因）。
-            foreach (Match m in RxCdLineStart.Matches(line))
+            for (Match m = Tag(RxCdLineStart.Match(line), "cd_line"); m.Success; m = m.NextMatch())
             {
                 string name = m.Groups["name"].Value.Trim();
                 if (name.Length == 0) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => StartRoute(user, "cd_line", name, CurrentScriptId(user), lineMs, srcFile) });
             }
-            foreach (Match m in RxCdLineOk.Matches(line))
+            for (Match m = Tag(RxCdLineOk.Match(line), "cd_line"); m.Success; m = m.NextMatch())
             {
                 string name = m.Groups["name"].Value.Trim();
                 if (name.Length == 0) continue;
@@ -1057,7 +958,7 @@ namespace SoulLink.Services
 
             // ── t6 锄地补充锚点 ─────────────────────────────────────────────
             //   名字型「开始第 x/y 条线路」：与「进入路线循环」同语义（route 开窗/挤掉），带序号供 Skipped 推断
-            foreach (Match m in RxRouteIdxStart.Matches(line))
+            for (Match m = Tag(RxRouteIdxStart.Match(line), "route_index"); m.Success; m = m.NextMatch())
             {
                 string name = m.Groups["name"].Value.Trim();
                 if (name.Length == 0) continue;
@@ -1070,14 +971,14 @@ namespace SoulLink.Services
                 });
             }
             //   「完成第 x/y 条线路」：正常收尾（Finished；HasError→Failed）
-            foreach (Match m in RxRouteIdxDone.Matches(line))
+            for (Match m = Tag(RxRouteIdxDone.Match(line), "route_index"); m.Success; m = m.NextMatch())
             {
                 string name = m.Groups["name"].Value.Trim();
                 if (name.Length == 0) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => EndRoute(user, name, null, lineMs, "") });
             }
             //   数量型（共加载 N 条路线 / 上报路线列表 N 条）：落到 run.planned_routes（C）
-            var plan = RxRoutePlanCount.Match(line);
+            var plan = Tag(RxRoutePlanCount.Match(line), "route_plan");
             if (plan.Success)
             {
                 int n = 0;
@@ -1089,12 +990,12 @@ namespace SoulLink.Services
             // ── 狗粮收益锚点（2026-11-26）────────────────────────────────────
             //   纯按日志格式匹配、不认组名。同一次运行内出现多次时
             //   AccumDogfoodGain 用「后写覆盖」实现取最后一次（= 本轮真实收益）。
-            foreach (Match m in RxDogfoodExp.Matches(line))
+            for (Match m = RxDogfoodExp.Match(line); m.Success; m = m.NextMatch())
             {
                 if (!long.TryParse(m.Groups["v"].Value, out long dfExp)) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumDogfoodGain(user, dfExp, 0, srcFile) });
             }
-            foreach (Match m in RxDogfoodMora.Matches(line))
+            for (Match m = RxDogfoodMora.Match(line); m.Success; m = m.NextMatch())
             {
                 if (!long.TryParse(m.Groups["v"].Value, out long dfMora)) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumDogfoodGain(user, 0, dfMora, srcFile) });
@@ -1102,14 +1003,14 @@ namespace SoulLink.Services
 
             // ── 轮次锚点（2026-11-26）────────────────────────────────────────
             //   两种写法各出现一次；同一轮重复触发是幂等的（只覆盖同样的 N/M/host）。
-            foreach (Match m in RxRoundBracket.Matches(line))
+            for (Match m = RxRoundBracket.Match(line); m.Success; m = m.NextMatch())
             {
                 if (!int.TryParse(m.Groups["idx"].Value, out int ri)) continue;
                 int rt = int.TryParse(m.Groups["total"].Value, out int t) ? t : 0;
                 string rh = m.Groups["host"].Value.Trim();
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => TouchRound(user, ri, rt, rh, srcFile) });
             }
-            foreach (Match m in RxRoundMultiWorld.Matches(line))
+            for (Match m = RxRoundMultiWorld.Match(line); m.Success; m = m.NextMatch())
             {
                 if (!int.TryParse(m.Groups["idx"].Value, out int ri)) continue;
                 int rt = int.TryParse(m.Groups["total"].Value, out int t) ? t : 0;
@@ -1120,57 +1021,55 @@ namespace SoulLink.Services
             // 路径组头 / 开始遍历：仅记录上下文（不生成路线行）
             if (RxPathGroupHeader.IsMatch(line) || RxTraverseStart.IsMatch(line))
             {
+                AddTag("route_context");
                 events.Add(new Ev { Pos = lineStart, Apply = () => TouchRun(user, lineMs) });
             }
 
             // ★ t6 硬要求二：三类拾取事件全投递（picked/no_target/skipped）。
-            //   picked 语义不变（=原 RxPick）；no_target/skipped 原 100% 丢弃，现在必须记录。
-            foreach (Match m in RxPick.Matches(line))
+            //   picked 语义不变（=原 BgiLogParser.Pick）；no_target/skipped 原 100% 丢弃，现在必须记录。
+            for (Match m = Tag(pick, "picked"); m.Success; m = m.NextMatch())
             {
                 string item = m.Groups["item"].Value.Trim();
                 if (item.Length == 0) continue;   // 空 capture 无物品字段；原文仍已由 raw_event 保留
+                int matchOffset = m.Index;
                 events.Add(new Ev
                 {
                     Pos = lineStart + m.Index,
-                    Apply = () => AccumPick(user, item, lineMs, "picked", lineStart, m.Index, srcFile, chunkOffset),
+                    Apply = () => AccumPick(user, item, lineMs, "picked", lineStart, matchOffset, srcFile, chunkOffset),
                 });
             }
-            foreach (Match m in RxNoTarget.Matches(line))
+            for (Match m = Tag(RxNoTarget.Match(line), "no_target"); m.Success; m = m.NextMatch())
             {
+                int matchOffset = m.Index;
                 events.Add(new Ev
                 {
                     Pos = lineStart + m.Index,
-                    Apply = () => AccumPick(user, "无有效结果", lineMs, "no_target", lineStart, m.Index, srcFile, chunkOffset),
+                    Apply = () => AccumPick(user, "无有效结果", lineMs, "no_target", lineStart, matchOffset, srcFile, chunkOffset),
                 });
             }
-            foreach (Match m in RxSkipped.Matches(line))
+            for (Match m = Tag(RxSkipped.Match(line), "skipped"); m.Success; m = m.NextMatch())
             {
                 string item = m.Groups["item"].Value.Trim();
+                int matchOffset = m.Index;
                 events.Add(new Ev
                 {
                     Pos = lineStart + m.Index,
-                    Apply = () => AccumPick(user, item, lineMs, "skipped", lineStart, m.Index, srcFile, chunkOffset),
+                    Apply = () => AccumPick(user, item, lineMs, "skipped", lineStart, matchOffset, srcFile, chunkOffset),
                 });
             }
-            foreach (Match m in RxExp.Matches(line))
+            for (Match m = Tag(BgiLogParser.Exp.Match(line), "exp"); m.Success; m = m.NextMatch())
             {
-                long v = ParseV(m);
+                long v = BgiLogParser.RewardValue(m);
                 if (v <= 0) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumReward(user, v, 0, lineMs, srcFile) });
             }
-            foreach (Match m in RxMora.Matches(line))
+            for (Match m = Tag(BgiLogParser.Mora.Match(line), "mora"); m.Success; m = m.NextMatch())
             {
-                long v = ParseV(m);
+                long v = BgiLogParser.RewardValue(m);
                 if (v <= 0) continue;
                 events.Add(new Ev { Pos = lineStart + m.Index, Apply = () => AccumReward(user, 0, v, lineMs, srcFile) });
             }
-        }
-
-        private static long ParseV(Match m)
-        {
-            if (long.TryParse(m.Groups["v1"].Value, out var a) && a > 0) return a;
-            if (long.TryParse(m.Groups["v2"].Value, out var b) && b > 0) return b;
-            return 0;
+            return tags == null ? "" : string.Join(",", tags);
         }
 
         private static string? CurrentScriptId(string user)
@@ -1190,17 +1089,7 @@ namespace SoulLink.Services
         ///   不做其它语义猜测 —— 正常组名（中文 / 英文 / 带数字符号）一律放行。
         /// ★ raw_event 里那一行原文照旧保留（raw 不做有效性筛选），只是不再生成 run 行。
         /// </summary>
-        internal static bool ValidGroup(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name)) return false;
-            string n = name.Trim();
-            foreach (string bad in BogusGroupNames)
-                if (string.Equals(n, bad, StringComparison.OrdinalIgnoreCase)) return false;
-            if (n.Contains("Exception", StringComparison.OrdinalIgnoreCase)) return false;
-            if (n.Contains("was canceled", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("was cancelled", StringComparison.OrdinalIgnoreCase)) return false;
-            return true;
-        }
+        internal static bool ValidGroup(string name) => BgiLogParser.ValidGroupName(name);
 
         /// <summary>实测被误当成配置组名的框架异常消息（大小写不敏感整串匹配）。</summary>
         private static readonly string[] BogusGroupNames =
@@ -1361,7 +1250,7 @@ namespace SoulLink.Services
                 var line = raw.TrimEnd('\r');
                 if (line.Length == 0) continue;
                 // 跳过头行（带 [ts] 前缀）：消息取头行之后第一条内容行
-                if (line[0] == '[' && RxLineTs.Match(line).Success) continue;
+                if (line[0] == '[' && BgiLogParser.LineTimestamp.Match(line).Success) continue;
                 int close = line.IndexOf(']');
                 return close >= 0 && close + 1 < line.Length ? line[(close + 1)..].Trim() : line;
             }

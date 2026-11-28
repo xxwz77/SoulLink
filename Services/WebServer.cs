@@ -954,15 +954,16 @@ public static partial class WebServer
 			};
 		}
 		int days = (int.TryParse(ctx.Request.QueryString["days"], out var result) ? Math.Clamp(result, 1, 365) : 7);
+		var records = RouteLedger.Query(text, days);
 		return new
 		{
 			ok = true,
 			user = text,
 			days = days,
-			records = RouteLedger.Query(text, days),
-			groups = RouteLedger.GroupSummary(text, days),
-			zeroReward = RouteLedger.QueryZeroReward(text, days),
-			failed = RouteLedger.QueryFailed(text, days)
+			records,
+			groups = RouteLedger.GroupSummary(records),
+			zeroReward = records.Where(r => r.ZeroReward).ToList(),
+			failed = records.Where(r => r.IsFailure).ToList()
 		};
 	}
 
@@ -1798,12 +1799,7 @@ public static partial class WebServer
 				error = "缺少 user"
 			};
 		}
-		DailyStats dailyStats = DailyStatsCache.Get(text);
-		int num = 0;
-		foreach (int value in dailyStats.Picks.Values)
-		{
-			num += value;
-		}
+		DailyStats dailyStats = BgiLogCenter.DailyStatsForWeb(text);
 		return new
 		{
 			ok = true,
@@ -1811,8 +1807,8 @@ public static partial class WebServer
 			day = dailyStats.Day,
 			exp = dailyStats.DogfoodExp,
 			mora = dailyStats.DogfoodMora,
-			pickTotal = num,
-			picks = new Dictionary<string, int>(dailyStats.Picks, StringComparer.OrdinalIgnoreCase),
+			pickTotal = dailyStats.PickTotal,
+			picks = dailyStats.Picks,
 			dogfoodRoutes = dailyStats.DogfoodRoutes,
 			lastDogfoodRoute = dailyStats.LastDogfoodRoute,
 			lastRoute = dailyStats.LastDogfoodRoute,
@@ -1823,7 +1819,7 @@ public static partial class WebServer
 	private static object ApiList()
 	{
 		string replayRoot = ReplayRoot;
-		List<object> list = new List<object>();
+		var list = new List<(string Name, object Item)>();
 		try
 		{
 			if (Directory.Exists(replayRoot))
@@ -1846,16 +1842,24 @@ public static partial class WebServer
 						catch
 						{
 						}
-						int num = 0;
-						try
+						int num = 0, fps = 10;
+						string trigger = "";
+						if (!string.IsNullOrWhiteSpace(text2))
 						{
-							if (JsonSerializer.Deserialize<JsonElement>(text2).TryGetProperty("frames", out var value) && value.TryGetInt32(out var value2))
+							try
 							{
-								num = value2;
+								using var meta = JsonDocument.Parse(text2);
+								var root = meta.RootElement;
+								if (root.TryGetProperty("frames", out var frames) && frames.ValueKind == JsonValueKind.Number)
+									frames.TryGetInt32(out num);
+								if (root.TryGetProperty("fps", out var rate) && rate.ValueKind == JsonValueKind.Number
+									&& rate.TryGetInt32(out var parsedFps) && parsedFps > 0)
+									fps = parsedFps;
+								if (root.TryGetProperty("trigger", out var kind) && kind.ValueKind == JsonValueKind.String)
+									trigger = kind.GetString() ?? "";
 							}
-						}
-						catch
-						{
+							catch (JsonException) { }
+							catch (InvalidOperationException) { }
 						}
 						if (num == 0)
 						{
@@ -1868,15 +1872,18 @@ public static partial class WebServer
 							}
 						}
 						bool hasVideo = File.Exists(Path.Combine(text, "replay.mp4"));
-						list.Add(new
+						string name = Path.GetFileName(text);
+						list.Add((name, new
 						{
 							user = Path.GetFileName(path),
-							name = Path.GetFileName(text),
+							name,
 							frames = num,
 							hasVideo = hasVideo,
 							path = Path.GetFileName(path) + "/" + Path.GetFileName(text),
-							meta = text2
-						});
+							meta = text2,
+							trigger,
+							fps
+						}));
 					}
 				}
 			}
@@ -1888,7 +1895,7 @@ public static partial class WebServer
 		{
 			ok = true,
 			count = list.Count,
-			items = list.OrderByDescending((object x) => x).ToList()
+			items = list.OrderByDescending(x => x.Name, StringComparer.OrdinalIgnoreCase).Select(x => x.Item).ToList()
 		};
 	}
 
@@ -2077,44 +2084,13 @@ public static partial class WebServer
 				catch
 				{
 				}
-				string taskName = "";
-				string configGroup = "";
-				string routeFile = "";
-				string round = "";
-				string role = "";
-				string eta = "";
-				string action = "";
-				int errorCount = 0;
-				int pickTotal = 0;
-				try
-				{
-					BgiLogSnapshot bgiLogSnapshot = BgiLogCenter.Snapshot(item.Id);
-					if (bgiLogSnapshot != null && bgiLogSnapshot.Tail.Count > 0)
-					{
-						StringBuilder stringBuilder = new StringBuilder(bgiLogSnapshot.Tail.Count * 96);
-						foreach (BgiLogLine item2 in bgiLogSnapshot.Tail)
-						{
-							stringBuilder.AppendLine(item2.Text);
-						}
-						BgiStatus bgiStatus = new BgiStatus();
-						bgiStatus.Update(stringBuilder.ToString());
-						taskName = bgiStatus.TaskName ?? "";
-						configGroup = bgiStatus.ConfigGroup ?? "";
-						routeFile = bgiStatus.RouteFile ?? "";
-						round = bgiStatus.Round ?? "";
-						role = bgiStatus.RoleName ?? "";
-						eta = bgiStatus.RouteEta ?? "";
-						action = bgiStatus.CurrentAction ?? "";
-						pickTotal = bgiStatus.PickTotal;
-					}
-					if (accountState != null)
-					{
-						errorCount = accountState.ErrorCount;
-					}
-				}
-				catch
-				{
-				}
+				var progress = accountState?.BgiRunning == true
+					? BgiLogCenter.SessionProgressFor(item.Id)
+					: null;
+				if (progress is { ProcessId: > 0 } && accountState?.BgiPid is > 0
+					&& progress.ProcessId != accountState.BgiPid)
+					progress = null;
+				var activity = progress?.Activity.Filter(DateTime.Now);
 				list.Add(new
 				{
 					id = item.Id,
@@ -2131,15 +2107,24 @@ public static partial class WebServer
 					remoteControlEnabled,
 					bgiPath = (dictionary.TryGetValue(item.UserName, out var value) ? value : ""),
 					screen = (flag ? (relayClient.ScreenWidth + "x" + relayClient.ScreenHeight) : ""),
-					taskName = taskName,
-					configGroup = configGroup,
-					routeFile = routeFile,
-					round = round,
-					role = role,
-					eta = eta,
-					action = action,
-					errorCount = errorCount,
-					pickTotal = pickTotal,
+					taskName = progress?.Task ?? "",
+					configGroup = progress?.Group ?? "",
+					routeFile = progress?.Route ?? "",
+					round = progress?.Round ?? "",
+					role = progress?.RunRole ?? "",
+					eta = progress?.Eta ?? "",
+					action = activity?.Action?.Text ?? "",
+					actionAt = activity?.Action?.At.ToString("HH:mm:ss") ?? "",
+					activeCharacter = activity?.Character?.Text ?? "",
+					activeCharacterAt = activity?.Character?.At.ToString("HH:mm:ss") ?? "",
+					recentSkill = activity?.Skill?.Text ?? "",
+					recentSkillOutcome = activity?.Skill?.Outcome ?? "",
+					recentSkillAt = activity?.Skill?.At.ToString("HH:mm:ss") ?? "",
+					recentFood = activity?.Food?.Text ?? "",
+					recentFoodOutcome = activity?.Food?.Outcome ?? "",
+					recentFoodAt = activity?.Food?.At.ToString("HH:mm:ss") ?? "",
+					errorCount = accountState?.ErrorCount ?? 0,
+					pickTotal = progress?.PickTotal ?? 0,
 					directPort = ResolveDirectPort(item.Id)
 				});
 			}

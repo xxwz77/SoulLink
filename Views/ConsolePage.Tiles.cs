@@ -339,10 +339,40 @@ namespace SoulLink.Views
 
         /// <summary>按当前模式重排所有格子。只改几何与可见性，不增删控件。</summary>
         private bool _applyingLayout;
+        private bool _changingFullScreenLayout;
 
-        // ★ 已回退 "_ignoreViewportSizeChange 挂起视口响应" 的做法。
-        //   它让 ApplyLayout 在需要重排时被整体跳过，直接导致 RDP 画面不显示（用户实测）。
-        //   反馈环改为只靠 OnViewportResized 里的尺寸去重来打破 —— 那一条不会阻止必要布局。
+        private RdpConsole[] BeginFullScreenLayoutChange()
+        {
+            var consoles = _tiles.Select(tile => tile.Console).OfType<RdpConsole>().ToArray();
+            _changingFullScreenLayout = true;
+            foreach (var console in consoles) console.BeginFullScreenViewportChange();
+            return consoles;
+        }
+
+        private void CompleteFullScreenLayoutChange(Window window, RdpConsole[] consoles)
+        {
+            try
+            {
+                // Chrome and window bounds are final. Measure the viewport before arranging its tiles.
+                window.UpdateLayout();
+                _lastViewportW = ViewportScroll.ActualWidth;
+                _lastViewportH = ViewportScroll.ActualHeight;
+                ApplyLayout();
+            }
+            catch (Exception ex) { App.AppendErrorLog("CompleteFullScreenLayoutChange", ex); }
+            finally
+            {
+                _changingFullScreenLayout = false;
+                foreach (var console in consoles) console.EndFullScreenViewportChange();
+            }
+
+            SyncBusyOverlaySize();
+            SyncShieldSize();
+            Dispatcher.BeginInvoke(new Action(UpdateShield), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        // 全屏过渡只暂缓 SizeChanged，最终尺寸仍显式调用 ApplyLayout。
+        // 普通布局继续由 OnViewportResized 按尺寸去重。
 
         private void ApplyLayout()
         {

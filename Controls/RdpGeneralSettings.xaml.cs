@@ -185,16 +185,16 @@ namespace SoulLink.Controls
 
    SensitivitySlider.Value = App.Config.Settings.LookSensitivity;
    SensitivityText.Text = App.Config.Settings.LookSensitivity.ToString("0.0") + "x";
-   GlobalHotkey.SetSpec(HotkeySpec.Parse(App.Config.Settings.LockHotkey));
+   GlobalHotkey.SetSpec(HotkeySpec.ParseRdpHotkey(App.Config.Settings.LockHotkey, "Ctrl+Alt+Q"));
    GlobalHotkey.Recorded -= OnHotkey;
    GlobalHotkey.Recorded += OnHotkey;
 
    // ★ 3.2.4：全屏热键（可自定义，避免 F11 被 RDP/游戏吞掉后进得去出不来）
-   FullScreenHotkeyRecorder.SetSpec(HotkeySpec.Parse(App.Config.Settings.FullScreenHotkey));
+   FullScreenHotkeyRecorder.SetSpec(HotkeySpec.ParseRdpHotkey(App.Config.Settings.FullScreenHotkey, "F11"));
    FullScreenHotkeyRecorder.Recorded -= OnFullScreenHotkey;
    FullScreenHotkeyRecorder.Recorded += OnFullScreenHotkey;
 
-   ExitFullScreenHotkeyRecorder.SetSpec(HotkeySpec.Parse(App.Config.Settings.ExitFullScreenHotkey));
+   ExitFullScreenHotkeyRecorder.SetSpec(HotkeySpec.ParseRdpHotkey(App.Config.Settings.ExitFullScreenHotkey));
    ExitFullScreenHotkeyRecorder.Recorded -= OnExitFullScreenHotkey;
    ExitFullScreenHotkeyRecorder.Recorded += OnExitFullScreenHotkey;
    CaptureClickCheck.Checked -= Capture_Changed;
@@ -597,7 +597,7 @@ namespace SoulLink.Controls
 
   private void OnHotkey(HotkeySpec? spec)
   {
-   if (_loading || spec == null) return;
+   if (_loading || spec == null || spec.IsBareEscape) return;
    App.Config.Settings.LockHotkey = spec.ToString();
    Save();
   }
@@ -605,7 +605,7 @@ namespace SoulLink.Controls
   /// <summary>进/出全屏热键。改完立刻让所有已打开的画面重新装钩子。</summary>
   private void OnFullScreenHotkey(HotkeySpec? spec)
   {
-   if (_loading || spec == null) return;
+   if (_loading || spec == null || spec.IsBareEscape) return;
    App.Config.Settings.FullScreenHotkey = spec.ToString();
    Save();
    SoulLink.Views.ConsolePage.NotifyFullScreenHotkeysChanged();
@@ -614,7 +614,7 @@ namespace SoulLink.Controls
   /// <summary>退出全屏备用热键（可选）。spec 为 null = 用户清空 → 不钩任何键。</summary>
   private void OnExitFullScreenHotkey(HotkeySpec? spec)
   {
-   if (_loading) return;
+   if (_loading || spec?.IsBareEscape == true) return;
    App.Config.Settings.ExitFullScreenHotkey = spec?.ToString() ?? "";
    Save();
    SoulLink.Views.ConsolePage.NotifyFullScreenHotkeysChanged();

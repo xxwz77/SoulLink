@@ -422,6 +422,18 @@ namespace SoulLink.Controls
             }
         }
 
+        internal bool TrySendRemoteEscape()
+        {
+            // Keyboard travels through ActiveX even when the independent relative-mouse relay is unavailable.
+            if (_disposed || ShieldLocked || _hostDisabled || !IsConnected || _ocx is not object ocx) return false;
+            try { return NativeDispatch.TrySendRdpEscape(ocx); }
+            catch (Exception ex)
+            {
+                Debug("发送远端 Esc 失败：" + ex.Message);
+                return false;
+            }
+        }
+
         public RdpConsole()
         {
             Background = System.Windows.Media.Brushes.Black;
@@ -1127,8 +1139,11 @@ namespace SoulLink.Controls
             get => _toggleHotkey;
             set
             {
-                if (string.IsNullOrWhiteSpace(value) || value == _toggleHotkey) return;
-                _toggleHotkey = value.Trim();
+                if (string.IsNullOrWhiteSpace(value)) return;
+                string requested = value.Trim();
+                if (HotkeySpec.Parse(requested)?.IsBareEscape == true) requested = "Ctrl+Alt+Q";
+                if (requested == _toggleHotkey) return;
+                _toggleHotkey = requested;
 
                 var old = _escapeHotkey;
                 _escapeHotkey = null;
@@ -1774,7 +1789,7 @@ namespace SoulLink.Controls
                 // 因此锁定时直接在本机判定并解锁，不再依赖目标会话。
                 if (_captured && !ev.IsInjected)
                 {
-                    var spec = HotkeySpec.Parse(App.Config.Settings.LockHotkey);
+                    var spec = HotkeySpec.Parse(ToggleHotkey);
                     bool isMouseSpec = spec?.IsMouse == true;
                     bool down = ev.IsLeftDown || ev.IsRightDown || ev.IsMiddleDown
                                 || ev.IsXButton1Down || ev.IsXButton2Down;
@@ -1951,9 +1966,9 @@ namespace SoulLink.Controls
             }
         }
 
-        private static bool IsConfiguredHotkeyMouse(MouseHookEvent ev)
+        private bool IsConfiguredHotkeyMouse(MouseHookEvent ev)
         {
-            var spec = HotkeySpec.Parse(App.Config.Settings.LockHotkey);
+            var spec = HotkeySpec.Parse(ToggleHotkey);
             if (spec == null || !spec.IsMouse) return false;
             return spec.MouseButton switch
             {
@@ -3001,10 +3016,42 @@ namespace SoulLink.Controls
         // ★ 一次性防抖：改用 CancellationTokenSource + Task.Delay 等待，
         //   不再新建 DispatcherTimer（AGENTS.md 性能约束）。
         private CancellationTokenSource? _resizeDebounceCts;
-        private (int width, int height) _pendingViewportPixels;
+        private bool _fullScreenViewportPending;
+        private int _fullScreenViewportVersion;
 
         /// <summary>全局串行：同一时刻只允许一个画面重协商远端分辨率。</summary>
         private static readonly System.Threading.SemaphoreSlim ResizeGate = new(1, 1);
+
+        internal void BeginFullScreenViewportChange()
+        {
+            _fullScreenViewportPending = true;
+            _fullScreenViewportVersion++;
+            Interlocked.Increment(ref _stretchRefitVersion);
+            _resizeDebounceCts?.Cancel();
+            _resizeDebounceCts?.Dispose();
+            _resizeDebounceCts = null;
+        }
+
+        internal void EndFullScreenViewportChange()
+        {
+            int version = _fullScreenViewportVersion;
+            if (Dispatcher.HasShutdownStarted) return;
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_disposed || version != _fullScreenViewportVersion) return;
+                _fullScreenViewportPending = false;
+                if (ViewportScreenRect() is not { } rect) return;
+
+                Debug("全屏切换视口已稳定 · x=" + rect.left + " y=" + rect.top
+                    + " " + rect.width + "x" + rect.height);
+                RefreshViewport();
+                NoteViewportSizeChanged();
+                // WPF has already applied the new native size. Preserve SmartSizing
+                // and repaint without briefly changing the host dimensions again.
+                ApplyStretchRefit(resizeHost: false);
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
 
         /// <summary>
         /// 视口尺寸变了：只记录目标，重置防抖计时器。
@@ -3015,64 +3062,52 @@ namespace SoulLink.Controls
         /// </summary>
         public void NoteViewportSizeChanged()
         {
-            if (_disposed || !_hasConnected || _ocx == null) return;
+            if (_disposed || _fullScreenViewportPending || !_hasConnected || _ocx == null) return;
             if ((Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode) != 0) return;
 
             var rect = ViewportScreenRect();
             if (rect == null) return;
             if (rect.Value.width < 200 || rect.Value.height < 200) return;
 
-            _pendingViewportPixels = (rect.Value.width, rect.Value.height);
+            var size = (rect.Value.width, rect.Value.height);
+            int generation = ConnectionGeneration;
 
             _resizeDebounceCts?.Cancel();
             _resizeDebounceCts?.Dispose();
             _resizeDebounceCts = new CancellationTokenSource();
-            var cts = _resizeDebounceCts;
+            var token = _resizeDebounceCts.Token;
             _ = Task.Run(async () =>
             {
-                try { await Task.Delay(ResizeSettleMs, cts.Token).ConfigureAwait(false); }
+                try { await Task.Delay(ResizeSettleMs, token).ConfigureAwait(false); }
                 catch (OperationCanceledException) { return; }
                 try
                 {
                     if (Dispatcher.HasShutdownStarted) return;
-                    await Dispatcher.InvokeAsync(async () =>
-                    {
-                        if (cts.IsCancellationRequested) return;
-                        await CommitPendingResizeAsync().ConfigureAwait(true);
-                    });
+                    await Dispatcher.InvokeAsync(
+                        () => CommitPendingResizeAsync(size.width, size.height, generation, token)).Task.Unwrap();
                 }
                 catch { }
             });
         }
 
         /// <summary>防抖到期后真正协商一次远端分辨率。</summary>
-        private async Task CommitPendingResizeAsync()
+        private async Task CommitPendingResizeAsync(int w, int h, int generation, CancellationToken token)
         {
-            if (_disposed || !_hasConnected || _ocx == null) return;
+            if (token.IsCancellationRequested || _disposed || _fullScreenViewportPending || !_hasConnected
+                || _ocx == null || generation != ConnectionGeneration) return;
             if ((Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode) != 0) return;
 
-            // 鼠标还按着（多半在拖边框）就先不协商，等用户停手。
+            // 鼠标还按着就先不协商。新的视口或全屏切换会取消此目标。
             for (int i = 0; i < 20 && System.Windows.Input.Mouse.LeftButton
                      == System.Windows.Input.MouseButtonState.Pressed; i++)
-                await Task.Delay(300).ConfigureAwait(true);
+                await Task.Delay(300, token).ConfigureAwait(true);
 
-            int w = _pendingViewportPixels.width;
-            int h = _pendingViewportPixels.height;
-            if (w < 200 || h < 200) return;
-
-            // 尺寸没变就不协商（切回来、布局微调都可能落在这里）。
+            await ResizeGate.WaitAsync(token).ConfigureAwait(true);
             try
             {
-                if (Math.Abs((int)_ocx.DesktopWidth - w) <= 1 &&
-                    Math.Abs((int)_ocx.DesktopHeight - h) <= 1) return;
-            }
-            catch { }
-
-            await ResizeGate.WaitAsync().ConfigureAwait(true);
-            try
-            {
-                // 排队期间可能已经断开/销毁，重新确认。
-                if (_disposed || !_hasConnected || _ocx == null) return;
+                if (token.IsCancellationRequested || _disposed || _fullScreenViewportPending || !_hasConnected
+                    || _ocx == null || generation != ConnectionGeneration) return;
+                if ((Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode) != 0) return;
                 try
                 {
                     if (Math.Abs((int)_ocx.DesktopWidth - w) <= 1 &&
@@ -3254,8 +3289,7 @@ namespace SoulLink.Controls
             CurrentSessionId = sessionId;
             try
             {
-                if (!string.IsNullOrWhiteSpace(App.Config.Settings.LockHotkey))
-                    _toggleHotkey = App.Config.Settings.LockHotkey;
+                ToggleHotkey = App.Config.Settings.LockHotkey;
 
                 var relay = new RelayClient(account.UserName, sessionId);
                 // ★ ConfigureAwait(false)：投送包含 schtasks 建任务 + 等代理连回管道，
@@ -3549,7 +3583,7 @@ namespace SoulLink.Controls
         {
             try
             {
-                if (_disposed) return;
+                if (_disposed || _fullScreenViewportPending) return;
                 // 只有 拉伸(1) / 原大小(2) 之外不处理；跟随窗口(0) 走分辨率协商。
                 int mode = Account?.RdpScaleMode ?? App.Config.Settings.RdpScaleMode;
                 if (mode != 1 && mode != 3) return;
@@ -3570,7 +3604,9 @@ namespace SoulLink.Controls
         }
 
         /// <summary>把控件重新按当前宿主尺寸铺满（不改远端分辨率）。</summary>
-        public void ApplyStretchRefit()
+        public void ApplyStretchRefit() => ApplyStretchRefit(resizeHost: true);
+
+        private void ApplyStretchRefit(bool resizeHost)
         {
             try
             {
@@ -3605,6 +3641,12 @@ namespace SoulLink.Controls
                     try { adv2.SmartSizing = true; } catch { }
                 }
 
+                if (!resizeHost)
+                {
+                    _ax?.Invalidate(true);
+                    return;
+                }
+
                 // 已经是拉伸状态：用"宿主尺寸没变也强制重铺"的替代手段 ——
                 // 让 WinForms 宿主把尺寸重设一次，ActiveX 会按新客户区重新布局内容，
                 // 全程 SmartSizing 保持开启，不会露出未缩放的中间帧。
@@ -3631,6 +3673,7 @@ namespace SoulLink.Controls
         /// <summary>画面尺寸变化时同步坐标换算。</summary>
         public void RefreshViewport()
         {
+            if (_fullScreenViewportPending) return;
             var input = Input;
             if (input == null) return;
 

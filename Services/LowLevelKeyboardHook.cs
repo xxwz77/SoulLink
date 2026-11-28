@@ -85,7 +85,10 @@ namespace SoulLink.Services
         public Func<bool>? CanSuppressModifiers { get; set; }
 
         public Action? Pressed { get; set; }
+        internal Func<uint, bool, uint, bool>? HandlePhysicalKey { get; set; }
         public bool IsHooked => _hook != IntPtr.Zero;
+
+        internal static bool IsPhysicalKeyDown(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
 
         public bool Install()
         {
@@ -95,6 +98,7 @@ namespace SoulLink.Services
             {
                 // 新安装的 LL 钩子会排在已安装的 RDP 钩子之前；重挂见 Rearm()。
                 _modifiers = ReadPhysicalModifiers();
+                _matcher.SynchronizeModifiers(_modifiers);
                 Volatile.Write(ref _sharedModifiers, _modifiers);
                 _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
                 if (_hook == IntPtr.Zero) return false;
@@ -144,13 +148,16 @@ namespace SoulLink.Services
                 if (!isDown && !isUp) return Next(nCode, wParam, lParam);
 
                 var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+                bool injected = (info.flags & LLKHF_INJECTED) != 0;
                 bool swallow = _matcher.Key(info.vkCode, isDown,
-                    (info.flags & LLKHF_INJECTED) != 0,
+                    injected,
                     CanTrigger?.Invoke() == true,
                     CanSuppressModifiers?.Invoke() == true,
                     out bool matched);
                 _modifiers = _matcher.Modifiers;
                 Volatile.Write(ref _sharedModifiers, _modifiers);
+                if (!injected && HandlePhysicalKey?.Invoke(info.vkCode, isDown, _modifiers) == true)
+                    return (IntPtr)1;
                 if (matched)
                 {
                     SoulLink.Controls.RdpConsole.Debug("本机热键命中：" + _spec

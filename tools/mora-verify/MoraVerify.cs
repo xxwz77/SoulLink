@@ -32,10 +32,11 @@ public static class MoraVerify
         // ★ 指向隔离 DB：MiyousheStore.Shared 可 set
         MiyousheStore.Shared = new MiyousheStore(() => System.IO.Path.Combine(dbDir, "miyoushe", "miyoushe.db"));
 
-        if (args.Contains("--daily"))
+        if (args.Contains("--daily") || args.Contains("--route-income"))
         {
             if (!string.Equals(AppIdentity.DataDir, dbDir, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("测试库未隔离");
-            return ScenarioDaily().GetAwaiter().GetResult();
+            if (args.Contains("--daily")) return ScenarioDaily().GetAwaiter().GetResult();
+            return ScenarioDelayedRouteIncome(dbDir).GetAwaiter().GetResult();
         }
         int failures = 0;
         failures += ScenarioRules();       // 3) 边界用例 + 4) NULL→unknown
@@ -80,6 +81,109 @@ public static class MoraVerify
         await MiyousheStore.Shared.SaveLedgerFactsAsync(entries,Array.Empty<MiyousheLedgerDay>(),default);
         var multi = await DailyMoraLedger.QueryAsync(account,day);
         Check(multi.Count==2 && multi.All(b=>b.RunId=="") && multi.Sum(b=>b.TotalMorale)==83,"多角色不串账，依 UID 对账 60+23");
+        return _fail;
+    }
+
+    private static async Task<int> ScenarioDelayedRouteIncome(string dbDir)
+    {
+        var checkedAt = new DateTimeOffset(new DateTime(2026, 11, 28, 0, 40, 0));
+        DateTimeOffset occurredAt = checkedAt.AddHours(-1);
+        long occurred = occurredAt.ToUnixTimeMilliseconds();
+        long received = checkedAt.ToUnixTimeMilliseconds();
+        const string account = "delayed-ledger", other = "other-ledger", multi = "multi-ledger";
+        const long minute = 60_000;
+
+        void Run(string owner, string id, long from, long to) => RunRecordStore.AddRun(new()
+        {
+            Account = owner, RunId = id, GroupName = "group", StartAtMs = from, EndAtMs = to, State = "Finished"
+        });
+        void Route(string run, string id, long from, long? to, string kind = "route") => RunRecordStore.AddRoute(new()
+        {
+            RunId = run, RouteId = id, Name = id, Kind = kind, StartAtMs = from, EndAtMs = to
+        });
+        Run(account, "earlier", occurred - 3 * minute, occurred + 6 * minute);
+        Route("earlier", "earlier-route", occurred - minute, occurred + minute);
+        Route("earlier", "cd-before-replay", occurred + 2 * minute, occurred + 3 * minute, "cd_line");
+        Route("earlier", "open-regular", occurred + 90_000, null);
+        Route("earlier", "part-minute", occurred + 4 * minute + 10_000, occurred + 5 * minute);
+        Route("earlier", "split-left", occurred + 5 * minute, occurred + 5 * minute + 25_000);
+        Route("earlier", "split-right", occurred + 5 * minute + 25_000, occurred + 6 * minute);
+        Route("earlier", "skipped-marker", occurred + 10_000, occurred + 10_000);
+        Run(account, "arrival", received - minute, received + 2 * minute);
+        Route("arrival", "arrival-route", received - minute, received + 2 * minute);
+        Run(other, "other-run", occurred - minute, occurred + 2 * minute);
+        Route("other-run", "other-route", occurred - minute, occurred + 2 * minute);
+        Run(multi, "multi-run", occurred - minute, occurred + 2 * minute);
+        Route("multi-run", "multi-route", occurred - minute, occurred + 2 * minute);
+
+        var facts = new List<MiyousheLedgerEntry>();
+        void Fact(string owner, string uid, long ts, long amount) => facts.Add(new(owner, uid, "cn_gf01",
+            "2026-11", 2, facts.Count + 1, "精英怪", amount, amount, 1,
+            DateTimeOffset.FromUnixTimeMilliseconds(ts).ToLocalTime().ToString("yyyy-MM-dd HH:mm"), ts,
+            "{}", "test", received));
+        Fact(account, "uid1", occurred, 200);
+        Fact(account, "uid1", occurred + 2 * minute, 400);
+        Fact(account, "uid1", occurred + 4 * minute, 600);
+        Fact(account, "uid1", occurred + 5 * minute, 200);
+        Fact(other, "uid1", occurred, 200);
+        Fact(multi, "uid1", occurred, 200);
+        Fact(multi, "uid2", occurred, 400);
+        await MiyousheStore.Shared.SaveLedgerFactsAsync(facts, Array.Empty<MiyousheLedgerDay>(), default,
+            stableOccurrences: true);
+
+        Task<List<(string Account, long Time, string Route)>> Links()
+            => MiyousheStore.Shared.RunAsync(db =>
+            {
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = "SELECT account,entry_ts_ms,COALESCE(route_id,'') FROM my_mora_route_income;";
+                using var reader = cmd.ExecuteReader();
+                var rows = new List<(string, long, string)>();
+                while (reader.Read()) rows.Add((reader.GetString(0), reader.GetInt64(1), reader.GetString(2)));
+                return rows;
+            }, null, default);
+
+        await MoraRouteIncome.UpdateAsync(account, "uid1", default, checkedAt);
+        var links = await Links();
+        Check(links.Count == 4 && links.All(x => x.Account == account), "拉取只处理指定 Windows 账号与 UID");
+        Check(links.Contains((account, occurred, "earlier-route")), "跨午夜延迟一小时，匹配前一日原始时间且忽略零时长窗口");
+        Check(links.Contains((account, occurred + 2 * minute, "")), "普通路线仍未收尾时，暂不写入当分钟的激活 CD 归属");
+
+        RunRecordStore.CloseRoute(new()
+        {
+            RouteId = "open-regular", EndAtMs = occurred + 3 * minute, State = "Finished"
+        });
+        var retryAt = checkedAt.AddMinutes(16);
+        await MoraRouteIncome.UpdateAsync(account, "uid1", default, retryAt);
+        await MoraRouteIncome.UpdateAsync(other, "uid1", default, retryAt);
+        await MoraRouteIncome.UpdateAsync(multi, "uid1", default, retryAt);
+        await MoraRouteIncome.UpdateAsync(multi, "uid2", default, retryAt);
+        links = await Links();
+        Check(links.Contains((account, occurred + 2 * minute, "open-regular")), "日志补齐后，重试归属到已结束的普通路线");
+        Check(links.Contains((account, occurred + 4 * minute, "")), "路线只覆盖部分分钟则保留未归属");
+        Check(links.Contains((account, occurred + 5 * minute, "")), "同一个分钟内切换路线时保留未归属");
+        Check(links.Contains((other, occurred, "other-route")), "另一 Windows 账号同一分钟单独归属");
+        Check(links.All(x => x.Account != multi), "同一 Windows 账号下两个游戏 UID 不争用同一 BGI 窗口");
+        var multiBins = await DailyMoraLedger.QueryAsync(multi, occurredAt.LocalDateTime.Date);
+        Check(multiBins.Count == 2 && multiBins.Sum(x => x.TotalMorale) == 600,
+            "多游戏 UID 的未归属收入按各自 UID 完整保留");
+
+        string file = System.IO.Path.Combine(dbDir, "better-genshin-impact20261127.log");
+        System.IO.File.WriteAllText(file, """
+            [23:38:00] 配置组 "group" 加载完成
+            [23:39:00.250] [DBG] 进入路线循环，count=1，route="earlier.json"
+            [12:01:01] 乱序普通日志
+            [23:41:00.500] → 脚本执行结束: "earlier.json"
+            [23:57:00] 进入路线循环，count=1，route="open.json"
+            [2026-11-28 00:04:00] → 脚本执行结束: "open.json"
+            """);
+        var windows = MoraRouteWindowScanner.Scan(file);
+        Check(windows.Count == 2 && windows[0].GroupName == "group"
+            && windows[0].StartMs == occurred - 59_750 && windows[0].EndMs == occurred + 60_500,
+            "文件扫描保留旧路线锚点与秒级时间，乱序日志不推到次日");
+        Check(windows.Count == 2 && windows[1].EndMs == received - 40 * minute,
+            "未结束文件窗口只覆盖本地日志当天");
+        Check(MoraClassifier.AttributeRoute(windows, occurred, out var hit, out _, out _) == MoraClassifier.AttrRoute
+            && hit.RouteName == "earlier.json", "手动归类扫描与原始米游社时间使用同一时间轴");
         return _fail;
     }
 
@@ -222,15 +326,16 @@ VALUES('A4','100000001',1,40,'minion',1,'unattributed','none','','','','',179547
 
         var versions = MoraClassifier.QueryVersionsAsync(account, default).GetAwaiter().GetResult();
         Console.WriteLine("  versions=" + string.Join(",", versions));
-        Check(versions.Contains(40) && versions.Contains(41), "v40 保留 + v4.1(41) 共存");
+        int currentVersion = MoraClassifier.RuleVersion;
+        Check(versions.Contains(40) && versions.Contains(currentVersion), "历史版本与当前版本共存");
 
         var v40 = MoraClassifier.QueryRowsAsync(account, 30, 40, default).GetAwaiter().GetResult();
-        var v41 = MoraClassifier.QueryRowsAsync(account, 30, 41, default).GetAwaiter().GetResult();
-        Console.WriteLine($"  v40 rows={v40.Count}（旧）  v41 rows={v41.Count}（新）");
+        var current = MoraClassifier.QueryRowsAsync(account, 30, currentVersion, default).GetAwaiter().GetResult();
+        Console.WriteLine($"  v40 rows={v40.Count}（旧）  v{currentVersion} rows={current.Count}（新）");
         var old1 = v40.FirstOrDefault(r => r.EntryRowid == 1);
-        var new1 = v41.FirstOrDefault(r => r.EntryRowid == 1);
+        var new1 = current.FirstOrDefault(r => r.EntryRowid == 1);
         if (old1 != null && new1 != null)
-            Console.WriteLine($"  对比 entry#1: v40={old1.Category} → v4.1={new1.Category}（single=147）");
+            Console.WriteLine($"  对比 entry#1: v40={old1.Category} → v{currentVersion}={new1.Category}（single=147）");
         Check(old1 != null && new1 != null, "两版本均可独立查询（可对比）");
         return _fail;
     }

@@ -48,6 +48,7 @@ namespace SoulLink.Services
 
         /// <summary>主 IDispatch 的 IID</summary>
         private static readonly Guid IID_IDispatch = new Guid("00020400-0000-0000-C000-000000000046");
+        private static readonly Guid RdpClientNonScriptable = new("2F079C4C-87B2-4AFD-97AB-20CDB43038AE");
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate int DelQueryInterface(IntPtr p, ref Guid riid, out IntPtr ppv);
@@ -59,6 +60,31 @@ namespace SoulLink.Services
 
         private static IntPtr VtblFn(IntPtr pUnk, int slot)
             => Marshal.ReadIntPtr(Marshal.ReadIntPtr(pUnk), slot * IntPtr.Size);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate int SendRdpKeys(IntPtr self, int count,
+            [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] short[] keyUp,
+            [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] int[] keyData);
+
+        internal static bool TrySendRdpEscape(object ocx)
+        {
+            IntPtr unknown = Marshal.GetIUnknownForObject(ocx);
+            try
+            {
+                Guid iid = RdpClientNonScriptable;
+                if (Marshal.QueryInterface(unknown, ref iid, out IntPtr client) != 0) return false;
+                try
+                {
+                    // IMsRdpClientNonScriptable::SendKeys. The native type library puts it at slot 14.
+                    var send = Marshal.GetDelegateForFunctionPointer<SendRdpKeys>(VtblFn(client, 14));
+                    const int escapeDown = (1 << 16) | 1; // Esc scan code 0x01, repeat count 1
+                    const int escapeUp = escapeDown | unchecked((int)0xC0000000);
+                    return send(client, 2, [0, -1], [escapeDown, escapeUp]) == 0;
+                }
+                finally { Marshal.Release(client); }
+            }
+            finally { Marshal.Release(unknown); }
+        }
 
         /// <summary>在指定接口上按名字查 DISPID。返回 HRESULT。</summary>
         public static int TryGetDispId(IntPtr iface, string name, out int dispId)

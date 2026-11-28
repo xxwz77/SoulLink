@@ -585,6 +585,11 @@ namespace SoulLink.Models
         /// </summary>
         public string LobbyServerUrl { get; set; } = "";
 
+        public string BgiCoordinatorUrl { get; set; } = "";
+        public string BgiPackageDirectory { get; set; } = "";
+        public List<string> BgiPickedPackagePaths { get; set; } = new();
+        public bool BgiDeleteDownloadedPackageAfterSuccess { get; set; }
+
         /// <summary>
         /// 发车前是否关闭原神（按账号独立）。
         /// ★ 停 BGI 是固定行为（一条龙/配置组都要求空闲），不需要配置。

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -89,16 +88,6 @@ namespace SoulLink.Services
         //
         // ★ 必须排除 "JS 通知关闭，消息被拦截: ..." —— 那是同一条消息的重复通知，
         //   不排除会把每个数字算两次。
-        [GeneratedRegex(@"(?<!JS 通知关闭，消息被拦截:\s*)狗粮路线获取狗粮经验\s*[:：]\s*(?<v>\d+)", RegexOptions.Compiled)]
-        private static partial Regex RxDogfoodExp1();
-        [GeneratedRegex(@"(?<!JS 通知关闭，消息被拦截:\s*)狗粮路线获取摩拉\s*[:：]\s*(?<v>\d+)", RegexOptions.Compiled)]
-        private static partial Regex RxDogfoodMora1();
-        [GeneratedRegex(@"(?<!JS 通知关闭，消息被拦截:\s*)[\u4e00-\u9fa5]{1,6}可获得(?<v>\d+)经验", RegexOptions.Compiled)]
-        private static partial Regex RxDogfoodExp2();
-        [GeneratedRegex(@"(?<!JS 通知关闭，消息被拦截:\s*)[\u4e00-\u9fa5]{1,6}获得(?<v>\d+)摩拉(?!鼬)", RegexOptions.Compiled)]
-        private static partial Regex RxDogfoodMora2();
-        [GeneratedRegex(@"交互或拾取\s*[:：]\s*""(?<item>[^""]+)""", RegexOptions.Compiled)]
-        private static partial Regex RxPick();
         [GeneratedRegex(@"完成\s*[:：]\s*校验路径组\s*[:：]\s*(?<name>[^，,]+)", RegexOptions.Compiled)]
         private static partial Regex RxRouteDone();
         [GeneratedRegex(@"配置组\s*""(?<g>[^""]+)""\s*加载完成", RegexOptions.Compiled)]
@@ -109,7 +98,7 @@ namespace SoulLink.Services
         public static DailyStats Calculate(string logText, DateTime businessDay)
         {
             var result = new DailyStats { Day = businessDay.Date };
-            Apply(result, logText, true);
+            Apply(result, new BgiLogBatch(logText), true);
             return result;
         }
         public static DailyStats Get(string userName, DateTime? now = null, int boundaryHour = 0)
@@ -140,57 +129,44 @@ namespace SoulLink.Services
                         st = new DailyStats { Day = day };
                         _map[userName] = st;
                     }
-                    Apply(st, logText, countPicks);
+                    Apply(st, new BgiLogBatch(logText), countPicks);
                 }
             }
             catch { }
         }
-        internal static void Accumulate(DailyStats st, string logText) => Apply(st, logText, true);
-        private static void Apply(DailyStats st, string logText, bool countPicks)
+        internal static void Accumulate(DailyStats st, BgiLogBatch batch) => Apply(st, batch, true);
+
+        private static void Apply(DailyStats st, BgiLogBatch batch, bool countPicks)
         {
-                    // ① 狗粮收益：多角色各报一次 → 累加。
-                    //    已在正则里用负向后顾排除重复通知行。
-                    foreach (Match m in RxDogfoodExp1().Matches(logText))
-                        if (long.TryParse(m.Groups["v"].Value, out long e1)) st.DogfoodExp += e1;
-                    foreach (Match m in RxDogfoodExp2().Matches(logText))
-                        if (long.TryParse(m.Groups["v"].Value, out long e2)) st.DogfoodExp += e2;
+            foreach (Match m in batch.ExpMatches) st.DogfoodExp += BgiLogParser.RewardValue(m);
+            foreach (Match m in batch.MoraMatches) st.DogfoodMora += BgiLogParser.RewardValue(m);
 
-                    foreach (Match m in RxDogfoodMora1().Matches(logText))
-                        if (long.TryParse(m.Groups["v"].Value, out long m1)) st.DogfoodMora += m1;
-                    foreach (Match m in RxDogfoodMora2().Matches(logText))
-                        if (long.TryParse(m.Groups["v"].Value, out long m2)) st.DogfoodMora += m2;
+            foreach (Match m in RxGroupLoad().Matches(batch.Text))
+            {
+                string g = m.Groups["g"].Value.Trim();
+                if (g.Length == 0) continue;
+                st.Groups.Add(g);
+                if (RxDogfoodGroup().IsMatch(g)) st.LastDogfoodRoute = g;
+            }
+            foreach (Match m in RxRouteDone().Matches(batch.Text))
+            {
+                string n = m.Groups["name"].Value.Trim();
+                if (n.Length == 0) continue;
+                if (RxDogfoodGroup().IsMatch(n))
+                {
+                    st.DogfoodRoutes++;
+                    st.LastDogfoodRoute = n;
+                }
+            }
 
-                    // ② 配置组（去重）与狗粮路线数
-                    foreach (Match m in RxGroupLoad().Matches(logText))
-                    {
-                        string g = m.Groups["g"].Value.Trim();
-                        if (g.Length == 0) continue;
-                        st.Groups.Add(g);
-                        if (RxDogfoodGroup().IsMatch(g)) st.LastDogfoodRoute = g;
-                    }
-                    foreach (Match m in RxRouteDone().Matches(logText))
-                    {
-                        string n = m.Groups["name"].Value.Trim();
-                        if (n.Length == 0) continue;
-                        // 只统计狗粮类路径组，避免把每日采集的几十条也算进来
-                        if (RxDogfoodGroup().IsMatch(n))
-                        {
-                            st.DogfoodRoutes++;
-                            st.LastDogfoodRoute = n;
-                        }
-                    }
-
-                    // ③ 拾取（按次数累加；调用方应只喂新增日志，避免重复计数）
-                    if (countPicks)
-                    {
-                        foreach (Match m in RxPick().Matches(logText))
-                        {
-                            string item = m.Groups["item"].Value.Trim();
-                            if (item.Length == 0) continue;
-                            st.Picks.TryGetValue(item, out int old);
-                            st.Picks[item] = old + 1;
-                        }
-                    }
+            if (!countPicks) return;
+            foreach (Match m in batch.PickMatches)
+            {
+                string item = m.Groups["item"].Value.Trim();
+                if (item.Length == 0) continue;
+                st.Picks.TryGetValue(item, out int old);
+                st.Picks[item] = old + 1;
+            }
         }
 
         /// <summary>跨天清理：把非今天的记录丢掉。</summary>

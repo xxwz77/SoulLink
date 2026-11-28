@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace SoulLink.Services
@@ -62,22 +61,10 @@ namespace SoulLink.Services
     ///
     /// ★ 幂等：同一段文本重复喂入不会产生错误状态（按最后一条事件为准）。
     /// </summary>
-    public sealed partial class ScriptGroupTracker
+    public sealed class ScriptGroupTracker
     {
         private readonly Dictionary<string, ScriptGroupRun> _map
             = new Dictionary<string, ScriptGroupRun>(StringComparer.OrdinalIgnoreCase);
-
-        [GeneratedRegex(@"配置组\s*""(?<g>[^""]+)""\s*加载完成[，,]\s*共\s*(?<n>\d+)\s*个脚本[，,]\s*开始执行", RegexOptions.Compiled)]
-        private static partial Regex RxStart();
-
-        [GeneratedRegex(@"配置组\s*""(?<g>[^""]+)""\s*执行结束", RegexOptions.Compiled)]
-        private static partial Regex RxFinish();
-
-        [GeneratedRegex(@"配置组\s*""(?<g>[^""]+)""\s*未成功完成[，,]?\s*结果\s*[:：]\s*(?<r>\S*)", RegexOptions.Compiled)]
-        private static partial Regex RxFail();
-
-        [GeneratedRegex(@"取消执行配置组\s*[:：]\s*""(?<g>[^""]+)""", RegexOptions.Compiled)]
-        private static partial Regex RxCancel();
 
         private readonly Lock _sync = new();
 
@@ -143,114 +130,57 @@ namespace SoulLink.Services
         /// </summary>
         public void Update(string logText)
         {
-            if (string.IsNullOrEmpty(logText)) return;
+            if (!string.IsNullOrEmpty(logText)) Update(new BgiLogBatch(logText));
+        }
+
+        internal void Update(BgiLogBatch batch)
+        {
             try
             {
                 lock (_sync)
                 {
-                    // 各事件按在文本中出现的位置排序处理，保证先后关系正确
-                    var events = new List<(int pos, Action apply)>();
-
-                    foreach (Match m in RxStart().Matches(logText))
+                    foreach (var e in batch.GroupEvents)
                     {
-                        string g = m.Groups["g"].Value.Trim();
-                        int n = int.TryParse(m.Groups["n"].Value, out int c) ? c : 0;
-                        if (!ValidGroupName(g)) continue;
-                        events.Add((m.Index, () =>
+                        if (!ValidGroupName(e.Name)) continue;
+                        var at = batch.TimestampAt(e.Position);
+                        var run = Ensure(e.Name);
+                        run.TimeIsExact = at != DateTime.MinValue;
+                        switch (e.Kind)
                         {
-                            var r = Ensure(g);
-                            foreach (var other in _map.Values)
-                                if (other.State == ScriptGroupState.Running && other.Name != g)
-                                { other.State = ScriptGroupState.Interrupted; other.Detail = "后续配置组已开始，未记录正常结束"; }
-                            r.State = ScriptGroupState.Running;
-                            r.StartedAt = EventTime(logText, m.Index); r.TimeIsExact = HasEventTime(logText, m.Index);
-                            r.EndedAt = DateTime.MinValue;
-                            r.ScriptCount = n;
-                            r.Detail = "";
-                        }));
+                            case BgiGroupEventKind.Start:
+                                foreach (var other in _map.Values)
+                                    if (other.State == ScriptGroupState.Running && other.Name != e.Name)
+                                    {
+                                        other.State = ScriptGroupState.Interrupted;
+                                        other.Detail = "后续配置组已开始，未记录正常结束";
+                                    }
+                                run.State = ScriptGroupState.Running;
+                                run.StartedAt = at;
+                                run.EndedAt = DateTime.MinValue;
+                                run.ScriptCount = e.ScriptCount;
+                                run.Detail = "";
+                                break;
+                            case BgiGroupEventKind.Finish:
+                                run.State = ScriptGroupState.Finished;
+                                run.EndedAt = at;
+                                break;
+                            case BgiGroupEventKind.Fail:
+                                run.State = ScriptGroupState.Failed;
+                                run.EndedAt = at;
+                                run.Detail = string.IsNullOrEmpty(e.Result) ? "Failed" : e.Result;
+                                break;
+                            case BgiGroupEventKind.Cancel:
+                                run.State = ScriptGroupState.Cancelled;
+                                run.EndedAt = at;
+                                break;
+                        }
                     }
-
-                    foreach (Match m in RxFinish().Matches(logText))
-                    {
-                        string g = m.Groups["g"].Value.Trim();
-                        if (!ValidGroupName(g)) continue;
-                        events.Add((m.Index, () =>
-                        {
-                            var r = Ensure(g);
-                            r.State = ScriptGroupState.Finished;
-                            r.EndedAt = EventTime(logText, m.Index); r.TimeIsExact = HasEventTime(logText, m.Index);
-                        }));
-                    }
-
-                    foreach (Match m in RxFail().Matches(logText))
-                    {
-                        string g = m.Groups["g"].Value.Trim();
-                        string res = m.Groups["r"].Value.Trim();
-                        if (!ValidGroupName(g)) continue;
-                        events.Add((m.Index, () =>
-                        {
-                            var r = Ensure(g);
-                            r.State = ScriptGroupState.Failed;
-                            r.EndedAt = EventTime(logText, m.Index); r.TimeIsExact = HasEventTime(logText, m.Index);
-                            r.Detail = string.IsNullOrEmpty(res) ? "Failed" : res;
-                        }));
-                    }
-
-                    foreach (Match m in RxCancel().Matches(logText))
-                    {
-                        string g = m.Groups["g"].Value.Trim();
-                        if (!ValidGroupName(g)) continue;
-                        events.Add((m.Index, () =>
-                        {
-                            var r = Ensure(g);
-                            r.State = ScriptGroupState.Cancelled;
-                            r.EndedAt = EventTime(logText, m.Index); r.TimeIsExact = HasEventTime(logText, m.Index);
-                        }));
-                    }
-
-                    events.Sort((a, b) => a.pos.CompareTo(b.pos));
-                    foreach (var e in events) e.apply();
                 }
             }
             catch { }
         }
 
-        internal static bool ValidGroupName(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name)) return false;
-            return !name.Equals("The operation was canceled.",StringComparison.OrdinalIgnoreCase)
-                && !name.Equals("OperationCanceledException",StringComparison.OrdinalIgnoreCase)
-                && !name.Contains("Exception",StringComparison.OrdinalIgnoreCase);
-        }
-
-        internal static DateTime EventTime(string text, int position)
-        {
-            // ★★ 2026-11-26 修复「过几秒界面冒出重复组卡片」：
-            //   配置组锚点（如「配置组 X 加载完成…开始执行」）是**续行**——时间戳在上一行，
-            //   本行开头没有 [HH:mm:ss]。旧实现只查当前行 90 字符 → 解析不到时间戳 →
-            //   StartedAt=DateTime.MinValue，与 SQLite（RunRecordCollector 用上一行时间戳）
-            //   的 start 对不齐 → 界面 (组名,开始时刻) 去重失效，同一组渲染成两条。
-            //   修法：从锚点行向前回溯，取「最近的上一行 [时间戳]」作为该锚点时刻。
-            int lineStart = text.LastIndexOf('\n', Math.Max(0, position - 1));
-            lineStart = lineStart < 0 ? 0 : lineStart + 1;
-            int scan = lineStart;
-            while (scan >= 0)
-            {
-                int prevNl = scan == 0 ? -1 : text.LastIndexOf('\n', scan - 1);
-                int curStart = prevNl < 0 ? 0 : prevNl + 1;
-                string curLine = text.Substring(curStart, scan - curStart);
-                var m = Regex.Match(curLine, @"\[(?<d>\d{4}-\d{2}-\d{2}[ T])?(?<t>\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?)\]");
-                if (m.Success)
-                {
-                    string stamp = (m.Groups["d"].Success ? m.Groups["d"].Value.Trim() + " " : DateTime.Now.ToString("yyyy-MM-dd") + " ") + m.Groups["t"].Value;
-                    return DateTime.TryParse(stamp, out var at) ? at : DateTime.MinValue;
-                }
-                if (prevNl < 0) break;
-                scan = prevNl;
-            }
-            return DateTime.MinValue;
-        }
-        private static bool HasEventTime(string text, int position) => EventTime(text, position) != DateTime.MinValue;
+        internal static bool ValidGroupName(string name) => BgiLogParser.ValidGroupName(name);
 
         private ScriptGroupRun Ensure(string name)
         {

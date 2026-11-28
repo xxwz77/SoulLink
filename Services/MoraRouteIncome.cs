@@ -17,10 +17,14 @@ internal static class MoraRouteIncome
     private sealed record Entry(long RowId, long Time, long Amount);
     private sealed record Match(Entry Entry, RunRecordStore.LedgerWindow? Route);
 
-    internal static async Task UpdateAsync(string account, string uid, CancellationToken ct)
+    internal static async Task UpdateAsync(string account, string uid, CancellationToken ct,
+        DateTimeOffset? checkedAt = null)
     {
-        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (string.IsNullOrWhiteSpace(uid) || !await HasUnambiguousRoleAsync(account, uid, ct).ConfigureAwait(false))
+            return;
+        long now = (checkedAt ?? DateTimeOffset.UtcNow).ToUnixTimeMilliseconds();
         long cutoff = now - 48 * 60 * MinuteMs;
+        long firstMinute = cutoff - cutoff % MinuteMs;
         List<RunRecordStore.LedgerWindow>? windows = null;
         bool retryUnmatched = false;
 
@@ -36,7 +40,8 @@ internal static class MoraRouteIncome
             if (entries == null || entries.Count == 0) return;
 
             // Route windows come from the BGI database. Do not retain the ledger database gate while reading them.
-            windows ??= await RunRecordStore.QueryLedgerWindowsAsync(account, cutoff, now + MinuteMs, includeCollectCd: true, ct)
+            windows ??= await RunRecordStore.QueryLedgerWindowsAsync(account, firstMinute, now + MinuteMs,
+                    forIncrementalLinker: true, ct)
                 .ConfigureAwait(false);
             if (windows == null) return;
 
@@ -44,6 +49,19 @@ internal static class MoraRouteIncome
             if (!await WriteBatchAsync(account, uid, now, matches, ct).ConfigureAwait(false)) return;
         }
     }
+
+    // BGI has Windows account information only. Check both known roles and previously imported facts.
+    private static Task<bool> HasUnambiguousRoleAsync(string account, string uid, CancellationToken ct)
+        => MiyousheStore.Shared.RunAsync(db =>
+        {
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = @"
+SELECT NOT EXISTS(SELECT 1 FROM my_role WHERE account=$account COLLATE NOCASE AND game_uid<>$uid)
+   AND NOT EXISTS(SELECT 1 FROM my_ledger_entry WHERE account=$account COLLATE NOCASE AND game_uid<>$uid);";
+            cmd.Parameters.AddWithValue("$account", account);
+            cmd.Parameters.AddWithValue("$uid", uid);
+            return Convert.ToInt64(cmd.ExecuteScalar()) == 1;
+        }, false, ct);
 
     private static Task<List<Entry>?> ReadBatchAsync(string account, string uid, long cutoff, long now,
         bool retryUnmatched, CancellationToken ct)
@@ -81,14 +99,15 @@ ORDER BY e.ts_ms DESC,e.rowid DESC LIMIT $limit;";
         int next = 0;
         foreach (var entry in entries.OrderBy(e => e.Time))
         {
+            // A pull can receive this entry an hour later. The match uses its original event minute.
             long minute = entry.Time - entry.Time % MinuteMs;
             long end = minute + MinuteMs;
             while (next < windows.Count && windows[next].Start < end) active.Add(windows[next++]);
             active.RemoveAll(window => window.End <= minute);
             var (run, route) = DailyMoraLedger.ResolveWindows(active, eligible: true);
-            // The ledger only resolves to a minute. Keep boundary minutes unassigned.
+            // A match needs a completed route covering the entire minute.
             if (run == null || run.Start > minute || run.End < end
-                || route == null || route.Start > minute || route.End < end)
+                || route == null || route.IsOpen || route.Start > minute || route.End < end)
                 route = null;
             matches.Add(new(entry, route));
         }

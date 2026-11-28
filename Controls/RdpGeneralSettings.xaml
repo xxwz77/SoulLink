@@ -35,7 +35,7 @@
        <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="切换自由视角的热键" Style="{StaticResource Label}" VerticalAlignment="Center"
-                 ToolTip="支持单键、修饰键组合、鼠标中键/侧键；录制后立即生效" />
+                 ToolTip="支持单键、修饰键组合、鼠标中键和侧键。单独的 Esc 用于短按送到远端、长按退出。" />
       <ctl:HotkeyRecorder Grid.Column="1" x:Name="GlobalHotkey" Style="{StaticResource GhostButton}" Width="180" Height="36" />
      </Grid>
 
@@ -44,7 +44,7 @@
           在某些时刻先于本机 LL 钩子），用户反映"进去了出不来"。
           现在两个键都可以自己改：
             · 进/出全屏：默认 F11
-            · 退出全屏：默认 Esc，只在全屏时生效（非全屏不吞键），作为最后逃生通道 -->
+            · 退出全屏备用热键默认留空，长按 Esc 始终可退出全屏和自由视角 -->
      <Grid Margin="0,14,0,0">
       <Grid.ColumnDefinitions>
        <ColumnDefinition Width="*" />
@@ -62,15 +62,15 @@
        <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="退出全屏的备用热键（可选）" Style="{StaticResource Label}" VerticalAlignment="Center"
-                 ToolTip="默认留空 = 不启用，全屏时只有上面那个键能进出。想加一条退路就自己录一个——注意别和游戏常用键冲突（Esc 在游戏里是菜单键，不建议）。" />
+                 ToolTip="可录制额外的退出全屏热键，例如 Ctrl+Shift+Q。请选择不与游戏操作冲突的组合。" />
       <ctl:HotkeyRecorder Grid.Column="1" x:Name="ExitFullScreenHotkeyRecorder" Style="{StaticResource GhostButton}" Width="150" Height="36" />
       <Button Grid.Column="2" x:Name="ExitFullScreenHotkeyClear" Content="清除"
               Style="{StaticResource GhostButton}" Padding="10,6" Margin="6,0,0,0" VerticalAlignment="Center"
-              ToolTip="清空 = 不钩任何键"
+              ToolTip="清除自定义备用热键，仍可长按 Esc 退出。"
               Click="ExitFullScreenHotkeyClear_Click" />
      </Grid>
 
-     <TextBlock Text="★ 默认不占用 Esc —— 游戏里 Esc 是菜单/取消键，被拦截会导致游戏没法用。若你想给自己留一条额外的退出退路，再自己录一个（例如 Ctrl+Shift+Q）。两个热键都只在全屏时生效，非全屏一律原样送给画面，绝不拦截。"
+     <TextBlock Text="RDP 全屏或自由视角中，短按 Esc 会发送一次到远端，长按约 0.65 秒会退出当前开启的模式。两种模式同时开启时，一次长按即可一起退出。自定义热键请避开单独的 Esc 和游戏常用键。"
                 Style="{StaticResource Caption}" Margin="2,8,0,0" TextWrapping="Wrap" />
 
      <Border Style="{StaticResource Divider}" Margin="0,18,0,0" />

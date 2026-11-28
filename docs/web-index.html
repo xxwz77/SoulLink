@@ -177,30 +177,22 @@
   .ibtn:active{transform:scale(.97)}
   .ibtn.on{background:var(--accent);color:var(--bg0);border-color:var(--accent)}
 
-  /* ══════════ 折叠卡片总览（2026-11-23 网页改版）══════════
-     每账号一张卡片，默认收起，点头部展开功能按钮。 */
+  /* 账号状态常驻，操作按钮按需展开。 */
   .ucard{background:linear-gradient(150deg,var(--card),var(--card2));
          border:1px solid var(--border);border-radius:14px;margin-bottom:10px;
          box-shadow:var(--shadow-sm);overflow:hidden}
-  .ucard-head{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;
-              user-select:none;transition:background .15s}
-  .ucard-head:hover{background:var(--card-hover)}
-  .ucard-head .chev{margin-left:auto;font-size:10px;color:var(--txt3);
-                    transition:transform .18s;display:inline-block;flex:0 0 auto}
-  .ucard.open .ucard-head .chev{transform:rotate(90deg)}
-  /* ★ 2026-11-24（T30）：展开/折叠用可过渡属性，不再 display 硬切换。
-     display:none→block 无法过渡（属性本身不可动画），悬停展开会「啪」一下很突兀。
-     改用 grid-template-rows 0fr→1fr（现代做法）：
-       · 不需要预先知道内容高度（max-height 方案要写死一个「够大」的值，容易夹断或留白）；
-       · 内层 .ucard-body-inner 设 min-height:0，让 grid 行能真正收缩到 0。
-     时长 180ms + ease：足够看清展开方向，又不会让悬停响应变「拖」。 */
-  .ucard-body{display:grid;grid-template-rows:0fr;opacity:0;
-              transition:grid-template-rows .18s ease,opacity .18s ease,padding .18s ease;
-              padding:0 14px 0;border-top:1px solid transparent;overflow:hidden}
-  .ucard-body-inner{min-height:0;overflow:hidden}
-  .ucard.open .ucard-body{grid-template-rows:1fr;opacity:1;padding:0 14px 13px;
-                          border-top-color:var(--border)}
-  .ucard-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px}
+  .ucard-head{display:flex;align-items:center;gap:8px;padding:8px 12px}
+  .ucard-identity{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+  .ucard-identity .un{overflow-wrap:anywhere}
+  .ucard-identity .udot{margin-top:0}
+  .ucard-toggle{display:flex;align-items:center;gap:6px;flex:none;min-height:36px;padding:0 9px;
+                border:1px solid var(--border);border-radius:8px;background:transparent;
+                color:var(--txt2);font:inherit;font-size:12px;cursor:pointer}
+  .ucard-toggle:hover,.ucard-toggle[aria-expanded="true"]{background:var(--card-hover);border-color:var(--border-hi)}
+  .ucard-toggle .chev{font-size:10px;color:var(--txt3)}
+  .ucard-toggle[aria-expanded="true"] .chev{transform:rotate(90deg)}
+  .ucard-actions{display:flex;gap:6px;flex-wrap:wrap;padding:8px 12px 10px;border-top:1px solid var(--border)}
+  .ucard-actions[hidden]{display:none}
   .uact-btn{padding:9px 14px;border-radius:9px;border:1px solid var(--accent-border);
             background:var(--accent-bg);color:var(--accent);font-size:12px;
             font-weight:550;cursor:pointer;transition:.15s}
@@ -256,10 +248,17 @@
   .mys-sign-settings input[type=time]{color:var(--txt);background:var(--card2);border:1px solid var(--border);
     border-radius:6px;padding:4px 6px;color-scheme:light dark}
 
-  .detail{margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
-  .dline{display:flex;gap:10px;font-size:11.5px;line-height:1.85}
-  .dk{color:var(--txt4);flex:0 0 56px;font-size:11px}
-  .dv{color:var(--txt2);flex:1;word-break:break-all}
+  .ucard-summary:not(:empty){padding:8px 12px 10px;border-top:1px solid var(--border)}
+  .ucard-detail{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px;margin:0}
+  .ucard-field{display:flex;align-items:baseline;gap:6px;min-width:0;font-size:12px;line-height:1.5}
+  .ucard-field.wide{grid-column:1/-1}
+  .ucard-field dt{color:var(--txt4);flex:none;min-width:4em}
+  .ucard-field dd{color:var(--txt2);margin:0;min-width:0;overflow-wrap:anywhere}
+  @media(max-width:360px){
+    .ucard-detail{column-gap:8px}
+    .ucard-field{gap:4px}
+    .ucard-field dt{min-width:0}
+  }
 
   #viewer{display:none;margin-top:14px}
 
@@ -985,10 +984,26 @@ function computeLiveMs() {
 }
 let kbMode = false;   // 右键已直接支持，不再需要开关
 
+let overviewVisible = false;
+let overviewTimer = 0;
+let overviewRequest = null;
+
+function stopOverviewRefresh() {
+  clearTimeout(overviewTimer);
+  overviewTimer = 0;
+  if (overviewRequest) overviewRequest.abort();
+  overviewRequest = null;
+}
+
 async function loadUsers() {
+  if (!overviewVisible || document.hidden || overviewRequest) return;
+  const request = new AbortController();
+  overviewRequest = request;
   try {
-    const r = await fetch('/api/sessions');
+    const r = await fetch('/api/sessions', { cache: 'no-store', signal: request.signal });
+    if (!r.ok) throw new Error('获取会话状态失败');
     const d = await r.json();
+    if (overviewRequest !== request || document.hidden) return;
     users = (d.sessions || []).filter(s => s.bound);
 
     // ★ 3.3.5：直连代理的口令（后端随会话列表下发，本接口本身已鉴权）
@@ -1011,82 +1026,88 @@ async function loadUsers() {
     $('mBgi').textContent = users.filter(u => u.bgiRunning).length;
     renderUsers();
   } catch (e) {
-    $('empty').style.display = 'block';
-    $('empty').textContent = '加载失败，请刷新重试';
+    if (overviewRequest !== request) return;
+    users = users.map(u => ({ ...u, action: '', activeCharacter: '', recentSkill: '', recentFood: '' }));
+    renderUsers();
+    if (!users.length) {
+      $('empty').style.display = 'block';
+      $('empty').textContent = '加载失败，正在重试…';
+    }
+  } finally {
+    if (overviewRequest === request) {
+      overviewRequest = null;
+      if (overviewVisible && !document.hidden) overviewTimer = setTimeout(loadUsers, 3000);
+    }
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  ★★ 2026-11-24（T30）：卡片悬停自动展开/折叠（方案 C）+ 点击固定 ★★
-//
-//  【方案 C 是什么】鼠标在**整个卡片**（含展开区）内就不折叠，移出整个卡片才折叠。
-//    → 所以 mouseenter/mouseleave 必须绑在 .ucard 上，**不能**绑 .ucard-head：
-//      绑 head 的话，鼠标一进入展开区就等于「离开 head」→ 立刻折叠 → 根本点不到按钮。
-//
-//  【两个延迟，各自防不同的误操作】
-//    · HOVER_IN_DELAY_MS = 280ms（移入延迟）
-//        防「快速划过一排卡片引发连环展开」——这是最主要的误操作来源。
-//        取 280：<200ms 时鼠标快速掠过 3~4 张卡片会连续炸开；>400ms 时
-//        「想展开一张卡片」会明显觉得迟滞。280 落在「掠过不触发」与「停留即响应」之间。
-//    · HOVER_OUT_DELAY_MS = 500ms（移出延迟）
-//        防「从卡片移到旁边的按钮/滚动条时立刻收起」——移出过程要经过卡片边缘，
-//        期间指针会短暂离开 .ucard，立即折叠会导致展开区闪一下又回去。
-//        取 500 比移入更长：**误折叠的代价（要重新悬停+再等 280ms）远大于误展开的代价**，
-//        所以不对称地偏向「宁可多开一会儿」。
-//
-//  【多卡片互斥】全局只记一个 _hoverCard；移入新卡片时先取消旧卡片的全部定时器
-//    并清掉它的 open（除非它是被点击固定的）。否则会多张同时展开、页面跳动。
-//
-//  【点击语义】点击 = 用户**显式固定**，之后移出不再自动折叠，直到再次点击或移入别卡。
-//    理由：用户主动点击就是要「钉住」这张卡片去看/操作里面的按钮；
-//    如果移出还折回，他就得一直把鼠标悬在卡片上才能点按钮，这明显违背点击意图。
-//        → 但「移入其他卡片」时会解除固定（否则固定态会一直占着，体验割裂）。
-// ═══════════════════════════════════════════════════════════════════════════
-const __canHover = window.matchMedia
-  ? window.matchMedia('(hover: hover) and (pointer: fine)').matches
-  : false;
-const HOVER_IN_DELAY_MS = 280;
-const HOVER_OUT_DELAY_MS = 500;
+function updateUserCard(card, u) {
+  const tags = [];
+  if (u.bgiRunning) tags.push('<span class="tag bgi">BGI ' +
+    (u.bgiLogIdleMinutes >= 0 ? '空闲 ' + u.bgiLogIdleMinutes + ' 分' : '运行中') + '</span>');
+  if (u.recording) tags.push('<span class="tag rec">录制中</span>');
+  if (!u.online) tags.push('<span class="tag off">离线</span>');
 
-let _hoverCard = null;      // 当前因悬停而展开的卡片（全局唯一）
-let _lastPointerDownAt = 0; // 最近一次 pointerdown 时刻（触屏模拟悬停兜底）
+  let sub = '';
+  if (!u.online) sub = '会话未连接';
+  else sub = esc(u.screen) + ' · 通道就绪 · ' + (u.bgiRunning ? 'BGI#' + u.bgiPid : 'BGI 未运行');
 
-// 触屏兜底：有些设备同时报告 hover 能力但实际是触屏，
-//   此时 mouseenter 常由 touch 合成的 pointerdown 触发 —— 刚按下 <200ms 就来的 enter
-//   几乎一定是触摸模拟，不是真悬停，跳过自动展开逻辑。
-document.addEventListener('pointerdown', () => { _lastPointerDownAt = Date.now(); },
-  { capture: true, passive: true });
+  // 运行详情来自该账号的日志解析状态。
+  let detail = '';
+  if (u.bgiRunning) {
+    const parts = [];
+    if (u.configGroup) parts.push(['配置组', u.configGroup]);
+    if (u.taskName) parts.push(['任务', u.taskName]);
+    if (u.routeFile) parts.push(['路线', u.routeFile, true]);
+    if (u.round || u.role) parts.push(['轮次',
+      [u.round, u.role].filter(Boolean).join(' · ')]);
+    if (u.eta) parts.push(['预计', u.eta]);
+    const addActivity = (label, value, at, outcome, wide = false) => {
+      if (value) parts.push([label, [value, outcome, at].filter(Boolean).join(' · '), wide]);
+    };
+    addActivity('当前动作', u.action, u.actionAt, '', true);
+    if (u.activeCharacter) parts.push(['出战角色', u.activeCharacter]);
+    addActivity('最近技能', u.recentSkill, u.recentSkillAt, u.recentSkillOutcome);
+    addActivity('最近料理', u.recentFood, u.recentFoodAt, u.recentFoodOutcome);
+    if (u.pickTotal > 0) parts.push(['拾取', u.pickTotal + ' 个']);
+    if (u.errorCount > 0) parts.push(['报错', u.errorCount + ' 次']);
 
-function __cancelCardTimers(card) {
-  if (!card) return;
-  if (card.__hoverInT) { clearTimeout(card.__hoverInT); card.__hoverInT = null; }
-  if (card.__hoverOutT) { clearTimeout(card.__hoverOutT); card.__hoverOutT = null; }
+    if (parts.length === 0) parts.push(['状态', '等待日志中的状态信息…', true]);
+    detail = '<dl class="ucard-detail">'
+      + parts.map(([label, value, wide]) => '<div class="ucard-field' + (wide ? ' wide' : '') + '"><dt>'
+          + esc(label) + '</dt><dd>' + esc(String(value)) + '</dd></div>').join('')
+      + '</dl>';
+  }
+
+  const head = '<span class="udot' + (u.online ? ' on' : '') + '"></span>'
+    + '<div class="uinfo"><div class="un">' + esc(u.label) + tags.join('') + '</div>'
+    + '<div class="us">' + sub + '</div></div>';
+  if (card.__lastHead !== head) {
+    card.querySelector('.ucard-identity').innerHTML = head;
+    card.querySelector('.ucard-toggle').setAttribute('aria-label', u.label + '的操作');
+    card.__lastHead = head;
+  }
+  if (card.__lastDetail !== detail) {
+    card.querySelector('.ucard-summary').innerHTML = detail;
+    card.__lastDetail = detail;
+  }
 }
 
-// 取消旧卡片的悬停展开（多卡片互斥的落地点）
-function __collapseHoverCard() {
-  const old = _hoverCard;
-  _hoverCard = null;
-  if (!old) return;
-  __cancelCardTimers(old);
-  // 悬停展开的卡片：移入别卡时收起（多卡片互斥，避免页面跳动）。
-  //   ★ 被点击固定的卡片**也在此收起**（解除固定）。
-  //     依据：任务③明确要求「鼠标从 A 移到 B 时 A 应该折叠，否则多张同时展开、页面跳动」。
-  //     若固定卡不收，用户固定 A 后再去操作 B，屏幕上会同时开两张 → 正是要避免的现象。
-  //     语义上「固定」= 相对当前这张卡保持展开（移出不折），但「注意力只有一处」，
-  //     移入另一张时让位，符合直觉且不产生页面跳动。
-  old.classList.remove('open');
-  old.__pinned = false;
+function setUserActionsOpen(card, open) {
+  card.classList.toggle('open', open);
+  card.querySelector('.ucard-toggle').setAttribute('aria-expanded', String(open));
+  card.querySelector('.ucard-actions').hidden = !open;
 }
 
 function renderUsers() {
   const box = $('users');
-  // ★ T30：重建前先清掉旧卡片的悬停定时器与全局引用。
-  //   否则旧 setTimeout 仍会在已移除的节点上执行（无害但泄漏），
-  //   更糟的是 _hoverCard 会指向一个已脱离文档的节点，导致「互斥」逻辑对空气作用、
-  //   新渲染出来的卡片反而不能正确收起上一张。
-  if (_hoverCard) { __cancelCardTimers(_hoverCard); _hoverCard = null; }
-  box.querySelectorAll('.ucard').forEach(__cancelCardTimers);
+  if (users.length !== 0 && box.children.length === users.length &&
+      users.every((u, index) => box.children[index].dataset.accountId === u.id)) {
+    users.forEach((u, index) => updateUserCard(box.children[index], u));
+    $('empty').style.display = 'none';
+    return;
+  }
+  const openAccount = box.querySelector('.ucard.open')?.dataset.accountId;
   box.innerHTML = '';
   if (!users.length) {
     $('empty').style.display = 'block';
@@ -1095,133 +1116,31 @@ function renderUsers() {
   }
   $('empty').style.display = 'none';
 
-  // ★ 2026-11-23 网页改版：每账号一张可折叠卡片（默认收起），
-  //   点卡片头部展开该账号的功能按钮（查看画面 / 运行分析 / 摩拉收益）。
-  for (const u of users) {
+  for (const [index, u] of users.entries()) {
     const card = document.createElement('div');
     card.className = 'ucard';
-
-    const tags = [];
-    if (u.bgiRunning) tags.push('<span class="tag bgi">BGI ' +
-      (u.bgiLogIdleMinutes >= 0 ? '空闲 ' + u.bgiLogIdleMinutes + ' 分' : '运行中') + '</span>');
-    if (u.recording) tags.push('<span class="tag rec">录制中</span>');
-    if (!u.online) tags.push('<span class="tag off">离线</span>');
-
-    let sub = '';
-    if (!u.online) sub = '会话未连接';
-    else sub = esc(u.screen) + ' · 通道就绪 · ' + (u.bgiRunning ? 'BGI#' + u.bgiPid : 'BGI 未运行');
-
-    // 运行详情（展开体里显示，与旧版同源同字段）
-    let detail = '';
-    if (u.bgiRunning) {
-      const parts = [];
-      if (u.configGroup) parts.push(['配置组', u.configGroup]);
-      if (u.taskName) parts.push(['任务', u.taskName]);
-      if (u.routeFile) parts.push(['路线', u.routeFile]);
-      if (u.round || u.role) parts.push(['轮次/角色',
-        [u.round, u.role].filter(Boolean).join(' · ')]);
-      if (u.eta) parts.push(['预计', u.eta]);
-      if (u.action) parts.push(['当前动作', u.action]);
-      if (u.pickTotal > 0) parts.push(['拾取', u.pickTotal + ' 个']);
-      if (u.errorCount > 0) parts.push(['报错', u.errorCount + ' 次']);
-
-      detail = parts.length === 0
-        ? '<div class="detail"><div class="dline"><span class="dk">状态</span>'
-          + '<span class="dv">等待日志中的状态信息…</span></div></div>'
-        : '<div class="detail">'
-          + parts.map(p => '<div class="dline"><span class="dk">' + esc(p[0])
-              + '</span><span class="dv">' + esc(String(p[1])) + '</span></div>').join('')
-          + '</div>';
-    }
-
+    card.dataset.accountId = u.id;
+    const actionsId = 'user-actions-' + index;
     card.innerHTML =
-      '<div class="ucard-head">'
-      + '<span class="udot' + (u.online ? ' on' : '') + '"></span>'
-      + '<div class="uinfo">'
-      + '<div class="un">' + esc(u.label) + tags.join('') + '</div>'
-      + '<div class="us">' + sub + '</div>'
-      + '</div>'
-      + '<span class="chev">▸</span>'
-      + '</div>'
-      + '<div class="ucard-body">'
-      // ★ T30：内层容器 —— grid 0fr→1fr 过渡要求子项能收缩（min-height:0），
-      //   直接放内容会在折叠态撑出高度，导致「折叠了但还占位」。
-      + '<div class="ucard-body-inner">'
-      + detail
-      + '<div class="ucard-actions">'
+      '<div class="ucard-head"><div class="ucard-identity"></div>'
+      + '<button type="button" class="ucard-toggle" aria-controls="' + actionsId
+      + '" aria-expanded="false">操作 <span class="chev" aria-hidden="true">▸</span></button></div>'
+      + '<div class="ucard-summary"></div>'
+      + '<div class="ucard-actions" id="' + actionsId + '" hidden>'
       + '<button class="uact-btn" data-act="remote">查看画面</button>'
       + '<button class="uact-btn" data-act="ledger">运行分析</button>'
       + '<a class="uact-btn home-task-link" href="/taskedit/?account=' + esc(encodeURIComponent(u.user)) + '">BGI 任务编辑器</a>'
       + '<button class="uact-btn" data-act="earnings">摩拉收益</button>'
       + '<button class="uact-btn" data-act="miyoushe">米游社</button>'
-      + '</div>'
-      + '</div>'
       + '</div>';
 
-    // ── 点击：显式切换 + 固定（T30）──────────────────────────────────────
-    //   ★ 点击仍绑在 .ucard-head 上：只有点头部才切换，点展开区里的内容不会误折叠。
-    //   ★ 点击时必须取消进行中的悬停定时器，否则「点开 → 移出」会立刻被 500ms 后的
-    //     自动折叠覆盖，用户会觉得点了没用。
-    card.querySelector('.ucard-head').onclick = () => {
-      __cancelCardTimers(card);
-      const willOpen = !card.classList.contains('open');
-      card.classList.toggle('open', willOpen);
-      card.__pinned = willOpen;   // 点开 = 固定；点收 = 解除
-      if (willOpen) {
-        // 点开这张 → 别的**未固定**的悬停卡收起（注意力只有一处）。
-        //   __collapseHoverCard 内部已保护 __pinned 的卡，这里不必再判。
-        if (_hoverCard && _hoverCard !== card) __collapseHoverCard();
-        // ★ 本卡是「点击固定」，不是「悬停展开」→ 不占用 _hoverCard。
-        //   否则悬停逻辑会把它当自己的卡，移出时按 _hoverCard 清理，导致固定态被误清。
-        if (_hoverCard === card) _hoverCard = null;
-      } else {
-        // 点收：若它恰好是悬停卡，一并让出
-        if (_hoverCard === card) _hoverCard = null;
-      }
+    updateUserCard(card, u);
+    if (u.id === openAccount) setUserActionsOpen(card, true);
+    card.querySelector('.ucard-toggle').onclick = () => {
+      const opened = box.querySelector('.ucard.open');
+      if (opened) setUserActionsOpen(opened, false);
+      if (opened !== card) setUserActionsOpen(card, true);
     };
-
-    // ── 悬停：自动展开/折叠（仅鼠标设备，T30 方案 C）─────────────────────
-    //   绑在**整个 .ucard**上：鼠标从头部移进展开区不会触发 mouseleave，
-    //   所以能正常点到里面的按钮（这正是方案 C 的关键）。
-    if (__canHover) {
-      card.addEventListener('mouseenter', () => {
-        // 触屏兜底：刚 pointerdown 完就来的 enter 是触摸模拟，不是真悬停
-        if (Date.now() - _lastPointerDownAt < 200) return;
-        __cancelCardTimers(card);
-        // ★ 已展开的卡片：不再排队展开，但**也不能抢 _hoverCard**。
-        //   如果它是被点击固定的，把它记成 _hoverCard 会导致「鼠标只是划过，
-        //   移出后就被折叠」—— 固定态被悬停逻辑劫持，用户会觉得点了没保住。
-        if (card.classList.contains('open')) return;
-        card.__hoverInT = setTimeout(() => {
-          card.__hoverInT = null;
-          // 互斥：先收起上一张悬停卡
-          if (_hoverCard && _hoverCard !== card) __collapseHoverCard();
-          // ★ 再收起「其它任何已展开的卡片」—— 特别是被点击固定的那张。
-          //   固定的卡片不占用 _hoverCard（见 onclick），所以上面的 _collapseHoverCard 管不到它；
-          //   不补这一步就会出现「固定 A 后悬停 B，A 和 B 同时展开」→ 页面跳动（任务③明令禁止）。
-          document.querySelectorAll('#users .ucard.open').forEach(function (other) {
-            if (other === card) return;
-            __cancelCardTimers(other);
-            other.classList.remove('open');
-            other.__pinned = false;
-            if (_hoverCard === other) _hoverCard = null;
-          });
-          _hoverCard = card;
-          card.classList.add('open');
-        }, HOVER_IN_DELAY_MS);
-      });
-      card.addEventListener('mouseleave', () => {
-        __cancelCardTimers(card);
-        // 被点击固定的卡片：移出不折叠（用户显式要求钉住）
-        if (card.__pinned) return;
-        card.__hoverOutT = setTimeout(() => {
-          card.__hoverOutT = null;
-          if (card.__pinned) return;      // 延迟期间被点击固定了 → 不折
-          card.classList.remove('open');
-          if (_hoverCard === card) _hoverCard = null;
-        }, HOVER_OUT_DELAY_MS);
-      });
-    }
 
     // 功能按钮：hash 路由同页跳转（不再 window.open 新标签）
     card.querySelectorAll('button[data-act]').forEach(btn => {
@@ -3644,9 +3563,13 @@ async function loadSaved() {
       return;
     }
     for (const it of mine) {
-      let trig = '', fps = 10;
+      let trig = it.trigger ?? '', fps = it.fps ?? 10;
       try {
-        if (it.meta) { const m = JSON.parse(it.meta); trig = m.trigger || ''; fps = m.fps || 10; }
+        if (it.fps == null && it.meta) {
+          const m = JSON.parse(it.meta);
+          trig = m.trigger || '';
+          fps = m.fps || 10;
+        }
       } catch (x) {}
       const short = it.name.replace(/^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}-?/, '');
       const div = document.createElement('div');
@@ -4734,23 +4657,26 @@ function applyEarningsUser(u) {
   buildUserSwitch('earningsSwitch', u.id, applyEarningsUser);
   loadEarnings(u);
 }
+let earningsGeneration = 0;
 async function loadEarnings(u) {
+  const generation = ++earningsGeneration;
   const body = $('earningsBody');
   body.innerHTML = '<div class="pageempty">加载中…</div>';
   try {
     const r = await fetch('/api/bgi/stats?user=' + encodeURIComponent(u.user));
     const d = await r.json();
-    body.innerHTML = renderEarnings(d);
+    if (generation === earningsGeneration) body.innerHTML = renderEarnings(d);
   } catch (e) {
-    body.innerHTML = '<div class="pageempty">加载失败：' + esc(e.message) + '</div>';
+    if (generation === earningsGeneration)
+      body.innerHTML = '<div class="pageempty">加载失败：' + esc(e.message) + '</div>';
   }
 }
 function renderEarnings(d) {
   if (!d) return '<div class="pageempty">暂无收益数据。</div>';
   const exp = d.exp || d.expGained || d.dogfoodExp || 0;
   const mora = d.mora || d.moraGained || d.dogfoodMora || 0;
-  let picks = d.pickTotal || 0;
-  if (d.picks && typeof d.picks === 'object') {
+  let picks = d.pickTotal ?? 0;
+  if (d.pickTotal == null && d.picks && typeof d.picks === 'object') {
     picks = Object.values(d.picks).reduce((a, b) => a + (typeof b === 'number' ? b : 0), 0);
   }
   let html = '<div class="metrics">'
@@ -4979,11 +4905,15 @@ function showOverview() {
   document.body.classList.remove('viewonly', 'page-func');
   document.documentElement.classList.remove('viewonly-root');
   document.title = 'SoulLink';
-  try { loadUsers(); } catch (e) { console.error('加载失败', e); }
+  overviewVisible = true;
+  loadUsers();
 }
 
 // ── 路由分发 ─────────────────────────────────────────────────
 function route() {
+  earningsGeneration++;
+  overviewVisible = false;
+  stopOverviewRefresh();
   stopLive();                              // 任何路由切换先停流
   document.body.classList.remove('viewonly', 'page-func');
   document.documentElement.classList.remove('viewonly-root');
@@ -5001,6 +4931,11 @@ const lb = $('ledgerBack'); if (lb) lb.onclick = () => { location.hash = '#/'; }
 const eb = $('earningsBack'); if (eb) eb.onclick = () => { location.hash = '#/'; };
 const mb = $('miyousheBack'); if (mb) mb.onclick = () => { location.hash = '#/'; };
 window.addEventListener('hashchange', route);
+document.addEventListener('visibilitychange', () => {
+  if (!overviewVisible) return;
+  stopOverviewRefresh();
+  if (!document.hidden) loadUsers();
+});
 function startPageVersionWatch() {
   const POLL_MS = 30000;
   const IDLE_MS = 5000;

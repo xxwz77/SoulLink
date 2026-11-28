@@ -72,9 +72,9 @@ namespace SoulLink.Views
             //   而顶栏热区又要求窗口激活，两条通道同时失效。
             //   现在：
             //     · FullScreenHotkey（默认 F11）——进/出全屏
-            //     · ExitFullScreenHotkey（默认 Esc）——全屏时无条件退出，
-            //       非全屏完全不拦截（不吞键）
-            //   两者都走本机 LL 钩子（RDP 子 HWND 持焦点时 WPF 收不到键盘事件）。
+            //     · ExitFullScreenHotkey（默认留空）——额外退出全屏
+            //     · 长按 Esc ——退出全屏和自由视角，短按 Esc 送到远端
+            //   本机 LL 钩子在 RDP 子 HWND 持有焦点时仍可处理这些按键。
             InstallFullScreenHooks();
             FullScreenHotkeysChanged -= OnFullScreenHotkeysChanged;
             FullScreenHotkeysChanged += OnFullScreenHotkeysChanged;
@@ -88,11 +88,13 @@ namespace SoulLink.Views
 
             Loaded += (_, __) =>
             {
+                if (_rdpEscapeHook?.IsHooked != true) InstallFullScreenHooks();
                 var window = Window.GetWindow(this);
                 if (window != null)
                 {
                     window.Deactivated += (_, __) =>
                     {
+                        CancelRdpEscape();
                         // 只释放输入，不隐藏保护层。真实 Win32 Owner + 非 Topmost
                         // 已保证它随主窗口沉到其他应用下面；Hide() 会让保护层消失。
                         _busyOverlayWindow?.HideForOwnerState();
@@ -102,12 +104,13 @@ namespace SoulLink.Views
                     };
                     window.Activated += (_, __) => Dispatcher.InvokeAsync(() =>
                     {
+                        InstallRdpEscapeHook();
                         if (_busyVisible) SetBusyVisible(true);
                         UpdateShield();
                     });
                     // 窗口位置/大小变化时，Popup 需要重新贴到视口上
-                    window.LocationChanged += (_, __) => UpdateShield();
-                    window.SizeChanged += (_, __) => UpdateShield();
+                    window.LocationChanged += (_, __) => { if (!_changingFullScreenLayout) UpdateShield(); };
+                    window.SizeChanged += (_, __) => { if (!_changingFullScreenLayout) UpdateShield(); };
                 }
             };
             // ★ 连接遮罩必须跟着「画面视口」走，不是跟着整个页面走。
@@ -117,6 +120,7 @@ namespace SoulLink.Views
             //   改成监听 ViewportHost 自身的 SizeChanged，并补一次首帧对齐。
             ViewportHost.SizeChanged += (_, __) =>
             {
+                if (_changingFullScreenLayout) return;
                 SyncBusyOverlaySize();
                 SyncShieldSize();
                 // 多画面要跟着重排；单画面只是重新铺满，不会触发远端分辨率协商
@@ -133,11 +137,13 @@ namespace SoulLink.Views
                 if (win == null) return;
                 win.StateChanged += (_, __) =>
                 {
+                    if (_changingFullScreenLayout) return;
                     try
                     {
                         bool minimized = win.WindowState == WindowState.Minimized;
                         if (minimized)
                         {
+                            CancelRdpEscape();
                             // 最小化：把原生窗口移到屏幕外（不 SW_HIDE，否则回来是黑屏）。
                             Debug("窗口最小化 → 隐藏 RDP 原生窗口");
                             foreach (var t in _tiles)
@@ -167,6 +173,9 @@ namespace SoulLink.Views
             };
             Unloaded += (_, __) =>
             {
+                CancelRdpEscape();
+                _rdpEscapeHook?.Dispose();
+                _rdpEscapeHook = null;
                 _shieldWatch?.Stop();
                 _shieldWatch = null;
                 try { _deadChannelTimer?.Dispose(); _deadChannelTimer = null; } catch { }
@@ -247,7 +256,7 @@ namespace SoulLink.Views
             }
             if (HotkeyBtn != null)
             {
-                HotkeyBtn.SetSpec(HotkeySpec.Parse(App.Config.Settings.LockHotkey)
+                HotkeyBtn.SetSpec(HotkeySpec.ParseRdpHotkey(App.Config.Settings.LockHotkey, "Ctrl+Alt+Q")
                     ?? HotkeySpec.Parse("Ctrl+Alt+Q"));
                 HotkeyBtn.Recorded += OnHotkeyRecorded;
             }
@@ -553,6 +562,7 @@ namespace SoulLink.Views
         {
             try
             {
+                CancelRdpEscape();
                 _shieldWatch?.Stop();
                 // 全屏菜单定时器同理：只有本页可见时才需要
                 EnsureFullScreenMenuWatch(false);
@@ -2635,7 +2645,12 @@ namespace SoulLink.Views
                     // 接管状态由保护层直接驱动，这里不再用一次性文字覆盖它
                 });
             c.InputModeChanged += (_, m) =>
-                Dispatcher.InvokeAsync(() => { if (ReferenceEquals(row, _viewing)) ApplyModeUi(m); });
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (!ReferenceEquals(row, _viewing)) return;
+                    if (_escapePress is { } pending && pending.Looking != c.IsLooking) CancelRdpEscape();
+                    ApplyModeUi(m);
+                });
             // ★★ 用户点了这个 RDP 画面 → 当拍切焦点。★★
             //
             //   RdpConsole 在 WM_MOUSEACTIVATE 里抛 ShieldClicked，这是"点击落到画面里"
@@ -2731,6 +2746,11 @@ namespace SoulLink.Views
                     try
                     {
                         if (!_initialized) return;
+                        if (ReferenceEquals(row, _viewing))
+                        {
+                            if (connected) InstallRdpEscapeHook();
+                            else CancelRdpEscape();
+                        }
                         Debug("连接状态变化 → 重排：" + ownerRow.Account.Caption
                               + " connected=" + connected);
                         ApplyLayout();
@@ -2839,7 +2859,7 @@ namespace SoulLink.Views
         {
             try
             {
-                HotkeyBtn.SetSpec(HotkeySpec.Parse(App.Config.Settings.LockHotkey));
+                HotkeyBtn.SetSpec(HotkeySpec.ParseRdpHotkey(App.Config.Settings.LockHotkey, "Ctrl+Alt+Q"));
                 _suppressSensSave = true;
                 SensSlider.Value = App.Config.Settings.LookSensitivity;
                 SensText.Text = App.Config.Settings.LookSensitivity.ToString("0.0") + "x";
@@ -2862,7 +2882,7 @@ namespace SoulLink.Views
 
         private void OnHotkeyRecorded(HotkeySpec? spec)
         {
-            if (spec == null) return;
+            if (spec == null || spec.IsBareEscape) return;
             var c = _viewing?.Console;
             if (c == null) { LogBus.Warn("自由视角", "先打开一个用户画面"); return; }
             App.Config.Settings.LockHotkey = spec.ToString();
@@ -3177,14 +3197,12 @@ namespace SoulLink.Views
         private System.Windows.Threading.DispatcherTimer? _fullScreenMenuWatch;
         private DateTime _fullScreenMenuHideAt = DateTime.MinValue;
         private bool _fullScreenMenuVisible;
-        private WindowState _preFullScreenState = WindowState.Normal;
+        private FsNative.WindowPlacement _preFullScreenPlacement;
         private WindowStyle _preFullScreenStyle = WindowStyle.None;
         private ResizeMode _preFullScreenResize = ResizeMode.CanResize;
         private Thickness _preFullScreenMargin;
-        private double _preFsLeft = double.NaN;
-        private double _preFsTop;
-        private double _preFsWidth = double.NaN;
-        private double _preFsHeight;
+        private Thickness _preFullScreenResizeBorder;
+        private Visibility _preFullScreenTopBarVisibility;
         private bool _preFsTopmost;
         private System.Windows.Shell.WindowChrome? _chrome;
 
@@ -3278,14 +3296,12 @@ namespace SoulLink.Views
             try { _fsMouseToggleHook?.Dispose(); _fsMouseToggleHook = null; } catch { }
             try { _fsMouseExitHook?.Dispose(); _fsMouseExitHook = null; } catch { }
 
-            string toggleKey = App.Config.Settings.FullScreenHotkey;
-            string exitKey = App.Config.Settings.ExitFullScreenHotkey;
-            var toggleSpec = HotkeySpec.Parse(toggleKey);
-            var exitSpec = HotkeySpec.Parse(exitKey);
+            var toggleSpec = HotkeySpec.ParseRdpHotkey(App.Config.Settings.FullScreenHotkey, "F11");
+            var exitSpec = HotkeySpec.ParseRdpHotkey(App.Config.Settings.ExitFullScreenHotkey);
 
             // 同一个键不重复装（否则一次按下会触发两次）
             bool exitIsSameAsToggle = exitSpec != null
-                && string.Equals(exitKey, toggleKey, StringComparison.OrdinalIgnoreCase);
+                && string.Equals(exitSpec.ToString(), toggleSpec?.ToString(), StringComparison.OrdinalIgnoreCase);
 
             // ── ① 进入/退出全屏 ─────────────────────────────────────
             if (toggleSpec != null)
@@ -3319,6 +3335,8 @@ namespace SoulLink.Views
                 }
                 catch (Exception ex) { App.AppendErrorLog("ConsolePage.ExitFullScreenHook", ex); }
             }
+
+            InstallRdpEscapeHook();
         }
 
         /// <summary>
@@ -3348,7 +3366,7 @@ namespace SoulLink.Views
                             return swallowThisUp;
                         }
 
-                        if (!canTrigger()) return false;
+                        if (NativeHotkey.HotkeysSuppressed || !canTrigger()) return false;
                         if (!spec.MatchesMouse(ev)) return false;   // 只看 Down
                         if (spec.ToModifiers() != LowLevelKeyboardHook.CurrentModifiers) return false;
 
@@ -3370,7 +3388,7 @@ namespace SoulLink.Views
             var kb = new LowLevelKeyboardHook
             {
                 Spec = spec,
-                CanTrigger = canTrigger,
+                CanTrigger = () => !NativeHotkey.HotkeysSuppressed && canTrigger(),
                 Pressed = pressed,
             };
             if (kb.Install())
@@ -3407,107 +3425,88 @@ namespace SoulLink.Views
         //   进入全屏后用 SetWindowPos 直接下物理像素矩形，一次到位。
         private static class FsNative
         {
-            [System.Runtime.InteropServices.DllImport("user32.dll")]
+            [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+            public struct WindowPlacement
+            {
+                public int Length, Flags, ShowCommand;
+                public int MinX, MinY, MaxX, MaxY;
+                public int NormalLeft, NormalTop, NormalRight, NormalBottom;
+            }
+
+            [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+            public static extern bool GetWindowPlacement(IntPtr hwnd, ref WindowPlacement placement);
+
+            [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+            public static extern bool SetWindowPlacement(IntPtr hwnd, ref WindowPlacement placement);
+
+            [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
             public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
                 int x, int y, int cx, int cy, uint flags);
             public const uint SWP_NOZORDER = 0x0004;
             public const uint SWP_NOACTIVATE = 0x0010;
-            public const uint SWP_FRAMECHANGED = 0x0020;
         }
 
         private void EnterFullScreen()
         {
+            var win = Window.GetWindow(this);
+            var console = _viewing?.Console;
+            if (_isFullScreen || _changingFullScreenLayout || win == null || console == null) return;
+
+            RdpConsole[]? consoles = null;
+            bool entered = false;
             try
             {
-                var win = Window.GetWindow(this);
-                if (win == null || _viewing?.Console == null) return;
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(win).EnsureHandle();
+                _preFullScreenPlacement = new FsNative.WindowPlacement
+                {
+                    Length = System.Runtime.InteropServices.Marshal.SizeOf<FsNative.WindowPlacement>()
+                };
+                if (!FsNative.GetWindowPlacement(hwnd, ref _preFullScreenPlacement))
+                    throw new System.ComponentModel.Win32Exception();
 
-                _preFullScreenState = win.WindowState;
+                var screen = System.Windows.Forms.Screen.FromHandle(hwnd).Bounds;
                 _preFullScreenStyle = win.WindowStyle;
                 _preFullScreenResize = win.ResizeMode;
                 _preFsTopmost = win.Topmost;
+                _preFullScreenTopBarVisibility = TopBar?.Visibility ?? Visibility.Visible;
                 if (win.Content is FrameworkElement root) _preFullScreenMargin = root.Margin;
+                _chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(win);
+                if (_chrome != null) _preFullScreenResizeBorder = _chrome.ResizeBorderThickness;
 
-                // ★ 显式记住几何：退出时若之前是 Normal，必须回到原位置原尺寸。
-                //   旧实现退出时只调 WindowState=Normal，窗口会停留在全屏大小上。
-                _preFsLeft = win.Left;
-                _preFsTop = win.Top;
-                _preFsWidth = win.Width;
-                _preFsHeight = win.Height;
-
+                consoles = BeginFullScreenLayoutChange();
                 _isFullScreen = true;
                 RdpConsole.Debug("进入全屏 · 钩子 hooked=" + (_fsKeyHook?.IsHooked == true)
                     + " canTrigger=" + IsPageUsable());
 
                 // 全屏不保护：直接解锁。
-                try { _viewing.Console.UnlockShield("进入全屏"); } catch { }
+                try { console.UnlockShield("进入全屏"); } catch { }
                 SetShieldReleased(true);
 
                 win.WindowStyle = WindowStyle.None;
                 win.ResizeMode = ResizeMode.NoResize;
                 if (win.Content is FrameworkElement r) r.Margin = new Thickness(0);
-
-                // 主窗口 chrome（标题栏 / 侧栏 / 内边距）全部收纳。
-                var mw = MainWindowRef ?? win as MainWindow;
-                mw?.SetChromeFullscreen(true);
-
-                // ★ 真·全屏：盖住任务栏。
-                //   旧实现铺 VirtualScreen（跨全部显示器，且任务栏依然浮在上面）。
-                //   改为「当前显示器整屏矩形 + Topmost」，物理像素换算成 DIP。
-                var hwnd = new System.Windows.Interop.WindowInteropHelper(win).EnsureHandle();
-                double sx = 1.0, sy = 1.0;
-                var target = System.Windows.PresentationSource.FromVisual(win)?.CompositionTarget;
-                if (target != null)
-                {
-                    var m = target.TransformFromDevice;
-                    sx = m.M11;
-                    sy = m.M22;
-                }
-                var scr = System.Windows.Forms.Screen.FromHandle(hwnd).Bounds;   // 物理像素
-
-                // ★★★ 3.2.7：几何只设一次，避免"顶部空一块再全屏"的两段式跳变 ★★★
-                //
-                //   踩过两次坑，都在这里：
-                //     ① 原来先 SetWindowPos 再归零 ResizeBorderThickness →
-                //        客户区 = 整屏 + 那圈边框 → 画面比屏幕大。
-                //     ② 后来又加 `win.Width = scr.Width / sx`（DIP）与物理像素混用 →
-                //        窗口被改大 26px，再靠"自检 + 二次校正"救回来 →
-                //        用户看到「先空一块、再全屏」。
-                //   现在：**先归零边框，再一次性 SetWindowPos**，之后不再碰 WPF 的
-                //   Width/Height（收到 WM_SIZE 它会自己同步，额外赋值只会打架）。
-                _chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(win);
                 if (_chrome != null) _chrome.ResizeBorderThickness = new Thickness(0);
-
-                win.WindowState = WindowState.Normal;
-                FsNative.SetWindowPos(hwnd, IntPtr.Zero, scr.Left, scr.Top, scr.Width, scr.Height,
-                    FsNative.SWP_NOZORDER | FsNative.SWP_NOACTIVATE);
-
-                // 几何稳定后再改层级与 DWM（不触发尺寸重排）
-                win.Topmost = true;
-                SoulLink.Services.WindowCorners.RemoveRounded(hwnd);
-
-                // ★ 全屏铺满：拉伸模式（SmartSizing + 连接前已开的 EnableZoom）
-                //   由控件按客户区自动放大铺满，远端分辨率不动。
-
-                // ★★ 3.2.7：进入全屏**不主动显示菜单条** ★★
-                //   用户原话：「或许一开始就不应该显示顶栏，顶栏是退出用的。」
-                //   原来进入时先撑开菜单占 46px，3 秒后再收起 ——
-                //   既造成"顶部空一块"，又多一次 RDP 尺寸变更。
-                //   现在菜单一开始就是 0 高，鼠标移到顶部时热区看门狗自然撑开。
+                (MainWindowRef ?? win as MainWindow)?.SetChromeFullscreen(true);
                 SetFullScreenMenuRowImmediate(false);
                 if (TopBar != null) TopBar.Visibility = Visibility.Collapsed;
 
+                // The monitor bounds and SetWindowPos both use device pixels.
+                win.WindowState = WindowState.Normal;
+                if (!FsNative.SetWindowPos(hwnd, IntPtr.Zero, screen.Left, screen.Top, screen.Width, screen.Height,
+                    FsNative.SWP_NOZORDER | FsNative.SWP_NOACTIVATE))
+                    throw new System.ComponentModel.Win32Exception();
+                win.Topmost = true;
+                SoulLink.Services.WindowCorners.RemoveRounded(hwnd);
                 EnsureFullScreenMenuWatch(true);
-
-                // 强制本帧落定（TopBar 隐藏 + 菜单 0 高 + RDP 新尺寸一起生效），
-                // 只走一次布局，不再排队第二次。
-                UpdateLayout();
-                ApplyLayout();
-
-                Debug("进入全屏 " + scr.Width + "x" + scr.Height
-                      + " dpi=" + sx.ToString("0.##"));
+                entered = true;
+                Debug("进入全屏 " + screen.Width + "x" + screen.Height);
             }
             catch (Exception ex) { App.AppendErrorLog("EnterFullScreen", ex); }
+            finally
+            {
+                if (consoles != null) CompleteFullScreenLayoutChange(win, consoles);
+                if (!entered && _isFullScreen) ExitFullScreen();
+            }
         }
 
         private void BtnExitFullScreen_Click(object sender, RoutedEventArgs e) => ExitFullScreen();
@@ -3515,72 +3514,40 @@ namespace SoulLink.Views
         private void ExitFullScreen(
             [System.Runtime.CompilerServices.CallerMemberName] string from = "")
         {
+            var win = Window.GetWindow(this);
+            if (!_isFullScreen || _changingFullScreenLayout || win == null) return;
+
+            RdpConsole[]? consoles = null;
             try
             {
                 RdpConsole.Debug("退出全屏 · from=" + from + " 当前_isFullScreen=" + _isFullScreen);
-                if (!_isFullScreen) return;
+                consoles = BeginFullScreenLayoutChange();
                 _isFullScreen = false;
 
                 EnsureFullScreenMenuWatch(false);
-                // Hide the menu as part of the window restore; the final layout below
-                // applies both the restored window geometry and menu row together.
                 SetFullScreenMenuRowImmediate(false);
 
-                // ★★★ 3.2.7：退出全屏顺序 —— 先几何，最后才恢复窗口样式 ★★★
-                //
-                //   用户反馈「退出好像还是会变两次位置」。
-                //   原因：WindowStyle 从 None 变回 SingleBorderWindow 时，
-                //   非客户区（标题栏/边框）重新出现，Windows 会按"当前客户区"
-                //   重算一次窗口外框 —— 这是第 1 次位移；
-                //   紧接着再设 Left/Top/Width/Height —— 第 2 次位移。
-                //   所以必须**先几何、后样式**，让样式引发的重算基于已正确的几何。
-                var win = Window.GetWindow(this);
-                if (win != null)
-                {
-                    // ① 先恢复几何（此时 WindowStyle 仍是 None，无非客户区干扰）
-                    win.Topmost = _preFsTopmost;
-                    if (_preFullScreenState == WindowState.Normal && !double.IsNaN(_preFsWidth))
-                    {
-                        win.WindowState = WindowState.Normal;
-                        win.Left = _preFsLeft;
-                        win.Top = _preFsTop;
-                        win.Width = _preFsWidth;
-                        win.Height = _preFsHeight;
-                    }
-                    else
-                    {
-                        win.WindowState = _preFullScreenState;
-                    }
+                if (_chrome != null) _chrome.ResizeBorderThickness = _preFullScreenResizeBorder;
+                win.ResizeMode = _preFullScreenResize;
+                win.WindowStyle = _preFullScreenStyle;
+                win.Topmost = _preFsTopmost;
+                if (win.Content is FrameworkElement root) root.Margin = _preFullScreenMargin;
+                if (TopBar != null) TopBar.Visibility = _preFullScreenTopBarVisibility;
+                (MainWindowRef ?? win as MainWindow)?.SetChromeFullscreen(false);
 
-                    // ② 再恢复边框与样式（非客户区回来，但几何已就位）
-                    if (_chrome != null) _chrome.ResizeBorderThickness = new Thickness(6);
-                    win.ResizeMode = _preFullScreenResize;
-                    win.WindowStyle = _preFullScreenStyle;
-
-                    // ③ 其余恢复（不改几何，不会引起位置跳变）
-                    if (win.Content is FrameworkElement re) re.Margin = _preFullScreenMargin;
-                    if (TopBar != null) TopBar.Visibility = Visibility.Visible;
-                    (MainWindowRef ?? win as MainWindow)?.SetChromeFullscreen(false);
-
-                    var hwnd = new System.Windows.Interop.WindowInteropHelper(win).Handle;
-                    SoulLink.Services.WindowCorners.ApplyRounded(hwnd);
-                }
-
-                // ④ 只走一次布局（原来这里还排队第二次 ApplyLayout，
-                //    那正是"退出时重排好几次"的来源，已删）。
-                UpdateLayout();
-                ApplyLayout();
-
-                // ⑤ 保护层状态延后一拍：它只影响遮罩显隐，不参与画面布局，
-                //    放同步路径里会让上面的布局白做一次。
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    try { UpdateShield(); } catch { }
-                }), System.Windows.Threading.DispatcherPriority.Background);
-
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(win).Handle;
+                // Restore the show state and normal bounds together. Maximized windows
+                // still need the pre-fullscreen bounds for their next unmaximize.
+                if (!FsNative.SetWindowPlacement(hwnd, ref _preFullScreenPlacement))
+                    throw new System.ComponentModel.Win32Exception();
+                SoulLink.Services.WindowCorners.ApplyRounded(hwnd);
                 Debug("退出全屏");
             }
             catch (Exception ex) { App.AppendErrorLog("ExitFullScreen", ex); }
+            finally
+            {
+                if (consoles != null) CompleteFullScreenLayoutChange(win, consoles);
+            }
         }
 
         private void EnsureFullScreenMenuWatch(bool on)

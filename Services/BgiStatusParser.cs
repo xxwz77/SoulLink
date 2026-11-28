@@ -3,6 +3,34 @@ using System.Text.RegularExpressions;
 
 namespace SoulLink.Services
 {
+    internal sealed record BgiActivityEvidence(string Text, DateTime At, string Outcome = "");
+
+    internal readonly record struct BgiLiveActivity(
+        BgiActivityEvidence? Action, BgiActivityEvidence? Character,
+        BgiActivityEvidence? Skill, BgiActivityEvidence? Food, BgiActivityEvidence? Map)
+    {
+        internal BgiLiveActivity Filter(DateTime now)
+        {
+            var character = KnownCharacter(Character, now);
+            var map = Map != null && Map.At <= now ? Map : null;
+            var action = Fresh(Action, now, 10);
+            if (action == null && map != null)
+                action = WithActor(map, character?.Text);
+            else if (action == null && character?.Outcome == "成功" && Fresh(character, now, 10) != null)
+                action = new("切换角色 " + character.Text, character.At, character.Outcome);
+            return new(action, character, Fresh(Skill, now, 20), Fresh(Food, now, 20), map);
+        }
+
+        internal static BgiActivityEvidence? KnownCharacter(BgiActivityEvidence? evidence, DateTime now)
+            => evidence != null && evidence.At <= now ? evidence : null;
+
+        internal static BgiActivityEvidence WithActor(BgiActivityEvidence evidence, string? actor)
+            => string.IsNullOrEmpty(actor) ? evidence : evidence with { Text = actor + " · " + evidence.Text };
+
+        private static BgiActivityEvidence? Fresh(BgiActivityEvidence? evidence, DateTime now, int seconds)
+            => evidence != null && evidence.At <= now && now - evidence.At <= TimeSpan.FromSeconds(seconds) ? evidence : null;
+    }
+
     /// <summary>
     /// 从 BGI 日志里解析"运行状态"。
     ///
@@ -284,9 +312,38 @@ namespace SoulLink.Services
         [GeneratedRegex(@"动作[:：]\s*(?<name>[^\r\n]{1,24})", RegexOptions.Compiled)]
         private static partial Regex RxActionLine();
 
-        // ⑥ 拾取物品：交互或拾取："霜仙花"
-        [GeneratedRegex(@"交互或拾取\s*[:：]\s*""(?<item>[^""]+)""", RegexOptions.Compiled)]
-        private static partial Regex RxPick();
+        [GeneratedRegex(@"成功切换角色\s*[:：]\s*(?:[""“](?<r>[^""“”\r\n]{1,24})[""”]|(?<r>[\p{L}·]{1,16}))", RegexOptions.Compiled)]
+        private static partial Regex RxCharacterSwitch();
+
+        [GeneratedRegex(@"(?:[""“](?<actor>[^""“”\r\n]{1,24})[""”]|(?<actor>[\p{L}·]{1,16}))\s+当前出战\s*$", RegexOptions.Compiled)]
+        private static partial Regex RxActiveCharacter();
+
+        [GeneratedRegex(@"开始(?:挖矿|采集|钓鱼|战斗|拾取)", RegexOptions.Compiled)]
+        private static partial Regex RxGameplayStart();
+
+        [GeneratedRegex(@"(?:[""“](?<actor>[^""“”\r\n]{1,24})[""”]|(?<actor>[\p{L}·]{1,16}))\s*(?<skill>(?:点按|长按)元素战技)\s*[，,]\s*cd\s*[:：]", RegexOptions.Compiled)]
+        private static partial Regex RxSkillInput();
+
+        [GeneratedRegex(@"(?:[""“](?<actor>[^""“”\r\n]{1,24})[""”]\s*)?(?<skill>(?:释放|施放)(?:元素)?(?:战技|爆发))\s*[:：]\s*[""“]?(?<result>成功|失败|未成功|冷却中|超时|未释放|未施放)(?=[""”\s，。,；;]|$)", RegexOptions.Compiled)]
+        private static partial Regex RxSkillOutcome();
+
+        [GeneratedRegex(@"(?<!未)(?<!没有)(?:识别到|检测到)战斗结束|自动战斗线程结束|(?:^|\s)战斗(?:已)?结束\s*(?:$|[，,:：])", RegexOptions.Compiled)]
+        private static partial Regex RxCombatEnd();
+
+        [GeneratedRegex(@"当前处于联机状态，且(?<guest>在别人世界中|当前账号是房主)，联机人数(?<players>[2-4])人", RegexOptions.Compiled)]
+        private static partial Regex RxCoopPartyShape();
+
+        [GeneratedRegex(@"识别到的队伍角色\s*[:：]\s*(?:""(?<names>[^""]*)""|(?<names>[^\r\n]+))", RegexOptions.Compiled)]
+        private static partial Regex RxRecognizedRoster();
+
+        [GeneratedRegex(@"当前出战角色未正确识别，通过出战标识推测角色编号为(?<slot>[1-4])", RegexOptions.Compiled)]
+        private static partial Regex RxRosterActiveSlot();
+
+        [GeneratedRegex(@"通过内部黑色像素识别出战编号为(?<slot>[1-4])，存在黑色数字的角色编号有\d+个，总角色数量(?<count>[1-4])", RegexOptions.Compiled)]
+        private static partial Regex RxObservedActiveSlot();
+
+        [GeneratedRegex(@"切换角色失败，最后一次尝试，当前角色编号\s*[:：]\s*(?<slot>-?[0-4])，期望角色编号", RegexOptions.Compiled)]
+        private static partial Regex RxFailedSwitchCurrentSlot();
 
         // ④ 一条龙配置
         [GeneratedRegex(@"启用一条龙配置\s*[:：]\s*(?<v>.+?)\s*$", RegexOptions.Compiled)]
@@ -328,17 +385,52 @@ namespace SoulLink.Services
         /// </summary>
         public void Update(string logChunk)
         {
-            if (string.IsNullOrEmpty(logChunk)) return;
+            if (!string.IsNullOrEmpty(logChunk)) Update(new BgiLogBatch(logChunk));
+        }
+
+        internal void Update(BgiLogBatch batch)
+        {
             try
             {
-                var lines = logChunk.Split('\n');
+                var lines = batch.Lines;
+                var groupEvents = batch.GroupEvents;
+                int groupEventIndex = 0;
                 for (int idx = 0; idx < lines.Length; idx++)
                 {
-                    string line = lines[idx];
+                    string line = lines[idx].Raw;
                     if (line.Length == 0) continue;
 
+                    if (line[0] == '[' && lines[idx].Timestamp is { Success: true } stamp)
+                        ObserveActivityHeader(line.AsSpan(stamp.Length));
+
+                    int lineEnd = lines[idx].Start + line.Length;
+                    while (groupEventIndex < groupEvents.Count && groupEvents[groupEventIndex].Position < lineEnd)
+                    {
+                        var groupEvent = groupEvents[groupEventIndex++];
+                        if (!BgiLogParser.ValidGroupName(groupEvent.Name)) continue;
+                        if (groupEvent.Kind == BgiGroupEventKind.Start)
+                        {
+                            BeginActivity();
+                            _activityGroup = ConfigGroup = groupEvent.Name;
+                        }
+                        else
+                        {
+                            ClearActivity(stopped: true);
+                            ClearProgress();
+                        }
+                    }
+
+                    var mapStart = line.Contains("开始执行地图追踪任务", StringComparison.Ordinal)
+                        ? RxMapTrace().Match(line) : Match.Empty;
+                    string mapRoute = mapStart.Success
+                        ? StripJson((mapStart.Groups["route"].Success ? mapStart.Groups["route"] : mapStart.Groups["route2"]).Value.Trim())
+                        : "";
+                    if (mapRoute.Length > 0) StartMap(mapRoute, batch, lines[idx].Start);
+                    if (_liveMap != null && line.Contains("脚本执行结束", StringComparison.Ordinal))
+                        FinishMapIfMatching(line);
+
                     // 把「本行 + 下一行」也作为候选：BGI 头行与正文分属两个物理行
-                    string merged = (idx + 1 < lines.Length) ? (line + " " + lines[idx + 1]) : line;
+                    string merged = (idx + 1 < lines.Length) ? (line + " " + lines[idx + 1].Raw) : line;
 
                     bool matched = false;
 
@@ -346,12 +438,13 @@ namespace SoulLink.Services
                     //   （挖矿、下落攻击、切换角色…），之前完全没解析，
                     //   于是界面一直停在"等待日志中的状态信息"（用户实测）。
                     var am = RxActionLine().Match(merged);
+                    Match rm = Match.Empty;
                     if (am.Success)
                     {
                         string act = am.Groups["name"].Value.Trim();
                         // "下落攻击 结束" 这种收尾行不算当前动作
                         if (act.EndsWith("结束", StringComparison.Ordinal)) act = "";
-                        if (act.Length > 0) { CurrentAction = act; matched = true; }
+                        if (act.Length > 0) CurrentAction = act;
                     }
                     else
                     {
@@ -367,15 +460,13 @@ namespace SoulLink.Services
                             if (seg.Length >= 3 && seg.Length <= 20 && !seg.Contains("开始第"))
                             {
                                 CurrentAction = seg;
-                                matched = true;
                             }
                         }
 
-                        var rm = Regex.Match(merged, @"成功切换角色\s*[:：]\s*""?(?<r>[^""\s，。]{1,16})");
+                        rm = RxCharacterSwitch().Match(merged);
                         if (rm.Success)
                         {
                             CurrentAction = "切换角色 " + rm.Groups["r"].Value;
-                            matched = true;
                         }
                     }
 
@@ -383,17 +474,19 @@ namespace SoulLink.Services
                     var m = RxRound().Match(merged);
                     if (m.Success)
                     {
-                        Round = m.Groups["round"].Value.Replace(" ", "");
-                        RoleName = m.Groups["role"].Value.Trim();
-                        RouteProgress = m.Groups["cur"].Value + "/" + m.Groups["total"].Value;
-
-                        // ★ 拾取统计按**配置组**累计，不再按单条路线清空。
-                        //   路线大多只捡 0~1 件，按路线统计几乎永远是空的；
-                        //   用户真正关心的是"这一轮总共捡了什么"。
-                        RouteFile = StripJson(m.Groups["file"].Value);
-
-                        RouteEta = Maybe(RxEta().Match(merged), "v");
-                        RoundRemain = Maybe(RxRemain().Match(merged), "v");
+                        string round = m.Groups["round"].Value.Replace(" ", "");
+                        string role = m.Groups["role"].Value.Trim();
+                        string progress = m.Groups["cur"].Value + "/" + m.Groups["total"].Value;
+                        string route = StripJson(m.Groups["file"].Value);
+                        bool newRound = Round != round;
+                        if (newRound || (RouteProgress.Length > 0 && RouteProgress != progress))
+                            RouteEta = "";
+                        if (newRound) RoundRemain = "";
+                        if (newRound || role.Length > 0) RoleName = role;
+                        Round = round;
+                        RouteProgress = progress;
+                        SetRoute(route);
+                        ReadEstimates(merged);
                         AreaName = "";
                         Recovered = true;   // 有正常进度 = 已恢复
                         matched = true;
@@ -405,13 +498,18 @@ namespace SoulLink.Services
                         var t = RxTaskRoute().Match(merged);
                         if (t.Success)
                         {
-                            TaskName = t.Groups["task"].Value;
-                            RouteFile = t.Groups["route"].Value;
-                            RouteTotal = t.Groups["total"].Success ? t.Groups["total"].Value : RouteTotal;
-                            RouteCd = t.Groups["cd"].Success ? t.Groups["cd"].Value : RouteCd;
-                            Elapsed = t.Groups["elapsed"].Success ? t.Groups["elapsed"].Value : Elapsed;
-                            Round = "";          // 这类任务没有轮次
-                            RouteProgress = "";
+                            string task = t.Groups["task"].Value;
+                            if (TaskName != task)
+                            {
+                                if (TaskName.Length > 0 && TaskName != "地图追踪") BeginActivity();
+                                else ClearProgress();
+                            }
+                            TaskName = task;
+                            SetRoute(t.Groups["route"].Value);
+                            if (t.Groups["total"].Success) RouteTotal = t.Groups["total"].Value;
+                            if (t.Groups["cd"].Success) RouteCd = t.Groups["cd"].Value;
+                            if (t.Groups["elapsed"].Success) Elapsed = t.Groups["elapsed"].Value;
+                            Round = RoleName = RoundRemain = RouteProgress = "";
                             Recovered = true;
                             matched = true;
                         }
@@ -430,28 +528,17 @@ namespace SoulLink.Services
                         }
                     }
 
-                    // ③c 地图追踪任务：→ 开始执行地图追踪任务: "xxx.json"
-                    //     ★ 这是实测最高频的格式（1 万+ 次），原来完全没解析，
-                    //       导致 RouteFile 永远是空 → 界面只能显示"已拾取 N 个"。
-                    if (!matched)
+                    // A map task may be part of an existing script or round.
+                    if (!matched && mapRoute.Length > 0)
                     {
-                        var mt = RxMapTrace().Match(line);
-                        if (mt.Success)
+                        if (RouteFile != mapRoute)
                         {
-                            string route = mt.Groups["route"].Success
-                                ? mt.Groups["route"].Value
-                                : mt.Groups["route2"].Value;
-                            route = route.Trim();
-                            if (route.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-                                route = route.Substring(0, route.Length - 5);
-                            RouteFile = route;
-                            TaskName = "地图追踪";
-                            RouteProgress = "";
-                            // 新任务开始 → 本路线拾取数清零
-                            PickCount = "";
-                            Recovered = true;
-                            matched = true;
+                            SetRoute(mapRoute);
+                            RouteProgress = PickCount = "";
                         }
+                        if (TaskName.Length == 0) TaskName = "地图追踪";
+                        Recovered = true;
+                        matched = true;
                     }
 
                     // ③d JS 脚本 / 独立任务
@@ -460,8 +547,7 @@ namespace SoulLink.Services
                         var js = RxJsScript().Match(line);
                         if (js.Success)
                         {
-                            RouteFile = js.Groups["name"].Value;
-                            TaskName = "JS脚本";
+                            StartScript("JS脚本", js.Groups["name"].Value);
                             Recovered = true;
                             matched = true;
                         }
@@ -470,8 +556,7 @@ namespace SoulLink.Services
                             var sd = RxStandalone().Match(line);
                             if (sd.Success)
                             {
-                                RouteFile = sd.Groups["name"].Value;
-                                TaskName = "独立任务";
+                                StartScript("独立任务", sd.Groups["name"].Value);
                                 Recovered = true;
                                 matched = true;
                             }
@@ -484,7 +569,9 @@ namespace SoulLink.Services
                         var od = RxOneDragonStart2().Match(line);
                         if (od.Success)
                         {
+                            BeginActivity();
                             OneDragonConfig = od.Groups["g"].Value;
+                            _activityGroup = OneDragonConfig;
                             Recovered = true;
                             matched = true;
                         }
@@ -514,9 +601,10 @@ namespace SoulLink.Services
                     }
 
                     // ⑤ 配置组（拾取诊断 / 旧格式）
+                    Match? groupTag = null;
                     if (!matched)
                     {
-                        var cg = RxConfigGroup().Match(line);
+                        var cg = groupTag = RxConfigGroup().Match(line);
                         if (cg.Success)
                         {
                             string g = cg.Groups["g"].Success ? cg.Groups["g"].Value : cg.Groups["g2"].Value;
@@ -545,6 +633,31 @@ namespace SoulLink.Services
                         if (tm.Success) { Team = tm.Groups["v"].Value; matched = true; }
                     }
 
+                    if (groupTag == null && (line.Contains("配置组", StringComparison.Ordinal)
+                        || line.Contains("总文件夹", StringComparison.Ordinal)))
+                        groupTag = RxConfigGroup().Match(line);
+                    if (groupTag is { Success: true })
+                    {
+                        string name = (groupTag.Groups["g"].Success ? groupTag.Groups["g"] : groupTag.Groups["g2"]).Value.Trim();
+                        if (name != "无" && BgiLogParser.ValidGroupName(name) && _activityGroup != name)
+                        {
+                            if (_activityGroup.Length > 0)
+                            {
+                                ClearActivity(_activityStopped);
+                                ClearProgress();
+                            }
+                            _activityGroup = name;
+                        }
+                    }
+
+                    // A stop may be followed by a new one-dragon or standalone task.
+                    if (_activityStopped && (RxOneDragonStart().IsMatch(line)
+                        || line.Contains("→ \"任务启动！\"", StringComparison.Ordinal)))
+                        BeginActivity();
+
+                    if (RouteFile.Length > 0 && line.Contains("预计", StringComparison.Ordinal))
+                        ReadEstimates(line);
+
                     // ⑦ 停止判定：脚本停了就不再显示"当前配置组/任务/路线"。
                     //   用户要求：日志出现停止即判为停止，不再保留运行状态。
                     //   锚点与 BgiLogCenter.RxStopped 保持一致。
@@ -558,39 +671,23 @@ namespace SoulLink.Services
                             && (line.IndexOf("执行结束", StringComparison.Ordinal) >= 0
                                 || line.IndexOf("未成功完成", StringComparison.Ordinal) >= 0)))
                     {
+                        ClearActivity(stopped: true);
                         StoppedAt = DateTime.Now;
-                        RoundRunning = false;
-                        TaskName = "";
-                        RouteFile = "";
-                        RouteProgress = "";
-                        RouteEta = "";
-                        RoundRemain = "";
-                        AreaName = "";
-                        PickCount = "";
+                        ClearProgress();
                     }
 
                     // ⑦' 每日报错计数（按行统计，与状态解析互不影响）
-                    if (line.IndexOf("[ERR]", StringComparison.Ordinal) >= 0)
-                    {
-                        ErrorCount++;
-                    }
-                    else if (line.IndexOf("[WRN]", StringComparison.Ordinal) >= 0)
-                    {
-                        WarnCount++;
-                    }
-                    // 任务级失败：日志正文行（不含级别前缀）
-                    if (line.IndexOf("执行失败", StringComparison.Ordinal) >= 0
-                        || line.IndexOf("未成功完成", StringComparison.Ordinal) >= 0
-                        || line.IndexOf("一条龙前置动作未成功", StringComparison.Ordinal) >= 0)
-                    {
-                        FailCount++;
-                    }
+                    var issues = lines[idx].Issues;
+                    if ((issues & BgiLogIssues.Error) != 0) ErrorCount++;
+                    if ((issues & BgiLogIssues.Warning) != 0) WarnCount++;
+                    if ((issues & BgiLogIssues.Failure) != 0) FailCount++;
 
-                    // ⑥ 拾取物品（累计到本路线）。高频日志，必须放在最后且不打断 matched。
-                    var pk = RxPick().Match(line);
+                    // ⑥ 拾取物品（累计到本路线）。
+                    var pk = lines[idx].Pick;
+                    string item = "";
                     if (pk.Success)
                     {
-                        string item = pk.Groups["item"].Value.Trim();
+                        item = pk.Groups["item"].Value.Trim();
                         // 过滤掉明显的无效值
                         if (item.Length > 0 && item != "无有效结果")
                         {
@@ -599,6 +696,15 @@ namespace SoulLink.Services
                             else
                                 RoutePicks[item] = 1;
                         }
+                    }
+
+                    if (!_activityStopped)
+                    {
+                        ObserveAvatarContext(batch, lines[idx].Start, line);
+                        if (line.Contains("战斗", StringComparison.Ordinal) && RxCombatEnd().IsMatch(line))
+                            ClearCombatAction();
+                        else
+                            TrackActivity(batch, lines[idx].Start, line, am, rm, item);
                     }
 
                     // ── 异常（优先级高，单独判定，不受 matched 影响）──
@@ -637,17 +743,381 @@ namespace SoulLink.Services
 
                     if (RxTaskEnd().IsMatch(line))
                     {
+                        ClearActivity(stopped: true);
+                        ClearProgress();
                         TaskEnded = true;
                         continue;
                     }
                     if (RxOneDragonDone().IsMatch(line))
                     {
+                        ClearActivity(stopped: true);
+                        ClearProgress();
                         TaskEnded = true;
                         continue;
                     }
                 }
             }
             catch { }
+        }
+
+        private BgiActivityEvidence? _liveAction, _liveCharacter, _liveSkill, _liveFood, _liveMap;
+        private string _activityGroup = "", _activityMapRoute = "", _activityScript = "", _combatActionName = "";
+        private bool _activityStopped;
+
+        private readonly record struct PartyObservation(DateTime At, string Scope)
+        {
+            internal bool IsRecent(DateTime at, string scope, int seconds)
+                => At != DateTime.MinValue && Scope == scope && at >= At && at - At <= TimeSpan.FromSeconds(seconds);
+        }
+
+        private string _activityScope = "", _primaryActivityProcess = "";
+        private string[]? _recognizedRoster;
+        private PartyObservation _rosterObservation, _partyLayoutObservation, _rosterSlotObservation;
+        private int _worldPartyLayout = -1, _nextRosterSlot;
+        private bool _primaryAvatarObserved;
+        private bool IsChildActivitySource => _activityScope.StartsWith("ChildSession:", StringComparison.Ordinal);
+
+        internal BgiLiveActivity LiveActivity => new(_liveAction, _liveCharacter, _liveSkill, _liveFood, _liveMap);
+        internal BgiLiveActivity GetLiveActivity(DateTime now) => LiveActivity.Filter(now);
+
+        internal void InheritMapActivityFrom(BgiStatus previous)
+        {
+            if (previous._liveMap == null || previous._activityStopped) return;
+            _liveMap = previous._liveMap;
+            _activityMapRoute = previous._activityMapRoute;
+            _activityScript = previous._activityScript;
+            _activityGroup = previous._activityGroup;
+            _liveCharacter = previous._liveCharacter;
+            _primaryActivityProcess = previous._primaryActivityProcess;
+            _primaryAvatarObserved = previous._primaryAvatarObserved;
+            _worldPartyLayout = previous._worldPartyLayout;
+        }
+
+        private void BeginActivity()
+        {
+            ClearActivity(stopped: false);
+            ClearProgress();
+            StoppedAt = DateTime.MinValue;
+            TaskEnded = false;
+        }
+
+        private void ClearProgress()
+        {
+            TaskName = Round = RoleName = RouteFile = RouteProgress = RouteEta = RoundRemain = "";
+            RouteTotal = RouteCd = Elapsed = AreaName = PickCount = CurrentAction = "";
+            RoundRunning = false;
+        }
+
+        private void SetRoute(string route)
+        {
+            if (RouteFile != route) RouteEta = "";
+            RouteFile = route;
+        }
+
+        private void ReadEstimates(string text)
+        {
+            string eta = Maybe(RxEta().Match(text), "v");
+            if (eta.Length > 0) RouteEta = eta;
+            string remain = Maybe(RxRemain().Match(text), "v");
+            if (remain.Length > 0) RoundRemain = remain;
+        }
+
+        private void StartScript(string type, string name)
+        {
+            if (_activityStopped || TaskName != type || RouteFile != name) BeginActivity();
+            TaskName = type;
+            RouteFile = _activityScript = name;
+        }
+
+        private void StartMap(string route, BgiLogBatch batch, int lineStart)
+        {
+            if (_activityStopped) BeginActivity();
+            ClearCombatAction();
+            _activityMapRoute = route;
+            DateTime at = batch.TimestampAt(lineStart);
+            _liveMap = at != DateTime.MinValue ? new("正在执行地图追踪", at) : null;
+        }
+
+        private void FinishMapIfMatching(string line)
+        {
+            for (var end = BgiLogParser.ScriptEndPlain.Match(line); end.Success; end = end.NextMatch())
+            {
+                var name = end.Groups["name"].Value.Trim();
+                if (!string.Equals(StripJson(name), _activityMapRoute, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(name, _activityScript, StringComparison.OrdinalIgnoreCase)) continue;
+                ClearCombatAction();
+                _activityMapRoute = "";
+                _liveMap = null;
+                break;
+            }
+        }
+
+        private void ClearCombatAction()
+        {
+            _liveAction = null;
+            _combatActionName = "";
+            if (_liveCharacter?.Outcome == "成功")
+                _liveCharacter = _liveCharacter with { Outcome = "" };
+        }
+
+        private void ClearActivity(bool stopped)
+        {
+            if (stopped) InvalidateAvatarContext();
+            else ClearCombatAction();
+            _liveSkill = _liveFood = _liveMap = null;
+            _activityMapRoute = _activityScript = "";
+            _activityStopped = stopped;
+        }
+
+        private void ObserveActivityHeader(ReadOnlySpan<char> suffix)
+        {
+            suffix = suffix.TrimStart();
+            if (!suffix.StartsWith("[Primary:", StringComparison.Ordinal)
+                && !suffix.StartsWith("[ChildSession:", StringComparison.Ordinal))
+            {
+                _activityScope = "";
+                return;
+            }
+
+            int close = suffix[..Math.Min(suffix.Length, 80)].IndexOf(']');
+            if (close < 0)
+            {
+                _activityScope = "";
+                return;
+            }
+            var scope = suffix[1..close];
+            if (_activityScope.AsSpan().SequenceEqual(scope)) return;
+            _activityScope = scope.ToString();
+
+            if (!scope.StartsWith("Primary:", StringComparison.Ordinal)) return;
+            int thread = scope.IndexOf(":T", StringComparison.Ordinal);
+            var process = thread < 0 ? scope : scope[..thread];
+            if (_primaryActivityProcess.AsSpan().SequenceEqual(process)) return;
+            if (_primaryActivityProcess.Length > 0)
+            {
+                InvalidateAvatarContext();
+                _liveSkill = _liveFood = _liveMap = null;
+                _activityMapRoute = _activityScript = "";
+            }
+            _primaryActivityProcess = process.ToString();
+        }
+
+        private void ObserveAvatarContext(BgiLogBatch batch, int lineStart, string line)
+        {
+            // Child tasks can interleave with the primary log. Their roster, slot and world
+            // observations cannot overwrite the primary session's character or formation.
+            if (IsChildActivitySource && (_primaryActivityProcess.Length > 0 || _primaryAvatarObserved)) return;
+
+            if (line.Contains("切换队伍成功", StringComparison.Ordinal)
+                || line.Contains("不在对方世界，开始尝试加入", StringComparison.Ordinal)
+                || ((line.Contains("成功加入序号", StringComparison.Ordinal)
+                    || line.Contains("成功加入对方世界", StringComparison.Ordinal))
+                    && !line.Contains("通知", StringComparison.Ordinal)))
+            {
+                InvalidateAvatarContext();
+                return;
+            }
+
+            if (line.Contains("传送完成，返回主界面", StringComparison.Ordinal))
+            {
+                // Same-world teleport may preserve the active character. Combat activity does not survive loading.
+                ClearCombatAction();
+                _rosterSlotObservation = default;
+                return;
+            }
+
+            if (line.Contains("当前处于联机状态", StringComparison.Ordinal))
+            {
+                var shape = RxCoopPartyShape().Match(line);
+                int layout = shape.Success
+                    ? shape.Groups["players"].ValueSpan[0] - '0' + (shape.Groups["guest"].ValueSpan.StartsWith("在别人") ? 0 : 10)
+                    : line.Contains("但是没有其他玩家连入", StringComparison.Ordinal) ? 11 : -1;
+                if (layout >= 0)
+                {
+                    if (layout != _worldPartyLayout && (_worldPartyLayout >= 0 || _liveCharacter != null)) InvalidateAvatarContext();
+                    _worldPartyLayout = layout;
+                    _partyLayoutObservation = new(batch.TimestampAt(lineStart), _activityScope);
+                }
+                return;
+            }
+
+            if (line.Contains("识别到的队伍角色", StringComparison.Ordinal))
+            {
+                ObserveRoster(batch.TimestampAt(lineStart), RxRecognizedRoster().Match(line));
+                return;
+            }
+
+            if (line.Contains("通过出战标识推测角色编号", StringComparison.Ordinal)
+                || line.Contains("当前编队中可能只存在一个角色（且角色编号未正确识别）", StringComparison.Ordinal))
+            {
+                var slot = RxRosterActiveSlot().Match(line);
+                bool only = line.Contains("当前编队中可能只存在一个角色（且角色编号未正确识别）", StringComparison.Ordinal);
+                if (slot.Success || only)
+                {
+                    _nextRosterSlot = only ? 1 : slot.Groups["slot"].ValueSpan[0] - '0';
+                    _rosterSlotObservation = new(batch.TimestampAt(lineStart), _activityScope);
+                }
+                return;
+            }
+
+            Match active = Match.Empty;
+            if (line.Contains("识别出战编号为", StringComparison.Ordinal))
+                active = RxObservedActiveSlot().Match(line);
+            else if (line.Contains("切换角色失败，最后一次尝试", StringComparison.Ordinal))
+                active = RxFailedSwitchCurrentSlot().Match(line);
+            if (!active.Success) return;
+
+            var at = batch.TimestampAt(lineStart);
+            var roster = _recognizedRoster;
+            int slotNumber = int.Parse(active.Groups["slot"].ValueSpan, System.Globalization.CultureInfo.InvariantCulture);
+            if (slotNumber < 1)
+            {
+                MarkUnknownCharacter();
+                return;
+            }
+            if (roster == null || !_rosterObservation.IsRecent(at, _activityScope, 120)) return;
+            var count = active.Groups["count"];
+            if (count.Success && count.ValueSpan[0] - '0' != roster.Length) return;
+            SetActiveCharacterFromSlot(roster, slotNumber, at);
+        }
+
+        private void ObserveRoster(DateTime at, Match match)
+        {
+            if (at == DateTime.MinValue || !match.Success) return;
+            var roster = match.Groups["names"].Value.Split([',', '，'], StringSplitOptions.TrimEntries);
+            if (roster.Length is < 1 or > 4) return;
+            for (int i = 0; i < roster.Length; i++)
+            {
+                string name = roster[i];
+                int costume = name.IndexOfAny(['(', '（']);
+                if (costume > 0) name = name[..costume].TrimEnd();
+                roster[i] = IsKnownActorName(name) ? name : "";
+            }
+            // The recognized order maps slots to names. A complete new roster can disprove an old actor.
+            if (_liveCharacter != null && at >= _liveCharacter.At
+                && Array.IndexOf(roster, _liveCharacter.Text) < 0 && Array.IndexOf(roster, "") < 0)
+                ClearActiveCharacter();
+
+            _recognizedRoster = roster;
+            _rosterObservation = new(at, _activityScope);
+            if (_rosterSlotObservation.IsRecent(at, _activityScope, 10))
+                SetActiveCharacterFromSlot(roster, _nextRosterSlot, at);
+            // BetterGI MultiGameStatus limits guests in a 3/4-person world and hosts in a
+            // 4-person world to one playable avatar.
+            else if (roster.Length == 1 && _worldPartyLayout is 3 or 4 or 14
+                && _partyLayoutObservation.IsRecent(at, _activityScope, 10))
+                SetActiveCharacterFromSlot(roster, 1, at);
+            _rosterSlotObservation = default;
+        }
+
+        private static bool IsKnownActorName(string name)
+        {
+            if (name.Length is < 1 or > 24 || name is "未知角色" or "未知" or "识别失败") return false;
+            foreach (char ch in name)
+                if (!char.IsLetter(ch) && ch is not ('·' or ' ' or '-' or '\'')) return false;
+            return true;
+        }
+
+        private void SetActiveCharacterFromSlot(string[] roster, int slot, DateTime at)
+        {
+            if (slot <= roster.Length && roster[slot - 1].Length > 0)
+                SetActiveCharacter(roster[slot - 1], at, switched: false);
+            else
+                MarkUnknownCharacter();
+        }
+
+        private void SetActiveCharacter(string name, DateTime at, bool switched)
+        {
+            if (!IsKnownActorName(name) || (IsChildActivitySource && _primaryAvatarObserved)) return;
+            if (switched || _liveCharacter?.Text != name) ClearCombatAction();
+            _liveCharacter = new(name, at, switched ? "成功" : "");
+            if (!IsChildActivitySource) _primaryAvatarObserved = true;
+        }
+
+        private void MarkUnknownCharacter()
+        {
+            ClearActiveCharacter();
+            if (!IsChildActivitySource) _primaryAvatarObserved = true;
+        }
+
+        private void ClearActiveCharacter()
+        {
+            ClearCombatAction();
+            _liveCharacter = null;
+        }
+
+        private void InvalidateAvatarContext()
+        {
+            ClearActiveCharacter();
+            _recognizedRoster = null;
+            _rosterObservation = _partyLayoutObservation = _rosterSlotObservation = default;
+            _worldPartyLayout = -1;
+            _primaryAvatarObserved = false;
+        }
+
+        private void TrackActivity(BgiLogBatch batch, int lineStart, string line, Match action, Match switchCharacter, string item)
+        {
+            var actionText = LineCapture(action, "name", line);
+            if (actionText.IsEmpty && line.Contains("开始", StringComparison.Ordinal))
+                actionText = RxGameplayStart().Match(line).ValueSpan;
+
+            // The legacy status considers a merged line; evidence belongs to the physical line carrying the signal.
+            if (switchCharacter.Index >= line.Length || (action.Success && line.Contains("成功切换角色", StringComparison.Ordinal)))
+                switchCharacter = RxCharacterSwitch().Match(line);
+            var character = LineCapture(switchCharacter, "r", line);
+            bool switched = !character.IsEmpty;
+            if (!switched && line.Contains("当前出战", StringComparison.Ordinal))
+                character = RxActiveCharacter().Match(line).Groups["actor"].ValueSpan;
+
+            Match cast = Match.Empty;
+            if (line.Contains("战技", StringComparison.Ordinal) || line.Contains("爆发", StringComparison.Ordinal))
+            {
+                cast = RxSkillOutcome().Match(line);
+                if (!cast.Success) cast = RxSkillInput().Match(line);
+            }
+
+            bool usedFood = item == "使用回血料理";
+            if (actionText.IsEmpty && character.IsEmpty && !cast.Success && !usedFood) return;
+
+            if (actionText.EndsWith("结束", StringComparison.Ordinal))
+            {
+                if (actionText[..^2].TrimEnd().SequenceEqual(_combatActionName))
+                    ClearCombatAction();
+                actionText = default;
+            }
+
+            DateTime at = batch.TimestampAt(lineStart);
+            if (at == DateTime.MinValue) return;
+
+            if (!character.IsEmpty)
+                SetActiveCharacter(character.ToString(), at, switched);
+
+            string? activeActor = IsChildActivitySource && _primaryAvatarObserved
+                ? null : BgiLiveActivity.KnownCharacter(_liveCharacter, at)?.Text;
+            if (!actionText.IsEmpty)
+            {
+                _combatActionName = actionText.ToString();
+                _liveAction = BgiLiveActivity.WithActor(new(_combatActionName, at), activeActor);
+            }
+            if (cast.Success)
+            {
+                string actor = cast.Groups["actor"].Value;
+                string skill = cast.Groups["skill"].Value;
+                string outcome = cast.Groups["result"].Success ? cast.Groups["result"].Value : "尝试";
+                _liveSkill = new(actor.Length == 0 ? skill : actor + " " + skill, at, outcome);
+                _combatActionName = skill;
+                _liveAction = BgiLiveActivity.WithActor(new(skill, at, outcome), actor.Length > 0 ? actor : activeActor);
+            }
+            if (usedFood)
+                _liveFood = new(item, at);
+        }
+
+        private static ReadOnlySpan<char> LineCapture(Match match, string name, string line)
+        {
+            if (!match.Success || match.Index >= line.Length) return default;
+            var capture = match.Groups[name];
+            if (!capture.Success || capture.Index >= line.Length) return default;
+            return line.AsSpan(capture.Index, Math.Min(capture.Length, line.Length - capture.Index)).Trim();
         }
 
         private static string Maybe(Match m, string name)

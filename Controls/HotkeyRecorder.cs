@@ -124,7 +124,7 @@ namespace SoulLink.Controls
 
             var key = e.Key == Key.System ? e.SystemKey : e.Key;
 
-            if (key == Key.Escape)
+            if (key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None)
             {
                 StopRecording();
                 return;

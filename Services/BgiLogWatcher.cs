@@ -724,13 +724,10 @@ namespace SoulLink.Services
                 string? line;
                 while ((line = sr.ReadLine()) != null)
                 {
-                    if (line.IndexOf("[ERR]", StringComparison.Ordinal) >= 0) errors++;
-                    else if (line.IndexOf("[WRN]", StringComparison.Ordinal) >= 0) warns++;
-
-                    if (line.IndexOf("执行失败", StringComparison.Ordinal) >= 0
-                        || line.IndexOf("未成功完成", StringComparison.Ordinal) >= 0
-                        || line.IndexOf("一条龙前置动作未成功", StringComparison.Ordinal) >= 0)
-                        fails++;
+                    var issues = BgiLogParser.FindIssues(line);
+                    if ((issues & BgiLogIssues.Error) != 0) errors++;
+                    if ((issues & BgiLogIssues.Warning) != 0) warns++;
+                    if ((issues & BgiLogIssues.Failure) != 0) fails++;
                 }
             }
             catch { }

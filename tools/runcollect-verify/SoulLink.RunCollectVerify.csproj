@@ -14,6 +14,7 @@
   <ItemGroup>
     <Compile Include="..\..\Services\RunRecordStore.cs" Link="Services\RunRecordStore.cs" />
     <Compile Include="..\..\Services\RunRecordCollector.cs" Link="Services\RunRecordCollector.cs" />
+    <Compile Include="..\..\Services\BgiLogParser.cs" Link="Services\BgiLogParser.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="T6Scenarios.cs" />
     <Compile Include="T10Scenarios.cs" />

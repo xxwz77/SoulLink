@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -30,15 +31,39 @@ namespace SoulLink.Views
 
         private readonly List<UserRowVm> _rows = new List<UserRowVm>();
         private CancellationTokenSource? _cts;
-        private BgiGitHubRelease.Package? _githubRelease;
+        private CancellationTokenSource? _lookupCts;
+        private CancellationTokenSource? _localScanCts;
+        private sealed record LocalPackage(string Path)
+        {
+            public string DisplayLabel => System.IO.Path.GetFileName(Path);
+        }
         private bool _running;
         private readonly List<string> _logLines = new List<string>();
 
         public BgiUpdatePage()
         {
             InitializeComponent();
+            CoordinatorAddressBox.Text = App.Config.Settings.BgiCoordinatorUrl;
+            DeleteDownloadedPackageCheck.IsChecked = App.Config.Settings.BgiDeleteDownloadedPackageAfterSuccess;
+            DeleteDownloadedPackageCheck.Checked += DeleteDownloadedPackage_Changed;
+            DeleteDownloadedPackageCheck.Unchecked += DeleteDownloadedPackage_Changed;
+            LocalPackageBox.SelectionChanged += (_, _) => UpdateButtonEnabled();
+            UpdatePackageDirectoryLabel();
+            DeleteDownloadedPackageCheck.IsEnabled = false;
             UpdateSourceBox.SelectionChanged += (_, _) => RefreshUpdateSource();
-            Loaded += (_, __) => Reload();
+            OnlinePackageBox.SelectionChanged += (_, _) => UpdateButtonEnabled();
+            CoordinatorAddressBox.TextChanged += (_, _) => InvalidateOnlineVersion("地址已更改，按 Enter 或点击刷新");
+            CoordinatorAddressBox.KeyDown += async (_, e) =>
+            {
+                if (e.Key != Key.Enter) return;
+                e.Handled = true;
+                await CheckOnlineSourceAsync();
+            };
+            Loaded += (_, __) =>
+            {
+                Reload();
+                if (!UsesOnline) _ = RefreshLocalPackagesAsync();
+            };
             BgiDataCenter.AccountDataChanged += OnSharedDataChanged;
             Unloaded += (_, __) => BgiDataCenter.AccountDataChanged -= OnSharedDataChanged;
         }
@@ -280,73 +305,192 @@ namespace SoulLink.Views
 
         // ══════════ 选包 ══════════
 
-        private bool UsesGitHub => UpdateSourceBox.SelectedIndex == 1;
+        private BgiOnlineSources.Source SelectedSource =>
+            UpdateSourceBox.SelectedItem is ComboBoxItem { Tag: string tag } &&
+            Enum.TryParse<BgiOnlineSources.Source>(tag, out var source) ? source : BgiOnlineSources.Source.Local;
+
+        private bool UsesOnline => SelectedSource != BgiOnlineSources.Source.Local;
 
         private void RefreshUpdateSource()
         {
-            LocalSourcePanel.Visibility = UsesGitHub ? Visibility.Collapsed : Visibility.Visible;
-            GitHubSourcePanel.Visibility = UsesGitHub ? Visibility.Visible : Visibility.Collapsed;
-            SubText.Text = UsesGitHub
-                ? "从 LCB 的 GitHub Releases 下载并校验便携包，请先退出目标 BGI"
-                : "把本地更新包解压覆盖到各账号的 BGI 目录";
+            LocalSourcePanel.Visibility = UsesOnline ? Visibility.Collapsed : Visibility.Visible;
+            OnlineSourcePanel.Visibility = UsesOnline ? Visibility.Visible : Visibility.Collapsed;
+            DeleteDownloadedPackageCheck.IsEnabled = !_running && UsesOnline;
+            CoordinatorPanel.Visibility = SelectedSource == BgiOnlineSources.Source.Coordinator
+                ? Visibility.Visible : Visibility.Collapsed;
+            SubText.Text = UsesOnline ? "查询所选来源的云端版本，更新前请退出目标 BGI"
+                                     : "把本地更新包解压覆盖到各账号的 BGI 目录";
+            InvalidateOnlineVersion("");
+            if (UsesOnline)
+            {
+                _localScanCts?.Cancel();
+                _ = CheckOnlineSourceAsync();
+            }
+            else _ = RefreshLocalPackagesAsync();
         }
 
-        private async Task<BgiGitHubRelease.Package> CheckGitHubReleaseAsync(CancellationToken ct)
+        private void InvalidateOnlineVersion(string status)
         {
-            _githubRelease = null;
-            GitHubReleaseText.Text = "正在查询 GitHub 发行版…";
-            try
-            {
-                _githubRelease = await BgiGitHubRelease.CheckAsync(ct);
-                GitHubReleaseText.Text = $"{_githubRelease.Version} · {_githubRelease.Size / 1048576.0:F0} MB";
-                return _githubRelease;
-            }
-            catch
-            {
-                GitHubReleaseText.Text = "尚未取得可用的 GitHub 发行版";
-                throw;
-            }
+            _lookupCts?.Cancel();
+            _lookupCts = null;
+            OnlinePackageBox.ItemsSource = null;
+            OnlinePackageBox.Visibility = Visibility.Collapsed;
+            OnlineVersionText.Text = status;
+            UpdateButtonEnabled();
         }
 
-        private async void CheckGitHubRelease_Click(object sender, RoutedEventArgs e)
+        private async void CheckOnlineSource_Click(object sender, RoutedEventArgs e) => await CheckOnlineSourceAsync();
+
+        private async Task CheckOnlineSourceAsync()
         {
-            if (_running || !UsesGitHub) return;
-            using var cancellation = new CancellationTokenSource();
-            _cts = cancellation;
-            SetRunning(true);
+            var source = SelectedSource;
+            if (_running || source == BgiOnlineSources.Source.Local) return;
+            InvalidateOnlineVersion("正在查询云端版本…");
+            string coordinator = CoordinatorAddressBox.Text.Trim();
+            if (source == BgiOnlineSources.Source.Coordinator && coordinator.Length == 0)
+            {
+                OnlineVersionText.Text = "请填写 BGI 协调服务器地址";
+                return;
+            }
+
+            using var lookup = new CancellationTokenSource();
+            _lookupCts = lookup;
             try
             {
-                await CheckGitHubReleaseAsync(cancellation.Token);
-                SetStatus("已取得 GitHub 发行版");
+                var versions = await BgiOnlineSources.GetCatalogAsync(source, coordinator, lookup.Token);
+                if (_lookupCts != lookup) return;
+                if (versions.Count == 0)
+                {
+                    OnlineVersionText.Text = "此来源暂无可下载的云端版本";
+                    return;
+                }
+                OnlineVersionText.Text = "最新云端版本 " + versions[0].Version;
+                OnlinePackageBox.ItemsSource = versions;
+                OnlinePackageBox.SelectedIndex = 0;
+                OnlinePackageBox.Visibility = Visibility.Visible;
+                if (source == BgiOnlineSources.Source.Coordinator && App.Config.Settings.BgiCoordinatorUrl != coordinator)
+                {
+                    App.Config.Settings.BgiCoordinatorUrl = coordinator;
+                    ConfigStore.Save(App.Config);
+                }
             }
             catch (OperationCanceledException)
             {
-                SetStatus(cancellation.IsCancellationRequested ? "已取消" : "查询 GitHub 超时");
+                if (_lookupCts == lookup) OnlineVersionText.Text = "查询云端版本超时，可刷新重试";
+            }
+            catch (HttpRequestException ex)
+            {
+                if (_lookupCts != lookup) return;
+                OnlineVersionText.Text = ex.StatusCode switch
+                {
+                    System.Net.HttpStatusCode.Forbidden when ex.Message.Contains("rate limit", StringComparison.OrdinalIgnoreCase) => "GitHub 查询次数暂时达到上限，请稍后刷新",
+                    System.Net.HttpStatusCode.Forbidden => "此更新源拒绝访问（403）",
+                    System.Net.HttpStatusCode.NotFound => "此更新源没有提供版本清单或安装包（404）",
+                    { } status => $"查询云端版本失败（HTTP {(int)status}）",
+                    _ => "无法连接此更新源，可刷新重试"
+                };
             }
             catch (Exception ex)
             {
-                SetStatus("GitHub 发行版查询失败");
-                ThemedMessage.Error(Window.GetWindow(this), "查询 LCB 失败", ex.Message);
+                if (_lookupCts == lookup) OnlineVersionText.Text = "查询失败 · " + ex.Message;
             }
             finally
             {
-                _cts = null;
-                SetRunning(false);
+                if (_lookupCts == lookup)
+                {
+                    _lookupCts = null;
+                    UpdateButtonEnabled();
+                }
             }
         }
 
-        private void PickZip_Click(object sender, RoutedEventArgs e)
+        private string PackageDirectory => string.IsNullOrWhiteSpace(App.Config.Settings.BgiPackageDirectory)
+            ? BgiLocalPackages.DefaultDirectory : App.Config.Settings.BgiPackageDirectory;
+
+        private void UpdatePackageDirectoryLabel()
+        {
+            PackageDirectoryLabel.Text = "安装包目录 " + PackageDirectory;
+            PackageDirectoryLabel.ToolTip = PackageDirectory;
+        }
+
+        private void DeleteDownloadedPackage_Changed(object sender, RoutedEventArgs e)
+        {
+            App.Config.Settings.BgiDeleteDownloadedPackageAfterSuccess = DeleteDownloadedPackageCheck.IsChecked == true;
+            ConfigStore.Save(App.Config);
+        }
+
+        private void BrowsePackageDirectory_Click(object sender, RoutedEventArgs e)
+        {
+            if (_running) return;
+            var dlg = new OpenFolderDialog { Title = "选择 BGI 安装包目录", InitialDirectory = PackageDirectory };
+            if (dlg.ShowDialog() != true) return;
+            App.Config.Settings.BgiPackageDirectory = dlg.FolderName;
+            ConfigStore.Save(App.Config);
+            UpdatePackageDirectoryLabel();
+            if (!UsesOnline) _ = RefreshLocalPackagesAsync();
+        }
+
+        private void UpdateButtonEnabled() => BtnUpdate.IsEnabled = !_running && (UsesOnline
+            ? OnlinePackageBox.SelectedItem is BgiOnlineSources.Package
+            : _localScanCts == null && LocalPackageBox.SelectedItem is LocalPackage);
+
+        private async void RefreshLocalPackages_Click(object sender, RoutedEventArgs e) => await RefreshLocalPackagesAsync();
+
+        private async Task RefreshLocalPackagesAsync(string? preferred = null)
+        {
+            if (UsesOnline) return;
+            preferred ??= (LocalPackageBox.SelectedItem as LocalPackage)?.Path;
+            _localScanCts?.Cancel();
+            using var scan = new CancellationTokenSource();
+            _localScanCts = scan;
+            string directory = PackageDirectory;
+            var pinned = App.Config.Settings.BgiPickedPackagePaths?.ToArray() ?? [];
+            LocalPackageStatus.Text = "正在查找本地安装包…";
+            UpdateButtonEnabled();
+            try
+            {
+                var paths = await Task.Run(() => BgiLocalPackages.Scan(directory, pinned, scan.Token), scan.Token);
+                if (_localScanCts != scan || UsesOnline) return;
+                var packages = paths.Select(path => new LocalPackage(path)).ToArray();
+                LocalPackageBox.ItemsSource = packages;
+                LocalPackageBox.SelectedItem = packages.FirstOrDefault(p =>
+                    string.Equals(p.Path, preferred, StringComparison.OrdinalIgnoreCase)) ?? packages.FirstOrDefault();
+                LocalPackageStatus.Text = packages.Length == 0 ? "这里还没有 BGI 安装包，可以选择磁盘上的压缩包。" : "";
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                if (_localScanCts == scan && !UsesOnline)
+                {
+                    LocalPackageBox.ItemsSource = null;
+                    LocalPackageStatus.Text = "无法读取安装包目录，可以更改目录或选择文件。";
+                }
+            }
+            finally
+            {
+                if (_localScanCts == scan) _localScanCts = null;
+                UpdateButtonEnabled();
+            }
+        }
+
+        private async void PickZip_Click(object sender, RoutedEventArgs e)
         {
             if (_running) return;
             var dlg = new OpenFileDialog
             {
-                Title = "选择 BGI 更新包",
-                Filter = "压缩包 (*.zip;*.7z;*.rar;*.tar;*.gz)|*.zip;*.7z;*.rar;*.tar;*.gz|" +
-                         "ZIP (*.zip)|*.zip|7Z (*.7z)|*.7z|RAR (*.rar)|*.rar|所有文件 (*.*)|*.*",
+                Title = "选择 BGI 安装包",
+                InitialDirectory = PackageDirectory,
+                Filter = "支持的压缩包 (*.zip;*.7z;*.rar;*.tar;*.gz)|*.zip;*.7z;*.rar;*.tar;*.gz",
                 CheckFileExists = true
             };
-            if (dlg.ShowDialog() == true)
-                ZipBox.Text = dlg.FileName;
+            if (dlg.ShowDialog() != true) return;
+            var picked = App.Config.Settings.BgiPickedPackagePaths ??= new List<string>();
+            if (!picked.Contains(dlg.FileName, StringComparer.OrdinalIgnoreCase))
+            {
+                picked.Insert(0, dlg.FileName);
+                ConfigStore.Save(App.Config);
+            }
+            await RefreshLocalPackagesAsync(dlg.FileName);
         }
 
         // ══════════ 开始更新 ══════════
@@ -355,9 +499,11 @@ namespace SoulLink.Views
         {
             if (_running) return;
 
-            bool usesGitHub = UsesGitHub;
-            string zip = (ZipBox.Text ?? "").Trim();
-            if (!usesGitHub && (zip.Length == 0 || !File.Exists(zip)))
+            bool usesOnline = UsesOnline;
+            var release = OnlinePackageBox.SelectedItem as BgiOnlineSources.Package;
+            if (usesOnline && release == null) return;
+            string zip = (LocalPackageBox.SelectedItem as LocalPackage)?.Path ?? "";
+            if (!usesOnline && (zip.Length == 0 || !File.Exists(zip)))
             {
                 ThemedMessage.Info(Window.GetWindow(this), "缺少更新包", "请先选择一个更新包（zip / 7z / rar）。");
                 return;
@@ -393,7 +539,7 @@ namespace SoulLink.Views
             if (LogText != null) LogText.Text = "";
             SetRunning(true);
             AppendLog("═══ 开始更新 ═══");
-            AppendLog(usesGitHub ? "更新源：LCB / NexusBGI（GitHub Releases）" : "更新包：" + Path.GetFileName(zip));
+            AppendLog(usesOnline ? "更新源：" + BgiOnlineSources.Label(SelectedSource) : "更新包：" + Path.GetFileName(zip));
             AppendLog("目标账号：" + string.Join("、", targets.Select(t => t.UserName)));
             AppendLog("");
 
@@ -415,13 +561,15 @@ namespace SoulLink.Views
             });
 
             DirectoryInfo? downloadDirectory = null;
+            BgiLocalPackages.DownloadedPackage? savedDownload = null;
+            string packageDirectory = PackageDirectory;
+            bool deleteDownloaded = DeleteDownloadedPackageCheck.IsChecked == true;
             try
             {
-                if (usesGitHub)
+                if (usesOnline && release != null)
                 {
-                    var release = _githubRelease ?? await CheckGitHubReleaseAsync(cancellation.Token);
                     string accounts = string.Join("、", targets.Select(target => target.UserName));
-                    if (!ThemedMessage.Confirm(Window.GetWindow(this), "确认应用 LCB 发行版",
+                    if (!ThemedMessage.Confirm(Window.GetWindow(this), "确认应用云端版本",
                             $"下载并应用 {release.Version} 到 {accounts} 的 BetterGI 目录？请先退出目标 BGI。"))
                     {
                         SetStatus("已取消");
@@ -431,22 +579,39 @@ namespace SoulLink.Views
                     await Task.Run(() => BgiUpdater.EnsureUpdateTargetsClosed(list), cancellation.Token);
                     downloadDirectory = Directory.CreateTempSubdirectory("SoulLinkBgi-");
                     AppendLog("下载：" + release.Name);
-                    SetProgress(0, "正在下载并校验 LCB 便携包…");
-                    zip = await BgiGitHubRelease.DownloadAsync(release, downloadDirectory.FullName,
-                        new Progress<int>(percent => SetProgress(percent, "下载并校验 LCB 便携包 · " + percent + "%")),
+                    SetProgress(0, "正在下载并校验便携包…");
+                    zip = await BgiOnlineSources.DownloadAsync(release, downloadDirectory.FullName,
+                        new Progress<int>(percent => SetProgress(percent, "下载并校验便携包 · " + percent + "%")),
                         cancellation.Token);
-                    AppendLog("便携包大小和 SHA-256 校验通过");
+                    savedDownload = await BgiLocalPackages.SaveDownloadedAsync(zip, packageDirectory,
+                        release.Name, cancellation.Token);
+                    zip = savedDownload.Path;
+                    AppendLog("安装包已保存：" + zip);
                 }
 
                 IProgress<string> log = new Progress<string>(AppendLog);
                 var results = await BgiUpdater.UpdateBatchAsync(list, zip, backupUser,
-                    log.Report, progress, cancellation.Token, requireClosedBgi: usesGitHub);
+                    log.Report, progress, cancellation.Token, requireClosedBgi: usesOnline);
 
                 int ok = results.Count(r => r.Ok);
                 int fail = results.Count - ok;
                 SetProgress(100, cancellation.IsCancellationRequested ? "已停止" : "完成");
                 SetStatus("成功 " + ok + " 个，失败 " + fail + " 个");
                 AppendLog("═══ 结束：成功 " + ok + "，失败 " + fail + " ═══");
+
+                if (deleteDownloaded && savedDownload != null && ok == list.Count && fail == 0 &&
+                    !cancellation.IsCancellationRequested)
+                {
+                    try
+                    {
+                        bool removed = await Task.Run(savedDownload.DeleteIfUnchanged);
+                        AppendLog(removed ? "已清理本次下载的安装包。" : "本次下载文件已不在原位或发生变化。");
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        AppendLog("无法清理本次安装包：" + ex.Message);
+                    }
+                }
 
                 if (fail == 0 && ok > 0)
                     ThemedMessage.Info(Window.GetWindow(this), "更新完成",
@@ -457,7 +622,7 @@ namespace SoulLink.Views
             }
             catch (OperationCanceledException)
             {
-                string message = cancellation.IsCancellationRequested ? "已停止" : "连接 GitHub 或下载超时";
+                string message = cancellation.IsCancellationRequested ? "已停止" : "连接更新源或下载超时";
                 SetProgress(0, message);
                 SetStatus(message);
                 AppendLog(message);
@@ -513,11 +678,13 @@ namespace SoulLink.Views
         private void SetRunning(bool running)
         {
             _running = running;
-            BtnUpdate.IsEnabled = !running;
+            UpdateButtonEnabled();
             BtnCancel.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
             UpdateSourceBox.IsEnabled = !running;
             LocalSourcePanel.IsEnabled = !running;
-            GitHubSourcePanel.IsEnabled = !running;
+            OnlineSourcePanel.IsEnabled = !running;
+            BtnBrowsePackageDirectory.IsEnabled = !running;
+            DeleteDownloadedPackageCheck.IsEnabled = !running && UsesOnline;
         }
 
         private void SetStatus(string text)

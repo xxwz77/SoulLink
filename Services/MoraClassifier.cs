@@ -25,8 +25,7 @@ namespace SoulLink.Services
     ///
     /// ── 线程模型 ─────────────────────────────────────────────────────
     ///   读写全部经 MiyousheStore.RunAsync（单连接信号量串行，后台线程）；
-    ///   无 DispatcherTimer；触发点=米游社拉取完成后（MiyousheService 调 ClassifyAsync）
-    ///   与 /api/miyoushe/mora/classify 手动触发。
+    ///   由 /api/miyoushe/mora/classify 手动触发。
     /// </summary>
     internal static class MoraClassifier
     {
@@ -321,18 +320,21 @@ CREATE TABLE IF NOT EXISTS my_mora_summary(
 
             // ① 原始 entries（只取 kind=2 摩拉流水）
             var entries = new List<(long rowid, string uid, string action, long? single, long? count,
-                long? num, long? ts, string timeText, string raw)>();
+                long? num, long? ts, bool singleUid)>();
             using (var cmd = db.CreateCommand())
             {
-                cmd.CommandText = @"SELECT rowid,game_uid,action,single_mora,count,num,ts_ms,time_text,raw_json
+                cmd.CommandText = @"WITH roles AS (
+                    SELECT game_uid FROM my_role WHERE account=$a COLLATE NOCASE
+                    UNION SELECT game_uid FROM my_ledger_entry WHERE account=$a COLLATE NOCASE
+                )
+SELECT rowid,game_uid,action,single_mora,count,num,ts_ms,(SELECT count(*) FROM roles)=1
 FROM my_ledger_entry WHERE account=$a AND kind=2 ORDER BY COALESCE(ts_ms,0),rowid;";
                 cmd.Parameters.AddWithValue("$a", account);
                 using var r = cmd.ExecuteReader();
                 while (r.Read())
                 {
                     entries.Add((r.GetInt64(0), r.GetString(1), r.GetString(2),
-                        OptLong(r, 3), OptLong(r, 4), OptLong(r, 5), OptLong(r, 6),
-                        r.GetString(7), r.GetString(8)));
+                        OptLong(r, 3), OptLong(r, 4), OptLong(r, 5), OptLong(r, 6), r.GetBoolean(7)));
                 }
             }
             if (entries.Count == 0)
@@ -347,7 +349,7 @@ FROM my_ledger_entry WHERE account=$a AND kind=2 ORDER BY COALESCE(ts_ms,0),rowi
                 string g = "", p = "", rn = "";
 
                 // 非击杀事实保留 non_kill，但不进入击杀路线/项目归属。
-                if (category != CatNonKill && e.ts.HasValue)
+                if (category != CatNonKill && e.ts.HasValue && e.singleUid && e.uid.Length > 0)
                 {
                     string pAttr = AttributeProject(projects, e.ts.Value, out var pw, out string pConf);
                     if (pw != null) { g = pw.GroupName; p = pw.ProjectName; }
@@ -517,20 +519,23 @@ VALUES($a,$u,$d,$rv,$g,$rn,$le,$e,$lm,$m,$uk,$nk,$rc,$krc,$tm);";
             if (WindowSourceForTest != null) return WindowSourceForTest(account);
             try
             {
-                var projects = LoadProjectWindows(account);
-                var routes = LoadRouteWindows(account);
-                return (projects, routes);
+                string exe = BgiPathResolver.GetBoundPath(account);
+                string? dir = Path.GetDirectoryName(exe);
+                if (!string.IsNullOrWhiteSpace(dir))
+                {
+                    string logDir = Path.Combine(dir, "log");
+                    return (LoadProjectWindows(logDir), LoadRouteWindows(logDir));
+                }
             }
-            catch { return (Array.Empty<ProjectWindow>(), Array.Empty<RouteWindow>()); }
+            catch { }
+            return (Array.Empty<ProjectWindow>(), Array.Empty<RouteWindow>());
         }
 
         /// <summary>读 BGI ExecutionRecords/YYYYMMDD.json（项目窗，近 8 天）。</summary>
-        private static List<ProjectWindow> LoadProjectWindows(string account)
+        private static List<ProjectWindow> LoadProjectWindows(string logDir)
         {
             var result = new List<ProjectWindow>();
-            string? exe = TryBgiExe(account);
-            if (string.IsNullOrWhiteSpace(exe)) return result;
-            string dir = Path.Combine(Path.GetDirectoryName(exe) ?? "", "log", "ExecutionRecords");
+            string dir = Path.Combine(logDir, "ExecutionRecords");
             if (!Directory.Exists(dir)) return result;
             foreach (string file in Directory.GetFiles(dir, "*.json")
                          .OrderByDescending(f => f).Take(8))
@@ -561,19 +566,10 @@ VALUES($a,$u,$d,$rv,$g,$rn,$le,$e,$lm,$m,$uk,$nk,$rc,$krc,$tm);";
             return result;
         }
 
-        private static string? TryBgiExe(string account)
-        {
-            try { return BgiPathResolver.GetBoundPath(account); }
-            catch { return null; }
-        }
-
         /// <summary>读 BGI 当日日志的路线窗（进入路线循环 → 脚本执行结束，近 2 天）。</summary>
-        private static List<RouteWindow> LoadRouteWindows(string account)
+        private static List<RouteWindow> LoadRouteWindows(string dir)
         {
             var result = new List<RouteWindow>();
-            string? exe = TryBgiExe(account);
-            if (string.IsNullOrWhiteSpace(exe)) return result;
-            string dir = Path.Combine(Path.GetDirectoryName(exe) ?? "", "log");
             if (!Directory.Exists(dir)) return result;
             foreach (string file in Directory.GetFiles(dir, "better-genshin-impact*.log")
                          .OrderByDescending(f => f).Take(2))

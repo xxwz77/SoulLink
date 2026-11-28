@@ -1006,26 +1006,29 @@ SELECT 'state_span', 'span#'||span_id, dur_ms, (end_at_ms - start_at_ms) FROM st
             }, Array.Empty<RunRecord>(), default);
 
         internal sealed record LedgerWindow(string RunId, string GroupName, string RouteId, string RouteName,
-            long Start, long End, string Kind = "");
+            long Start, long End, string Kind = "", bool IsOpen = false);
 
-        // The incremental linker can read completed routes inside an ongoing group.
+        // The incremental linker sees open routes so they can prevent a premature assignment.
         internal static Task<List<LedgerWindow>?> QueryLedgerWindowsAsync(string account, long lo, long hi,
-            bool includeCollectCd = false, CancellationToken ct = default)
+            bool forIncrementalLinker = false, CancellationToken ct = default)
             => Core.Value.EnqueueQuery<List<LedgerWindow>?>(db =>
             {
                 using var cmd = db.CreateCommand();
-                cmd.CommandText = @"SELECT run_id,group_name,'','',start_at_ms,COALESCE(end_at_ms,$hi),'' FROM run
+                cmd.CommandText = @"SELECT run_id,group_name,'','',start_at_ms,COALESCE(end_at_ms,$hi),'',end_at_ms IS NULL FROM run
                     WHERE account=$a COLLATE NOCASE AND start_at_ms<$hi
-                    AND (end_at_ms>$lo OR ($cd=1 AND end_at_ms IS NULL))
-                    UNION ALL SELECT r.run_id,r.group_name,t.route_id,t.name,t.start_at_ms,t.end_at_ms,t.kind FROM route t
+                    AND (end_at_ms>$lo OR ($incremental=1 AND end_at_ms IS NULL))
+                    UNION ALL SELECT r.run_id,r.group_name,t.route_id,t.name,t.start_at_ms,COALESCE(t.end_at_ms,$hi),
+                    t.kind,t.end_at_ms IS NULL FROM route t
                     JOIN run r ON r.run_id=t.run_id WHERE r.account=$a COLLATE NOCASE
-                    AND (t.kind='route' OR ($cd=1 AND t.kind='cd_line'))
-                    AND t.start_at_ms<$hi AND t.end_at_ms>$lo ORDER BY 5,1,3;";
-                Add(cmd,"$a",account); Add(cmd,"$lo",lo); Add(cmd,"$hi",hi); Add(cmd,"$cd",includeCollectCd ? 1 : 0);
+                    AND (t.kind='route' OR ($incremental=1 AND t.kind='cd_line'))
+                    AND t.start_at_ms<$hi AND ((t.end_at_ms>$lo AND t.end_at_ms>t.start_at_ms)
+                        OR ($incremental=1 AND t.end_at_ms IS NULL))
+                    ORDER BY 5,1,3;";
+                Add(cmd,"$a",account); Add(cmd,"$lo",lo); Add(cmd,"$hi",hi); Add(cmd,"$incremental",forIncrementalLinker ? 1 : 0);
                 using var reader = cmd.ExecuteReader();
                 var rows = new List<LedgerWindow>();
                 while (reader.Read()) rows.Add(new(reader.GetString(0),reader.GetString(1),reader.GetString(2),
-                    reader.GetString(3),reader.GetInt64(4),reader.GetInt64(5),reader.GetString(6)));
+                    reader.GetString(3),reader.GetInt64(4),reader.GetInt64(5),reader.GetString(6),reader.GetBoolean(7)));
                 return rows;
             }, null, ct);
 

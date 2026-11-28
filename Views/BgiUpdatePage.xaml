@@ -33,47 +33,68 @@
                     <TextBlock Text="更新源" Style="{StaticResource Label}" />
                     <ComboBox x:Name="UpdateSourceBox" SelectedIndex="0" Margin="0,7,0,0"
                               AutomationProperties.Name="BGI 更新源">
-                        <ComboBoxItem Content="本地更新包" />
-                        <ComboBoxItem Content="LCB / NexusBGI（GitHub Releases）" />
+                        <ComboBoxItem Tag="Local" Content="本地安装包" />
+                        <ComboBoxItem Tag="Coordinator" Content="协调服务器" />
+                        <ComboBoxItem Tag="GitHubReleases" Content="GitHub Releases" />
+                        <ComboBoxItem Tag="GitHubActions" Content="GitHub Actions 构建" />
+                        <ComboBoxItem Tag="CnbMirror" Content="CNB 茶包镜像（H工源）" />
                     </ComboBox>
-                    <StackPanel x:Name="LocalSourcePanel">
                     <Grid Margin="0,7,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-
-                        <TextBox x:Name="ZipBox" Grid.Column="0" Height="38"
-                                 Style="{StaticResource GlassTextBox}"
-                                 Padding="11,0,11,0" FontSize="12"
-                                 VerticalContentAlignment="Center"
-                                 IsReadOnly="True" />
-
-                        <Button Grid.Column="1" Style="{StaticResource GhostButton}"
-                                Padding="14,8" Margin="8,0,0,0" Click="PickZip_Click">
-                            <TextBlock Text="选择文件" FontSize="11.5" />
-                        </Button>
+                        <TextBlock x:Name="PackageDirectoryLabel" TextWrapping="Wrap"
+                                   Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                        <Button x:Name="BtnBrowsePackageDirectory" Grid.Column="1"
+                                Style="{StaticResource GhostButton}" Padding="12,7" Margin="8,0,0,0"
+                                Click="BrowsePackageDirectory_Click" Content="更改安装包目录" />
                     </Grid>
-
-                    <TextBlock Text="支持 zip / 7z / rar / tar / gz。解压后覆盖到 BGI 目录，包内多一层 BetterGI 文件夹会自动识别。"
-                               Style="{StaticResource Caption}" TextWrapping="Wrap"
-                               Margin="0,5,0,0" />
+                    <StackPanel x:Name="LocalSourcePanel">
+                        <Grid Margin="0,7,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="LocalPackageBox" DisplayMemberPath="DisplayLabel"
+                                      AutomationProperties.Name="本地安装包" />
+                            <Button Grid.Column="1" Style="{StaticResource GhostButton}"
+                                    Padding="12,7" Margin="8,0,0,0" Click="PickZip_Click" Content="选择文件" />
+                            <Button Grid.Column="2" Style="{StaticResource GhostButton}"
+                                    Padding="12,7" Margin="8,0,0,0" Click="RefreshLocalPackages_Click" Content="刷新" />
+                        </Grid>
+                        <TextBlock x:Name="LocalPackageStatus" Style="{StaticResource Caption}"
+                                   TextWrapping="Wrap" Margin="0,5,0,0" />
                     </StackPanel>
-                    <Grid x:Name="GitHubSourcePanel" Margin="0,7,0,0" Visibility="Collapsed">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="GitHubReleaseText" Text="尚未检查 GitHub 发行版"
-                                   Style="{StaticResource Caption}" TextWrapping="Wrap" VerticalAlignment="Center" />
-                        <Button x:Name="BtnCheckGitHub" Grid.Column="1" Style="{StaticResource GhostButton}"
-                                Padding="14,8" Margin="8,0,0,0" Click="CheckGitHubRelease_Click"
-                                Content="检查版本" />
-                    </Grid>
+                    <StackPanel x:Name="OnlineSourcePanel" Margin="0,7,0,0" Visibility="Collapsed">
+                        <StackPanel x:Name="CoordinatorPanel" Visibility="Collapsed" Margin="0,0,0,6">
+                            <TextBlock Text="BGI 协调服务器地址" Style="{StaticResource Caption}" />
+                            <TextBox x:Name="CoordinatorAddressBox" Height="35" Margin="0,4,0,0"
+                                     Style="{StaticResource GlassTextBox}" Padding="9,7"
+                                     AutomationProperties.Name="BGI 协调服务器地址" />
+                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="OnlineVersionText" Style="{StaticResource Caption}"
+                                       TextWrapping="Wrap" VerticalAlignment="Center" />
+                            <Button x:Name="BtnCheckOnline" Grid.Column="1" Style="{StaticResource GhostButton}"
+                                    Padding="14,8" Margin="8,0,0,0" Click="CheckOnlineSource_Click" Content="刷新" />
+                        </Grid>
+                        <ComboBox x:Name="OnlinePackageBox" DisplayMemberPath="DisplayLabel"
+                                  AutomationProperties.Name="云端安装包版本" Visibility="Collapsed" Margin="0,6,0,0" />
+                    </StackPanel>
                 </StackPanel>
 
                 <!-- 选项 -->
                 <StackPanel Grid.Row="2" Margin="0,14,0,0">
+                    <CheckBox x:Name="DeleteDownloadedPackageCheck"
+                              Content="更新成功后删除安装包"
+                              ToolTip="仅清理本次下载的安装包"
+                              Style="{StaticResource GlassCheckBox}" FontSize="11.5" Margin="0,0,0,6" />
                     <CheckBox x:Name="BackupUserCheck"
                               Content="更新前备份 User 目录（保留配置和自定义脚本）"
                               Style="{StaticResource GlassCheckBox}"

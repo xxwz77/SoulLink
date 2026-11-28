@@ -131,6 +131,15 @@ namespace SoulLink.Services
             public long NextSeq = 1;
 
             public BgiStatus Status = new();
+            public BgiSessionProgress? SessionProgress;
+            public string StatusSourceFile = "";
+
+            public void ClearSessionStatus()
+            {
+                Status = new BgiStatus();
+                StatusSourceFile = "";
+                Volatile.Write(ref SessionProgress, null);
+            }
 
             /// <summary>最近一条带时间戳的日志时刻（无时间戳的续行沿用）。</summary>
             public DateTime LastEventAt = DateTime.MinValue;
@@ -161,6 +170,13 @@ namespace SoulLink.Services
 
             public void ResetForNewFile(string file)
             {
+                bool continuesAtMidnight = !Status.Stopped && !Status.TaskEnded
+                    && BgiLogParser.TryFileDate(StatusSourceFile, out var previousDay)
+                    && BgiLogParser.TryFileDate(file, out var nextDay)
+                    && nextDay == previousDay.AddDays(1)
+                    && string.Equals(Path.GetDirectoryName(StatusSourceFile), Path.GetDirectoryName(file),
+                        StringComparison.OrdinalIgnoreCase);
+                var previous = Status;
                 Version++;
                 LogFile = file;
                 // ★ t45 断点续传：换文件/新文件时从持久化游标继续，而不是从 0 重扫。
@@ -194,7 +210,24 @@ namespace SoulLink.Services
                 PicksByGroup.Clear();
                 ErrorCount = WarnCount = FailCount = 0;
                 Tail.Clear(); TailChars = 0;
-                Status = new BgiStatus();
+                if (continuesAtMidnight)
+                {
+                    Status = new BgiStatus
+                    {
+                        TaskName = previous.TaskName,
+                        RouteFile = previous.RouteFile,
+                        Round = previous.Round,
+                        RoleName = previous.RoleName,
+                        RouteEta = previous.RouteEta,
+                        RouteProgress = previous.RouteProgress,
+                        RoundRemain = previous.RoundRemain,
+                        AreaName = previous.AreaName,
+                        RoundRunning = previous.RoundRunning
+                    };
+                    Status.InheritMapActivityFrom(previous);
+                }
+                else ClearSessionStatus();
+                StatusSourceFile = file;
                 LastEventAt = DateTime.MinValue;
                 Primed = false;
                 // 行序号**不**归零：跨天滚动后新文件首行接着上一行的序号，
@@ -249,10 +282,6 @@ namespace SoulLink.Services
             @"|已停止运行|中断执行",
             RegexOptions.Compiled);
 
-        private static readonly Regex RxTs = new(
-            @"^\[(?<date>\d{4}-\d{2}-\d{2}[ T])?(?<time>\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?)\]\s*(?:\[(?<level>[A-Za-z]{3,5})\])?",
-            RegexOptions.Compiled);
-
         // ── 对外读接口（全部无锁读不可变快照）────────────────────────
 
         /// <summary>取某账号的快照；没有则返回 null（= 未绑定或尚未扫描）。</summary>
@@ -260,6 +289,39 @@ namespace SoulLink.Services
         {
             if (string.IsNullOrWhiteSpace(accountId)) return null;
             lock (Sync) return Entries.TryGetValue(accountId, out var e) ? Cached(e) : null;
+        }
+
+        internal static BgiSessionProgress? SessionProgressFor(string accountId)
+        {
+            if (string.IsNullOrWhiteSpace(accountId)) return null;
+            lock (Sync)
+                return Entries.TryGetValue(accountId, out var entry) ? Volatile.Read(ref entry.SessionProgress) : null;
+        }
+
+        // Only the earnings endpoint needs a detached daily aggregate. Copy it under
+        // the account's log lock on the request thread, then serialize outside the lock.
+        internal static DailyStats DailyStatsForWeb(string userName)
+        {
+            Entry? entry;
+            lock (Sync)
+                entry = Entries.Values.FirstOrDefault(e => string.Equals(e.UserName, userName,
+                    StringComparison.OrdinalIgnoreCase));
+            if (entry == null) return new DailyStats();
+            lock (entry.StepGate)
+            {
+                if (entry.BgiExe.Length == 0 || entry.Today.Day != DateTime.Today) return new DailyStats();
+                var today = entry.Today;
+                return new DailyStats
+                {
+                    Day = today.Day,
+                    DogfoodExp = today.DogfoodExp,
+                    DogfoodMora = today.DogfoodMora,
+                    DogfoodRoutes = today.DogfoodRoutes,
+                    LastDogfoodRoute = today.LastDogfoodRoute,
+                    Picks = new Dictionary<string, int>(today.Picks, StringComparer.OrdinalIgnoreCase),
+                    Groups = new HashSet<string>(today.Groups, StringComparer.OrdinalIgnoreCase)
+                };
+            }
         }
 
         public static BgiLogSnapshot? SnapshotByUser(string userName)
@@ -982,6 +1044,12 @@ namespace SoulLink.Services
             bool wasUnbound = false;
             lock (Sync)
             {
+                if (!string.Equals(e.UserName, user, StringComparison.OrdinalIgnoreCase))
+                {
+                    e.ClearSessionStatus();
+                    e.CurrentGroup = "";
+                    e.CurrentGroupAt = DateTime.MinValue;
+                }
                 e.UserName = user;
                 if (!bound)
                 {
@@ -996,7 +1064,14 @@ namespace SoulLink.Services
                     e.FileLength = 0;
                     e.Primed = false;
                     e.Error = "";
-                    if (had) { e.Tail.Clear(); e.TailChars = 0; }
+                    if (had)
+                    {
+                        e.ClearSessionStatus();
+                        e.CurrentGroup = "";
+                        e.CurrentGroupAt = DateTime.MinValue;
+                        e.Tail.Clear();
+                        e.TailChars = 0;
+                    }
                     wasUnbound = true;
                 }
             }
@@ -1017,6 +1092,9 @@ namespace SoulLink.Services
             {
                 e.BgiPid = 0;
                 e.Backfill = new BackfillState();
+                e.ClearSessionStatus();
+                e.CurrentGroup = "";
+                e.CurrentGroupAt = DateTime.MinValue;
             }
             if (!rebound && expected.Length > 0 && e.LogFile.Length > 0
                 && !string.Equals(e.LogFile, expected, StringComparison.OrdinalIgnoreCase)
@@ -1063,9 +1141,16 @@ namespace SoulLink.Services
             }
 
             string logFile = file.FullName;
-            int sid = AccountStateCenter.Get(e.AccountId)?.SessionId ?? 0;
-            if (e.BgiPid <= 0 && sid > 0)
-                e.BgiPid = BgiLogWatcher.DiscoverForSession(sid, exe)?.Pid ?? 0;
+            var accountState = AccountStateCenter.Get(e.AccountId);
+            int sid = accountState?.SessionId ?? 0;
+            int pid = accountState?.BgiPid ?? 0;
+            if (pid <= 0 && e.BgiPid <= 0 && sid > 0)
+                pid = BgiLogWatcher.DiscoverForSession(sid, exe)?.Pid ?? 0;
+            if (pid > 0)
+            {
+                if (e.BgiPid > 0 && e.BgiPid != pid) e.ClearSessionStatus();
+                e.BgiPid = pid;
+            }
 
             lock (Sync)
             {
@@ -1239,54 +1324,39 @@ namespace SoulLink.Services
         {
             if (chunk.Length == 0) return;
             e.Version++;
-            var now = DateTime.Now;
-            string today = now.ToString("yyyy-MM-dd");
+            var batch = new BgiLogBatch(chunk, e.LogFile, e.LastEventAt);
 
-            // ① 结构化状态：交给既有解析器，它们本来就只吃文本。
-            try { e.Status.Update(chunk); } catch { }
-            try { e.Groups.Update(chunk); } catch { }
-            try { DailyStatsCache.Accumulate(e.Today, chunk); } catch { }
-            // ★ 台账：把"配置组运行事件 × 收益事件"按时间窗归因成一条条记录。
-            //   只做内存归因，文件写 IO 由 RouteLedger 后台线程承担（不在 UI 线程）。
-            //   挂在这里 = 挂在现有增量解析路径上，不新增定时器。
-            try { RouteLedger.Feed(e.UserName, chunk); } catch { }
+            try { e.Status.Update(batch); } catch { }
+            try { e.Groups.Update(batch); } catch { }
+            try { DailyStatsCache.Accumulate(e.Today, batch); } catch { }
+            // 两个台账消费同一增量块，落盘各自仍走后台写入队列。
+            try { RouteLedger.Feed(e.UserName, batch); } catch { }
+            try { RunRecordCollector.Feed(e.UserName, batch, e.LogFile, fileLen, writeTicks); } catch { }
 
-            // ★★ 3.3.41 运行记录（SQLite）：紧邻 RouteLedger 的第二个归因订阅者。
-            //   同一条增量 chunk、同一份字节游标 —— **不新增日志扫描链**，
-            //   只多跑若干已编译正则 + 内存状态机 + 入队（写盘全在 RunRecordStore 后台线程）。
-            //   异常绝不能影响日志解析主流程（Feed 内部已 try/catch，这里再兜一层）。
-            //   srcFile 用于取文件名日期（跨天时间轴）与来源留痕，不做任何文件 IO。
-            try { RunRecordCollector.Feed(e.UserName, chunk, e.LogFile, fileLen, writeTicks); } catch { }
-
-            // ② 逐行处理：粘性配置组 / 拾取分组 / 报错计数 / 尾窗。
-            var lines = chunk.Split('\n');
+            var lines = batch.Lines;
             for (int i = 0; i < lines.Length; i++)
             {
-                string raw = lines[i];
-                if (raw.Length == 0) continue;
-                string line = raw.TrimEnd('\r');
+                ref var logLine = ref lines[i];
+                string line = logLine.Text;
                 if (line.Length == 0) continue;
 
-                DateTime at = now;
+                DateTime at = batch.Now;
                 string level = "";
-                var m = RxTs.Match(line);
-                if (m.Success)
+                var stamp = logLine.Timestamp;
+                if (stamp.Success)
                 {
-                    if (TryStamp(m, now, out var parsed)) { at = parsed; e.LastEventAt = parsed; }
-                    level = m.Groups["level"].Value;
+                    if (batch.TryWallTime(stamp, out var parsed)) { at = parsed; e.LastEventAt = parsed; }
+                    level = stamp.Groups["level"].Value;
                 }
-                else
+                else if (e.LastEventAt != DateTime.MinValue)
                 {
-                    // 没有时间戳的行（BGI 的换行续行）按"上一次时间"处理。
-                    at = e.LastEventAt == DateTime.MinValue ? now : e.LastEventAt;
+                    at = e.LastEventAt;
                 }
 
-                // 报错 / 告警 / 失败计数（与 CountDailyErrors 同一口径）。
-                if (line.IndexOf("[ERR]", StringComparison.Ordinal) >= 0) e.ErrorCount++;
-                else if (line.IndexOf("[WRN]", StringComparison.Ordinal) >= 0) e.WarnCount++;
-                if (line.IndexOf("执行失败", StringComparison.Ordinal) >= 0
-                    || line.IndexOf("未成功完成", StringComparison.Ordinal) >= 0
-                    || line.IndexOf("一条龙前置动作未成功", StringComparison.Ordinal) >= 0) e.FailCount++;
+                var issues = logLine.Issues;
+                if ((issues & BgiLogIssues.Error) != 0) e.ErrorCount++;
+                if ((issues & BgiLogIssues.Warning) != 0) e.WarnCount++;
+                if ((issues & BgiLogIssues.Failure) != 0) e.FailCount++;
 
                 // ── 停止判定：先看"停了没有"，再看"有没有新的" ──────────
                 //
@@ -1363,11 +1433,17 @@ namespace SoulLink.Services
                 }
 
                 // 尾窗：只保留今天 + 最近一段。
-                PushTail(e, at, level, line, today);
+                PushTail(e, at, level, line);
             }
+
+            e.StatusSourceFile = e.LogFile;
+            var status = e.Status;
+            Volatile.Write(ref e.SessionProgress, new BgiSessionProgress(e.BgiPid, e.CurrentGroup,
+                status.TaskName, status.RouteFile, status.Round, status.RoleName, status.RouteEta,
+                status.PickTotal, status.LiveActivity));
         }
 
-        private static void PushTail(Entry e, DateTime at, string level, string text, string today)
+        private static void PushTail(Entry e, DateTime at, string level, string text)
         {
             // 太长的行截断，避免单行撑爆预算。
             if (text.Length > 400) text = text.Substring(0, 400) + "…";
@@ -1379,18 +1455,6 @@ namespace SoulLink.Services
                 e.TailChars -= dropped.Text.Length + 24;
                 if (e.Tail.Count == 0) e.TailChars = 0;
             }
-        }
-
-        private static bool TryStamp(Match m, DateTime now, out DateTime at)
-        {
-            at = default;
-            string date = m.Groups["date"].Value.Trim();
-            string time = m.Groups["time"].Value;
-            string text = (date.Length > 0 ? date + " " : now.ToString("yyyy-MM-dd") + " ") + time;
-            if (!DateTime.TryParse(text, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.AllowWhiteSpaces, out at)) return false;
-            if (date.Length == 0 && at > now.AddSeconds(2)) at = at.AddDays(-1);
-            return true;
         }
 
         /// <summary>
